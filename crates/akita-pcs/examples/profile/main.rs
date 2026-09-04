@@ -28,6 +28,8 @@ mod verifier;
     allow(dead_code)
 )]
 mod workload;
+#[path = "../support/workspace_schedules.rs"]
+mod workspace_schedules;
 
 use akita_prover::CpuBackend;
 use std::env;

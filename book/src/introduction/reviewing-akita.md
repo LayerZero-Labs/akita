@@ -2,7 +2,7 @@
 
 Akita is designed so that a reviewer can follow a public claim from the Book to
 the code that enforces it. The main boundaries are visible in crate
-dependencies, generated schedule tables, transcript inputs, checked decoding,
+dependencies, external schedule artifacts, transcript inputs, checked decoding,
 and verifier rejection paths.
 
 This chapter maps the starting points for a security argument and a code audit.
@@ -61,7 +61,7 @@ or prover implementation.
 | `akita-sumcheck` | Shared sumcheck proof types and drivers |
 | `akita-types` | Public proof, setup, schedule, commitment, and claim shapes |
 | `akita-planner` | Offline schedule search and cost evaluation |
-| `akita-schedules` | Generated schedules consumed by normal builds |
+| `akita-schedules` | External schedule artifact decoding, admission, and lookup |
 | `akita-config` | Concrete policy and schedule admission |
 | `akita-setup` | Public setup construction and setup artifacts |
 | `akita-prover` | Commitment and proof generation |
@@ -93,24 +93,25 @@ the right question is which one the verifier trusts. Thin wrappers and copied
 formulas make that answer harder to establish and should not become alternate
 sources of truth.
 
-## Generated artifacts need review too
+## Schedule artifacts need review too
 
-Normal builds use generated schedule tables. The planner is an offline tool,
-but its output selects the dimensions, challenge rules, bounds, and opening
-methods that the verifier accepts.
+Normal builds load approved external schedule artifacts. The planner is an
+offline tool, but its output selects the dimensions, challenge rules, bounds,
+and opening methods that the verifier accepts.
 
 A schedule review should establish:
 
 - the lookup key describes the complete ordered opening layout;
-- the selected row belongs to the enabled configuration family;
+- the selected row belongs to the artifact family bound to the configuration;
 - every fold satisfies the accepted Module-SIS and response policies;
 - setup capacity covers each direct matrix use;
 - setup offloading metadata matches the carried setup commitment;
 - the terminal parameters cover the remaining relation.
 
-Generation scripts and continuous integration check that committed tables match
-the planner output. A generated file is still protocol source. Review changes
-to it with the same care as handwritten verifier code.
+Generation scripts and continuous integration byte-compare committed `.aks`
+artifacts with fresh planner output. An external schedule artifact is still
+protocol source. Review changes to it with the same care as handwritten
+verifier code.
 
 The [Configuration and planning](../how/configuration.md), [Setup
 offloading](../how/setup-offloading.md), and [Security
@@ -160,7 +161,7 @@ jobs.
 | Source | What it establishes |
 | --- | --- |
 | Current code | Runtime behavior and enforced API boundaries |
-| Generated tables | Concrete schedules and parameters accepted by normal builds |
+| External schedule artifacts | Concrete schedules and parameters admitted by normal builds |
 | Live specifications | Accepted designs that still contain details not folded into the Book |
 | The Book | The maintained explanation of current behavior |
 | Tests | Evidence for selected valid cases, rejection paths, and cross implementation agreement |

@@ -27,7 +27,8 @@ Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:
 
 ```rust
-let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)?;
+let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
+let setup = scheme.setup_prover(nv, num_polys)?;
 let backend = CpuBackend::DEFAULT;
 let prepared = backend.prepare_setup(&setup)?;
 let stack = UniformProverStack::uniform(
@@ -35,8 +36,12 @@ let stack = UniformProverStack::uniform(
     &prepared,
     setup.expanded.as_ref(),
 )?;
-let (commitment, hint) =
-    AkitaCommitmentScheme::<Cfg>::commit(&setup, polys, &stack)?;
+let commit_output = scheme.commit(
+    &setup,
+    polys,
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
 ```
 
 Applications may replace the default with

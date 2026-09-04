@@ -18,28 +18,12 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .map(|group| group.profile)
             .collect(),
     };
-    if let Some(catalog) = Cfg::schedule_catalog() {
-        if let Some(entry) = akita_schedules::generated::table_entry(catalog, &key) {
-            return akita_schedules::estimate_proof_bytes(
-                entry,
-                &key,
-                &akita_config::policy_of::<Cfg>(),
-                Cfg::ring_challenge_config,
-            )
-            .expect("generated schedule estimate");
-        }
-    }
-    let precommitted_honest_fold_policies =
-        vec![akita_config::honest_fold_policy_of::<Cfg>(); key.precommitteds.len()];
-    akita_planner::find_schedule(
+    akita_schedules::expanded_schedule_proof_payload_bytes(
         &key,
-        akita_config::honest_fold_policy_of::<Cfg>(),
-        &precommitted_honest_fold_policies,
+        schedule,
         &akita_config::policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
     )
-    .and_then(|planned| planned.estimate.estimated_proof_payload_bytes())
-    .expect("runtime schedule estimate")
+    .expect("expanded schedule estimate")
 }
 
 pub(super) fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)

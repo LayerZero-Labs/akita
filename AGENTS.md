@@ -11,7 +11,7 @@ Akita is a lattice-based polynomial commitment scheme (PCS) with transparent set
 Run the cheap repository-wide gates before starting expensive compilation:
 
 ```bash
-scripts/generate-schedule-tables.sh
+scripts/generate-schedule-artifacts.sh
 cargo fmt --all --check
 taplo fmt --check
 scripts/test-rust-file-lines.sh
@@ -23,6 +23,7 @@ scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
 scripts/check-shared-field-identity.sh
+scripts/check-external-schedule-artifacts.sh
 cargo machete --with-metadata
 typos
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
@@ -34,7 +35,7 @@ graphs differ:
 ```bash
 cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
 cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
-cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,

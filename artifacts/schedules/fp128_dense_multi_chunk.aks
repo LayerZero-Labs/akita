@@ -1,0 +1,64 @@
+{
+  "magic": [
+    65,
+    75,
+    83,
+    67,
+    72,
+    68,
+    48,
+    49
+  ],
+  "version": 1,
+  "protocol_epoch": 4,
+  "policy_digest": [
+    244,
+    115,
+    33,
+    247,
+    36,
+    143,
+    22,
+    49,
+    184,
+    255,
+    172,
+    59,
+    55,
+    46,
+    84,
+    139,
+    76,
+    174,
+    149,
+    5,
+    208,
+    156,
+    167,
+    149,
+    28,
+    182,
+    253,
+    121,
+    250,
+    176,
+    26,
+    48
+  ],
+  "family_name": "fp128_dense_multi_chunk",
+  "rows": [
+    {
+      "schedule": {
+        "root": {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":16,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":128,"positions_per_block":8,"live_blocks":16},"outer_slice_count":8,"inner":{"digits":{"log_basis":10,"num_digits":13},"matrix":{"output_rank":1,"input_width":104,"security_route":{"Linf":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Inner","ring_dimension":512,"coeff_linf_bound":427818804}}}},"outer":{"digits":{"log_basis":3,"num_digits":43},"matrix":{"output_rank":1,"input_width":688,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":7},"role":null}}},"opening":{"opening_method":{"SubringCoefficientPacking":{"challenge_subring_dimension":64}},"fold_challenge_config":{"count_pm1":31,"count_pm2":10},"log_basis_open":3,"num_digits_open":43,"num_digits_fold":6},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":688,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":7},"role":null},"payload_mode":"Compressed","ring_relation_mode":"QuotientLift","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":8,"num_activated_levels":2}},"input_witness_len":65536,"output_witness_len":3081664},
+        "recursive_folds": [
+          {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":22,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":48151,"positions_per_block":1024,"live_blocks":48},"outer_slice_count":2,"inner":{"digits":{"log_basis":3,"num_digits":1},"matrix":{"output_rank":6,"input_width":1024,"security_route":{"Linf":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Inner","ring_dimension":64,"coeff_linf_bound":6684468}}}},"outer":{"digits":{"log_basis":3,"num_digits":43},"matrix":{"output_rank":1,"input_width":6192,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":7},"role":null}}},"opening":{"opening_method":{"SubringCoefficientPacking":{"challenge_subring_dimension":64}},"fold_challenge_config":{"count_pm1":31,"count_pm2":10},"log_basis_open":3,"num_digits_open":43,"num_digits_fold":4},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":2064,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":7},"role":null},"payload_mode":"Compressed","ring_relation_mode":"QuotientLift","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":8,"num_activated_levels":2}},"input_witness_len":3081664,"output_witness_len":3080128},
+          {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":22,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":48127,"positions_per_block":2048,"live_blocks":24},"outer_slice_count":1,"inner":{"digits":{"log_basis":3,"num_digits":1},"matrix":{"output_rank":5,"input_width":2048,"security_route":{"Linf":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Inner","ring_dimension":64,"coeff_linf_bound":835380}}}},"outer":{"digits":{"log_basis":3,"num_digits":43},"matrix":{"output_rank":1,"input_width":5160,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":7},"role":null}}},"opening":{"opening_method":"EvaluationTrace","fold_challenge_config":{"count_pm1":31,"count_pm2":10},"log_basis_open":3,"num_digits_open":43,"num_digits_fold":4},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":1032,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":7},"role":null},"payload_mode":"Compressed","ring_relation_mode":"QuotientLift","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":1,"num_activated_levels":0}},"input_witness_len":3080128,"output_witness_len":965184},
+          {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":20,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":15081,"positions_per_block":1024,"live_blocks":15},"outer_slice_count":1,"inner":{"digits":{"log_basis":3,"num_digits":1},"matrix":{"output_rank":5,"input_width":1024,"security_route":{"Linf":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Inner","ring_dimension":64,"coeff_linf_bound":835380}}}},"outer":{"digits":{"log_basis":4,"num_digits":32},"matrix":{"output_rank":1,"input_width":2400,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":15},"role":null}}},"opening":{"opening_method":"EvaluationTrace","fold_challenge_config":{"count_pm1":31,"count_pm2":10},"log_basis_open":4,"num_digits_open":32,"num_digits_fold":3},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":480,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":15},"role":null},"payload_mode":"Compressed","ring_relation_mode":"QuotientLift","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":1,"num_activated_levels":0}},"input_witness_len":965184,"output_witness_len":419328},
+          {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":19,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":6552,"positions_per_block":512,"live_blocks":13},"outer_slice_count":1,"inner":{"digits":{"log_basis":4,"num_digits":1},"matrix":{"output_rank":3,"input_width":512,"security_route":{"L2":{"table_key":{"policy":"Quantum128BitADPS16","table_digest":[161,204,10,6,8,151,68,20,91,97,145,156,240,1,234,38,12,149,164,187,161,97,255,218,255,85,57,29,13,250,16,42],"modulus_profile":"Q128OffsetA7F7","ring_dimension":64,"collision_l2_sq":17592186044416},"response_l2_sq_cap":533363791,"norm_proof_shape":{"Direct":{"physical_response_len":32768}}}}}},"outer":{"digits":{"log_basis":4,"num_digits":32},"matrix":{"output_rank":1,"input_width":1248,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":15},"role":null}}},"opening":{"opening_method":"EvaluationTrace","fold_challenge_config":{"count_pm1":31,"count_pm2":11},"log_basis_open":4,"num_digits_open":32,"num_digits_fold":3},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":416,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":15},"role":null},"payload_mode":"Compressed","ring_relation_mode":"ReducedEvaluation","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":1,"num_activated_levels":0}},"input_witness_len":419328,"output_witness_len":225280},
+          {"params":{"groups":{"entries":[{"profile":{"version":4,"group":{"num_vars":18,"num_polynomials":1},"blocks":{"live_ring_elements_per_claim":3520,"positions_per_block":512,"live_blocks":7},"outer_slice_count":1,"inner":{"digits":{"log_basis":4,"num_digits":1},"matrix":{"output_rank":3,"input_width":512,"security_route":{"L2":{"table_key":{"policy":"Quantum128BitADPS16","table_digest":[161,204,10,6,8,151,68,20,91,97,145,156,240,1,234,38,12,149,164,187,161,97,255,218,255,85,57,29,13,250,16,42],"modulus_profile":"Q128OffsetA7F7","ring_dimension":64,"collision_l2_sq":8796093022208},"response_l2_sq_cap":295483865,"norm_proof_shape":{"Direct":{"physical_response_len":32768}}}}}},"outer":{"digits":{"log_basis":5,"num_digits":26},"matrix":{"output_rank":1,"input_width":546,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Outer","ring_dimension":64,"coeff_linf_bound":31},"role":null}}},"opening":{"opening_method":"EvaluationTrace","fold_challenge_config":{"count_pm1":31,"count_pm2":11},"log_basis_open":5,"num_digits_open":26,"num_digits_fold":2},"setup_natural_len":null}]},"open_matrix":{"output_rank":1,"input_width":182,"sis_table_key":{"policy":"Quantum128BitADPS16","table_digest":[233,245,115,172,206,196,229,205,1,123,159,200,157,105,36,246,157,188,117,74,70,94,70,83,213,72,47,117,21,146,126,144],"modulus_profile":"Q128OffsetA7F7","role":"Open","ring_dimension":64,"coeff_linf_bound":31},"role":null},"payload_mode":"Raw","ring_relation_mode":"ReducedEvaluation","source_encoding":"CanonicalCoefficientTable","witness_chunk":{"num_chunks":1,"num_activated_levels":0}},"input_witness_len":225280,"output_witness_len":112128}
+        ],
+        "terminal": {"blocks":{"live_ring_elements_per_claim":1752,"positions_per_block":256,"live_blocks":7},"inner":{"digits":{"log_basis":5,"num_digits":1},"matrix":{"output_rank":3,"input_width":256,"security_route":{"L2":{"table_key":{"policy":"Quantum128BitADPS16","table_digest":[161,204,10,6,8,151,68,20,91,97,145,156,240,1,234,38,12,149,164,187,161,97,255,218,255,85,57,29,13,250,16,42],"modulus_profile":"Q128OffsetA7F7","ring_dimension":64,"collision_l2_sq":17592186044416},"response_l2_sq_cap":549103459,"norm_proof_shape":{"Direct":{"physical_response_len":16384}}}}}},"fold":{"log_basis":5,"num_digits":3},"fold_challenge_config":{"count_pm1":31,"count_pm2":11},"response_shape":{"layout":{"ring_dimension":64,"groups":[{"z_coords":16384,"e_field_elems":448,"t_field_elems":1344,"z_linf_cap":null,"z_rice_low_bits":7,"z_payload_bytes":22528}],"logical_num_elems":18176}},"input_witness_len":112128}
+      }
+    }
+  ]
+}

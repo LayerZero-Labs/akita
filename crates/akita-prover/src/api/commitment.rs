@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
+use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
 #[cfg(test)]
 use akita_error::checked;
 use akita_error::AkitaError;
@@ -365,6 +365,7 @@ where
 fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     context: GroupContext<'_>,
 ) -> Result<GroupCommitPhaseParams, AkitaError>
 where
@@ -392,7 +393,7 @@ where
                 final_group: polynomial_group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
-            let scheduled_row = Cfg::resolve_catalog_row_for_key(&key)?;
+            let scheduled_row = schedules.resolve_key(&key)?;
 
             // A final group with precommitted groups consumes the row's whole
             // schedule. A standalone group is admitted on its own A/B footprint.
@@ -454,6 +455,7 @@ where
 pub fn commit<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
     context: GroupContext<'_>,
 ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
@@ -465,7 +467,7 @@ where
     P: RuntimeCommitSource<Cfg::Field>,
     B: RuntimeCommitBackendFor<Cfg::Field, P>,
 {
-    let commit_params = resolve_commit_params::<Cfg, P>(polys, expanded, context)?;
+    let commit_params = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
     let ctx = stack.commit();
     let (inner_rows, uncompressed_commitment) =
         compute_inner_outer_commitment(polys, ctx, commit_params)?;

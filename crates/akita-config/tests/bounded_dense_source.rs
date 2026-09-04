@@ -10,16 +10,18 @@
 //! the workload this preset exists for.
 
 #![allow(missing_docs)]
-// Both catalogs must be linked: every test here compares the bounded family
-// against its full-width sibling.
-#![cfg(all(
-    feature = "schedules-fp128-dense-bounded",
-    feature = "schedules-fp128-dense"
-))]
-
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+
+fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("artifacts/schedules")
+        .join(format!("{}.aks", Cfg::schedule_family_name()));
+    let bytes = std::fs::read(path).expect("checked-in schedule artifact");
+    akita_config::trusted_schedule_catalog_from_bytes::<Cfg>(&bytes).expect("trusted catalog")
+}
 
 /// Root-level quantities the committed-source bound feeds.
 #[derive(Debug, PartialEq, Eq)]
@@ -30,11 +32,13 @@ struct RootShape {
 }
 
 fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
-    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(num_vars),
-    ))
-    .expect("generated singleton schedule")
-    .into_schedule();
+    let schedule = catalog::<Cfg>()
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(num_vars),
+        ))
+        .expect("generated singleton schedule")
+        .schedule()
+        .clone();
     let root = &schedule.root.params;
     RootShape {
         inner_basis: root.inner().digits.log_basis,
@@ -116,15 +120,22 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
         bounded, full,
         "the committed-source bound must separate two otherwise identical policies"
     );
-
-    let bounded_catalog = fp128::DenseBounded::schedule_catalog().expect("bounded catalog");
-    let full_catalog = fp128::Dense::schedule_catalog().expect("full-width catalog");
     assert_ne!(
-        akita_schedules::identity_digest(&bounded_catalog.identity),
-        akita_schedules::identity_digest(&full_catalog.identity),
+        &bounded[8..],
+        &[0u8; 24],
+        "the serialized policy identity must carry the full cryptographic digest"
+    );
+
+    let bounded_catalog = catalog::<fp128::DenseBounded>();
+    let full_catalog = catalog::<fp128::Dense>();
+    assert_ne!(
+        bounded_catalog.catalog_digest(),
+        full_catalog.catalog_digest(),
     );
     assert_eq!(
-        bounded_catalog.identity.decomposition.log_commit_bound,
+        policy_of::<fp128::DenseBounded>()
+            .decomposition
+            .log_commit_bound,
         fp128::DenseBounded::LOG_COMMIT_BOUND,
         "the shipped catalog must carry the bound it was generated for"
     );
@@ -132,13 +143,13 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
     // A bounded row cannot be resolved through the full-width config, because
     // the catalog identity is validated against the requesting policy.
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(24));
-    assert!(akita_schedules::resolve_generated_catalog_row_for_key(
-        &key,
-        &policy_of::<fp128::Dense>(),
-        fp128::Dense::ring_challenge_config,
-        Some(bounded_catalog),
-    )
-    .is_err());
+    let bounded_bytes = bounded_catalog
+        .to_artifact_bytes()
+        .expect("bounded artifact");
+    assert!(
+        akita_config::trusted_schedule_catalog_from_bytes::<fp128::Dense>(&bounded_bytes).is_err()
+    );
+    assert!(full_catalog.resolve_key(&key).is_ok());
 }
 
 /// The bound must actually reduce the source-dependent root digit depth.
@@ -184,22 +195,24 @@ fn generated_root_digit_depth_matches_the_declared_bound() {
         fp128::Dense::decomposition(),
     ] {
         let catalog = if family_decomposition.has_bounded_committed_source() {
-            fp128::DenseBounded::schedule_catalog().expect("bounded catalog")
+            catalog::<fp128::DenseBounded>()
         } else {
-            fp128::Dense::schedule_catalog().expect("full-width catalog")
+            catalog::<fp128::Dense>()
         };
-        for entry in catalog.entries {
+        for row in catalog.rows() {
+            let root = &row.schedule().root.params;
             let expected = akita_types::sis::num_digits_inner_for_bound(
                 akita_types::DecompositionParams {
-                    log_basis: entry.root.core.group.inner_commit_matrix.log_basis,
+                    log_basis: root.inner().digits.log_basis,
                     ..family_decomposition
                 },
                 family_decomposition.log_commit_bound,
             );
             assert_eq!(
-                entry.root.num_digits_inner as usize, expected,
+                root.inner().digits.num_digits,
+                expected,
                 "row {:?} stores a non-canonical root digit depth",
-                entry.final_group
+                row.profiles().final_group.group
             );
         }
     }

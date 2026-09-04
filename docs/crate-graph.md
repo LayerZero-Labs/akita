@@ -22,10 +22,10 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
-| `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and generated-table certification |
-| `akita-planner` | `Cfg`-free schedule search and optional preset-driven table emission |
-| `akita-schedules` | Feature-gated generated schedule table wiring |
-| `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
+| `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and artifact certification |
+| `akita-planner` | `Cfg`-free schedule search and optional preset-driven artifact emission |
+| `akita-schedules` | Versioned artifacts, row audit, and validated owned catalogs |
+| `akita-config` | Presets, `CommitmentConfig`, and artifact-family policy binding |
 | `akita-setup` | Setup construction and optional cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
 | `akita-prover` | Commitment, proving, witnesses, polynomial backends |
@@ -142,27 +142,28 @@ graph TD
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
-- `akita-planner` is the offline schedule search and table emission engine.
+- `akita-planner` is the offline schedule search and artifact emission engine.
   Normal planner search is `Cfg`-free and depends on `akita-types`,
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
-  `catalog-gen` feature also enables `akita-config`, allowing table-emission
+  `catalog-gen` feature also enables `akita-config`, allowing artifact-emission
   binaries to name concrete `CommitmentConfig` presets.
 - `akita-sis-estimator` owns the offline scalar SIS cost model and table
   certification logic. It depends on inert schedule and matrix descriptions in
   `akita-types`. The planner's optional `catalog-security` feature uses it to
-  report direct modeled costs for expanded generated rows; normal planner,
+  report direct modeled costs for expanded artifact rows; normal planner,
   schedule, prover, and verifier builds do not depend on the estimator.
-- `akita-schedules` owns generated row types, catalog identity validation,
-  runtime row expansion, and the tracked generated tables with their Cargo
-  feature wiring. The family modules are deterministic planner output. The crate
-  depends only on `akita-error`, `akita-types`, and `akita-challenges`.
+- `akita-schedules` owns canonical artifact encoding, bounded decoding, semantic
+  row audit, and the immutable `TrustedScheduleCatalog` indexes used at runtime.
+  Tracked `.aks` family files are deterministic planner output but are never
+  linked into the crate. It depends only on `akita-error`, `akita-types`, and
+  `akita-challenges`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
-  policy trait. It depends on `akita-schedules`: `CommitmentConfig::resolve_catalog_row_for_key`
-  delegates to strict generated-catalog resolution, which validates an opted-in
-  catalog and expands a table hit. Missing catalogs or rows are unsupported.
+  policy trait. A preset names its expected family and policy. Applications load
+  artifact bytes and pass the resulting catalog explicitly; configs do not own
+  or resolve static rows.
 - `akita-verifier` stays prover-free (no polynomial backends, no setup
-  expansion) and is directly `<Cfg>`-generic: it depends on `akita-config` and
-  therefore reaches generated schedule expansion transitively. Verifier-reachable
+  expansion) and is directly `<Cfg>`-generic. It receives the catalog explicitly
+  and resolves only the statement's row digest. Verifier-reachable
   schedule resolution must reject malformed input with `AkitaError`, never panic
   (see [`docs/verifier-contract.md`](verifier-contract.md)).
 - `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
@@ -172,7 +173,7 @@ graph TD
 - `akita-types` owns inert shared protocol data: proof/setup/claim shapes,
   opening-point and layout math, schedule contracts, SIS sizing (`akita_types::sis`),
   and transcript append traits. It should not grow planner search or prover
-  algorithms (the generated table *representation* and search live in
+  algorithms (offline search and compact emission machinery live in
   `akita-planner`).
 - `akita-pcs` is the broad umbrella crate: it owns the end-to-end
   `AkitaCommitmentScheme` orchestration, re-exports the full public surface, and

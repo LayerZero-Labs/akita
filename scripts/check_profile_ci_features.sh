@@ -16,7 +16,6 @@ from pathlib import Path
 from scripts.profile_ci_features import (
     load_feature_graph,
     resolve_feature,
-    schedule_features,
 )
 
 repo = Path(".")
@@ -25,19 +24,13 @@ profile_main = repo / "crates/akita-pcs/examples/profile/main.rs"
 profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
 modes_rs = profile_modes
 
-MODE_FEATURE = {
-    "onehot_fp32": "schedules-fp32-onehot",
-    "dense_fp32": "schedules-fp32-dense",
-    "onehot_fp64": "schedules-fp64-onehot",
-    "dense_fp64": "schedules-fp64-dense",
-    "dense_fp128": "schedules-fp128-dense",
-    "onehot_fp128": "schedules-fp128-onehot",
-    "onehot_fp128_multi_group": "schedules-fp128-onehot",
-    "onehot_fp128_multi_group_recursive": "schedules-fp128-onehot-recursive",
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": "schedules-fp128-onehot-recursive-multi-chunk-w8r2",
-    "onehot_fp128_multi_chunk_w8r2": "schedules-fp128-onehot-multi-chunk",
-    "onehot_fp128_multi_chunk_w2r2": "schedules-fp128-onehot-multi-chunk-w2r2",
-    "onehot_fp128_multi_chunk_w4r2": "schedules-fp128-onehot-multi-chunk-w4r2",
+MODES = {
+    "onehot_fp32", "dense_fp32", "onehot_fp64", "dense_fp64",
+    "dense_fp128", "onehot_fp128", "onehot_fp128_multi_group",
+    "onehot_fp128_multi_group_recursive",
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
+    "onehot_fp128_multi_chunk_w8r2", "onehot_fp128_multi_chunk_w2r2",
+    "onehot_fp128_multi_chunk_w4r2",
 }
 MODE_NUM_POLYS = {
     "onehot_fp32": {1},
@@ -67,18 +60,13 @@ MODE_NUM_VARS = {
     "onehot_fp128_multi_chunk_w2r2": {32},
     "onehot_fp128_multi_chunk_w4r2": {32},
 }
-MODE_SETUP = {mode: {"direct"} for mode in MODE_FEATURE}
+MODE_SETUP = {mode: {"direct"} for mode in MODES}
 MODE_SETUP["onehot_fp128"] = {"direct", "recursive"}
 MODE_SETUP["onehot_fp128_multi_group_recursive"] = {"recursive"}
 MODE_SETUP["onehot_fp128_multi_group_recursive_multi_chunk_w8r2"] = {"recursive"}
-SETUP_FEATURE_OVERRIDES = {
-    ("onehot_fp128", "recursive"): "schedules-fp128-onehot-recursive",
-}
 PROFILE_BENCH_MARKER = "profile-bench-selected"
 
 feature_graph = load_feature_graph(repo)
-profile_ci_schedules = schedule_features(feature_graph, "akita-pcs", "profile-ci")
-
 modes_text = modes_rs.read_text(encoding="utf-8")
 selected_match = re.search(
     r"const PROFILE_SELECTED_MODES:.*?=\s*&\[(.*?)\n\];",
@@ -146,7 +134,6 @@ if case_specs[case_specs.index(fp128_direct) + 1] != fp128_recursive:
     raise SystemExit(1)
 failed = False
 matrix_features: dict[str, set[str]] = {}
-group_requirements: dict[tuple[str, str], set[str]] = {}
 for group_name, profile_feature, case_spec in bench_cases:
     mode, num_vars_s, num_polys_s, *setup_mode = case_spec.split(":")
     num_vars = int(num_vars_s)
@@ -159,13 +146,10 @@ for group_name, profile_feature, case_spec in bench_cases:
             file=sys.stderr,
         )
         failed = True
-    if mode not in MODE_FEATURE:
-        print(f"bench case mode '{mode}' is missing from MODE_FEATURE table", file=sys.stderr)
+    if mode not in MODES:
+        print(f"bench case mode '{mode}' is missing from MODES", file=sys.stderr)
         failed = True
         continue
-    required = SETUP_FEATURE_OVERRIDES.get(
-        (mode, actual_setup_mode), MODE_FEATURE[mode]
-    )
     if mode not in selected_modes:
         print(
             f"bench case mode '{mode}' is not registered in PROFILE_SELECTED_MODES",
@@ -173,32 +157,15 @@ for group_name, profile_feature, case_spec in bench_cases:
         )
         failed = True
     if profile_feature not in matrix_features:
-        matrix_features[profile_feature] = schedule_features(
+        matrix_features[profile_feature] = resolve_feature(
             feature_graph, "akita-pcs", profile_feature
         )
-    selected = matrix_features[profile_feature]
-    group_requirements.setdefault((group_name, profile_feature), set()).add(required)
     if ("akita-pcs", PROFILE_BENCH_MARKER) not in resolve_feature(
         feature_graph, "akita-pcs", profile_feature
     ):
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' does not enable "
             f"the '{PROFILE_BENCH_MARKER}' registry marker",
-            file=sys.stderr,
-        )
-        failed = True
-    required_schedules = schedule_features(feature_graph, "akita-config", required)
-    if not required_schedules.issubset(selected):
-        print(
-            f"matrix group '{group_name}' feature '{profile_feature}' does not enable "
-            f"required schedules {sorted(required_schedules)} for bench mode '{mode}'",
-            file=sys.stderr,
-        )
-        failed = True
-    if not required_schedules.issubset(profile_ci_schedules):
-        print(
-            f"profile-ci does not enable required schedules {sorted(required_schedules)} "
-            f"for bench mode '{mode}'",
             file=sys.stderr,
         )
         failed = True
@@ -221,19 +188,6 @@ for group_name, profile_feature, case_spec in bench_cases:
         print(
             f"bench case '{case_spec}' uses setup mode '{actual_setup_mode}'; "
             f"expected one of [{expected_setup}]",
-            file=sys.stderr,
-        )
-        failed = True
-
-for (group_name, profile_feature), required in group_requirements.items():
-    selected = matrix_features[profile_feature]
-    required_schedules = set().union(
-        *(schedule_features(feature_graph, "akita-config", feature) for feature in required)
-    )
-    if selected != required_schedules:
-        print(
-            f"matrix group '{group_name}' feature '{profile_feature}' enables schedule "
-            f"features {sorted(selected)}, expected exactly {sorted(required_schedules)}",
             file=sys.stderr,
         )
         failed = True

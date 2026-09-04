@@ -7,6 +7,7 @@ use akita_types::{
 use jolt_field::{Field, Zero};
 
 pub(super) fn prover_claims<'a, Cfg, P>(
+    schedules: &akita_config::TrustedScheduleCatalog,
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
@@ -33,6 +34,7 @@ where
         opening_claims,
         vec![hint],
         vec![polynomials],
+        schedules,
     )
     .expect("valid prover opening data");
     assert_eq!(selected.selection(), selection);

@@ -15,7 +15,7 @@ use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Per-group opening geometry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PolynomialGroupLayout {
     num_vars: usize,
     num_polynomials: usize,

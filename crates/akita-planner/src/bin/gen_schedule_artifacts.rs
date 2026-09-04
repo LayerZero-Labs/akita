@@ -1,14 +1,10 @@
-//! Generate schedule tables using the offline DP planner.
+//! Generate external schedule artifacts using the offline DP planner.
 
 mod catalog_policy_report;
 mod catalog_snapshot;
 mod generation_output_path;
 
 use catalog_policy_report::catalog_policy_signature;
-#[cfg(all(test, feature = "catalog-check"))]
-use catalog_policy_report::source_encoding_signature;
-#[cfg(test)]
-use generation_output_path::resolved_output_path;
 use generation_output_path::validate_explicit_output_isolation;
 
 use akita_planner::emit::{
@@ -16,11 +12,11 @@ use akita_planner::emit::{
     MaterializationDiagnostics, PrecommittedProducer,
 };
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    emit_spec_for_family, empty_emit_spec, GeneratedFamily, GenerationPreplans,
     ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{
-    publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
+    publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
 };
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
@@ -39,11 +35,11 @@ struct ExplicitRows {
 
 struct ParsedArgs {
     base_dir: PathBuf,
-    wiring_only: bool,
     check_catalog: bool,
     catalog_report: Option<PathBuf>,
     catalog_snapshot: Option<PathBuf>,
     catalog_baseline: Option<PathBuf>,
+    require_catalog_baseline_match: bool,
     row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
@@ -62,39 +58,29 @@ struct ExplicitRange {
     end: usize,
 }
 
-fn generator_command() -> &'static str {
-    "cargo run --release -p akita-planner --features catalog-gen --bin gen_schedule_tables -- <output-dir>"
-}
-
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
-     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     --bin gen_schedule_artifacts -- <output-dir> [--check-catalog] \
      [--catalog-report <path>] [--catalog-snapshot <path>] \
-     [--catalog-baseline <snapshot>] [--row-progress] \
-     [family_module_name ...]\n\
+     [--catalog-baseline <snapshot>] [--require-catalog-baseline-match] \
+     [--row-progress] \
+     [family_name ...]\n\
      positional family names select only those generated families; omit them \
      to generate every family \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
 
-fn sorted_unique_specs(specs: &[EmitSpec]) -> Vec<EmitSpec> {
-    let mut out: Vec<EmitSpec> = specs.to_vec();
-    out.sort_by_key(|spec| spec.module_name);
-    out.dedup_by_key(|spec| spec.module_name);
-    out
-}
-
 fn known_family(name: &str) -> bool {
     ALL_GENERATED_FAMILIES
         .iter()
-        .any(|family| family.module_name == name)
+        .any(|family| family.family_name() == name)
 }
 
 fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
     ALL_GENERATED_FAMILIES
         .iter()
-        .find(|family| family.module_name == name)
+        .find(|family| family.family_name() == name)
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {
@@ -145,21 +131,17 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
         return Err(usage().to_string());
     }
     let base_dir = PathBuf::from(&raw_args[0]);
-    let mut wiring_only = false;
     let mut check_catalog = false;
     let mut catalog_report = None;
     let mut catalog_snapshot = None;
     let mut catalog_baseline = None;
+    let mut require_catalog_baseline_match = false;
     let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
     while i < raw_args.len() {
         match raw_args[i].as_str() {
-            "--wiring-only" => {
-                wiring_only = true;
-                i += 1;
-            }
             "--check-catalog" => {
                 check_catalog = true;
                 i += 1;
@@ -197,6 +179,10 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
                 }
                 catalog_baseline = Some(PathBuf::from(value));
                 i += 2;
+            }
+            "--require-catalog-baseline-match" => {
+                require_catalog_baseline_match = true;
+                i += 1;
             }
             "--final-group" => {
                 let value = raw_args
@@ -249,13 +235,10 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     } else {
         Some(family_args)
     };
-    if wiring_only && family_filter.is_some() {
-        return Err("--wiring-only does not accept family filters or explicit rows".to_string());
-    }
     let catalog_rows_requested =
         check_catalog || catalog_snapshot.is_some() || catalog_baseline.is_some();
-    if catalog_rows_requested && (wiring_only || explicit_rows.final_group.is_some()) {
-        return Err("catalog checks and snapshots require ordinary generated rows".to_string());
+    if catalog_rows_requested && explicit_rows.final_group.is_some() {
+        return Err("catalog checks and snapshots require the standard artifact rows".to_string());
     }
     if check_catalog && !cfg!(feature = "catalog-check") {
         return Err("--check-catalog requires the `catalog-check` feature".to_string());
@@ -266,13 +249,16 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if catalog_baseline.is_some() && family_filter.is_some() {
         return Err("--catalog-baseline requires the complete generated family set".to_string());
     }
+    if require_catalog_baseline_match && catalog_baseline.is_none() {
+        return Err("--require-catalog-baseline-match requires --catalog-baseline".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
-        wiring_only,
         check_catalog,
         catalog_report,
         catalog_snapshot,
         catalog_baseline,
+        require_catalog_baseline_match,
         row_progress,
         family_filter,
         explicit_rows,
@@ -283,7 +269,7 @@ fn selected_families(family_filter: Option<&[String]>) -> Vec<&'static Generated
     ALL_GENERATED_FAMILIES
         .iter()
         .filter(|family| {
-            family_filter.is_none_or(|names| names.iter().any(|name| name == family.module_name))
+            family_filter.is_none_or(|names| names.iter().any(|name| name == family.family_name()))
         })
         .collect()
 }
@@ -292,15 +278,43 @@ fn validate_materialized_catalog(
     spec: &EmitSpec,
     entries: &[akita_planner::emit::MaterializedEntry],
 ) -> Result<CatalogComparison, String> {
-    let family = family_by_name(spec.module_name)
-        .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
-    let table = (family.schedule_catalog)().ok_or_else(|| {
-        format!(
-            "{}: compiled catalog is unavailable; build with all schedule features",
-            spec.module_name
-        )
-    })?;
-    compare_materialized_catalog(spec, table, entries)
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            let key = entry.key();
+            let schedule = entry.schedule().clone();
+            let final_group =
+                GroupCommitPhaseParams::try_from_params(key.final_group, &schedule.root.params)
+                    .map_err(|error| format!("derive final committed profile: {error}"))?;
+            Ok((
+                CommittedGroupBatchProfile {
+                    final_group,
+                    precommitteds: key.precommitteds,
+                },
+                schedule,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let regenerated = akita_schedules::TrustedScheduleCatalog::try_new(
+        spec.family_name,
+        rows,
+        &spec.policy,
+        spec.ring_challenge_config,
+    )
+    .map_err(|error| format!("build regenerated catalog: {error}"))?
+    .to_artifact_bytes()
+    .map_err(|error| format!("encode regenerated catalog: {error}"))?;
+    let path = spec.output_dir.join(format!("{}.aks", spec.family_name));
+    let existing = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let changed_rows = usize::from(existing != regenerated);
+    Ok(CatalogComparison {
+        report: if changed_rows == 0 {
+            String::new()
+        } else {
+            format!("{}\tchanged\tartifact-bytes\n", spec.family_name)
+        },
+        changed_rows,
+    })
 }
 
 struct CatalogComparison {
@@ -318,7 +332,7 @@ struct CatalogRowMetrics {
     policy_signature: String,
 }
 
-const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
+const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tdetail\n";
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
     let final_group =
@@ -371,16 +385,6 @@ fn catalog_row_metrics(
     })
 }
 
-fn compact_catalog_key(key: &AkitaScheduleLookupKey) -> String {
-    let id = catalog_lookup_key_digest(key);
-    format!(
-        "nv={};polys={};precommits={};key={id}",
-        key.final_group.num_vars(),
-        key.final_group.num_polynomials(),
-        key.precommitteds.len(),
-    )
-}
-
 fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
     use std::fmt::Write as _;
 
@@ -420,7 +424,7 @@ fn catalog_snapshot_row(
     let metrics = catalog_row_metrics(spec, key, schedule)?;
     Ok(catalog_snapshot::CatalogSnapshotRow {
         schema: catalog_snapshot::SnapshotSchema::Current,
-        family: spec.module_name.to_string(),
+        family: spec.family_name.to_string(),
         logical_key,
         lookup_key_digest: catalog_lookup_key_digest(key),
         setup_fields: metrics.setup_fields,
@@ -429,129 +433,6 @@ fn catalog_snapshot_row(
         fold_levels: metrics.fold_levels,
         row_digest: metrics.row_digest,
         policy: metrics.policy_signature,
-    })
-}
-
-fn optional_metric(
-    value: Option<&CatalogRowMetrics>,
-    field: fn(&CatalogRowMetrics) -> usize,
-) -> String {
-    value
-        .map(field)
-        .map_or_else(|| "-".to_string(), |value| value.to_string())
-}
-
-fn optional_digest(value: Option<&CatalogRowMetrics>) -> &str {
-    value.map_or("-", |metrics| metrics.row_digest.as_str())
-}
-
-fn optional_policy(value: Option<&CatalogRowMetrics>) -> &str {
-    value.map_or("-", |metrics| metrics.policy_signature.as_str())
-}
-
-fn compare_materialized_catalog(
-    spec: &EmitSpec,
-    table: akita_schedules::GeneratedScheduleTable,
-    entries: &[akita_planner::emit::MaterializedEntry],
-) -> Result<CatalogComparison, String> {
-    let rows = entries
-        .iter()
-        .map(|entry| (entry.key(), entry.schedule().clone()))
-        .collect::<Vec<_>>();
-    compare_catalog_rows(spec, table, &rows)
-}
-
-fn compare_catalog_rows(
-    spec: &EmitSpec,
-    table: akita_schedules::GeneratedScheduleTable,
-    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
-) -> Result<CatalogComparison, String> {
-    let mut old_rows = table
-        .entries
-        .iter()
-        .copied()
-        .map(|entry| {
-            let key = entry.to_runtime_lookup_key();
-            let schedule = akita_schedules::schedule_from_entry(
-                &entry,
-                &key,
-                &spec.policy,
-                spec.ring_challenge_config,
-            )
-            .map_err(|error| format!("{}: expand compiled row: {error}", spec.module_name))?;
-            Ok((key, schedule))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    old_rows
-        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
-
-    let mut report = String::new();
-    let mut old_index = 0;
-    let mut new_index = 0;
-    let mut changed_rows = 0;
-    while old_index < old_rows.len() || new_index < entries.len() {
-        let ordering = match (old_rows.get(old_index), entries.get(new_index)) {
-            (Some((old, _)), Some((new, _))) => akita_schedules::runtime_schedule_key_cmp(old, new),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => break,
-        };
-        let (status, key, old_schedule, new_schedule) = match ordering {
-            std::cmp::Ordering::Less => {
-                let (key, schedule) = &old_rows[old_index];
-                old_index += 1;
-                ("removed", key, Some(schedule), None)
-            }
-            std::cmp::Ordering::Greater => {
-                let (key, schedule) = &entries[new_index];
-                new_index += 1;
-                ("added", key, None, Some(schedule))
-            }
-            std::cmp::Ordering::Equal => {
-                let (key, old_schedule) = &old_rows[old_index];
-                let (_, new_schedule) = &entries[new_index];
-                old_index += 1;
-                new_index += 1;
-                let status = if old_schedule == new_schedule {
-                    "equal"
-                } else {
-                    "changed"
-                };
-                (status, key, Some(old_schedule), Some(new_schedule))
-            }
-        };
-        if status != "equal" {
-            changed_rows += 1;
-        }
-        let old_metrics = old_schedule
-            .map(|schedule| catalog_row_metrics(spec, key, schedule))
-            .transpose()?;
-        let new_metrics = new_schedule
-            .map(|schedule| catalog_row_metrics(spec, key, schedule))
-            .transpose()?;
-        use std::fmt::Write as _;
-        writeln!(
-            report,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            spec.module_name,
-            status,
-            compact_catalog_key(key),
-            optional_metric(old_metrics.as_ref(), |metrics| metrics.setup_fields),
-            optional_metric(new_metrics.as_ref(), |metrics| metrics.setup_fields),
-            optional_metric(old_metrics.as_ref(), |metrics| metrics.proof_bytes),
-            optional_metric(new_metrics.as_ref(), |metrics| metrics.proof_bytes),
-            optional_metric(old_metrics.as_ref(), |metrics| metrics.fold_levels),
-            optional_metric(new_metrics.as_ref(), |metrics| metrics.fold_levels),
-            optional_digest(old_metrics.as_ref()),
-            optional_digest(new_metrics.as_ref()),
-            optional_policy(old_metrics.as_ref()),
-            optional_policy(new_metrics.as_ref()),
-        )
-        .map_err(|error| format!("write catalog comparison: {error}"))?;
-    }
-    Ok(CatalogComparison {
-        report,
-        changed_rows,
     })
 }
 
@@ -609,22 +490,11 @@ fn materialized_snapshot_rows(
         .collect()
 }
 
-#[cfg(all(test, feature = "catalog-check"))]
-fn catalog_snapshot_rows(
-    spec: &EmitSpec,
-    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
-) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
-    entries
-        .iter()
-        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule, catalog_logical_key(key)))
-        .collect()
-}
-
 impl ExplicitRows {
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
             .as_ref()
-            .is_some_and(|group| group.family == family.module_name)
+            .is_some_and(|group| group.family == family.family_name())
     }
 }
 
@@ -704,24 +574,22 @@ fn emit_spec_with_overrides(
     preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
-    generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
-        return emit_spec_for_family(family, preplans, base_dir, generator_command)
-            .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
+        return emit_spec_for_family(family, preplans, base_dir)
+            .map_err(|e| format!("{}: emit spec: {e}", family.family_name()));
     }
 
-    // Explicit sweeps replace the catalog key set. Start from the cheap wiring
+    // Explicit sweeps replace the catalog key set. Start from an empty request
     // shape so a one-key diagnostic does not first plan every default grouped
     // root merely to discard those rows below.
-    let mut spec = wiring_emit_spec(family, base_dir)
-        .map_err(|e| format!("{}: producer contract: {e}", family.module_name))?;
-    spec.generator_command = generator_command;
+    let mut spec = empty_emit_spec(family, base_dir)
+        .map_err(|e| format!("{}: producer contract: {e}", family.family_name()))?;
 
     let final_group = explicit_rows
         .final_group
         .as_ref()
-        .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
+        .ok_or_else(|| format!("{}: missing --final-group", family.family_name()))?;
     spec.keys.clear();
     spec.grouped_requests.clear();
     let final_layouts = final_group.layouts();
@@ -764,68 +632,44 @@ fn main() -> Result<(), String> {
         .map_err(|e| format!("create {}: {e}", args.base_dir.display()))?;
     let families_to_write = selected_families(args.family_filter.as_deref());
 
-    let specs = if args.wiring_only {
-        Vec::new()
-    } else {
-        let generator_command = generator_command();
-        let preplans = GenerationPreplans::default();
-        let indexed_families = families_to_write
-            .iter()
-            .enumerate()
-            .map(|(index, family)| (index, *family))
-            .collect::<Vec<_>>();
-        let family_count = indexed_families.len();
-        let workers = offline_planning_worker_count(family_count);
-        let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
-            let (index, family) = *item;
-            let family_started = Instant::now();
-            eprintln!(
-                "preparing schedule family requests and dependency schedules {}/{}: {}",
-                index + 1,
-                family_count,
-                family.module_name
-            );
-            let spec = emit_spec_with_overrides(
-                family,
-                &preplans,
-                args.base_dir.clone(),
-                &args.explicit_rows,
-                generator_command,
-            )?;
-            eprintln!(
-                "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
-                index + 1,
-                family_count,
-                family.module_name,
-                spec.keys.len(),
-                spec.grouped_requests.len(),
-                family_started.elapsed(),
-            );
-            Ok(Some(spec))
-        })?;
-        for (family, spec) in families_to_write.iter().zip(&mut specs) {
-            preplans.attach_to_spec(family, spec);
-        }
-        drop(preplans);
-        specs
-    };
-
-    let mod_path = args.base_dir.join("mod.rs");
-    let wiring_specs = ALL_GENERATED_FAMILIES
+    let preplans = GenerationPreplans::default();
+    let indexed_families = families_to_write
         .iter()
-        .map(|family| {
-            wiring_emit_spec(family, args.base_dir.clone())
-                .map_err(|error| format!("{}: producer contract: {error}", family.module_name))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mod_path = if mod_path.exists() {
-        Some(mod_path)
-    } else if args.wiring_only {
-        return Err(format!("missing {}", mod_path.display()));
-    } else {
-        println!("skipped missing {}", mod_path.display());
-        None
-    };
+        .enumerate()
+        .map(|(index, family)| (index, *family))
+        .collect::<Vec<_>>();
+    let family_count = indexed_families.len();
+    let workers = offline_planning_worker_count(family_count);
+    let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
+        let (index, family) = *item;
+        let family_started = Instant::now();
+        eprintln!(
+            "preparing schedule family requests and dependency schedules {}/{}: {}",
+            index + 1,
+            family_count,
+            family.family_name()
+        );
+        let spec = emit_spec_with_overrides(
+            family,
+            &preplans,
+            args.base_dir.clone(),
+            &args.explicit_rows,
+        )?;
+        eprintln!(
+            "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
+            index + 1,
+            family_count,
+            family.family_name(),
+            spec.keys.len(),
+            spec.grouped_requests.len(),
+            family_started.elapsed(),
+        );
+        Ok(Some(spec))
+    })?;
+    for (family, spec) in families_to_write.iter().zip(&mut specs) {
+        preplans.attach_to_spec(family, spec);
+    }
+    drop(preplans);
     let check_catalog = args.check_catalog;
     let collect_catalog_snapshot =
         args.catalog_snapshot.is_some() || args.catalog_baseline.is_some();
@@ -836,10 +680,8 @@ fn main() -> Result<(), String> {
     };
     let mut changed_catalog_rows = 0usize;
     let mut current_catalog_rows = Vec::new();
-    let outputs = render_generated_outputs_with_validation(
+    let outputs = render_schedule_artifact_outputs_with_validation(
         &specs,
-        &sorted_unique_specs(&wiring_specs),
-        mod_path.as_deref(),
         MaterializationDiagnostics {
             row_progress: args.row_progress,
         },
@@ -869,7 +711,7 @@ fn main() -> Result<(), String> {
         }
         if changed_catalog_rows != 0 {
             return Err(format!(
-                "compiled catalog differs from the planner in {changed_catalog_rows} rows"
+                "checked-in artifact differs from the planner in {changed_catalog_rows} row sets"
             ));
         }
     }
@@ -902,15 +744,25 @@ fn main() -> Result<(), String> {
             comparison.changed_rows,
             comparison.equal_rows,
         );
+        if args.require_catalog_baseline_match
+            && (comparison.added_rows != 0
+                || comparison.removed_rows != 0
+                || comparison.changed_rows != 0)
+        {
+            return Err(format!(
+                "generated catalog differs from the required baseline: {} added, {} removed, {} changed",
+                comparison.added_rows, comparison.removed_rows, comparison.changed_rows,
+            ));
+        }
     }
     let publish_started = args.row_progress.then(Instant::now);
     if args.row_progress {
         eprintln!(
-            "schedule generation phase: publish {} generated outputs",
+            "schedule generation phase: publish {} artifacts",
             outputs.len(),
         );
     }
-    let destinations = publish_generated_outputs(outputs)?;
+    let destinations = publish_artifact_outputs(outputs)?;
     if let Some(started) = publish_started {
         eprintln!(
             "schedule generation phase complete: published {} outputs in {:.2?}",
@@ -921,25 +773,17 @@ fn main() -> Result<(), String> {
     for destination in &destinations {
         println!("wrote {}", destination.display());
     }
-    if args.wiring_only {
-        eprintln!(
-            "finished schedule module wiring and published {} files in {:.2?}",
-            destinations.len(),
-            generation_started.elapsed(),
-        );
-    } else {
-        eprintln!(
-            "finished {} schedule {} and published {} files in {:.2?}",
-            specs.len(),
-            if specs.len() == 1 {
-                "family"
-            } else {
-                "families"
-            },
-            destinations.len(),
-            generation_started.elapsed(),
-        );
-    }
+    eprintln!(
+        "finished {} schedule {} and published {} files in {:.2?}",
+        specs.len(),
+        if specs.len() == 1 {
+            "family"
+        } else {
+            "families"
+        },
+        destinations.len(),
+        generation_started.elapsed(),
+    );
     Ok(())
 }
 
@@ -951,5 +795,5 @@ const fn should_emit_catalog_drift_report(
 }
 
 #[cfg(test)]
-#[path = "gen_schedule_tables_tests.rs"]
+#[path = "gen_schedule_artifacts_tests.rs"]
 mod tests;

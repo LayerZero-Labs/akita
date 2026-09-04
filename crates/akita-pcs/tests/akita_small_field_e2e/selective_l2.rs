@@ -4,7 +4,8 @@ fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
     seed: usize,
 ) -> akita_prover::OneHotPoly<fp32::Field, u8> {
-    let onehot_k = 256;
+    let onehot_k = akita_config::unit_onehot_source_chunk_size::<fp32::OneHot>()
+        .expect("fp32 one-hot fixture requires a unit-one-hot config");
     let total_field = params
         .blocks()
         .live_blocks
@@ -51,16 +52,23 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
-    type Scheme = AkitaCommitmentScheme<Cfg>;
     const NUM_VARS: usize = 28;
     const LABEL: &[u8] = b"test/fp32-ext4-multiblock-l2-pcs";
 
     init_rayon_pool();
     run_on_large_stack(|| {
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
-        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        let schedule = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                opening_layout
+                    .root_final_group_layout()
+                    .expect("singleton group layout"),
+            ))
             .expect("shipped L2 schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let l2_step = schedule
             .recursive_folds
             .iter()
@@ -100,24 +108,25 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
-        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("L2 prover setup");
+        let setup = scheme.setup_prover(NUM_VARS, 1).expect("L2 prover setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepared L2 setup");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("L2 prover stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("L2 verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("L2 commitment");
+        } = scheme
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("L2 commitment");
         let poly_refs = [&poly];
         let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
@@ -127,14 +136,20 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         .expect("L2 prover group")])
         .expect("L2 prover claims");
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
-        let proof = Scheme::batched_prove(
-            &setup,
-            selected_prover_data::<Cfg, _>(prover_claims, vec![hint], vec![&poly_refs]),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("small-field L2 proof");
+        let proof = scheme
+            .batched_prove(
+                &setup,
+                selected_prover_data::<Cfg, _>(
+                    prover_claims,
+                    vec![hint],
+                    vec![&poly_refs],
+                    scheme.schedules(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("small-field L2 proof");
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof
@@ -170,11 +185,11 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .expect("L2 verifier group")])
             .expect("L2 verifier claims");
             let mut transcript = AkitaTranscript::<F>::new(LABEL);
-            Scheme::batched_verify(
+            scheme.batched_verify(
                 candidate,
                 &verifier_setup,
                 &mut transcript,
-                selected_statement::<Cfg>(claims),
+                selected_statement::<Cfg>(claims, scheme.schedules()),
                 BasisMode::Lagrange,
             )
         };
@@ -234,16 +249,23 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
-    type Scheme = AkitaCommitmentScheme<Cfg>;
     const NUM_VARS: usize = 20;
     const LABEL: &[u8] = b"test/fp32-nv20-shipped-terminal-route";
 
     init_rayon_pool();
     run_on_large_stack(|| {
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
-        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        let schedule = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                opening_layout
+                    .root_final_group_layout()
+                    .expect("singleton group layout"),
+            ))
             .expect("shipped fp32 schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let terminal_params = &schedule.terminal;
         let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
 
@@ -252,24 +274,29 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
-        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("terminal L2 prover setup");
+        let setup = scheme
+            .setup_prover(NUM_VARS, 1)
+            .expect("terminal L2 prover setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepared terminal L2 setup");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("terminal L2 prover stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("terminal L2 verifier setup");
+        let verifier_setup = scheme
+            .setup_verifier(&setup)
+            .expect("terminal L2 verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("terminal L2 commitment");
+        } = scheme
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("terminal L2 commitment");
         let poly_refs = [&poly];
         let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
@@ -279,14 +306,20 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         .expect("terminal L2 prover group")])
         .expect("terminal L2 prover claims");
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
-        let proof = Scheme::batched_prove(
-            &setup,
-            selected_prover_data::<Cfg, _>(prover_claims, vec![hint], vec![&poly_refs]),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("shipped terminal proof");
+        let proof = scheme
+            .batched_prove(
+                &setup,
+                selected_prover_data::<Cfg, _>(
+                    prover_claims,
+                    vec![hint],
+                    vec![&poly_refs],
+                    scheme.schedules(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("shipped terminal proof");
 
         let verify = |candidate: &AkitaBatchedProof<F, E>| {
             let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -297,11 +330,11 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .expect("terminal L2 verifier group")])
             .expect("terminal L2 verifier claims");
             let mut transcript = AkitaTranscript::<F>::new(LABEL);
-            Scheme::batched_verify(
+            scheme.batched_verify(
                 candidate,
                 &verifier_setup,
                 &mut transcript,
-                selected_statement::<Cfg>(claims),
+                selected_statement::<Cfg>(claims, scheme.schedules()),
                 BasisMode::Lagrange,
             )
         };

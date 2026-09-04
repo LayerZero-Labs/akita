@@ -12,9 +12,11 @@ This module is independent of the `Cfg` trait because `Cfg` uses the planner; if
 
 The planner covers the parameter-selection features supported by Akita,
 including batching and extension fields. For each case it resolves the fold
-parameters under the selection policy bound into the generated catalog.
+parameters under the selection policy bound into the emitted family artifact.
 
-The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
+With `catalog-gen`, the planner emits fully expanded, canonical `.aks` family
+artifacts. Runtime crates decode and audit those artifacts; they never compile
+planner rows or repeat the dynamic-programming search.
 
 ## What The Planner Optimizes
 
@@ -97,15 +99,18 @@ exact dimensions used at each level.
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_generated_catalog_row_for_key`, not the DP directly. Resolution is the strict table entry point:
+The planner is not a runtime resolver. Artifact generation materializes every
+selected `FoldSchedule`, validates the expanded rows, and writes one canonical
+artifact per family. An application loads approved bytes into a
+`TrustedScheduleCatalog` and passes that catalog to its
+`AkitaCommitmentScheme`. Honest proving resolves an exact profile key;
+verification resolves the statement's 32-byte row selection. A missing row is
+unsupported and never triggers search.
 
-1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
-2. If a catalog is supplied, `resolve_generated_catalog_row_for_key` validates its embedded identity against the runtime policy and hook closures.
-3. If the validated table contains the lookup key, it expands the compact
-   `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
-4. If there is no catalog or no matching entry, the request is unsupported.
-
-Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and ring-challenge closure. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
+Generation and artifact decoding are deterministic functions of the lookup key,
+`PlannerPolicy`, and ring-challenge closure. This ensures that prover and
+verifier audit the same expanded schedule before the Fiat-Shamir transcript is
+bound.
 
 ## Search Model
 
@@ -208,9 +213,8 @@ stream byte count is rounded once across the complete plan. Terminal proof
 bodies contain only any extension-opening reduction; their clear witness is
 priced by `terminal_response_bytes`.
 
-This keeps generated-table expansion and offline DP regeneration aligned. A
-generated table row and a fresh DP run are two ways to produce the same typed
-`FoldSchedule` and the same separately held `FoldScheduleEstimate`.
+The planner materializes this accounting directly into the expanded
+`FoldSchedule` stored in each external artifact row.
 
 ## SIS Layout Derivation
 
@@ -235,7 +239,7 @@ Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
 
 The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
 at a 128-bit target. The policy, table digest, exact profile, and role are part
-of planner inputs, catalog identity, generated table expansion, and descriptor
+of planner inputs, artifact policy binding, expanded schedules, and descriptor
 bytes, so a schedule generated for one table cannot be silently reused under
 another table or role.
 
@@ -252,31 +256,20 @@ the A input width, the SIS rank, and the next-level witness length. A bounded de
 family (`fp128::DenseBounded`) differs from its full-width sibling in that parameter
 alone.
 
-## Generated Tables
+## Schedule Artifacts
 
-The planner owns the generated schedule table representation and expansion
-logic. Deterministic generated table data is tracked in the `akita-schedules`
-crate. Compact entries mirror the protocol topology:
+The planner materializes complete expanded `FoldSchedule` values. The artifact
+emitter pairs each schedule with its committed group profiles, constructs a
+validated `TrustedScheduleCatalog`, and serializes that catalog directly as a
+deterministically formatted canonical `.aks` file. Structural catalog and row
+boundaries use line breaks while nested row payloads remain compact. There is no
+intermediate Rust table representation or runtime expansion path.
 
-- `GeneratedFoldCore` stores the new group, shared opening matrix, and witness
-  chunk count used by every nonterminal fold.
-- `GeneratedRootFold` adds the root inner digit depth and ordered frozen
-  precommitted groups.
-- `GeneratedRecursiveFold` adds the optional setup prefix, payload mode, and
-  optional L2 response cap.
-- `GeneratedTerminalFold` records only source geometry and the inner matrix
-  choice; terminal B/D matrices and outer/open digit bases do not exist.
-
-Generated matrices store ring dimension, digit basis, and slice count where
-applicable. Expansion reconstructs widths, collision buckets, and minimum
-SIS-secure output ranks from the shared security primitives.
-
-The reusable generated-table emitter lives in this crate and accepts explicit
-`EmitSpec` values. The `gen_schedule_tables` binary is enabled by the
+The reusable artifact emitter lives in this crate and accepts explicit
+`EmitSpec` values. The `gen_schedule_artifacts` binary is enabled by the
 `catalog-gen` feature, which is allowed to name concrete `akita-config` preset
-`Cfg` types. The emitted family modules are written into
-`akita-schedules/src/generated/`, where feature-gated table constructors return
-`GeneratedScheduleTable` values to opted-in presets.
+`Cfg` types. It writes canonical `.aks` family artifacts into
+`artifacts/schedules/`; runtime crates do not compile those rows.
 
 The repository tracks a compact stock catalog for the shapes exercised by the
 checked-in tests, examples, and profiles. Downstream applications that need a
@@ -284,20 +277,20 @@ different fixed catalog should run the standalone planner binary with their
 exact shapes instead of expanding the repository catalog for every possible
 polynomial size.
 
-To regenerate schedule tables:
+To regenerate schedule artifacts:
 
 ```bash
-scripts/generate-schedule-tables.sh
+scripts/generate-schedule-artifacts.sh
 ```
 
-During planner development, pass one or more generated family module names to
+During planner development, pass one or more family names to
 plan and publish only those families. The generator validates the names against
 the canonical family registry and reports the elapsed time and key counts for
 each selected family:
 
 ```bash
-scripts/generate-schedule-tables.sh fp32_dense
-scripts/generate-schedule-tables.sh fp32_dense fp64_dense
+scripts/generate-schedule-artifacts.sh fp32_dense
+scripts/generate-schedule-artifacts.sh fp32_dense fp64_dense
 ```
 
 Add `--row-progress` when one of those searches is slow. It reports start,
@@ -305,13 +298,10 @@ completion, elapsed time, and the selected objective, proof bytes, total setup,
 first-direct capacity, root output-witness length, dimensions, and fold count
 for each flattened row request. It is disabled by default.
 
-`--check-catalog` is a same-revision drift guard. It compares the union of the
-compiled and regenerated keys and labels those sides explicitly in its stable
-tab-separated report. The report includes added, removed, changed, and equal
-rows, with compiled and regenerated setup capacity, proof payload, fold count,
-and row identity. This check requires the generator's `catalog-check` feature;
-the repository script selects it automatically. Add `--catalog-report <path>`
-to keep that report separate from live progress on standard error.
+`--check-catalog` is a same-revision drift guard. It byte-compares each newly
+materialized canonical artifact with the tracked artifact in the output
+directory. This check requires the generator's `catalog-check` feature; the
+repository script selects it automatically.
 
 Revision audits are separate. `--catalog-snapshot <path>` writes one stable row
 per regenerated family and logical catalog key. To compare another revision,
@@ -346,12 +336,12 @@ Each search stays sequential. The generator puts each result back in its input
 family and sorts each family by the runtime lookup order. Worker completion
 order therefore does not affect generated bytes.
 
-The generated-table drift guard uses the same worker bound while comparing
-tracked rows with fresh DP results.
+The artifact drift guard uses the same worker bound while comparing tracked
+files with fresh DP results.
 
-Generic CI and Jolt smoke jobs compile the tracked tables directly. The
-dedicated all-schedules drift job is the sole CI regeneration owner and rejects
-any byte difference from the tracked catalog.
+Generic CI and Jolt smoke jobs load the tracked artifacts at runtime. The
+dedicated artifact-drift job is the sole CI regeneration owner and rejects any
+byte difference from the tracked catalog.
 
 The family list is in
 `akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the
@@ -367,7 +357,7 @@ of precommitted groups:
 
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --bin gen_schedule_artifacts -- artifacts/schedules \
   --final-group fp128_onehot:32:2 \
   --precommitted-group fp128_onehot:16:1 \
   --precommitted-group fp128_dense:15:2
@@ -385,7 +375,7 @@ Each numeric slot accepts either a single value or an inclusive range written as
 
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
+  --bin gen_schedule_artifacts -- artifacts/schedules \
   --final-group fp128_onehot:30..=32:2..=4 \
   --precommitted-group fp128_onehot:14..=16:1 \
   --precommitted-group fp128_dense:15:1..=2
@@ -433,20 +423,20 @@ akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::resolve_catalog_row_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
+`akita-config` derives `PlannerPolicy` from concrete presets with
+`policy_of::<Cfg>()`. Applications validate external artifacts against that
+policy and pass the resulting catalog explicitly. Runtime resolution never
+invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 
 ## Source Map
 
 - `src/lib.rs`: public planner surface and `PlannerPolicy`.
-- `src/generated_families.rs`: offline generated-table family registry behind `catalog-gen`.
-- `src/emit/`: generated table emission and wiring refresh helpers.
+- `src/generated_families.rs`: offline artifact-family registry behind `catalog-gen`.
+- `src/emit/`: schedule materialization and canonical artifact emission.
 - `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
-- `src/generated/mod.rs`: generated table types and table lookup helpers.
-- `src/generated/expand.rs`: typed compact root/recursive/terminal expansion to
-  runtime schedule parameters.
-- `src/emit/mod.rs`: reusable generated-table emitter.
-- `crates/akita-planner/src/bin/gen_schedule_tables.rs`: offline table emitter adapter for concrete presets.
-- `crates/akita-config/src/generated_families.rs`: preset family list and regeneration hooks.
-- `crates/akita-schedules/src/generated/`: feature-gated generated schedule table wiring and ignored family table output.
+- `src/emit/mod.rs`: reusable offline materializer.
+- `src/bin/gen_schedule_artifacts.rs`: source for the `gen_schedule_artifacts` binary.
+- `src/generated_families.rs`: preset family list and regeneration hooks.
+- `artifacts/schedules/`: tracked external family artifacts.

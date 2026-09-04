@@ -1,10 +1,9 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
-//! Production selectors resolve a schedule row for a cataloged lookup key via
-//! [`CommitmentConfig::resolve_catalog_row_for_key`]. Runtime
-//! resolution is strict: missing generated catalog rows reject instead of
-//! invoking planner search.
+//! Schedule rows are supplied through an owned [`TrustedScheduleCatalog`].
+//! Runtime resolution is strict: missing catalog rows reject instead of invoking
+//! planner search.
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -12,28 +11,26 @@ use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
-use akita_types::{
-    schedule_row_digest, FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
-};
-use akita_types::{
-    AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
-    SetupMatrixCapacity, SisModulusProfileId,
-};
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
+use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
-/// and the generated schedule catalog.
+/// and external schedule family identity.
 ///
 /// The companion shares the base's field, dimension schedule, decomposition,
 /// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
 /// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
 /// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
 macro_rules! impl_multi_chunk_companion {
-    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
+    ($cfg:ty, $base:ty, $profile:expr, $family:literal) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            fn schedule_family_name() -> &'static str {
+                $family
+            }
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
@@ -47,15 +44,6 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
-            }
-            fn setup_matrix_capacity(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
-                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<$cfg>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                )
             }
             fn opening_basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::opening_basis_range()
@@ -72,35 +60,32 @@ macro_rules! impl_multi_chunk_companion {
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }
-            fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
-                #[cfg(feature = $feat)]
-                {
-                    Some(akita_schedules::$table())
-                }
-                #[cfg(not(feature = $feat))]
-                {
-                    None
-                }
-            }
         }
     };
 }
 
 pub mod proof_optimized;
 pub mod recursive_commitment;
-pub mod setup_prefix_slots;
-#[cfg(feature = "test-support")]
+#[cfg(test)]
+mod schedule_artifact_tests;
+mod setup_prefix_slots;
+mod setup_requirements;
+pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements};
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
+pub use akita_schedules::{
+    TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
+};
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
-pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use transcript_binding::bind_transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
@@ -140,6 +125,34 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     }
 }
 
+/// Decode and validate a trusted schedule artifact for one concrete config.
+///
+/// This is an application or preprocessing boundary. Proof parsing never
+/// calls it and no proof field contains these artifact bytes.
+pub fn trusted_schedule_catalog_from_bytes<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+) -> Result<TrustedScheduleCatalog, AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    TrustedScheduleCatalog::from_artifact_bytes(
+        bytes,
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+}
+
+/// Check that an already validated catalog belongs to one concrete config.
+pub fn validate_trusted_schedule_catalog<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog,
+) -> Result<(), AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    catalog.validate_binding(
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+}
+
 /// Validate a config's schedule policy and concrete extension-field tower.
 ///
 /// # Errors
@@ -171,6 +184,22 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
     Cfg::committed_source_class()
         .honest_fold_policy(<Cfg::Field as CanonicalEncoding>::MODULUS_BITS)
+}
+
+/// Return the config-owned chunk size for a unit-one-hot committed source.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `Cfg` does not declare a unit-one-hot source.
+pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, AkitaError> {
+    match Cfg::committed_source_class() {
+        akita_types::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
+            Ok(source_chunk_size)
+        }
+        source_class => Err(AkitaError::InvalidSetup(format!(
+            "unit-one-hot fixture requires a unit-one-hot committed source, got {source_class:?}"
+        ))),
+    }
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -261,17 +290,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Packed capacity envelope for the shared setup matrix.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidSetup` on arithmetic overflow.
-    #[doc(hidden)]
-    fn setup_matrix_capacity(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixCapacity, AkitaError>;
-
     /// Inclusive `(min, max)` B/D opening and folded-response basis range.
     #[doc(hidden)]
     fn opening_basis_range() -> (u32, u32);
@@ -307,7 +325,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Whether schedule planning may emit recursive setup-contribution edges.
     ///
     /// Ordinary configs are direct-only. Config adapters that opt into recursive
-    /// setup offloading override this and use a separate generated catalog.
+    /// setup offloading override this and use a separate external family artifact.
     fn recursive_setup_planning() -> bool {
         false
     }
@@ -324,113 +342,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Optional generated schedule catalog for this preset.
-    ///
-    /// Presets with generated tables override this when the matching
-    /// `schedules-*` feature is enabled. The default is `None`, so runtime
-    /// schedule resolution rejects catalog-backed requests.
-    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
-        None
-    }
-
-    /// Resolve the exact generated catalog row for `key`.
-    ///
-    /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
-    /// empty `precommitteds` vector. Grouped roots supply frozen precommit
-    /// layouts in `precommitteds`.
-    ///
-    /// Delegates to [`akita_schedules::resolve_generated_catalog_row_for_key`] with this
-    /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
-    /// and expands the compact entry. A missing catalog row is unsupported.
-    ///
-    /// # Errors
-    ///
-    /// Propagates expansion / SIS-bucket failures or unsupported catalog
-    /// requests. Never panics — this is verifier-reachable.
-    fn resolve_catalog_row_for_key(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::validate_sis_modulus_profile()?;
-        akita_schedules::resolve_generated_catalog_row_for_key(
-            key,
-            &policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::schedule_catalog(),
-        )
-    }
-
-    /// Resolve the exact row without precommitted groups for an opening layout.
-    ///
-    /// A layout carrying precommitted groups has no single row: grouped selection
-    /// needs the exact committed descriptors, so it goes through
-    /// [`Self::resolve_catalog_row_for_key`] instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a malformed or grouped layout, and propagates
-    /// unsupported catalog requests.
-    fn resolve_catalog_row_for_opening(
-        layout: &OpeningClaimsLayout,
-    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::resolve_catalog_row_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
-    }
-
-    /// Frozen profile this config commits a group with when it has no precommitted groups.
-    ///
-    /// This is the one runtime definition of an independent commitment's
-    /// parameters. A grouped row's frozen precommitted descriptor is the value this
-    /// returns for the same group, which
-    /// `every_grouped_precommitted_descriptor_has_a_generated_producer` enforces.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when no generated row without precommitted groups covers
-    /// `group`.
-    fn profile_without_precommitted_groups(
-        group: akita_types::PolynomialGroupLayout,
-    ) -> Result<akita_types::GroupCommitPhaseParams, AkitaError> {
-        let layout = OpeningClaimsLayout::from_groups(vec![group])?;
-        Ok(Self::resolve_catalog_row_for_opening(&layout)?
-            .profiles()
-            .final_group)
-    }
-
-    /// Resolve the generated row accepted for exact committed profiles.
-    ///
-    /// This is an honest-prover operation. Verification must instead resolve
-    /// the explicit public selection through [`Self::resolve_schedule_selection`].
-    fn resolve_catalog_row_for_profiles(
-        profiles: &akita_types::CommittedGroupBatchProfile,
-    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::validate_sis_modulus_profile()?;
-        profiles.validate(Self::decomposition().field_bits())?;
-        akita_schedules::resolve_generated_catalog_row_for_profiles(
-            &AkitaScheduleLookupKey {
-                final_group: profiles.final_group.group,
-                precommitteds: profiles.precommitteds.clone(),
-            },
-            profiles,
-            &policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::schedule_catalog(),
-        )
-    }
-
-    /// Resolve one explicit public selection in this config's generated catalog.
-    ///
-    /// This is the verifier boundary: it performs identity/digest lookup only
-    /// and never reconstructs a runtime key or invokes planner search.
-    fn resolve_schedule_selection(
-        selection: akita_types::OpeningScheduleSelection,
-    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::validate_sis_modulus_profile()?;
-        akita_schedules::resolve_generated_schedule_selection(
-            selection,
-            &policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::schedule_catalog(),
-        )
-    }
+    /// Stable trusted schedule family identity for external artifact loading.
+    fn schedule_family_name() -> &'static str;
 }
 
 #[cfg(test)]
@@ -453,6 +366,10 @@ mod tests {
     impl CommitmentConfig for SingleExtensionConfig {
         type Field = Base;
         type ExtField = BaseExt;
+
+        fn schedule_family_name() -> &'static str {
+            "test_single_extension"
+        }
 
         const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
             RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
@@ -478,13 +395,6 @@ mod tests {
             SisModulusProfileId::Q32Offset99
         }
 
-        fn setup_matrix_capacity(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            Ok(SetupMatrixCapacity::minimum())
-        }
-
         fn opening_basis_range() -> (u32, u32) {
             (3, 3)
         }
@@ -497,6 +407,10 @@ mod tests {
     impl CommitmentConfig for WrongDeclaredExtensionDegree {
         type Field = crate::proof_optimized::fp32::Field;
         type ExtField = crate::proof_optimized::fp32::ExtensionField;
+
+        fn schedule_family_name() -> &'static str {
+            "test_wrong_declared_extension_degree"
+        }
 
         const EXT_DEGREE: usize = 2;
         const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
@@ -512,13 +426,6 @@ mod tests {
 
         fn sis_modulus_profile() -> SisModulusProfileId {
             SingleExtensionConfig::sis_modulus_profile()
-        }
-
-        fn setup_matrix_capacity(
-            max_num_vars: usize,
-            max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            SingleExtensionConfig::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
         }
 
         fn opening_basis_range() -> (u32, u32) {
@@ -664,19 +571,20 @@ mod sis_schedule_width_audit {
 #[cfg(test)]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
+    use super::schedule_artifact_tests::mutated_row_admission_error;
     use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
     use super::*;
 
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         num_vars_values: &[usize],
     ) {
-        let catalog = Cfg::schedule_catalog().expect("generated schedule catalog");
+        let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
+            .expect("workspace schedule catalog");
         let catalog_max = catalog
-            .entries
-            .iter()
-            .map(|entry| entry.to_runtime_lookup_key().final_group.num_vars())
+            .rows()
+            .map(|row| row.profiles().final_group.group.num_vars())
             .max()
-            .expect("nonempty generated schedule catalog");
+            .expect("nonempty workspace schedule catalog");
         assert!(
             num_vars_values.contains(&catalog_max),
             "SIS-width spot checks must include catalog maximum nv={catalog_max}"
@@ -690,9 +598,11 @@ mod fp128_policy_tests {
                     PolynomialGroupLayout::new(num_vars, 1)
                 }
             };
-            let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+            let schedule = catalog
+                .resolve_key(&AkitaScheduleLookupKey::single(group))
                 .unwrap()
-                .into_schedule();
+                .schedule()
+                .clone();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
@@ -715,7 +625,6 @@ mod fp128_policy_tests {
                 ..
             }
         ));
-        assert!(fp128::OneHot::schedule_catalog().is_some());
     }
 
     #[test]
@@ -732,7 +641,6 @@ mod fp128_policy_tests {
                 ..
             }
         ));
-        assert!(fp128::Dense::schedule_catalog().is_some());
     }
 
     #[test]
@@ -758,17 +666,23 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_generated_singleton_plans_resolve() {
+        let dense_catalog = crate::test_support::workspace_schedule_catalog::<fp128::Dense>()
+            .expect("dense schedule catalog");
+        let onehot_catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let dense_key = PolynomialGroupLayout::singleton(32);
         let onehot_key = PolynomialGroupLayout::new(32, 1);
 
-        let dense =
-            fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(dense_key))
-                .expect("adaptive dense schedule")
-                .into_schedule();
-        let onehot =
-            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(onehot_key))
-                .expect("adaptive onehot schedule")
-                .into_schedule();
+        let dense = dense_catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(dense_key))
+            .expect("adaptive dense schedule")
+            .schedule()
+            .clone();
+        let onehot = onehot_catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(onehot_key))
+            .expect("adaptive onehot schedule")
+            .schedule()
+            .clone();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -776,46 +690,35 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_adaptive_onehot_supports_batched_keys() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let schedule =
-            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
-                .expect("adaptive batched onehot schedule")
-                .into_schedule();
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(key))
+            .expect("adaptive batched onehot schedule")
+            .schedule()
+            .clone();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
 
-    fn mutated_row_admission_error<Cfg: CommitmentConfig>(
-        row: &akita_schedules::ResolvedScheduleRow,
-        mutate: impl FnOnce(&mut FoldSchedule),
-    ) -> AkitaError {
-        let profiles = row.profiles().clone();
-        let mut schedule = row.schedule().clone();
-        mutate(&mut schedule);
-        let selection = OpeningScheduleSelection {
-            row_digest: schedule_row_digest(&profiles, &schedule).expect("mutated row digest"),
-        };
-        akita_schedules::ResolvedScheduleRow::try_new(
-            selection,
-            profiles,
-            schedule,
-            &policy_of::<Cfg>(),
-        )
-        .expect_err("noncanonical transition must fail at row admission")
-    }
-
     #[test]
     fn row_admission_rederives_root_and_terminal_transitions() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row =
-            fp128::OneHot::resolve_catalog_row_for_opening(&opening_batch).expect("generated row");
+        let row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                opening_batch.root_final_group_layout().expect("root group"),
+            ))
+            .expect("generated row");
 
-        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             schedule.root.input_witness_len /= 2;
         });
         assert!(!root_input_error.to_string().is_empty());
-        let transition_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let transition_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
             schedule.root.output_witness_len -= alignment;
             if let Some(next) = schedule.recursive_folds.first_mut() {
@@ -830,17 +733,22 @@ mod fp128_policy_tests {
         );
     }
 
-    #[cfg(feature = "schedules-fp128-onehot-recursive")]
     #[test]
     fn row_admission_rederives_recursive_transitions() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 (!row.schedule().recursive_folds.is_empty()).then_some(row)
             })
             .expect("recursive generated row");
-        let error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             let alignment = schedule.recursive_folds[0].params.d_a().max(
                 if schedule.recursive_folds.len() > 1 {
                     schedule.recursive_folds[1].params.d_a()
@@ -861,15 +769,20 @@ mod fp128_policy_tests {
         );
     }
 
-    #[cfg(feature = "schedules-fp128-onehot-recursive")]
     #[test]
     fn row_admission_rejects_overpadded_setup_prefix() {
         type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>()
+            .expect("recursive one-hot schedule catalog");
 
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 row.schedule()
                     .recursive_folds
                     .iter()
@@ -877,7 +790,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
             let step = schedule
                 .recursive_folds
                 .iter_mut()
@@ -898,15 +811,20 @@ mod fp128_policy_tests {
         );
     }
 
-    #[cfg(feature = "schedules-fp128-onehot-recursive")]
     #[test]
     fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
         type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+        let catalog = crate::test_support::workspace_schedule_catalog::<RecursiveOneHot>()
+            .expect("recursive one-hot schedule catalog");
 
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 row.schedule()
                     .recursive_folds
                     .iter()
@@ -914,7 +832,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
             let step = schedule
                 .recursive_folds
                 .iter_mut()
@@ -946,13 +864,14 @@ mod independent_commitment_tests {
 
     #[test]
     fn independent_profile_comes_from_the_scalar_row() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let profile =
-            fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");
-        let scalar_row =
-            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
-                .expect("generated scalar row");
+        let scalar_row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .expect("generated scalar row");
+        let profile = scalar_row.profiles().final_group;
         assert_eq!(profile, scalar_row.profiles().final_group);
         assert_eq!(profile.inner.matrix.ring_dimension(), 256);
         assert_eq!(profile.outer.matrix.ring_dimension(), 64);

@@ -1,6 +1,6 @@
 //! Akita-owned execution boundary for Jolt recursion guests.
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
@@ -35,6 +35,7 @@ impl GuestStatus {
 
 type ArtifactDecoder<Cfg, const D: usize> = fn(
     &[u8],
+    &TrustedScheduleCatalog,
 ) -> Result<
     AkitaJoltInputs<<Cfg as CommitmentConfig>::Field, D, <Cfg as CommitmentConfig>::ExtField>,
     SerializationError,
@@ -61,7 +62,14 @@ where
         + Valid,
 {
     start_cycle_tracking("deserialize_input");
-    let decoded = match decode(input) {
+    let (schedules, input) = match akita_recursion_glue::split_schedule_catalog::<Cfg>(input) {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            end_cycle_tracking("deserialize_input");
+            return GuestStatus::InputRejected.code();
+        }
+    };
+    let decoded = match decode(input, &schedules) {
         Ok(decoded) if decoded.case == expected_case => decoded,
         Ok(_) | Err(_) => {
             end_cycle_tracking("deserialize_input");
@@ -101,6 +109,7 @@ where
     let result = batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
+        &schedules,
         &mut transcript,
         statement,
         BasisMode::Lagrange,

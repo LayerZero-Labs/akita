@@ -1,7 +1,9 @@
-//! Direct SIS security estimates for checked-in generated schedule catalogs.
+//! Direct SIS security estimates for checked-in schedule artifacts.
 
 use std::env;
 use std::fmt::Write as _;
+use std::fs;
+use std::path::PathBuf;
 
 use akita_planner::generated_families::{GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_sis_estimator::{
@@ -24,7 +26,7 @@ const DETAIL_INSTANCE_HEADER: [&str; 10] = [
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-security \
      --example catalog_security -- [--check] [--details] \
-     [--final-group NUM_VARSxNUM_POLYNOMIALS] [--row-digest HEX] [family_module_name ...]"
+     [--final-group NUM_VARSxNUM_POLYNOMIALS] [--row-digest HEX] [family_name ...]"
 }
 
 fn parse_group(value: &str) -> Result<(usize, usize), String> {
@@ -50,7 +52,7 @@ fn selected_families(names: &[String]) -> Result<Vec<&'static GeneratedFamily>, 
         .map(|name| {
             ALL_GENERATED_FAMILIES
                 .iter()
-                .find(|family| family.module_name == name)
+                .find(|family| family.family_name() == name)
                 .ok_or_else(|| format!("unknown generated schedule family {name:?}\n{}", usage()))
         })
         .collect()
@@ -122,21 +124,34 @@ fn main() -> Result<(), String> {
     let mut matched_rows = 0usize;
     let mut below_policy = Vec::new();
     for family in selected_families(&names)? {
-        let catalog = (family.schedule_catalog)()
-            .ok_or_else(|| format!("{} catalog is not linked", family.module_name))?;
-        let policy_minimum_bits = SisSecurityPolicy::from(catalog.identity.sis_security_policy)
+        let policy = (family.policy)();
+        let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../artifacts/schedules")
+            .join(format!("{}.aks", family.family_name()));
+        let bytes = fs::read(&artifact_path)
+            .map_err(|error| format!("read {}: {error}", artifact_path.display()))?;
+        let catalog = akita_schedules::TrustedScheduleCatalog::from_artifact_bytes(
+            &bytes,
+            family.family_name(),
+            &policy,
+            family.ring_challenge_config,
+        )
+        .map_err(|error| format!("load {}: {error}", artifact_path.display()))?;
+        let policy_minimum_bits = SisSecurityPolicy::from(policy.sis_security_policy)
             .adps16_quantum_constraint()
             .minimum_log2_rop;
-        for entry in catalog.entries {
-            let key = entry.to_runtime_lookup_key();
+        for resolved in catalog.rows() {
+            let profiles = resolved.profiles();
+            let key = akita_types::AkitaScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: profiles.precommitteds.clone(),
+            };
             if final_group.is_some_and(|(num_vars, num_polynomials)| {
                 key.final_group.num_vars() != num_vars
                     || key.final_group.num_polynomials() != num_polynomials
             }) {
                 continue;
             }
-            let resolved = (family.resolve_catalog_row_for_key)(key.clone())
-                .map_err(|error| format!("{} {:?}: {error}", family.module_name, key))?;
             let row_digest = digest_label(resolved.selection().row_digest);
             if row_digest_filter
                 .as_ref()
@@ -147,7 +162,7 @@ fn main() -> Result<(), String> {
             matched_rows += 1;
             let schedule = resolved.schedule();
             let estimate = estimate_schedule_security(schedule)
-                .map_err(|error| format!("{} {:?}: {error}", family.module_name, key))?;
+                .map_err(|error| format!("{} {:?}: {error}", family.family_name(), key))?;
             let weakest = estimate.minimum();
             let precommitted = if key.precommitteds.is_empty() {
                 "-".to_string()
@@ -160,11 +175,11 @@ fn main() -> Result<(), String> {
             };
             println!(
                 "{}\t{}\t{}\t{}\t{}\t{:?}\t{:.6}\t{}\t{}\t{}\t{}\t{}",
-                family.module_name,
+                family.family_name(),
                 row_digest,
                 group_label(key.final_group),
                 precommitted,
-                catalog.identity.sis_security_policy.name(),
+                policy.sis_security_policy.name(),
                 weakest.modulus_profile,
                 estimate.minimum_security_bits(),
                 weakest.location,
@@ -177,7 +192,10 @@ fn main() -> Result<(), String> {
             if check && (!minimum_bits.is_finite() || minimum_bits < policy_minimum_bits) {
                 below_policy.push(format!(
                     "{} {}: {:.6} bits at {}",
-                    family.module_name, row_digest, minimum_bits, weakest.location
+                    family.family_name(),
+                    row_digest,
+                    minimum_bits,
+                    weakest.location
                 ));
             }
             if details {

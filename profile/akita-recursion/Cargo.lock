@@ -76,6 +76,7 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "keccak 0.1.6",
+ "serde",
  "smallvec",
  "tracing",
 ]
@@ -91,7 +92,6 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
- "tracing",
 ]
 
 [[package]]
@@ -215,6 +215,8 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -277,6 +279,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]

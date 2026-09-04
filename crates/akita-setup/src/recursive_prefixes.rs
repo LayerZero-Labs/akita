@@ -1,4 +1,3 @@
-use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
@@ -83,26 +82,20 @@ pub(crate) fn validate_prefix_registry_complete<F: Field>(
     Ok(())
 }
 
-pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
+pub(crate) fn populate_required_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
+    required_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + Valid + 'static,
-    Cfg: CommitmentConfig<Field = F>,
 {
-    if !Cfg::recursive_setup_planning() {
+    if required_ids.is_empty() {
         return Ok(());
     }
-    let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
-        max_num_vars,
-        max_num_batched_polys,
-    )?;
     let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(setup)?;
-    materialize_setup_prefix_slots(setup, &backend, &prepared, &required_ids)?;
-    validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)?;
+    materialize_setup_prefix_slots(setup, &backend, &prepared, required_ids)?;
+    validate_prefix_registry_complete(&setup.prefix_slots, required_ids)?;
 
     tracing::info!(
         slots = setup.prefix_slots.len(),

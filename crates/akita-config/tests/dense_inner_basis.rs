@@ -4,6 +4,15 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
+fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("artifacts/schedules")
+        .join(format!("{}.aks", Cfg::schedule_family_name()));
+    let bytes = std::fs::read(path).expect("checked-in schedule artifact");
+    akita_config::trusted_schedule_catalog_from_bytes::<Cfg>(&bytes).expect("trusted catalog")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot {
     inner_basis: u32,
@@ -25,10 +34,12 @@ struct Snapshot {
 }
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(26),
-    ))
-    .expect("generated dense nv=26 schedule");
+    let catalog = catalog::<Cfg>();
+    let schedule = catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(26),
+        ))
+        .expect("generated dense nv=26 schedule");
     let root = &schedule.schedule().root.params;
     Snapshot {
         inner_basis: root.inner().digits.log_basis,
@@ -105,22 +116,22 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp128,
         Snapshot {
-            inner_basis: 7,
+            inner_basis: 16,
             opening_basis: 3,
             positions: 256,
-            blocks: 1024,
+            blocks: 256,
             outer_slices: 8,
-            inner_digits: 19,
-            n_a: 2,
+            inner_digits: 8,
+            n_a: 1,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_245_184,
-            a_output_raw: 512,
-            b_input_raw: 2_818_048,
+            a_input_raw: 2_097_152,
+            a_output_raw: 1_024,
+            b_input_raw: 1_409_024,
             b_output_raw: 64,
-            d_input_raw: 2_818_048,
+            d_input_raw: 704_512,
             d_output_raw: 64,
-            next_witness: 32_963_008,
+            next_witness: 31_002_560,
         }
     );
 }

@@ -1,12 +1,17 @@
 #![allow(dead_code)]
 
 mod opening_oracles;
+#[path = "../../examples/support/workspace_schedules.rs"]
+mod workspace_schedules;
 
 pub(super) use opening_oracles::*;
+pub(super) use workspace_schedules::load_workspace_scheme;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{derive_transcript_grinding_plan, RecursiveCommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, RecursiveCommitmentConfig, TrustedScheduleCatalog,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -39,15 +44,8 @@ use akita_transcript::{labels, AkitaTranscript, Transcript};
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-// Bare presets: test-only non-singleton batched opening shapes
-// fall through to the offline DP planner on table miss via the default
-// `resolve_catalog_row_for_key` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = 256;
-// `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
-// ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
-// per ring element.
-pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::Dense;
 pub(super) const DENSE_D: usize = 256;
@@ -318,6 +316,7 @@ pub(super) fn prove_input<'a, Cfg, P>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<Cfg::Field>,
     hint: AkitaCommitmentHint<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
@@ -339,6 +338,7 @@ where
         opening_claims,
         vec![hint],
         vec![polynomials],
+        schedules,
     )
     .expect("valid prover opening data")
 }
@@ -347,6 +347,7 @@ pub(super) fn selected_prover_data<'a, Cfg, P>(
     claims: OpeningClaims<'a, Cfg::ExtField, CommittedGroup<Cfg::Field>>,
     hints: Vec<AkitaCommitmentHint<Cfg::Field>>,
     polynomials: Vec<&'a [&'a P]>,
+    schedules: &TrustedScheduleCatalog,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
@@ -357,12 +358,13 @@ where
     Cfg: CommitmentConfig,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials)
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials, schedules)
         .expect("valid selected prover data")
 }
 
 pub(super) fn selected_statement<'a, Cfg>(
     claims: OpeningClaims<'a, Cfg::ExtField, &'a CommittedGroup<Cfg::Field>>,
+    schedules: &TrustedScheduleCatalog,
 ) -> GroupBatchStatement<'a, Cfg::ExtField, Cfg::Field>
 where
     Cfg: CommitmentConfig,
@@ -378,7 +380,8 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = Cfg::resolve_catalog_row_for_profiles(&profiles)
+    let selection = schedules
+        .resolve_profiles(&profiles)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid selected verifier statement")
@@ -388,6 +391,7 @@ pub(super) fn verify_input<'a, Cfg>(
     point: &'a [Cfg::ExtField],
     openings: &'a [Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
 ) -> GroupBatchStatement<'a, Cfg::ExtField, Cfg::Field>
 where
     Cfg: CommitmentConfig,
@@ -403,7 +407,8 @@ where
         final_group: *commitment.profile(),
         precommitteds: Vec::new(),
     };
-    let selection = Cfg::resolve_catalog_row_for_profiles(&profiles)
+    let selection = schedules
+        .resolve_profiles(&profiles)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
@@ -486,16 +491,25 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly<Cfg>(num_vars: usize, seed: u64) -> OneHotPoly<F, u8>
+where
+    Cfg: CommitmentConfig<Field = F>,
+{
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
+    let onehot_k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
+        .expect("one-hot fixture requires a unit-one-hot commitment config");
+    assert!(
+        onehot_k <= usize::from(u8::MAX) + 1,
+        "test u8 one-hot fixture cannot represent chunk size {onehot_k}"
+    );
     let total_field = 1usize << num_vars;
-    let total_chunks = total_field / ONEHOT_K;
+    let total_chunks = total_field / onehot_k;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(onehot_k, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {

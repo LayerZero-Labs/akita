@@ -202,12 +202,14 @@ where
     /// fp128. Misaligned inputs use allocation-free unaligned word reads.
     pub fn read_trusted_benchmark_artifact_bytes<Cfg>(
         bytes: &[u8],
+        schedules: &TrustedScheduleCatalog,
     ) -> Result<Self, SerializationError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
         Self::decode_from_bytes_with_setup::<Cfg>(
             bytes,
+            schedules,
             Self::deserialize_trusted_fixed_width_host_setup,
         )
     }

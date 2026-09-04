@@ -1,6 +1,6 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -21,14 +21,16 @@ use akita_types::{
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
 /// Every concrete ring degree is derived from the selected schedule. Setup is
 /// flat and does not carry a nominal ring dimension.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
+    schedules: Arc<TrustedScheduleCatalog>,
     _cfg: PhantomData<Cfg>,
 }
 
@@ -39,12 +41,42 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
+    /// Bind one validated trusted schedule catalog to this scheme instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog family or policy does not match `Cfg`.
+    pub fn new(schedules: TrustedScheduleCatalog) -> Result<Self, AkitaError> {
+        akita_config::validate_trusted_schedule_catalog::<Cfg>(&schedules)?;
+        Ok(Self {
+            schedules: Arc::new(schedules),
+            _cfg: PhantomData,
+        })
+    }
+
+    /// Decode a trusted schedule artifact and bind it to this scheme instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when decoding, row audit, or config binding fails.
+    pub fn from_schedule_artifact(bytes: &[u8]) -> Result<Self, AkitaError> {
+        Self::new(akita_config::trusted_schedule_catalog_from_bytes::<Cfg>(
+            bytes,
+        )?)
+    }
+
+    /// The single validated catalog used by setup, commitment, proving, and verification.
+    pub fn schedules(&self) -> &TrustedScheduleCatalog {
+        &self.schedules
+    }
+
     /// Build a flat prover setup for the config's provisioning policy.
     ///
     /// # Errors
     ///
-    /// Returns an error if the requested capacity, field tower, or generated setup is invalid.
+    /// Returns an error if the requested capacity, field tower, catalog, or setup is invalid.
     pub fn setup_prover(
+        &self,
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError>
@@ -52,6 +84,7 @@ where
         Cfg::Field: AkitaDeserialize<Context = ()>,
     {
         akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+            &self.schedules,
             max_num_vars,
             max_num_polys_per_commitment_group,
         )
@@ -63,6 +96,7 @@ where
     ///
     /// Returns [`AkitaError::InvalidSetup`] when setup conversion fails.
     pub fn setup_verifier(
+        &self,
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
         let capacity = SetupMatrixCapacity {
@@ -83,6 +117,7 @@ where
     /// Returns [`AkitaError::InvalidSetup`] when the schedule is malformed or
     /// its verifier matrix requirement exceeds the prover setup.
     pub fn setup_verifier_for_schedule(
+        &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         schedule: &FoldSchedule,
         root_layout: &OpeningClaimsLayout,
@@ -101,6 +136,7 @@ where
     /// or commitment execution fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     pub fn commit<P, B>(
+        &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
@@ -113,7 +149,13 @@ where
         B: RuntimeCommitBackendFor<Cfg::Field, P>,
     {
         akita_config::validate_config_policy::<Cfg>()?;
-        akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, context)
+        akita_prover::commit::<Cfg, P, B>(
+            polys,
+            setup.expanded.as_ref(),
+            &self.schedules,
+            stack,
+            context,
+        )
     }
 
     /// Produce a fused batched opening proof over ordered commitment groups.
@@ -124,6 +166,7 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     pub fn batched_prove<'a, T, P, B>(
+        &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
         stacks: &'a impl LevelProveStacks<
@@ -162,6 +205,7 @@ where
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
+            &self.schedules,
             stacks,
             opening,
             transcript,
@@ -184,6 +228,7 @@ where
     /// Returns an error when verification fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     pub fn batched_verify<T: Transcript<Cfg::Field>>(
+        &self,
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
         transcript: &mut T,
@@ -191,7 +236,7 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         akita_config::validate_config_policy::<Cfg>()?;
-        batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
+        batched_verify_inner::<Cfg, T>(proof, setup, &self.schedules, transcript, statement, basis)
     }
 
     /// Protocol identifier.
@@ -204,6 +249,7 @@ where
 fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     transcript: &mut T,
     statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
@@ -217,7 +263,9 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, statement, basis)?;
+    akita_verifier::batched_verify::<Cfg, T>(
+        proof, setup, schedules, transcript, statement, basis,
+    )?;
 
     tracing::info!(
         levels = proof.num_fold_levels(),

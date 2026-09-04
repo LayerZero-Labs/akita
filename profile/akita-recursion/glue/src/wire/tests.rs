@@ -16,6 +16,11 @@ type TestF = fp128::Field;
 const TEST_D: usize = 256;
 const PREFIX_D: usize = 64;
 
+fn schedules<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog {
+    akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace trusted schedule catalog")
+}
+
 fn blob_prefix() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&BLOB_MAGIC);
@@ -24,6 +29,60 @@ fn blob_prefix() -> Vec<u8> {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
     bytes
+}
+
+#[test]
+fn full_catalog_frame_round_trips_without_compiled_rows() {
+    let catalog = schedules::<TestCfg>();
+    let inner = blob_prefix();
+    let framed = frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
+
+    assert_eq!(
+        read_blob_case(&framed).expect("framed case"),
+        AkitaJoltCase::OneHotFp128Direct
+    );
+    let (decoded, decoded_inner) =
+        split_schedule_catalog::<TestCfg>(&framed).expect("split catalog frame");
+    assert_eq!(decoded.catalog_digest(), catalog.catalog_digest());
+    assert_eq!(decoded_inner, inner);
+}
+
+#[test]
+fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
+    let inner = blob_prefix();
+    let missing = split_schedule_catalog::<TestCfg>(&inner)
+        .expect_err("guest entry requires the benchmark catalog frame");
+    assert!(missing.to_string().contains("missing"));
+
+    let mut truncated = CATALOG_FRAME_MAGIC.to_vec();
+    truncated.extend_from_slice(&1u64.to_le_bytes());
+    let truncated = split_schedule_catalog::<TestCfg>(&truncated)
+        .expect_err("catalog frame must contain an inner blob");
+    assert!(truncated.to_string().contains("complete inner blob"));
+
+    let catalog = schedules::<TestCfg>();
+    let mut tampered =
+        frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
+    let artifact_start = CATALOG_FRAME_HEADER_BYTES;
+    let marker = b"\"policy_digest\"";
+    let mut digest_start = tampered[artifact_start..]
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .map(|offset| artifact_start + offset + marker.len())
+        .expect("policy digest key");
+    while tampered[digest_start].is_ascii_whitespace() {
+        digest_start += 1;
+    }
+    assert_eq!(tampered[digest_start], b':');
+    digest_start += 1;
+    while !tampered[digest_start].is_ascii_digit() {
+        digest_start += 1;
+    }
+    let digit = tampered[digest_start];
+    tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
+    let tampered = split_schedule_catalog::<TestCfg>(&tampered)
+        .expect_err("tampered catalog identity must reject");
+    assert!(tampered.to_string().contains("policy"));
 }
 
 fn prefix_commitment_params() -> GroupOpenPhaseParams {
@@ -81,8 +140,11 @@ fn trailing_blob_bytes_are_rejected() {
 fn previous_blob_version_is_rejected_at_the_magic_boundary() {
     let mut bytes = blob_prefix();
     bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv4");
-    let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes)
-        .expect_err("v4 blob must not reach payload decoding");
+    let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .expect_err("v4 blob must not reach payload decoding");
     assert!(error.to_string().contains("magic mismatch"));
 }
 
@@ -128,7 +190,11 @@ fn transcript_domain_len_is_capped_before_allocation() {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("length"));
 }
 
@@ -142,7 +208,11 @@ fn num_vars_is_capped_before_opening_point_allocation() {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("length"));
 }
 
@@ -155,7 +225,11 @@ fn opening_point_len_must_match_num_vars_before_allocation() {
     2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
     3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("opening-point arity 3"));
 }
 
@@ -233,16 +307,18 @@ fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
 
 #[test]
 fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
-    let row = TestCfg::resolve_catalog_row_for_opening(
-        &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
-    )
-    .expect("generated singleton row");
+    let schedules = schedules::<TestCfg>();
+    let opening_claims = akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout");
+    let row = schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            opening_claims
+                .root_final_group_layout()
+                .expect("singleton group layout"),
+        ))
+        .expect("trusted singleton row");
     let opening_layout = row.profiles().opening_layout().expect("opening layout");
-    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
-        row.schedule(),
-        &opening_layout,
-    )
-    .expect("grinding plan");
+    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(row.schedule(), &opening_layout)
+        .expect("grinding plan");
     let canonical = canonical_proof_shape(row.schedule(), &opening_layout, 1, &grinding_plan)
         .expect("canonical shape");
 
@@ -250,7 +326,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
     huge.root.opening_payload_coeffs = usize::MAX;
     let budget_error = AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<
         TestCfg,
-    >(row.selection(), &huge, 0)
+    >(row.selection(), &huge, 0, &schedules)
     .expect_err("huge shape must fail against remaining bytes");
     let budget_message = budget_error.to_string();
     assert!(
@@ -265,6 +341,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
+            &schedules,
         )
         .expect_err("noncanonical shape must fail before proof decoding");
     assert!(identity_error.to_string().contains("canonical schedule"));
@@ -277,14 +354,17 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
 
     let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
-    let row =
-        ExtCfg::resolve_catalog_row_for_opening(&layout).expect("generated fp32 singleton row");
+    let schedules = schedules::<ExtCfg>();
+    let row = schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            layout
+                .root_final_group_layout()
+                .expect("singleton group layout"),
+        ))
+        .expect("trusted fp32 singleton row");
     let opening_layout = row.profiles().opening_layout().expect("catalog layout");
-    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(
-        row.schedule(),
-        &opening_layout,
-    )
-    .expect("grinding plan");
+    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(row.schedule(), &opening_layout)
+        .expect("grinding plan");
     let mut noncanonical = canonical_proof_shape(
         row.schedule(),
         &opening_layout,
@@ -304,6 +384,7 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
+            &schedules,
         )
         .expect_err("noncanonical extension shape must fail before proof decoding");
     assert!(error.to_string().contains("canonical schedule"));

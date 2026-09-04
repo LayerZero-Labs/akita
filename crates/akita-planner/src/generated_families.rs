@@ -1,24 +1,22 @@
-//! Shared metadata describing every `Cfg` family that ships with a
-//! generated schedule table in `akita-schedules`.
+//! Shared metadata describing every `Cfg` family that ships a schedule artifact.
 //!
-//! Both the `gen_schedule_tables` binary (the offline table emitter) and
+//! Both the `gen_schedule_artifacts` binary (the offline artifact emitter) and
 //! the drift-guard test consume [`ALL_GENERATED_FAMILIES`] so the two
 //! cannot drift apart: a missing `Cfg` here is missing in both the emitted
 //! artifact and the regression guard.
 //!
 //! This list is the one place a preset `Cfg` type is bound to its regen
-//! hook and generated table. It is behind the `catalog-gen` feature because
+//! hook and artifact policy. It is behind the `catalog-gen` feature because
 //! that offline path is allowed to name `akita-config` presets. Normal
-//! runtime callers consume the generated tables from `akita-schedules`.
+//! runtime callers consume validated artifacts through `akita-schedules`.
 
 use std::any::TypeId;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
-use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
+use crate::{find_schedule, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
@@ -166,7 +164,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 
 /// Bounded dense keys.
 ///
-/// 14 is the producer for the bounded precommit descriptor embedded in the
+/// 14 is the producer for the bounded precommit descriptor stored in the
 /// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
 /// and 26 are the sizes where the bound's setup and next-witness savings are
 /// measured against the matching `fp128_dense` rows.
@@ -208,41 +206,39 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
 
 const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1), (35, 1)];
 
-/// One generated schedule-table family.
+/// One generated schedule-artifact family.
 ///
 /// Function-pointer fields (instead of generic `Fn` closures) keep the
 /// list `const`-constructible and `'static`.
 #[derive(Clone, Copy)]
 pub struct GeneratedFamily {
-    /// On-disk module file name (without `.rs`) and the basename used
-    /// to derive the static `&[GeneratedFoldScheduleEntry]` const name.
-    pub module_name: &'static str,
-    /// On-disk const name for the table entries array.
-    pub const_name: &'static str,
-    /// Cargo feature on `akita-schedules` / `akita-config` for this family.
-    pub schedule_feature: &'static str,
+    /// Artifact family name and on-disk basename (without `.aks`).
+    family_name_fn: fn() -> &'static str,
     /// Scalar opening keys emitted for this family.
     pub scalar_keys: &'static [PolynomialGroupLayout],
     /// Exact producer type used to distinguish scalar preplans.
     scalar_plan_source: fn() -> TypeId,
-    /// Pure DP regeneration that ignores any generated table
+    /// Pure DP regeneration that ignores any checked-in artifact
     /// (`find_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
-    /// Pure multi-group DP regeneration that ignores any generated table.
+    /// Pure multi-group DP regeneration that ignores any checked-in artifact.
     pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
     /// Grouped-root keys enumerated for this generated family.
     pub grouped_requests: GroupedRequestGenerator,
-    /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub resolve_catalog_row_for_key:
-        fn(AkitaScheduleLookupKey) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>,
-    /// The generated catalog linked for this family, when its feature is active.
-    pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
     /// The family config's declared producer contract (class plus bound).
     pub source_contract: fn() -> Result<CommittedSourceContract, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     /// Build one caller requested canonical precommit producer record.
     pub explicit_precommitted_group: ExplicitPrecommittedGroupGenerator,
+}
+
+impl GeneratedFamily {
+    /// Config-owned artifact family name and on-disk basename.
+    #[must_use]
+    pub fn family_name(self) -> &'static str {
+        (self.family_name_fn)()
+    }
 }
 
 /// Build the ordered key cross-product emitted for `family`.
@@ -255,12 +251,7 @@ pub struct GeneratedFamily {
 /// Returns an error if key enumeration fails.
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
     let mut keys = family.scalar_keys.to_vec();
-    keys.sort_by(|left, right| {
-        runtime_schedule_key_cmp(
-            &AkitaScheduleLookupKey::single(*left),
-            &AkitaScheduleLookupKey::single(*right),
-        )
-    });
+    keys.sort_by_cached_key(|key| AkitaScheduleLookupKey::single(*key).canonical_order_key());
     keys.dedup();
     Ok(keys)
 }
@@ -288,7 +279,7 @@ fn plan_regen<Cfg: CommitmentConfig>(
     Ok(planned.schedule)
 }
 
-/// Pure DP regeneration for `Cfg` — never consults the generated table.
+/// Pure DP regeneration for `Cfg` — never consults the checked-in artifact.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
@@ -296,10 +287,10 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 /// Frozen profile a group commits with when it has no precommitted groups.
 ///
 /// Generation cannot read the catalog it is producing, so this plans the row
-/// instead of selecting it. `CommitmentConfig::profile_without_precommitted_groups`
-/// is the runtime counterpart, and
-/// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
-/// agree on every shipped descriptor.
+/// instead of selecting it. `TrustedScheduleCatalog::resolve_key` is the runtime counterpart, and
+/// `every_grouped_artifact_precommit_has_a_shipped_scalar_producer` asserts the
+/// two agree on every shipped descriptor, including recursive adapter/base-family
+/// mappings.
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
@@ -308,7 +299,7 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
 }
 
-/// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
+/// Pure multi-group DP regeneration for `Cfg` — never consults the checked-in artifact.
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     request: GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
@@ -318,22 +309,12 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     plan_regen::<Cfg>(&request.key(), &policies)
 }
 
-fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
-) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-    Cfg::resolve_catalog_row_for_key(&key)
-}
-
-fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
-    Cfg::schedule_catalog()
-}
-
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
     policy_of::<Cfg>()
 }
 
 fn sorted_grouped_requests(mut requests: GroupedGenerationRequests) -> GroupedGenerationRequests {
-    requests.sort_by(|left, right| runtime_schedule_key_cmp(&left.key(), &right.key()));
+    requests.sort_by_cached_key(|request| request.key().canonical_order_key());
     requests
 }
 
@@ -423,7 +404,7 @@ fn fp32_dense_grouped_requests(
 ) -> Result<GroupedGenerationRequests, AkitaError> {
     // The precommit half is 20 rather than 14 because the shipped fp32 dense
     // catalog begins at 20. The group's frozen profile must come from a
-    // generated row in that catalog.
+    // artifact row in that catalog.
     single_pre_grouped_requests::<fp32::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),
@@ -564,63 +545,50 @@ fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
 }
 
 macro_rules! family_row {
-    ($module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty, $group_keys:expr) => {
-        GeneratedFamily {
-            module_name: $module,
-            const_name: $const,
-            schedule_feature: $feat,
-            scalar_keys: $keys,
-            scalar_plan_source: TypeId::of::<$cfg>,
-            regen: regen::<$cfg>,
-            regen_group_batch: regen_group_batch::<$cfg>,
-            grouped_requests: $group_keys,
-            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
-            schedule_catalog: schedule_catalog::<$cfg>,
-            policy: family_policy::<$cfg>,
-            source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
-            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
-        }
-    };
     // Recursion adapter families: like `group_batch`, but grouped keys come from
     // the fixed recursive profiling shape rather than the generic per-`Cfg` grid.
-    (recursive, $module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty, $base_cfg:ty, $group_keys:expr) => {
+    (recursive, $keys:expr, $cfg:ty, $base_cfg:ty, $group_keys:expr) => {
         GeneratedFamily {
-            module_name: $module,
-            const_name: $const,
-            schedule_feature: $feat,
+            family_name_fn: <$cfg as CommitmentConfig>::schedule_family_name,
             scalar_keys: $keys,
             scalar_plan_source: TypeId::of::<$cfg>,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             grouped_requests: $group_keys,
-            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
-            schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             explicit_precommitted_group: explicit_precommitted_group::<$base_cfg>,
         }
     };
+    ($keys:expr, $cfg:ty, $group_keys:expr) => {
+        GeneratedFamily {
+            family_name_fn: <$cfg as CommitmentConfig>::schedule_family_name,
+            scalar_keys: $keys,
+            scalar_plan_source: TypeId::of::<$cfg>,
+            regen: regen::<$cfg>,
+            regen_group_batch: regen_group_batch::<$cfg>,
+            grouped_requests: $group_keys,
+            policy: family_policy::<$cfg>,
+            source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
+            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
+            explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
+        }
+    };
 }
 
-/// Minimal [`EmitSpec`] for refreshing `generated/mod.rs` wiring only.
+/// Minimal [`EmitSpec`] for a caller-selected artifact sweep.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when the family declares a producer
-/// contract it cannot honour. A wiring refresh does not emit a banner, but the
-/// spec still owns one field per family fact, so the failure surfaces here rather
-/// than being papered over with a placeholder.
-pub fn wiring_emit_spec(
+/// contract it cannot honour.
+pub fn empty_emit_spec(
     family: &GeneratedFamily,
     output_dir: std::path::PathBuf,
 ) -> Result<EmitSpec, AkitaError> {
     Ok(EmitSpec {
-        module_name: family.module_name,
-        const_name: family.const_name,
-        family_name: family.module_name,
-        schedule_feature: family.schedule_feature,
+        family_name: family.family_name(),
         policy: (family.policy)(),
         source_contract: (family.source_contract)()?,
         keys: Vec::new(),
@@ -630,7 +598,6 @@ pub fn wiring_emit_spec(
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
-        generator_command: "",
     })
 }
 
@@ -639,15 +606,11 @@ pub fn emit_spec_for_family(
     family: &GeneratedFamily,
     preplans: &GenerationPreplans,
     output_dir: std::path::PathBuf,
-    generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
     let policy = (family.policy)();
     let grouped_requests = (family.grouped_requests)(preplans)?;
     Ok(EmitSpec {
-        module_name: family.module_name,
-        const_name: family.const_name,
-        family_name: family.module_name,
-        schedule_feature: family.schedule_feature,
+        family_name: family.family_name(),
         policy,
         source_contract: (family.source_contract)()?,
         keys: emitted_scalar_keys(family)?,
@@ -657,7 +620,6 @@ pub fn emit_spec_for_family(
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
-        generator_command,
     })
 }
 
@@ -670,25 +632,19 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
     )?)
 }
 
-/// Every `Cfg` that has a generated schedule table.
+/// Every `Cfg` that has a checked-in schedule artifact.
 ///
-/// Adding a new preset with a generated table requires adding a row
-/// here; both the table emitter and the drift-guard test pick it up
+/// Adding a new preset with an artifact requires adding a row
+/// here; both the artifact emitter and the drift guard pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
-        "fp128_onehot",
-        "FP128_ONEHOT_SCHEDULES",
-        "fp128-onehot",
         FP128_ONEHOT_KEYS,
         fp128::OneHot,
         fp128_onehot_grouped_requests
     ),
     family_row!(
         recursive,
-        "fp128_onehot_recursive",
-        "FP128_ONEHOT_RECURSIVE_SCHEDULES",
-        "fp128-onehot-recursive",
         FP128_ONEHOT_RECURSIVE_KEYS,
         RecursiveCommitmentConfig<fp128::OneHot>,
         fp128::OneHot,
@@ -696,94 +652,41 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     family_row!(
         recursive,
-        "fp128_onehot_recursive_multi_chunk_w8r2",
-        "FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES",
-        "fp128-onehot-recursive-multi-chunk-w8r2",
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
         fp128::OneHotMultiChunk,
         recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>
     ),
+    family_row!(FP128_DENSE_KEYS, fp128::Dense, fp128_dense_grouped_requests),
     family_row!(
-        "fp128_dense",
-        "FP128_DENSE_SCHEDULES",
-        "fp128-dense",
-        FP128_DENSE_KEYS,
-        fp128::Dense,
-        fp128_dense_grouped_requests
-    ),
-    family_row!(
-        "fp128_onehot_multi_chunk",
-        "FP128_ONEHOT_MULTI_CHUNK_SCHEDULES",
-        "fp128-onehot-multi-chunk",
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
         fp128::OneHotMultiChunk,
         fp128_onehot_multichunk_grouped_requests
     ),
     family_row!(
-        "fp128_onehot_multi_chunk_w2r2",
-        "FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
-        "fp128-onehot-multi-chunk-w2r2",
         FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS,
         fp128::OneHotMultiChunkW2R2,
         fp128_onehot_multichunk_w2r2_grouped_requests
     ),
     family_row!(
-        "fp128_onehot_multi_chunk_w4r2",
-        "FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
-        "fp128-onehot-multi-chunk-w4r2",
         FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS,
         fp128::OneHotMultiChunkW4R2,
         no_grouped_requests
     ),
     family_row!(
-        "fp128_dense_multi_chunk",
-        "FP128_DENSE_MULTI_CHUNK_SCHEDULES",
-        "fp128-dense-multi-chunk",
         FP128_DENSE_MULTI_CHUNK_KEYS,
         fp128::DenseMultiChunk,
         no_grouped_requests
     ),
     family_row!(
-        "fp128_dense_bounded",
-        "FP128_DENSE_BOUNDED_SCHEDULES",
-        "fp128-dense-bounded",
         FP128_DENSE_BOUNDED_KEYS,
         fp128::DenseBounded,
         no_grouped_requests
     ),
-    family_row!(
-        "fp64_dense",
-        "FP64_DENSE_SCHEDULES",
-        "fp64-dense",
-        FP64_DENSE_KEYS,
-        fp64::Dense,
-        fp64_dense_grouped_requests
-    ),
-    family_row!(
-        "fp64_onehot",
-        "FP64_ONEHOT_SCHEDULES",
-        "fp64-onehot",
-        FP64_ONEHOT_KEYS,
-        fp64::OneHot,
-        no_grouped_requests
-    ),
-    family_row!(
-        "fp32_dense",
-        "FP32_DENSE_SCHEDULES",
-        "fp32-dense",
-        FP32_DENSE_KEYS,
-        fp32::Dense,
-        fp32_dense_grouped_requests
-    ),
-    family_row!(
-        "fp32_onehot",
-        "FP32_ONEHOT_SCHEDULES",
-        "fp32-onehot",
-        FP32_ONEHOT_KEYS,
-        fp32::OneHot,
-        fp32_onehot_grouped_requests
-    ),
+    family_row!(FP64_DENSE_KEYS, fp64::Dense, fp64_dense_grouped_requests),
+    family_row!(FP64_ONEHOT_KEYS, fp64::OneHot, no_grouped_requests),
+    family_row!(FP32_DENSE_KEYS, fp32::Dense, fp32_dense_grouped_requests),
+    family_row!(FP32_ONEHOT_KEYS, fp32::OneHot, fp32_onehot_grouped_requests),
 ];
 
 #[cfg(test)]
@@ -817,9 +720,9 @@ mod tests {
 
         let family = ALL_GENERATED_FAMILIES
             .iter()
-            .find(|family| family.module_name == "fp128_onehot")
+            .find(|family| family.family_name() == "fp128_onehot")
             .expect("known family");
-        let mut spec = wiring_emit_spec(family, std::path::PathBuf::new())
+        let mut spec = empty_emit_spec(family, std::path::PathBuf::new())
             .expect("shipped families declare a valid producer contract");
         spec.keys = vec![key];
         preplans.attach_to_spec(family, &mut spec);

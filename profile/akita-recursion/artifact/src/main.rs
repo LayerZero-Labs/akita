@@ -15,25 +15,23 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitOutput, ComputeBackendSetup, CpuBackend,
     GroupContext, OneHotPoly, SelectedProverOpeningData,
 };
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -41,6 +39,26 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
+
+fn load_workspace_scheme<Cfg>() -> Result<AkitaCommitmentScheme<Cfg>, akita_error::AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("artifacts/schedules")
+        .join(format!("{}.aks", Cfg::schedule_family_name()));
+    let bytes = fs::read(&path).map_err(|error| {
+        akita_error::AkitaError::InvalidSetup(format!(
+            "failed to read workspace schedule artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    AkitaCommitmentScheme::from_schedule_artifact(&bytes)
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -61,7 +79,6 @@ type Cfg = RecursiveCommitmentConfig<BaseCfg>;
 const SOURCE_VIEW_D: usize = 512;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
-const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
 const PRE_GROUPS: usize = 2;
 const PRE_NUM_VARS: usize = 16;
 const FINAL_POLYS: usize = 2;
@@ -69,9 +86,11 @@ const FINAL_POLYS: usize = 2;
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot";
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
-    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
+    let source_chunk_size = akita_config::unit_onehot_source_chunk_size::<BaseCfg>()
+        .expect("recursion artifact requires a unit-one-hot base config");
+    let max_supported_log_k = source_chunk_size.trailing_zeros() as usize;
     if nv >= max_supported_log_k {
-        ONEHOT_K
+        source_chunk_size
     } else {
         1usize << nv
     }
@@ -296,12 +315,14 @@ fn publish_blob(output_path: &std::path::Path, blob: &[u8]) -> Result<(), String
 fn verify_proof(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
+    schedules: &akita_config::TrustedScheduleCatalog,
     transcript: &mut AkitaTranscript<F>,
     statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _>(
         proof,
         verifier_setup,
+        schedules,
         transcript,
         statement,
         BasisMode::Lagrange,
@@ -333,9 +354,14 @@ macro_rules! generate_scalar_case {
 
         let case = $case;
         let num_vars = $nv;
+        let scheme = load_workspace_scheme::<ScalarCfg>()
+            .map_err(|err| format!("{} trusted schedule catalog: {err}", case))?;
         let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
             .map_err(|err| format!("{} opening layout: {err}", case))?;
-        let schedule = ScalarCfg::resolve_catalog_row_for_opening(&opening_layout)
+        let schedule_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, 1));
+        let schedule = scheme
+            .schedules()
+            .resolve_key(&schedule_key)
             .map_err(|err| format!("{} schedule: {err}", case))?;
         let root_d = schedule.schedule().root.params.d_a();
         if root_d != $d {
@@ -347,7 +373,8 @@ macro_rules! generate_scalar_case {
 
         tracing::info!(case = %case, num_vars, d = $d, "generating scalar OneHot recursion artifact");
         let t0 = Instant::now();
-        let mut prover_setup = AkitaCommitmentScheme::<ScalarCfg>::setup_prover(num_vars, 1)
+        let mut prover_setup = scheme
+            .setup_prover(num_vars, 1)
             .map_err(|err| format!("{} prover setup: {err}", case))?;
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&prover_setup)
@@ -380,12 +407,13 @@ macro_rules! generate_scalar_case {
         let CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<ScalarCfg>::commit(
-            &prover_setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            GroupContext::scheduler_without_precommitted_groups(),
-        )
+        } = scheme
+            .commit(
+                &prover_setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
         .map_err(|err| format!("{} commit: {err}", case))?;
         tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
@@ -402,26 +430,25 @@ macro_rules! generate_scalar_case {
                 .map_err(|err| format!("{} opening claims: {err}", case))?,
             vec![hint],
             vec![poly_group.as_slice()],
+            scheme.schedules(),
         )
         .map_err(|err| format!("{} prover opening data: {err}", case))?;
         let schedule_selection = prove_input.selection();
         let mut prover_transcript = AkitaTranscript::<ScalarField>::new(TRANSCRIPT_DOMAIN);
         let t0 = Instant::now();
-        let proof = AkitaCommitmentScheme::<ScalarCfg>::batched_prove(
-            &prover_setup,
-            prove_input,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
+        let proof = scheme
+            .batched_prove(
+                &prover_setup,
+                prove_input,
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
         .map_err(|err| format!("{} prove: {err}", case))?;
         tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-        let verifier_setup = AkitaCommitmentScheme::<ScalarCfg>::setup_verifier_for_schedule(
-            &prover_setup,
-            schedule.schedule(),
-            &opening_layout,
-        )
+        let verifier_setup = scheme
+            .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
         .map_err(|err| format!("{} verifier setup: {err}", case))?;
         let verifier_group = PolynomialGroupClaims::new(
             opening_point.as_slice(),
@@ -440,6 +467,7 @@ macro_rules! generate_scalar_case {
         batched_verify::<ScalarCfg, _>(
             &proof,
             &verifier_setup,
+            scheme.schedules(),
             &mut verifier_transcript,
             statement,
             BasisMode::Lagrange,
@@ -468,11 +496,12 @@ macro_rules! generate_scalar_case {
             proof_shape,
             proof,
         };
-        let blob = inputs
+        let inner_blob = inputs
             .write_to_bytes()
             .map_err(|err| format!("{} encode blob: {err}", case))?;
         let decoded = AkitaJoltInputs::<ScalarField, $d, ScalarExt>::read_from_bytes::<ScalarCfg>(
-            &blob,
+            &inner_blob,
+            scheme.schedules(),
         )
         .map_err(|err| format!("{} strict blob round-trip: {err}", case))?;
         let mut transcript =
@@ -480,6 +509,7 @@ macro_rules! generate_scalar_case {
         batched_verify::<ScalarCfg, _>(
             &decoded.proof,
             &decoded.verifier_setup,
+            scheme.schedules(),
             &mut transcript,
             decoded
                 .verifier_statement()
@@ -487,6 +517,11 @@ macro_rules! generate_scalar_case {
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
+        let blob = akita_recursion_glue::frame_with_schedule_catalog::<ScalarCfg>(
+            &inner_blob,
+            scheme.schedules(),
+        )
+        .map_err(|err| format!("{} frame schedule catalog: {err}", case))?;
         publish_blob($output_path, &blob)?;
         eprintln!(
             "wrote {} bytes ({:.2} MiB) for {} to {}",
@@ -589,6 +624,10 @@ fn run() -> Result<(), String> {
         ));
     }
     let onehot_k = onehot_k_for_num_vars(nv);
+    let scheme = load_workspace_scheme::<Cfg>()
+        .map_err(|err| format!("failed to load trusted recursive schedule catalog: {err}"))?;
+    let base_scheme = load_workspace_scheme::<BaseCfg>()
+        .map_err(|err| format!("failed to load trusted base schedule catalog: {err}"))?;
 
     let prime = fp128_prime_label();
     tracing::info!(
@@ -600,7 +639,10 @@ fn run() -> Result<(), String> {
     );
 
     let pre_group = PolynomialGroupLayout::new(PRE_NUM_VARS, 1);
-    let pre_descriptor = BaseCfg::profile_without_precommitted_groups(pre_group)
+    let pre_descriptor = base_scheme
+        .schedules()
+        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .map(|row| row.profiles().final_group)
         .map_err(|err| format!("precommit profile: {err}"))?;
     let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
     let key = AkitaScheduleLookupKey {
@@ -610,7 +652,9 @@ fn run() -> Result<(), String> {
     let opening_layout = key
         .opening_layout()
         .map_err(|err| format!("recursive opening layout: {err}"))?;
-    let schedule = Cfg::resolve_catalog_row_for_key(&key)
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&key)
         .map_err(|err| format!("recursive proof schedule: {err}"))?;
     let layout = schedule.schedule().root.params.clone();
     let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
@@ -642,7 +686,8 @@ fn run() -> Result<(), String> {
         .collect();
 
     let t0 = Instant::now();
-    let mut prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
+    let mut prover_setup = scheme
+        .setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
@@ -679,13 +724,14 @@ fn run() -> Result<(), String> {
         let CommitOutput {
             committed_group,
             hint,
-        } = AkitaCommitmentScheme::<BaseCfg>::commit(
-            &prover_setup,
-            &polys,
-            &stack,
-            GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
+        } = base_scheme
+            .commit(
+                &prover_setup,
+                &polys,
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
         pre_polys_by_group.push(polys);
         pre_openings.push(openings);
         pre_commitments.push(committed_group);
@@ -704,13 +750,14 @@ fn run() -> Result<(), String> {
     let CommitOutput {
         committed_group: final_commitment,
         hint: final_hint,
-    } = AkitaCommitmentScheme::<Cfg>::commit(
-        &prover_setup,
-        &final_polys,
-        &stack,
-        GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-    )
-    .map_err(|err| format!("final multi-group commit failed: {err}"))?;
+    } = scheme
+        .commit(
+            &prover_setup,
+            &final_polys,
+            &stack,
+            GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .map_err(|err| format!("final multi-group commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
     let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
@@ -746,25 +793,24 @@ fn run() -> Result<(), String> {
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         prover_hints,
         poly_groups,
+        scheme.schedules(),
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let schedule_selection = prove_input.selection();
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
-        &prover_setup,
-        prove_input,
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .map_err(|err| format!("batched_prove failed: {err}"))?;
+    let proof = scheme
+        .batched_prove(
+            &prover_setup,
+            prove_input,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
-        &prover_setup,
-        schedule.schedule(),
-        &opening_layout,
-    )
-    .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
+    let verifier_setup = scheme
+        .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
+        .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
@@ -772,6 +818,7 @@ fn run() -> Result<(), String> {
     verify_proof(
         &proof,
         &verifier_setup,
+        scheme.schedules(),
         &mut verifier_transcript,
         build_statement(
             schedule_selection,
@@ -789,11 +836,9 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
-        schedule.schedule(),
-        &opening_layout,
-    )
-    .map_err(|err| format!("derive grinding plan failed: {err}"))?;
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(schedule.schedule(), &opening_layout)
+            .map_err(|err| format!("derive grinding plan failed: {err}"))?;
     let proof_shape = proof.shape();
     proof_shape
         .validate_grinding_plan(&grinding_plan)
@@ -823,18 +868,22 @@ fn run() -> Result<(), String> {
         proof,
     };
 
-    let blob = inputs
+    let inner_blob = inputs
         .write_to_bytes()
         .map_err(|err| format!("encode jolt inputs blob failed: {err}"))?;
     // Round-trip before publishing so a buggy encoding fails on the host
     // instead of leaving a trusted benchmark artifact on disk.
-    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(&blob)
-        .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
+    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(
+        &inner_blob,
+        scheme.schedules(),
+    )
+    .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     verify_proof(
         &decoded.proof,
         &decoded.verifier_setup,
+        scheme.schedules(),
         &mut roundtrip_transcript,
         decoded
             .verifier_statement()
@@ -842,6 +891,10 @@ fn run() -> Result<(), String> {
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;
     tracing::info!("decoded-blob verify OK");
+
+    let blob =
+        akita_recursion_glue::frame_with_schedule_catalog::<Cfg>(&inner_blob, scheme.schedules())
+            .map_err(|err| format!("frame schedule catalog failed: {err}"))?;
 
     publish_blob(&output_path, &blob)?;
 

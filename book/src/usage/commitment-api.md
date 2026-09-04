@@ -11,7 +11,7 @@ Every call to `commit` supplies the setup, a slice of polynomials, a prepared
 compute stack, and the complete context for that group.
 
 ```rust
-let output = AkitaCommitmentScheme::<Config>::commit(
+let output = scheme.commit(
     &setup,
     &polynomials,
     &stack,
@@ -38,8 +38,8 @@ hint beside the exact polynomial group and preserve their order.
 
 ## Independent commitments stay reusable
 
-`GroupContext::scheduler_without_precommitted_groups()` selects the generated
-row for an independent group. The resulting commitment can be opened by itself
+`GroupContext::scheduler_without_precommitted_groups()` selects the trusted
+catalog row for an independent group. The resulting commitment can be opened by itself
 or used as an earlier group in a later batched proof. The commitment does not
 need to predict that later proof.
 
@@ -118,7 +118,7 @@ let prior = PrecommittedGroupProfiles::from_ordered_groups(
     prior_commitments.iter(),
 )?;
 
-let final_output = AkitaCommitmentScheme::<Config>::commit(
+let final_output = scheme.commit(
     &setup,
     &final_polynomials,
     &stack,
@@ -126,7 +126,7 @@ let final_output = AkitaCommitmentScheme::<Config>::commit(
 )?;
 ```
 
-The grouped context selects a generated row keyed by the complete ordered
+The grouped context selects a trusted catalog row keyed by the complete ordered
 prefix and final group. It also checks that every earlier commitment profile is
 the independent profile that the corresponding base configuration produces.
 
@@ -141,11 +141,15 @@ large verifier workloads. Earlier groups still commit under `BaseConfig`. The
 final group and opening proof use the recursive configuration.
 
 ```rust
-let setup = AkitaCommitmentScheme::<
+let recursive_catalog = trusted_schedule_catalog_from_bytes::<
     RecursiveCommitmentConfig<BaseConfig>,
->::setup_prover(max_num_vars, max_group_size)?;
+>(&recursive_artifact_bytes)?;
+let recursive_scheme = AkitaCommitmentScheme::<
+    RecursiveCommitmentConfig<BaseConfig>,
+>::new(recursive_catalog)?;
+let setup = recursive_scheme.setup_prover(max_num_vars, max_group_size)?;
 
-let earlier = AkitaCommitmentScheme::<BaseConfig>::commit(
+let earlier = base_scheme.commit(
     &setup,
     &earlier_polynomials,
     &stack,
@@ -182,7 +186,7 @@ throughout commitment and opening.
 
 ## Explicit commitment parameters
 
-Normal applications should use generated schedule selection. A caller that
+Normal applications should use trusted catalog selection. A caller that
 already owns a reviewed commit profile may use
 `GroupContext::explicit(&profile)`.
 

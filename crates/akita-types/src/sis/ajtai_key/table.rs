@@ -9,7 +9,9 @@ use super::InnerCommitMatrixParams;
 ///
 /// The bytes are fixed width and are part of every runtime SIS identity. The
 /// value is replaced by the generator when the checked-in table changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SisTableDigest(pub [u8; 32]);
 
 impl Default for SisTableDigest {
@@ -27,7 +29,9 @@ impl SisTableDigest {
 }
 
 /// Matrix role whose coefficient and ring geometry is being priced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SisMatrixRole {
     /// Inner commitment matrix (A).
     Inner,
@@ -68,7 +72,19 @@ impl SisMatrixRole {
 }
 
 /// Policy identity used by SIS sizing and generated artifacts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum SisSecurityPolicyId {
     /// Corrected ADPS16 quantum LGSA estimator at a 128-bit target.
     #[default]
@@ -113,7 +129,19 @@ mod policy_id_tests {
 }
 
 /// Exact SIS modulus profile used to select generated security floors.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum SisModulusProfileId {
     /// Representative q = 2^32 - 99.
     Q32Offset99,
@@ -181,7 +209,9 @@ pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
 /// Canonical key for a generated SIS floor row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SisTableKey {
     /// SIS security policy.
     pub policy: SisSecurityPolicyId,

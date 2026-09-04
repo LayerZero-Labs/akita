@@ -11,7 +11,7 @@ use crate::sis::{
 use crate::{CommitmentRingDims, DecompositionParams};
 
 /// Schedule-selected procedure for opening one committed group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OpeningMethod {
     /// Open full A-ring partials with evaluation-trace weights.
     EvaluationTrace,
@@ -78,7 +78,7 @@ impl OpeningMethod {
 ///
 /// EvaluationTrace decomposes a full A-ring partial. Coefficient packing
 /// decomposes its `k * s` physical base-field coordinates instead. This is the
-/// canonical sizing authority used by planners, generated-row expansion, and
+/// canonical sizing authority used by planners, artifact validation, and
 /// authenticated schedule replay.
 pub fn opening_d_segment_width(
     opening_method: OpeningMethod,
@@ -112,7 +112,7 @@ pub fn opening_d_segment_width(
 }
 
 /// Opening policy selected by the fold that consumes a committed group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GroupOpeningPlan {
     /// Procedure used to reduce and open the group's coefficients.
     pub opening_method: OpeningMethod,
@@ -169,7 +169,7 @@ impl GroupOpeningPlan {
 /// Every group in a fold has this type: the final/new group, each precommitted
 /// group, and the setup prefix. The fold owns the shared D matrix; a group owns
 /// only its contribution of D digits, through `opening`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GroupOpenPhaseParams {
     /// Frozen commit-phase identity of this group.
     pub profile: GroupCommitPhaseParams,

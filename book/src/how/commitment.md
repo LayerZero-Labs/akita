@@ -9,9 +9,9 @@ outer B matrix, and a compressed public payload.
 The shared setup is one vector of field elements. Each level interprets a
 prefix of that vector as its A, B, and D matrices. Compression matrices use the
 same setup at their own smaller ring dimensions. The setup envelope is the
-largest physical matrix requirement across the selected schedule. Generated
-schedules and setup-prefix identifiers bind the exact geometry that uses this
-vector.
+largest physical matrix requirement across the selected schedule. Trusted
+artifact rows and setup-prefix identifiers bind the exact geometry that uses
+this vector.
 
 A recursive setup schedule may require commitments to selected power of two
 prefixes of this vector. Setup construction materializes exactly those prefix

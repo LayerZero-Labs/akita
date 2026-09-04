@@ -1,126 +1,67 @@
-//! Generated-file rendering and module wiring orchestration.
+//! Canonical external schedule-artifact rendering.
 
 use super::*;
+use akita_types::{CommittedGroupBatchProfile, GroupCommitPhaseParams};
 use std::time::Instant;
 
-fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
-    let mut declarations = String::new();
-    let mut accessors = String::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for spec in specs {
-        if !seen.insert(spec.module_name) {
-            continue;
-        }
-        let module_name = spec.module_name;
-        let feat = spec.schedule_feature;
-        writeln!(declarations, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(declarations, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        accessors.push_str(&emit_table_accessor(spec)?);
-        accessors.push('\n');
-    }
-    declarations.push('\n');
-    declarations.push_str(&accessors);
-    Ok(declarations)
-}
-
-fn table_fn_name(module_name: &str) -> String {
-    format!("{module_name}_table")
-}
-
-fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
-    let fn_name = table_fn_name(spec.module_name);
-    let feat = spec.schedule_feature;
-    let module_name = spec.module_name;
-    let const_name = spec.const_name;
-    Ok(format!(
-        "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
-    ))
-}
-
-fn replace_between_markers(
-    content: &str,
-    begin: &str,
-    end: &str,
-    replacement: &str,
-) -> Result<String, String> {
-    let start = content
-        .find(begin)
-        .ok_or_else(|| format!("missing generated marker `{begin}`"))?
-        + begin.len();
-    let end_pos = content
-        .find(end)
-        .ok_or_else(|| format!("missing generated marker `{end}`"))?;
-    if end_pos < start {
-        return Err(format!(
-            "generated markers `{begin}` and `{end}` are out of order"
-        ));
-    }
-    let mut out = String::new();
-    out.push_str(&content[..start]);
-    out.push('\n');
-    out.push_str(replacement.trim_end());
-    out.push('\n');
-    out.push_str(&content[end_pos..]);
-    Ok(out)
-}
-
-/// One fully rendered generated file awaiting publication.
+/// One fully rendered artifact awaiting publication.
 #[derive(Debug)]
-pub struct GeneratedOutput {
+pub struct ArtifactOutput {
     pub(super) destination: PathBuf,
     pub(super) body: String,
 }
 
-fn render_family_output(
+fn render_family_artifact(
     spec: &EmitSpec,
     materialized: Vec<MaterializedEntry>,
-) -> Result<GeneratedOutput, String> {
-    Ok(GeneratedOutput {
-        destination: spec.output_dir.join(format!("{}.rs", spec.module_name)),
-        body: emit_family_module_from_entries(spec, materialized)?,
+) -> Result<ArtifactOutput, String> {
+    let rows = materialized
+        .into_iter()
+        .map(|entry| {
+            let key = entry.key();
+            let schedule = entry.schedule().clone();
+            let final_group =
+                GroupCommitPhaseParams::try_from_params(key.final_group, &schedule.root.params)
+                    .map_err(|error| {
+                        format!(
+                            "{}: derive final committed profile: {error}",
+                            spec.family_name
+                        )
+                    })?;
+            Ok((
+                CommittedGroupBatchProfile {
+                    final_group,
+                    precommitteds: key.precommitteds,
+                },
+                schedule,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let catalog = akita_schedules::TrustedScheduleCatalog::try_new(
+        spec.family_name,
+        rows,
+        &spec.policy,
+        spec.ring_challenge_config,
+    )
+    .map_err(|error| format!("{}: build artifact: {error}", spec.family_name))?;
+    let bytes = catalog
+        .to_artifact_bytes()
+        .map_err(|error| format!("{}: encode artifact: {error}", spec.family_name))?;
+    let body = String::from_utf8(bytes)
+        .map_err(|error| format!("{}: artifact is not UTF-8: {error}", spec.family_name))?;
+    Ok(ArtifactOutput {
+        destination: spec.output_dir.join(format!("{}.aks", spec.family_name)),
+        body,
     })
 }
 
-/// Render every family module and optional wiring update.
-///
-/// No destination is modified unless the complete batch renders successfully
-/// and is later passed to [`publish_generated_outputs`].
-pub fn render_generated_outputs(
+/// Materialize, validate, and render canonical external schedule artifacts.
+pub fn render_schedule_artifact_outputs_with_validation(
     specs: &[EmitSpec],
-    wiring_specs: &[EmitSpec],
-    mod_path: Option<&Path>,
-) -> Result<Vec<GeneratedOutput>, String> {
-    render_generated_outputs_with_validation(
-        specs,
-        wiring_specs,
-        mod_path,
-        MaterializationDiagnostics::default(),
-        |_, _| Ok(()),
-    )
-}
-
-/// Render every family after validating the exact schedules materialized by
-/// the shared planning queue. This lets CI compare compiled catalog rows and
-/// generated source without running the planner twice.
-pub fn render_generated_outputs_with_validation(
-    specs: &[EmitSpec],
-    wiring_specs: &[EmitSpec],
-    mod_path: Option<&Path>,
     diagnostics: MaterializationDiagnostics,
     mut validate: impl FnMut(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
-) -> Result<Vec<GeneratedOutput>, String> {
+) -> Result<Vec<ArtifactOutput>, String> {
     let materialization_started = diagnostics.row_progress.then(Instant::now);
-    if diagnostics.row_progress {
-        let row_count = specs
-            .iter()
-            .map(|spec| spec.keys.len() + spec.grouped_requests.len())
-            .sum::<usize>();
-        eprintln!(
-            "schedule generation phase: materialize {row_count} rows across {} families",
-            specs.len(),
-        );
-    }
     let materialized = materialized_entries_for_specs(specs, diagnostics)?;
     if let Some(started) = materialization_started {
         eprintln!(
@@ -128,140 +69,12 @@ pub fn render_generated_outputs_with_validation(
             started.elapsed(),
         );
     }
-    let validation_started = diagnostics.row_progress.then(Instant::now);
-    if diagnostics.row_progress {
-        eprintln!(
-            "schedule generation phase: validate {} materialized families",
-            specs.len(),
-        );
-    }
     for (spec, entries) in specs.iter().zip(&materialized) {
         validate(spec, entries)?;
     }
-    if let Some(started) = validation_started {
-        eprintln!(
-            "schedule generation phase complete: validated materialized families in {:.2?}",
-            started.elapsed(),
-        );
-    }
-    let rendering_started = diagnostics.row_progress.then(Instant::now);
-    if diagnostics.row_progress {
-        eprintln!(
-            "schedule generation phase: render {} family modules",
-            specs.len(),
-        );
-    }
-    let mut outputs = specs
+    specs
         .iter()
         .zip(materialized)
-        .map(|(spec, entries)| render_family_output(spec, entries))
-        .collect::<Result<Vec<_>, _>>()?;
-    if let Some(mod_path) = mod_path {
-        let mod_src = fs::read_to_string(mod_path)
-            .map_err(|error| format!("read {}: {error}", mod_path.display()))?;
-        let mod_wiring = emit_mod_wiring(wiring_specs)?;
-        outputs.push(GeneratedOutput {
-            destination: mod_path.to_path_buf(),
-            body: replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?,
-        });
-    }
-    if let Some(started) = rendering_started {
-        eprintln!(
-            "schedule generation phase complete: rendered {} outputs in {:.2?}",
-            outputs.len(),
-            started.elapsed(),
-        );
-    }
-    Ok(outputs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::render_generated_outputs;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
-
-    fn test_dir(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "akita-generated-publish-{label}-{}-{}",
-            std::process::id(),
-            TEST_NONCE.fetch_add(1, Ordering::Relaxed)
-        ))
-    }
-
-    #[test]
-    fn render_failure_does_not_touch_existing_wiring() {
-        let dir = test_dir("render-failure");
-        fs::create_dir_all(&dir).expect("create test directory");
-        let mod_path = dir.join("mod.rs");
-        let original = "pub mod hand_written;\n";
-        fs::write(&mod_path, original).expect("write wiring fixture");
-
-        let error = render_generated_outputs(&[], &[], Some(&mod_path))
-            .expect_err("missing wiring markers must fail rendering");
-        assert!(error.contains("missing generated marker"));
-        assert_eq!(
-            fs::read_to_string(&mod_path).expect("read wiring fixture"),
-            original
-        );
-        fs::remove_dir_all(dir).expect("remove test directory");
-    }
-
-    #[cfg(feature = "catalog-gen")]
-    #[test]
-    fn targeted_family_render_keeps_complete_module_wiring() {
-        use crate::generated_families::{wiring_emit_spec, ALL_GENERATED_FAMILIES};
-
-        let dir = test_dir("targeted-family");
-        fs::create_dir_all(&dir).expect("create test directory");
-        let mod_path = dir.join("mod.rs");
-        fs::write(
-            &mod_path,
-            "// @generated schedule module wiring begin\n\
-             // stale wiring\n\
-             // @generated schedule module wiring end\n",
-        )
-        .expect("write wiring fixture");
-        let selected = ALL_GENERATED_FAMILIES
-            .iter()
-            .find(|family| family.module_name == "fp32_dense")
-            .expect("known selected family");
-        let selected_specs = vec![wiring_emit_spec(selected, dir.clone())
-            .expect("shipped families declare a valid producer contract")];
-        let wiring_specs = ALL_GENERATED_FAMILIES
-            .iter()
-            .map(|family| {
-                wiring_emit_spec(family, dir.clone())
-                    .expect("shipped families declare a valid producer contract")
-            })
-            .collect::<Vec<_>>();
-
-        let outputs = render_generated_outputs(&selected_specs, &wiring_specs, Some(&mod_path))
-            .expect("render targeted output plan");
-        assert_eq!(
-            outputs
-                .iter()
-                .map(|output| {
-                    output
-                        .destination
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect::<Vec<_>>(),
-            vec!["fp32_dense.rs", "mod.rs"],
-        );
-        assert!(!outputs
-            .iter()
-            .any(|output| output.destination.ends_with("fp64_dense.rs")));
-        let wiring = &outputs.last().expect("module wiring output").body;
-        assert!(wiring.contains("pub mod fp32_dense;"));
-        assert!(wiring.contains("pub mod fp64_dense;"));
-
-        fs::remove_dir_all(dir).expect("remove test directory");
-    }
+        .map(|(spec, entries)| render_family_artifact(spec, entries))
+        .collect()
 }

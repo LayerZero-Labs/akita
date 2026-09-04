@@ -71,15 +71,16 @@ typed prepared state and return errors for any remaining mismatch.
 
 ## Per-level replay
 
-`batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) is
-directly `<Cfg>`-generic: it calls `CommitmentConfig` hooks and
-`bind_transcript_instance_descriptor` with no policy closure layer.
+`batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) receives
+a validated `TrustedScheduleCatalog`. The catalog is a trusted verifier
+parameter. It is loaded before proof parsing and is not read from the proof.
 
 At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
-2. **Resolve the exact generated row** named by
-   `OpeningScheduleSelection`. Catalog and row digests are checked before the
+2. **Resolve the exact trusted row** named by
+   `OpeningScheduleSelection`. Artifact identity and row digests are checked
+   before the
    ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
 3. **Replay the structural folds** in `protocol/core`: the root fold followed by
@@ -162,8 +163,8 @@ kernels.
 Verifier admission uses one canonical row audit. Before setup access or proof
 replay, it:
 
-1. validates the generated catalog identity against the active policy and
-   runtime challenge hooks;
+1. validates the trusted artifact family, protocol epoch, active policy, and
+   runtime challenge hooks when the catalog is installed;
 2. resolves the fixed-width row digest by bounded lookup;
 3. checks every ordered public committed profile against the resolved row;
 4. re-audits every A, B, D, recursive, and terminal SIS matrix against the
@@ -176,8 +177,10 @@ replay, it:
 
 Private polynomial representations and honest-prover witness models are absent
 from this path. The public selection is one digest of the exact ordered
-profiles and expanded row. Catalog policy metadata is validated internally
-before that digest is admitted.
+profiles and expanded row. Catalog policy metadata is validated when the
+trusted parameter is loaded. Unknown proof row digests reject. There is no
+proof field that can replace a catalog row or ask the verifier to decode
+schedule content.
 
 ## The verifier no-panic contract
 
@@ -192,7 +195,7 @@ commitment, direct witness, or transcript input must be rejected with
 - `akita-verifier`
 - Verifier-reachable paths in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` code
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-schedules` generated-catalog identity, row resolution, and canonical
+- `akita-schedules` artifact identity, row resolution, and canonical
   resolved-row audit paths
 
 ### Rules for contributors

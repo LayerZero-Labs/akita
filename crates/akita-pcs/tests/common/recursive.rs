@@ -4,7 +4,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
     on_schedule: fn(&FoldSchedule),
 ) where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>
+        + akita_config::recursive_commitment::RecursiveScheduleConfig,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
 
@@ -17,25 +18,36 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
     init_rayon_pool();
     run_on_large_stack(move || {
+        let base_scheme =
+            load_workspace_scheme::<BaseCfg>().expect("workspace base schedule catalog");
+        let recursive_scheme = load_workspace_scheme::<RecursiveCommitmentConfig<BaseCfg>>()
+            .expect("workspace recursive schedule catalog");
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_frozen =
-            BaseCfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
+        let pre_frozen = base_scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(pre_key))
+            .expect("independent profile")
+            .profiles()
+            .final_group;
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule =
-            RecursiveCommitmentConfig::<BaseCfg>::resolve_catalog_row_for_key(&schedule_key)
-                .expect("recursive profile schedule resolves")
-                .into_schedule();
+        let schedule = recursive_scheme
+            .schedules()
+            .resolve_key(&schedule_key)
+            .expect("recursive profile schedule resolves")
+            .schedule()
+            .clone();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive profile must carry setup-prefix metadata"
         );
         on_schedule(&schedule);
 
-        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
+        let setup = recursive_scheme
+            .setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
             .expect("recursive setup");
         assert!(
             !setup.prefix_slots.is_empty(),
@@ -55,37 +67,42 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_commitments = Vec::new();
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
-            let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
+            let poly =
+                make_onehot_poly::<BaseCfg>(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
             let akita_prover::CommitOutput {
                 committed_group: commitment,
                 hint,
-            } = AkitaCommitmentScheme::<BaseCfg>::commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                &stack,
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-            )
-            .expect("precommit group");
+            } = base_scheme
+                .commit(
+                    &setup,
+                    std::slice::from_ref(&poly),
+                    &stack,
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                )
+                .expect("precommit group");
             pre_polys_by_group.push(vec![poly]);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
         }
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
+            .map(|poly_idx| {
+                make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64)
+            })
             .collect();
         let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = Recursive::<BaseCfg>::commit(
-            &setup,
-            &final_polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-        )
-        .expect("final generated-profile commitment");
+        } = recursive_scheme
+            .commit(
+                &setup,
+                &final_polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+            )
+            .expect("final generated-profile commitment");
 
         let point = random_point(FINAL_NV, 0xcafe_2026_0001);
         // Independent oracles: sums of Lagrange weights at the hot indices.
@@ -141,18 +158,20 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
+            recursive_scheme.schedules(),
         );
         let selection = prover_claims.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let proof = Recursive::<BaseCfg>::batched_prove(
-            &setup,
-            prover_claims,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("generated-profile recursive proof");
+        let proof = recursive_scheme
+            .batched_prove(
+                &setup,
+                prover_claims,
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("generated-profile recursive proof");
         assert!(
             proof_has_recursive_setup_sumcheck(&proof),
             "recursive proof must carry stage-3 setup sumcheck evidence"
@@ -183,9 +202,9 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("deserialize generated-profile proof");
 
-        let verifier_setup =
-            Recursive::<BaseCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-                .expect("verifier setup");
+        let verifier_setup = recursive_scheme
+            .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+            .expect("verifier setup");
         let verify_claims = |final_openings: Vec<F>| {
             let mut verifier_groups = Vec::new();
             for (group_idx, openings) in pre_openings.iter().enumerate() {
@@ -207,14 +226,15 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         };
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        Recursive::<BaseCfg>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        )
-        .expect("generated-profile recursive verify");
+        recursive_scheme
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            )
+            .expect("generated-profile recursive verify");
 
         if let Some(alternate_verifier_setup) = verifier_setup_with_alternate_full_prefix(
             &setup,
@@ -222,7 +242,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             &first_setup_prefix_slot(&schedule),
         ) {
             let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let alternate_result = Recursive::<BaseCfg>::batched_verify(
+            let alternate_result = recursive_scheme.batched_verify(
                 &proof,
                 &alternate_verifier_setup,
                 &mut alternate_transcript,
@@ -237,7 +257,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let result = Recursive::<BaseCfg>::batched_verify(
+            let result = recursive_scheme.batched_verify(
                 &tampered_proof,
                 &verifier_setup,
                 &mut transcript,
@@ -279,7 +299,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut tampered = final_openings;
         tampered[0] += F::from_u128_reduced(1);
         let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let tampered_result = Recursive::<BaseCfg>::batched_verify(
+        let tampered_result = recursive_scheme.batched_verify(
             &proof,
             &verifier_setup,
             &mut tampered_transcript,

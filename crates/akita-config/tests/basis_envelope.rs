@@ -6,6 +6,15 @@ use akita_config::CommitmentConfig;
 use akita_types::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
+fn catalog<Cfg: CommitmentConfig>() -> akita_config::TrustedScheduleCatalog {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("artifacts/schedules")
+        .join(format!("{}.aks", Cfg::schedule_family_name()));
+    let bytes = std::fs::read(path).expect("checked-in schedule artifact");
+    akita_config::trusted_schedule_catalog_from_bytes::<Cfg>(&bytes).expect("trusted catalog")
+}
+
 /// Sparse singleton keys covering small, production, stress, and table-max nv.
 const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
 
@@ -55,12 +64,13 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     let inner_basis_max = Cfg::inner_basis_range().1;
     let opening_basis_max = Cfg::opening_basis_range().1;
     let mut covered = 0usize;
+    let catalog = catalog::<Cfg>();
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
-        let schedule = match Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+        let schedule = match catalog.resolve_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(nv, 1),
         )) {
-            Ok(row) => row.into_schedule(),
+            Ok(row) => row.schedule().clone(),
             Err(_) => continue,
         };
         covered += 1;

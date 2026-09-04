@@ -1,8 +1,15 @@
-#![cfg(any(feature = "schedules-default", feature = "profile-ci"))]
-
 use super::*;
+
+fn workspace_scheme<C>() -> Result<AkitaCommitmentScheme<C>, AkitaError>
+where
+    C: CommitmentConfig,
+    C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    C::ExtField: FpExtEncoding<C::Field>,
+    C::ExtField: ExtField<C::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    AkitaCommitmentScheme::new(akita_config::test_support::workspace_schedule_catalog::<C>()?)
+}
 use akita_config::proof_optimized::fp128;
-use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -33,9 +40,58 @@ type Scheme = AkitaCommitmentScheme<Cfg>;
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::OneHot;
 const ONEHOT_D: usize = 256;
-// `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
-const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
+
+fn onehot_source_chunk_size<C: CommitmentConfig>() -> usize {
+    akita_config::unit_onehot_source_chunk_size::<C>()
+        .expect("one-hot fixture requires a unit-one-hot commitment config")
+}
+
+#[test]
+fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
+    let artifact = workspace_catalog
+        .to_artifact_bytes()
+        .expect("schedule artifact");
+    let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
+
+    assert_eq!(
+        scheme.schedules().catalog_digest(),
+        workspace_catalog.catalog_digest()
+    );
+    let key =
+        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+    assert_eq!(
+        scheme
+            .schedules()
+            .resolve_key(&key)
+            .expect("artifact row")
+            .selection(),
+        workspace_catalog
+            .resolve_key(&key)
+            .expect("artifact row")
+            .selection()
+    );
+
+    let expected_capacity =
+        akita_config::SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), 14, 1)
+            .map(|requirements| requirements.matrix_capacity)
+            .expect("catalog setup capacity");
+    let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
+    assert!(
+        setup.expanded.shared_matrix().num_field_elements() >= expected_capacity.num_field_elements,
+        "setup must cover the exact catalog-derived matrix requirement"
+    );
+}
+
+#[test]
+fn scheme_rejects_a_catalog_bound_to_another_config() {
+    let dense = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("dense schedule catalog");
+    let error = OneHotScheme::new(dense).expect_err("one-hot scheme must reject dense catalog");
+    assert!(error.to_string().contains("family"));
+}
 
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
@@ -57,6 +113,7 @@ mod onehot;
 mod single;
 
 fn selected_prover_data<'a, C, P>(
+    scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -65,10 +122,16 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
+    SelectedProverOpeningData::from_committed_claims::<C>(
+        claims,
+        hints,
+        polynomials,
+        scheme.schedules.as_ref(),
+    )
 }
 
 fn selected_statement<'a, C>(
+    scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, &'a CommittedGroup<C::Field>>,
 ) -> Result<GroupBatchStatement<'a, C::ExtField, C::Field>, AkitaError>
 where
@@ -85,7 +148,7 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = C::resolve_catalog_row_for_profiles(&profiles)?.selection();
+    let selection = scheme.schedules.resolve_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
 }
 
@@ -97,6 +160,7 @@ fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
 }
 
 fn prover_claims<'a, P>(
+    scheme: &Scheme,
     point: &'a [F],
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<F>,
@@ -112,11 +176,12 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
+    selected_prover_data::<Cfg, _>(scheme, opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(
+    scheme: &Scheme,
     point: &[F],
     openings: &[F],
     commitment: &'a CommittedGroup<F>,
@@ -128,7 +193,7 @@ fn verifier_claims<'a>(
     )
     .expect("valid verifier claims group")])
     .expect("valid verifier claims");
-    selected_statement::<Cfg>(claims).expect("valid verifier statement")
+    selected_statement::<Cfg>(scheme, claims).expect("valid verifier statement")
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
@@ -138,17 +203,46 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     (poly, evals)
 }
 
-fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
-    let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::resolve_catalog_row_for_opening(&opening_batch)
-        .expect("singleton commitment layout")
+fn singleton_layout<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    num_vars: usize,
+) -> CommittedGroupParams {
+    catalog_root_layout(scheme, num_vars, 1)
+}
+
+fn catalog_root_layout<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    num_vars: usize,
+    num_polynomials: usize,
+) -> CommittedGroupParams {
+    let key = akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+        num_vars,
+        num_polynomials,
+    ));
+    scheme
+        .schedules
+        .resolve_key(&key)
+        .expect("catalog root layout")
         .schedule()
         .root
         .params
         .clone()
 }
 
+fn catalog_profile<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    group: akita_types::PolynomialGroupLayout,
+) -> akita_types::GroupCommitPhaseParams {
+    scheme
+        .schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group))
+        .expect("catalog profile")
+        .profiles()
+        .final_group
+}
+
 type VerifyFixture = (
+    Scheme,
     AkitaVerifierSetup<F>,
     CommittedGroup<F>,
     AkitaBatchedProof<F, F>,
@@ -158,12 +252,13 @@ type VerifyFixture = (
 );
 
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(num_vars);
+    let layout = singleton_layout(&scheme, num_vars);
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
+    let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -171,17 +266,18 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .unwrap();
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -196,17 +292,25 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
+    let proof = scheme
+        .batched_prove::<_, _, _>(
+            &setup,
+            prover_claims(
+                &scheme,
+                &opening_point[..],
+                &poly_refs[..],
+                &commitments[0],
+                hint,
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
 
     let [commitment] = commitments;
     (
+        scheme,
         verifier_setup,
         commitment,
         proof,
@@ -221,15 +325,20 @@ fn debug_make_onehot_poly(
     _ring_dimension: usize,
     seed: u64,
 ) -> OneHotPoly<OneHotF, u8> {
+    let onehot_k = onehot_source_chunk_size::<OneHotCfg>();
+    assert!(
+        onehot_k <= usize::from(u8::MAX) + 1,
+        "test u8 one-hot fixture cannot represent chunk size {onehot_k}"
+    );
     let total_field = 1usize << num_vars;
-    let total_chunks = total_field / BENCH_ONEHOT_K;
+    let total_chunks = total_field / onehot_k;
 
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
 
-    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
+    OneHotPoly::<OneHotF, u8>::new(onehot_k, indices).expect("debug onehot poly")
 }
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
@@ -240,15 +349,24 @@ fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
 /// Derive the structural proof shape from the schedule. The terminal carries
 /// only optional EOR and the clear terminal response; nonces are proof-level.
 fn expected_same_point_batched_shape(
+    scheme: &OneHotScheme,
     max_num_vars: usize,
     num_claims: usize,
     proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+    let key = akita_types::AkitaScheduleLookupKey::single(
+        opening_batch
+            .root_final_group_layout()
+            .expect("batched root group layout"),
+    );
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&key)
         .expect("batched root runtime plan")
-        .into_schedule();
+        .schedule()
+        .clone();
     let root_step = &schedule.root;
     let root_params = &root_step.params;
     let num_fold_levels = schedule.num_fold_levels();

@@ -10,7 +10,6 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
@@ -26,6 +25,7 @@ use rand::SeedableRng;
 use std::time::Instant;
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
     label: &str,
     nv: usize,
     num_polys: usize,
@@ -50,7 +50,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let group_layout = PolynomialGroupLayout::new(nv, num_polys);
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
-            make_profile_onehot_poly::<FF>(nv, 0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32))
+            make_profile_onehot_poly::<Cfg>(nv, 0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32))
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
@@ -65,7 +65,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys).unwrap();
+        let setup = scheme.setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -101,20 +101,23 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .unwrap();
+        } = scheme
+            .commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
         let commitments = [commitment];
-        let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitments[0].profile(),
-            precommitteds: Vec::new(),
-        })
-        .expect("select generated schedule row")
-        .selection();
+        let selection = scheme
+            .schedules()
+            .resolve_profiles(&CommittedGroupBatchProfile {
+                final_group: *commitments[0].profile(),
+                precommitteds: Vec::new(),
+            })
+            .expect("select generated schedule row")
+            .selection();
         let hints = vec![hint];
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
@@ -126,20 +129,22 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_claims::<Cfg, _>(
-                selection,
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
+        let proof = scheme
+            .batched_prove::<_, _, _>(
+                &setup,
+                prover_claims::<Cfg, _>(
+                    scheme.schedules(),
+                    selection,
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = prepared
             .shared_ntt_cache_metrics()
@@ -150,9 +155,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
-    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group_layout))
         .expect("batched schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let effective_schedule = plan.unwrap_or(&schedule);
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
@@ -225,7 +233,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
+        scheme
+            .setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
             .expect("verifier setup")
     });
     report_timing(
@@ -235,12 +244,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     let prepare = || {
         verifier_claims(
-            Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
-                final_group: *commitments[0].profile(),
-                precommitteds: Vec::new(),
-            })
-            .expect("select verifier schedule row")
-            .selection(),
+            scheme
+                .schedules()
+                .resolve_profiles(&CommittedGroupBatchProfile {
+                    final_group: *commitments[0].profile(),
+                    precommitteds: Vec::new(),
+                })
+                .expect("select verifier schedule row")
+                .selection(),
             &pt[..],
             &openings[..],
             &commitments[0],
@@ -248,7 +259,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
+        scheme.batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

@@ -50,6 +50,9 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
+The current set temporarily contains 16 while
+`external-schedule-catalog-ownership.md` is active; that record returns to the archive
+after its durable contract is folded into the Book.
 
 ## Status transitions (required actions)
 
@@ -82,21 +85,22 @@ The root live set is deliberately small and is synchronized with
 2. `quotient-free-tail-ring-relations.md`
 3. `quotient-free-tail-ring-relations-implementation.md`
 4. `dyadic-chunk-partition.md`
-5. `flat-public-matrix-and-exact-ntt-cache.md`
-6. `fold-linf-rejection.md`
-7. `heterogeneous-group-source-contracts.md`
-8. `large-digit-ntt-infrastructure.md`
-9. `packed-sumcheck.md`
-10. `role-native-projected-digit-layout.md`
-11. `runtime-ring-cutover.md`
-12. `selective-l2-fold-security-sizing.md`
-13. `setup-offloading-planner.md`
-14. `sis-quantum128-scalar-n-table.md`
-15. `structured-e-term.md`
-16. `subring-coefficient-packing.md`
-17. `transcript-grinding.md`
+5. `external-schedule-catalog-ownership.md`
+6. `flat-public-matrix-and-exact-ntt-cache.md`
+7. `fold-linf-rejection.md`
+8. `heterogeneous-group-source-contracts.md`
+9. `large-digit-ntt-infrastructure.md`
+10. `packed-sumcheck.md`
+11. `role-native-projected-digit-layout.md`
+12. `runtime-ring-cutover.md`
+13. `selective-l2-fold-security-sizing.md`
+14. `setup-offloading-planner.md`
+15. `sis-quantum128-scalar-n-table.md`
+16. `structured-e-term.md`
+17. `subring-coefficient-packing.md`
+18. `transcript-grinding.md`
 
-All 17 live specifications must pass the default dead-symbol scan. A record
+All 18 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

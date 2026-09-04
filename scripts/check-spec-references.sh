@@ -29,6 +29,8 @@ fi
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
   'effective_batched_schedule'
+  'trusted_setup_matrix_capacity'
+  'setup_prefix_slot_ids_from_catalog'
   'akita-scheme'
   'akita-cfg'
   'akita-derive'
@@ -130,6 +132,7 @@ live_specs=(
   specs/quotient-free-tail-ring-relations.md
   specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
+  specs/external-schedule-catalog-ownership.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
   specs/heterogeneous-group-source-contracts.md

@@ -29,13 +29,13 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["parallel", "schedules-default", "transcript-blake2b"]
+features = ["parallel", "transcript-blake2b"]
 
 [package.metadata.cargo-machete]
 ignored = ["akita-setup"]
 
 [features]
-default = ["parallel", "schedules-default", "transcript-blake2b"]
+default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -67,7 +67,6 @@ parallel = [
   "akita-sumcheck/parallel",
   "akita-verifier/parallel",
 ]
-schedules-default = ["akita-config/schedules-default"]
 profile-ci = [
   "profile-ci-fp32",
   "profile-ci-fp64",
@@ -82,57 +81,16 @@ profile-ci = [
 # compatibility union for local use and older merge-base checkouts. It is the
 # transitive union of the narrow features above, so those lists cannot drift.
 profile-bench-selected = []
-profile-ci-fp32 = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp32-dense",
-  "akita-config/schedules-fp32-onehot",
-]
-profile-ci-fp64 = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp64-dense",
-  "akita-config/schedules-fp64-onehot",
-]
-profile-ci-fp128-base = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-dense",
-  "akita-config/schedules-fp128-onehot",
-  "akita-config/schedules-fp128-onehot-recursive",
-]
-profile-ci-multi-group-direct = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-onehot",
-]
-profile-ci-multi-group-recursive = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-onehot-recursive",
-]
-profile-ci-multi-group-recursive-w8r2 = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-onehot-recursive-multi-chunk-w8r2",
-]
-profile-ci-distributed = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-onehot-multi-chunk",
-  "akita-config/schedules-fp128-onehot-multi-chunk-w2r2",
-  "akita-config/schedules-fp128-onehot-multi-chunk-w4r2",
-]
+profile-ci-fp32 = ["profile-bench-selected"]
+profile-ci-fp64 = ["profile-bench-selected"]
+profile-ci-fp128-base = ["profile-bench-selected"]
+profile-ci-multi-group-direct = ["profile-bench-selected"]
+profile-ci-multi-group-recursive = ["profile-bench-selected"]
+profile-ci-multi-group-recursive-w8r2 = ["profile-bench-selected"]
+profile-ci-distributed = ["profile-bench-selected"]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
-# configuration. Run with `--no-default-features` so unrelated schedule tables
-# and profile-mode monomorphizations stay out of the binary.
-profile-onehot-fp128 = ["akita-config/schedules-fp128-onehot"]
-schedules-fp128-dense-multi-chunk = [
-  "akita-config/schedules-fp128-dense-multi-chunk",
-]
-schedules-fp128-dense-bounded = ["akita-config/schedules-fp128-dense-bounded"]
-schedules-fp128-onehot-multi-chunk = [
-  "akita-config/schedules-fp128-onehot-multi-chunk",
-]
-schedules-fp128-onehot-recursive = [
-  "akita-config/schedules-fp128-onehot-recursive",
-]
-schedules-fp128-onehot-recursive-multi-chunk = [
-  "akita-config/schedules-fp128-onehot-recursive-multi-chunk-w8r2",
-]
+# configuration. Schedule rows remain external artifacts.
+profile-onehot-fp128 = []
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",
@@ -159,13 +117,8 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-# Test-only: pull in `akita-config`'s test-support layout helpers
-# (e.g. `test_support::akita_batched_root_layout`). Do not enable
-# schedule-table features here: Cargo feature unification would link those
-# tables into the profile-ci binary
-# (`--no-default-features --features profile-ci`), failing
-# `scripts/check_profile_ci_linkage.sh`. Tests that need extra tables rely
-# on `default = ["schedules-default"]` or explicit `required-features`.
+# Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
+# seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }

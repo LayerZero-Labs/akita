@@ -297,7 +297,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
+    use akita_config::proof_optimized::fp128::Dense;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, scheduled_setup_prefix,
@@ -401,14 +401,17 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(16),
-        ))
-        .expect("scalar schedule")
-        .schedule()
-        .root
-        .params
-        .clone();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Dense>()
+            .expect("workspace schedule catalog");
+        let level_params = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(16),
+            ))
+            .expect("scalar schedule")
+            .schedule()
+            .root
+            .params
+            .clone();
         let natural_field_len = level_params
             .inner()
             .matrix
