@@ -100,3 +100,87 @@ fn explicit_rows_accept_adaptive_families() {
 fn explicit_group_rejects_source_metadata() {
     assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
 }
+
+#[test]
+fn strict_catalog_baseline_requires_a_baseline_path() {
+    let error = parse_args_from(vec![
+        "out".into(),
+        "--require-catalog-baseline-match".into(),
+    ])
+    .err()
+    .expect("strict baseline matching without a baseline must reject");
+    assert!(error.contains("requires --catalog-baseline"));
+}
+
+#[test]
+fn every_grouped_artifact_precommit_has_a_shipped_scalar_producer() {
+    let artifact_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("artifacts/schedules");
+    let catalogs = ALL_GENERATED_FAMILIES
+        .iter()
+        .map(|family| {
+            let path = artifact_dir.join(format!("{}.aks", family.family_name()));
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let catalog = akita_schedules::TrustedScheduleCatalog::from_artifact_bytes(
+                &bytes,
+                family.family_name(),
+                &(family.policy)(),
+                family.ring_challenge_config,
+            )
+            .unwrap_or_else(|error| panic!("failed to load {}: {error}", family.family_name()));
+            (family.family_name(), catalog)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let scalar_producers = catalogs
+        .iter()
+        .flat_map(|(family, catalog)| {
+            catalog
+                .rows()
+                .filter(|row| row.profiles().precommitteds.is_empty())
+                .map(move |row| (*family, row.profiles().final_group))
+        })
+        .collect::<Vec<_>>();
+
+    for (family, catalog) in &catalogs {
+        for row in catalog.rows() {
+            for precommitted in &row.profiles().precommitteds {
+                assert!(
+                    scalar_producers
+                        .iter()
+                        .any(|(_, producer)| producer == precommitted),
+                    "family {family} contains a grouped precommit without an exact shipped scalar producer: {:?}",
+                    precommitted.group,
+                );
+            }
+        }
+    }
+
+    for (recursive_family, base_family) in [
+        ("fp128_onehot_recursive", "fp128_onehot"),
+        (
+            "fp128_onehot_recursive_multi_chunk_w8r2",
+            "fp128_onehot_multi_chunk",
+        ),
+    ] {
+        let recursive = catalogs
+            .get(recursive_family)
+            .unwrap_or_else(|| panic!("missing recursive artifact {recursive_family}"));
+        let base_producers = scalar_producers
+            .iter()
+            .filter(|(family, _)| *family == base_family)
+            .map(|(_, producer)| producer)
+            .collect::<Vec<_>>();
+        for row in recursive.rows() {
+            for precommitted in &row.profiles().precommitteds {
+                assert!(
+                    base_producers.contains(&precommitted),
+                    "recursive artifact {recursive_family} precommit is not produced by base family {base_family}: {:?}",
+                    precommitted.group,
+                );
+            }
+        }
+    }
+}

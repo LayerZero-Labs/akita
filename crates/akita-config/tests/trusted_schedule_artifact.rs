@@ -1,7 +1,9 @@
 use akita_config::{
-    policy_of, proof_optimized::fp128, trusted_schedule_catalog_from_bytes, CommitmentConfig,
+    policy_of, proof_optimized::fp128, setup_prefix_slot_ids_from_catalog,
+    trusted_schedule_catalog_from_bytes, CommitmentConfig, RecursiveCommitmentConfig,
     TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
 };
+use akita_serialization::AkitaSerialize;
 use akita_types::{OpeningScheduleSelection, ScheduleRowDigest};
 
 fn checked_in_catalog<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog {
@@ -21,6 +23,33 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
         .join(format!("{}.aks", Cfg::schedule_family_name()));
     std::fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
+    setup_prefix_slot_ids_from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
+        .expect("derive recursive setup-prefix slots")
+        .into_iter()
+        .map(|slot| {
+            let mut bytes = Vec::new();
+            slot.serialize_compressed(&mut bytes)
+                .expect("serialize setup-prefix slot id");
+            bytes
+                .into_iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+        .collect()
+}
+
+fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
+    let slots = serialized_slot_ids::<Cfg>();
+    let digest =
+        akita_types::instance_descriptor::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = digest
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    (slots.len(), digest)
 }
 
 fn json_value_start(bytes: &[u8], key: &[u8], occurrence: usize) -> usize {
@@ -413,4 +442,25 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
     )
     .expect_err("family names must be bounded");
     assert!(format!("{long_family}").contains("family name length"));
+}
+
+#[test]
+fn recursive_prefix_slot_id_fixture() {
+    let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>();
+    let multichunk =
+        recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
+    assert_eq!(
+        onehot,
+        (
+            3,
+            "7aa5dc54754bdf48823cde0aac34c3926c207e64a118f8ebe9c44d7985484dac".to_string(),
+        )
+    );
+    assert_eq!(
+        multichunk,
+        (
+            3,
+            "20fc40144b1de0c287268de2fd6a9bf168f49fb715f60525ef410f6ab4a07156".to_string(),
+        )
+    );
 }

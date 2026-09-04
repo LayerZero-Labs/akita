@@ -290,8 +290,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 ///
 /// Generation cannot read the catalog it is producing, so this plans the row
 /// instead of selecting it. `TrustedScheduleCatalog::resolve_key` is the runtime counterpart, and
-/// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
-/// agree on every shipped descriptor.
+/// `every_grouped_artifact_precommit_has_a_shipped_scalar_producer` asserts the
+/// two agree on every shipped descriptor, including recursive adapter/base-family
+/// mappings.
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,

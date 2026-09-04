@@ -187,7 +187,10 @@ jobs:
           artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts"
           mkdir -p "$artifact_dir"
           cargo run --release -p akita-planner --features catalog-gen \
-            --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress
+            --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
+            --catalog-baseline specs/evidence/subring-coefficient-packing/head.tsv \
+            --require-catalog-baseline-match \
+            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
           diff -ru artifacts/schedules "$artifact_dir"
       - name: Direct modeled SIS cost for every schedule
         run: |

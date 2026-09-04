@@ -39,6 +39,7 @@ struct ParsedArgs {
     catalog_report: Option<PathBuf>,
     catalog_snapshot: Option<PathBuf>,
     catalog_baseline: Option<PathBuf>,
+    require_catalog_baseline_match: bool,
     row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
@@ -61,7 +62,8 @@ fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_artifacts -- <output-dir> [--check-catalog] \
      [--catalog-report <path>] [--catalog-snapshot <path>] \
-     [--catalog-baseline <snapshot>] [--row-progress] \
+     [--catalog-baseline <snapshot>] [--require-catalog-baseline-match] \
+     [--row-progress] \
      [family_name ...]\n\
      positional family names select only those generated families; omit them \
      to generate every family \
@@ -133,6 +135,7 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let mut catalog_report = None;
     let mut catalog_snapshot = None;
     let mut catalog_baseline = None;
+    let mut require_catalog_baseline_match = false;
     let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
@@ -176,6 +179,10 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
                 }
                 catalog_baseline = Some(PathBuf::from(value));
                 i += 2;
+            }
+            "--require-catalog-baseline-match" => {
+                require_catalog_baseline_match = true;
+                i += 1;
             }
             "--final-group" => {
                 let value = raw_args
@@ -242,12 +249,16 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if catalog_baseline.is_some() && family_filter.is_some() {
         return Err("--catalog-baseline requires the complete generated family set".to_string());
     }
+    if require_catalog_baseline_match && catalog_baseline.is_none() {
+        return Err("--require-catalog-baseline-match requires --catalog-baseline".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         check_catalog,
         catalog_report,
         catalog_snapshot,
         catalog_baseline,
+        require_catalog_baseline_match,
         row_progress,
         family_filter,
         explicit_rows,
@@ -733,6 +744,16 @@ fn main() -> Result<(), String> {
             comparison.changed_rows,
             comparison.equal_rows,
         );
+        if args.require_catalog_baseline_match
+            && (comparison.added_rows != 0
+                || comparison.removed_rows != 0
+                || comparison.changed_rows != 0)
+        {
+            return Err(format!(
+                "generated catalog differs from the required baseline: {} added, {} removed, {} changed",
+                comparison.added_rows, comparison.removed_rows, comparison.changed_rows,
+            ));
+        }
     }
     let publish_started = args.row_progress.then(Instant::now);
     if args.row_progress {
