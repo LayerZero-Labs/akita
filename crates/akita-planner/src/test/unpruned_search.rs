@@ -1,10 +1,25 @@
 use super::*;
-use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
+
+#[path = "unpruned_search/candidate.rs"]
+mod candidate;
+#[path = "unpruned_search/frontier.rs"]
+mod frontier;
+#[path = "unpruned_search/relation.rs"]
+mod relation;
+#[path = "unpruned_search/score.rs"]
+mod score;
+#[path = "unpruned_search/suffix.rs"]
+mod suffix;
+
+use candidate::{prepend_fold, prepend_root, terminal};
+use frontier::{retain as retain_frontier_candidate, OracleFrontier};
+use relation::OracleRelationState;
+use score::{schedule_descriptor_bytes, score, OracleScore};
+use suffix::visit_suffixes;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    key: PolynomialGroupLayout,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,252 +30,124 @@ struct UnprunedState {
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
     payload_phase: akita_types::CommitmentPayloadPhase,
+    relation_state: OracleRelationState,
 }
 
-type UnprunedMemo = Vec<(UnprunedState, Arc<Vec<ScheduleCandidate>>)>;
-
-fn packing_opening_domain(
-    level: usize,
-    extension_degree: usize,
-    dimensions: CommitmentRingDims,
-) -> Result<Vec<crate::schedule_params::PlannerOpeningCandidate>, AkitaError> {
-    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-        level,
-        extension_degree,
-        dimensions,
-    )
+impl std::hash::Hash for UnprunedState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.level.hash(state);
+        self.input_witness_len.hash(state);
+        self.current_log_basis.hash(state);
+        self.source_moment.hash(state);
+        self.dimension_ceiling.d_a().hash(state);
+        self.dimension_ceiling.d_b().hash(state);
+        self.dimension_ceiling.d_d().hash(state);
+        self.payload_phase.hash(state);
+        self.relation_state.hash(state);
+    }
 }
 
-fn enumerate_suffixes(
-    ctx: &UnprunedCtx<'_>,
-    state: UnprunedState,
-    memo: &mut UnprunedMemo,
-) -> Result<Arc<Vec<ScheduleCandidate>>, AkitaError> {
-    if let Some((_, suffixes)) = memo.iter().find(|(cached, _)| *cached == state) {
-        return Ok(Arc::clone(suffixes));
-    }
-    let UnprunedCtx {
-        policy,
-        ring_challenge_config,
-        key,
-    } = *ctx;
-    let UnprunedState {
-        level,
-        input_witness_len,
-        current_log_basis,
-        source_moment,
-        dimension_ceiling,
-        payload_phase,
-    } = state;
-    if level > MAX_RECURSION_DEPTH {
-        return Ok(Arc::new(Vec::new()));
-    }
-    let field_bits = policy.decomposition.field_bits();
-    let challenge_field_bits = policy.challenge_field_bits()?;
-    let (min_log_basis, max_log_basis) =
-        crate::policy::log_basis_search_range_at_level(policy, level);
-    let terminal_opening_shape = akita_types::PolynomialGroupLayout::singleton(
-        akita_types::padded_boolean_opening_vars(input_witness_len)?,
-    );
-    let mut schedules = Vec::new();
-    for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-            let trace_work = ring_challenge_config(candidate_dimensions.d_a())
-                .ok()
-                .and_then(|ring_challenge| {
-                    try_extension_opening_reduction_level_bytes(
-                        challenge_field_bits,
-                        policy.claim_ext_degree,
-                        terminal_opening_shape,
-                    )
-                    .transpose()
-                    .map(|result| {
-                        result.map(|eor_bytes| {
-                            (
-                                crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
-                                    ring_challenge,
-                                ),
-                                eor_bytes,
-                            )
-                        })
-                    })
-                })
-                .transpose()?;
-            let derive_candidates =
-                |opening, payload_mode| -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-                    let exhaustive = level < akita_schedules::ADAPTIVE_SEARCH_LEVELS;
-                    let request = RecursiveCandidateRequest {
-                        policy,
-                        payload_mode,
-                        opening,
-                        dimensions: candidate_dimensions,
-                        current_witness_len: input_witness_len,
-                        source: crate::InnerBasisSource::BalancedDigits {
-                            log_basis: current_log_basis,
-                        },
-                        log_basis_inner: current_log_basis,
-                        log_basis_open: log_basis,
-                        fold_level: level,
-                        source_moment: if exhaustive { source_moment } else { None },
-                    };
-                    let fold_policy = if exhaustive {
-                        FoldCandidatePolicy::Frontier(SplitBoundPolicy::DisabledForOracle)
-                    } else {
-                        FoldCandidatePolicy::Best
-                    };
-                    derive_fold_candidates(request, RecursiveSetupPrefix::None, fold_policy)
-                };
+pub(super) const MAX_ORACLE_SUFFIX_STATES: usize = 2_000_000;
+pub(super) const MAX_ORACLE_COMPLETE_SCHEDULES: usize = 1_000_000;
+pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 4;
 
-            if let Some((trace_opening, terminal_eor_bytes)) = trace_work {
-                for &payload_mode in payload_phase.candidate_modes(level, false) {
-                    for params in derive_terminal_candidates(RecursiveCandidateRequest {
-                        policy,
-                        payload_mode,
-                        opening: trace_opening,
-                        dimensions: candidate_dimensions,
-                        current_witness_len: input_witness_len,
-                        source: crate::InnerBasisSource::BalancedDigits {
-                            log_basis: current_log_basis,
-                        },
-                        log_basis_inner: current_log_basis,
-                        log_basis_open: log_basis,
-                        fold_level: level,
-                        source_moment,
-                    })? {
-                        if let Some((mut terminal, terminal_bytes)) =
-                            suffix_dp::try_terminal_direct_suffix_cost(
-                                policy,
-                                input_witness_len,
-                                &params,
-                                field_bits,
-                                key,
-                                level,
-                                None,
-                                source_moment,
-                            )?
-                        {
-                            let direct_bytes = terminal_eor_bytes;
-                            let payload_bytes =
-                                direct_bytes.checked_add(terminal_bytes).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned traversal terminal proof size overflow".into(),
-                                    )
-                                })?;
-                            terminal.estimated_direct_payload_bytes = direct_bytes;
-                            schedules.push(ScheduleCandidate {
-                                first_direct_setup_field_len: std::num::NonZeroUsize::new(
-                                    akita_types::active_setup_field_len(
-                                        &params,
-                                        &suffix_opening_layout(input_witness_len, None)?,
-                                    )?,
-                                ),
-                                cost: PackedProofCost::new(payload_bytes, 0)?,
-                                setup_field_elements: terminal_setup_field_elements(
-                                    &terminal.params,
-                                )?,
-                                folds: CandidateFoldChain::default(),
-                                terminal: Arc::new(terminal),
-                            });
-                        }
-                    }
-                }
-            }
+#[derive(Default)]
+struct OracleWork {
+    suffix_states: usize,
+    reduced_fold_candidates: usize,
+    linf_candidates: usize,
+    l2_candidates: usize,
+}
 
-            let fold_work = if level <= 1 {
-                packing_opening_domain(level, policy.claim_ext_degree, candidate_dimensions)?
-                    .into_iter()
-                    .map(|opening| (opening, 0))
-                    .collect::<Vec<_>>()
-            } else {
-                trace_work.into_iter().collect()
-            };
-            for (opening, opening_reduction_bytes) in fold_work {
-                for &payload_mode in payload_phase.candidate_modes(level, false) {
-                    for (params, output_witness_len) in derive_candidates(opening, payload_mode)? {
-                        let child_ceiling = params.role_dims();
-                        let next_source_moment = if policy.selective_l2_response_model_enabled() {
-                            let opening_layout = suffix_opening_layout(input_witness_len, None)?;
-                            Some(crate::response_model::next_source_moment(
-                                &params,
-                                &opening_layout,
-                                &[source_moment.ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned response source moment is missing".into(),
-                                    )
-                                })?],
-                                field_bits,
-                                policy.claim_ext_degree,
-                            )?)
-                        } else {
-                            None
-                        };
-                        for child in enumerate_suffixes(
-                            ctx,
-                            UnprunedState {
-                                level: level + 1,
-                                input_witness_len: output_witness_len,
-                                current_log_basis: log_basis,
-                                source_moment: next_source_moment,
-                                dimension_ceiling: child_ceiling,
-                                payload_phase: payload_phase.after(params.payload_mode),
-                            },
-                            memo,
-                        )?
-                        .iter()
-                        {
-                            let opening_layout = suffix_opening_layout(input_witness_len, None)?;
-                            let successor_d = child
-                                .folds
-                                .first()
-                                .map_or(child.terminal.params.d_a(), |fold| fold.params.d_a());
-                            let direct_bytes = level_proof_bytes(
-                                field_bits,
-                                challenge_field_bits,
-                                &params,
-                                params.relation_address_geometry(
-                                    &opening_layout,
-                                    policy.claim_ext_degree,
-                                    successor_d,
-                                    output_witness_len,
-                                )?,
-                                child.first_fold_params(),
-                            )?
-                            .checked_add(opening_reduction_bytes)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "unpruned traversal fold proof size overflow".into(),
-                                )
-                            })?;
-                            let folds = child.folds.prepend(CandidateFoldStep {
-                                params: Arc::new(params.clone()),
-                                input_witness_len,
-                                output_witness_len,
-                                estimated_direct_payload_bytes: direct_bytes,
-                                estimated_stage3_payload_bytes: 0,
-                            });
-                            let cost = child.cost.checked_prepend(direct_bytes, 0)?;
-                            schedules.push(ScheduleCandidate {
-                                first_direct_setup_field_len: std::num::NonZeroUsize::new(
-                                    akita_types::active_setup_field_len(
-                                        &params,
-                                        &suffix_opening_layout(input_witness_len, None)?,
-                                    )?,
-                                ),
-                                cost,
-                                setup_field_elements: level_setup_field_elements(&params)?
-                                    .max(child.setup_field_elements),
-                                folds,
-                                terminal: Arc::clone(&child.terminal),
-                            });
-                        }
-                    }
-                }
-            }
+type OracleMemo = std::collections::HashMap<UnprunedState, Arc<Vec<ScheduleCandidate>>>;
+
+impl OracleWork {
+    fn visit_suffix_state(&mut self) -> Result<(), AkitaError> {
+        self.suffix_states = self.suffix_states.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("unpruned suffix work counter overflow".into())
+        })?;
+        if self.suffix_states > MAX_ORACLE_SUFFIX_STATES {
+            return Err(AkitaError::InvalidSetup(
+                "unpruned fixture exceeded its suffix-state work bound".into(),
+            ));
         }
+        Ok(())
     }
-    let schedules = Arc::new(schedules);
-    memo.push((state, Arc::clone(&schedules)));
-    Ok(schedules)
+
+    fn record_reduced_fold_candidates(&mut self, count: usize) -> Result<(), AkitaError> {
+        self.reduced_fold_candidates =
+            self.reduced_fold_candidates
+                .checked_add(count)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unpruned reduced-candidate counter overflow".into())
+                })?;
+        Ok(())
+    }
+
+    fn record_candidate_route(&mut self, params: &CommittedGroupParams) -> Result<(), AkitaError> {
+        let counter = match params.inner().matrix.security_route() {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
+            akita_types::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
+        };
+        *counter = counter.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("unpruned candidate-route counter overflow".into())
+        })?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct OracleSearchResult {
+    pub(super) planned: PlannedFoldSchedule,
+    pub(super) suffix_states: usize,
+    pub(super) complete_schedules: usize,
+    pub(super) reduced_fold_candidates: usize,
+    pub(super) linf_candidates: usize,
+    pub(super) l2_candidates: usize,
+}
+
+struct RootCandidate<'a> {
+    params: &'a CommittedGroupParams,
+    input_witness_len: usize,
+    output_witness_len: usize,
+}
+
+fn consider_complete_schedule(
+    policy: &PlannerPolicy,
+    schedule_key: &akita_types::AkitaScheduleLookupKey,
+    root: RootCandidate<'_>,
+    suffix: &ScheduleCandidate,
+    complete_schedules: &std::cell::Cell<usize>,
+    selected: &mut Option<(OracleScore, ScheduleCandidate)>,
+) -> Result<(), AkitaError> {
+    let visited = complete_schedules.get().checked_add(1).ok_or_else(|| {
+        AkitaError::InvalidSetup("unpruned complete-schedule counter overflow".into())
+    })?;
+    if visited > MAX_ORACLE_COMPLETE_SCHEDULES {
+        return Err(AkitaError::InvalidSetup(
+            "unpruned fixture exceeded its complete-schedule work bound".into(),
+        ));
+    }
+    complete_schedules.set(visited);
+    let candidate = prepend_root(
+        policy,
+        schedule_key,
+        root.input_witness_len,
+        root.params,
+        root.output_witness_len,
+        suffix,
+    )?;
+    if !policy.admits_setup_field_elements(candidate.setup_field_elements) {
+        return Ok(());
+    }
+    let candidate_score = score(policy, &candidate)?;
+    if selected
+        .as_ref()
+        .is_none_or(|(best_score, _)| candidate_score < *best_score)
+    {
+        *selected = Some((candidate_score, candidate));
+    }
+    Ok(())
 }
 
 pub(super) fn find_schedule(
@@ -268,7 +155,7 @@ pub(super) fn find_schedule(
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-) -> Result<PlannedFoldSchedule, AkitaError> {
+) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
     akita_schedules::planner_support::validate_policy(policy)?;
 
@@ -277,20 +164,19 @@ pub(super) fn find_schedule(
         AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
     })?;
     let (min_log_basis, max_log_basis) = crate::policy::log_basis_search_range_at_level(policy, 0);
-    let mut complete = Vec::new();
+    let mut selected: Option<(OracleScore, ScheduleCandidate)> = None;
+    let mut work = OracleWork::default();
+    let mut memo = OracleMemo::new();
+    let complete_schedules = std::cell::Cell::new(0usize);
     let schedule_key = akita_types::AkitaScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
         policy,
         ring_challenge_config: &ring_challenge_config,
-        key,
     };
-    // This remains an exhaustive oracle: memoization only reuses the complete
-    // candidate set for an identical suffix state. In particular, it applies
-    // none of the dominance or lower-bound pruning used by the production DP.
-    let mut memo = UnprunedMemo::new();
     let inner_source =
         root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
+    let relation_state = OracleRelationState::QuotientPrefix;
     for log_basis in min_log_basis..=max_log_basis {
         for inner_basis in min_inner_basis..=max_inner_basis {
             for root_dimensions in
@@ -302,17 +188,19 @@ pub(super) fn find_schedule(
                     continue;
                 }
                 let root_openings =
-                    packing_opening_domain(0, policy.claim_ext_degree, root_dimensions)?;
+                    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                        0,
+                        policy.claim_ext_degree,
+                        root_dimensions,
+                    )?;
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
-                        crate::planner::root_level_candidates_for_basis(
+                        crate::planner::exhaustive_root_candidates_for_reference(
                             &schedule_key,
                             honest_fold_policy,
-                            &[],
                             policy,
                             root_dimensions,
                             root_opening,
-                            &[],
                             inner_basis,
                             log_basis,
                         )?
@@ -336,7 +224,7 @@ pub(super) fn find_schedule(
                         } else {
                             None
                         };
-                        for suffix in enumerate_suffixes(
+                        visit_suffixes(
                             &ctx,
                             UnprunedState {
                                 level: 1,
@@ -346,83 +234,47 @@ pub(super) fn find_schedule(
                                 dimension_ceiling: root_dimensions,
                                 payload_phase:
                                     akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                                relation_state,
                             },
                             &mut memo,
-                        )?
-                        .iter()
-                        {
-                            let opening_layout = schedule_key.opening_layout()?;
-                            let first_direct_setup_field_len = NonZeroUsize::new(
-                                active_setup_field_len(&root_params, &opening_layout)?,
-                            )
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "unpruned root setup field length must be nonzero".into(),
-                                )
-                            })?;
-                            let successor_d = suffix
-                                .folds
-                                .first()
-                                .map_or(suffix.terminal.params.d_a(), |fold| fold.params.d_a());
-                            let root_bytes = level_proof_bytes(
-                                field_bits,
-                                policy.challenge_field_bits()?,
-                                &root_params,
-                                root_params.relation_address_geometry(
-                                    &opening_layout,
-                                    policy.claim_ext_degree,
-                                    successor_d,
-                                    output_witness_len,
-                                )?,
-                                suffix.first_fold_params(),
-                            )?;
-                            let folds = suffix.folds.prepend(CandidateFoldStep {
-                                params: Arc::new(root_params.clone()),
-                                input_witness_len,
-                                output_witness_len,
-                                estimated_direct_payload_bytes: root_bytes,
-                                estimated_stage3_payload_bytes: 0,
-                            });
-                            let payload_cost = suffix.cost.checked_prepend(root_bytes, 0)?;
-                            let mut candidate = ScheduleCandidate {
-                                first_direct_setup_field_len: Some(first_direct_setup_field_len),
-                                cost: payload_cost,
-                                setup_field_elements: level_setup_field_elements(&root_params)?
-                                    .max(suffix.setup_field_elements),
-                                folds,
-                                terminal: Arc::clone(&suffix.terminal),
-                            };
-                            let nonce_bits =
-                                akita_schedules::planner_support::candidate_grinding_nonce_bits(
+                            &mut work,
+                            &mut |suffix| {
+                                consider_complete_schedule(
                                     policy,
-                                    &schedule_key.opening_layout()?,
-                                    &candidate.folds.to_vec(),
-                                    candidate.terminal.as_ref(),
-                                )?;
-                            candidate.cost = candidate.cost.with_nonce_bits(nonce_bits)?;
-                            complete.push(candidate);
-                        }
+                                    &schedule_key,
+                                    RootCandidate {
+                                        params: &root_params,
+                                        input_witness_len,
+                                        output_witness_len,
+                                    },
+                                    &suffix,
+                                    &complete_schedules,
+                                    &mut selected,
+                                )
+                            },
+                        )?;
                     }
                 }
             }
         }
     }
 
-    let supported = complete
-        .iter()
-        .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements));
-    let Some(selected) = select_complete_candidate(policy, supported, None)?.cloned() else {
+    let Some((_, selected)) = selected else {
         return Err(AkitaError::UnsupportedSchedule(
             "unpruned traversal found no complete schedule".into(),
         ));
     };
-    let cached_first_direct_setup_field_len =
-        if policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload {
-            selected.first_direct_setup_field_len.map(NonZeroUsize::get)
-        } else {
-            None
-        };
-    materialize_candidate_schedule(
+    let cached_first_direct_setup_field_len = if matches!(
+        policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+    ) {
+        selected.first_direct_setup_field_len.map(NonZeroUsize::get)
+    } else {
+        None
+    };
+    let selected_descriptor = schedule_descriptor_bytes(&selected)?;
+    let planned = materialize_candidate_schedule(
         selected.cost.proof_bytes(),
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
@@ -430,5 +282,18 @@ pub(super) fn find_schedule(
         &schedule_key.opening_layout()?,
         selected.folds.to_vec(),
         selected.terminal.as_ref().clone(),
-    )
+    )?;
+    if selected_descriptor != planned.schedule.canonical_descriptor_bytes() {
+        return Err(AkitaError::InvalidSetup(
+            "oracle candidate descriptor disagrees with its materialized schedule".into(),
+        ));
+    }
+    Ok(OracleSearchResult {
+        planned,
+        suffix_states: work.suffix_states,
+        complete_schedules: complete_schedules.get(),
+        reduced_fold_candidates: work.reduced_fold_candidates,
+        linf_candidates: work.linf_candidates,
+        l2_candidates: work.l2_candidates,
+    })
 }

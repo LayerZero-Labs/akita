@@ -148,7 +148,10 @@ where
             &opening_layout,
             &relation_geometry,
             root_commitment.witness_chunk.num_chunks,
-            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
+            akita_types::RelationQuotientPlan::quotient_lift(
+                akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
+            )
+            .expect("quotient-lift relation plan"),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(

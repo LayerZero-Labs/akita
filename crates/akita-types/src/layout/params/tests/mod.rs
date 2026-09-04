@@ -18,6 +18,26 @@ fn sample_layout_lp() -> CommittedGroupParams {
 }
 
 #[test]
+fn relation_mode_is_bound_immediately_after_payload_mode() {
+    let quotient = sample_params_only();
+    let mut reduced = quotient.clone();
+    reduced.ring_relation_mode = crate::RingRelationMode::ReducedEvaluation;
+
+    let quotient_descriptor = quotient.canonical_descriptor_bytes();
+    let reduced_descriptor = reduced.canonical_descriptor_bytes();
+    assert_eq!(quotient_descriptor[0], quotient.payload_mode.tag());
+    assert_eq!(
+        quotient_descriptor[1],
+        crate::RingRelationMode::QuotientLift.tag()
+    );
+    assert_eq!(
+        reduced_descriptor[1],
+        crate::RingRelationMode::ReducedEvaluation.tag()
+    );
+    assert_ne!(quotient_descriptor, reduced_descriptor);
+}
+
+#[test]
 fn distinct_semantic_depths_size_a_b_and_d_independently() {
     let mut params = sample_params_only();
     params.own_group_mut().profile.inner.digits.log_basis = 2;

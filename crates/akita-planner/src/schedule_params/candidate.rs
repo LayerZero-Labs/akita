@@ -279,7 +279,11 @@ pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     recursive_split_search_domain, FoldCandidatePolicy, RecursiveCandidateRequest,
-    RecursiveSetupPrefix, SplitBoundPolicy,
+    RecursiveFoldWork, SplitBoundPolicy,
+};
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(crate) use recursive::{
+    derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
 pub(super) use setup_prefix::{derive_setup_prefix_groups, SetupPrefixSearchRequest};

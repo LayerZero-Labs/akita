@@ -2,13 +2,13 @@
 
 use crate::compute::compression::{
     execute_compression_chains, CompressionExecutionInput, CompressionExecutionOutput,
-    CompressionExecutionReport,
+    CompressionExecutionReport, CompressionRelationOutput,
 };
 use crate::compute::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
 use akita_types::{
     AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload,
-    RelationRhsLayout, RingVec,
+    RelationRhsLayout, RingRelationMode, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -20,16 +20,15 @@ pub(crate) enum CompressionSourceId {
 }
 
 /// Persistent materialization for one source chain.
-pub(crate) struct CompressionSourceWitness<F> {
+pub(crate) struct CompressionSourceWitness<F: Field> {
     pub(crate) id: CompressionSourceId,
     pub(crate) witness: CompressionChainWitness,
-    #[allow(dead_code)] // Read by the atomic compressed-RHS and wire cutover.
     pub(crate) terminal: CompressionTerminalPayload<F>,
-    pub(crate) quotients: Vec<RingVec<F>>,
+    relation: CompressionRelationOutput<F>,
 }
 
 /// All source chains in canonical relation order: B groups, then D.
-pub(crate) struct CompressionWitnessMaterialization<F> {
+pub(crate) struct CompressionWitnessMaterialization<F: Field> {
     sources: Vec<CompressionSourceWitness<F>>,
 }
 
@@ -53,13 +52,35 @@ impl<F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize>
         plan: &CompressionChainPlan,
         hint: &AkitaCommitmentHint<F>,
         terminal_coefficients: Vec<F>,
+        relation_mode: RingRelationMode,
     ) -> Result<Self, AkitaError> {
+        let (witness, relation) = match relation_mode {
+            RingRelationMode::QuotientLift => (
+                hint.outer_compression_witness(plan)?,
+                CompressionRelationOutput::QuotientLift {
+                    quotients: hint.outer_compression_quotients(plan)?,
+                },
+            ),
+            RingRelationMode::ReducedEvaluation => (
+                hint.reduced_outer_compression_witness(plan)?,
+                CompressionRelationOutput::ReducedEvaluation,
+            ),
+        };
         Ok(Self {
             id: CompressionSourceId::Outer { group_index },
-            witness: hint.outer_compression_witness(plan)?,
+            witness,
             terminal: CompressionTerminalPayload::new(plan.clone(), terminal_coefficients)?,
-            quotients: hint.outer_compression_quotients(plan)?,
+            relation,
         })
+    }
+
+    pub(crate) fn quotient(&self, map_index: usize) -> Result<&RingVec<F>, AkitaError> {
+        match &self.relation {
+            CompressionRelationOutput::QuotientLift { quotients } => {
+                quotients.get(map_index).ok_or(AkitaError::InvalidProof)
+            }
+            CompressionRelationOutput::ReducedEvaluation => Err(AkitaError::InvalidProof),
+        }
     }
 }
 
@@ -70,7 +91,7 @@ fn into_source<F: Field>(
         id: output.id,
         witness: output.witness,
         terminal: output.terminal,
-        quotients: output.quotients,
+        relation: output.relation,
     }
 }
 
@@ -80,6 +101,7 @@ pub(crate) fn materialize_compression_witness<F, B>(
     layout: &RelationRhsLayout,
     mut outer_sources: Vec<CompressionSourceWitness<F>>,
     opening_rows: &RingVec<F>,
+    relation_mode: RingRelationMode,
 ) -> Result<
     (
         CompressionWitnessMaterialization<F>,
@@ -98,10 +120,20 @@ where
     }
     for (relation_group_index, source) in outer_sources.iter().enumerate() {
         let (group_index, plan) = layout.group_compression_plan(relation_group_index)?;
+        let relation_matches = match (&source.relation, relation_mode) {
+            (
+                CompressionRelationOutput::QuotientLift { quotients },
+                RingRelationMode::QuotientLift,
+            ) => quotients.len() == plan.maps().len(),
+            (CompressionRelationOutput::ReducedEvaluation, RingRelationMode::ReducedEvaluation) => {
+                true
+            }
+            _ => false,
+        };
         if source.id != (CompressionSourceId::Outer { group_index })
             || source.witness.plan() != plan
             || source.terminal.plan() != plan
-            || source.quotients.len() != plan.maps().len()
+            || !relation_matches
         {
             return Err(AkitaError::InvalidSetup(
                 "retained outer compression source disagrees with the relation layout".into(),
@@ -120,6 +152,7 @@ where
         id: CompressionSourceId::Opening,
         plan: opening_plan.clone(),
         coefficients: opening_rows.coeffs().to_vec(),
+        relation_mode,
     }];
 
     let (outputs, report) = execute_compression_chains(ctx, inputs)?;

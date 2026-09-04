@@ -1,11 +1,11 @@
 #![allow(missing_docs)]
 
-use akita_types::CommitmentRingDims;
+use akita_types::{CommitmentRingDims, RingRelationMode};
 use akita_verifier::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::Prime128OffsetA7F7;
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use jolt_field::{One, Prime128OffsetA7F7};
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;
@@ -30,68 +30,156 @@ fn bench_relation_evaluator(c: &mut Criterion) {
             64,
         ),
     ] {
-        let case = relation_evaluator_benchmark_case(role_dims, outgoing_ring_dimension)
-            .expect("valid relation benchmark case");
-        group.bench_with_input(
-            BenchmarkId::new(cell, "direct"),
-            &case,
-            |b, benchmark_case| {
-                b.iter(|| {
-                    black_box(
-                        benchmark_case
-                            .evaluator
-                            .eval_flat_at_point::<F>(
-                                black_box(&benchmark_case.point),
-                                black_box(&benchmark_case.setup),
-                                black_box(benchmark_case.alpha),
-                                None,
+        for (mode_name, mode) in [
+            ("quotient", RingRelationMode::QuotientLift),
+            ("reduced", RingRelationMode::ReducedEvaluation),
+        ] {
+            let case = relation_evaluator_benchmark_case(mode, role_dims, outgoing_ring_dimension)
+                .expect("valid relation benchmark case");
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "preparation"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter(|| black_box(benchmark_case.prepare().expect("relation preparation")));
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "setup_scan"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter_batched(
+                        || benchmark_case.prepare().expect("relation preparation"),
+                        |prepared| {
+                            black_box(
+                                prepared
+                                    .setup_scan(black_box(&benchmark_case.setup))
+                                    .expect("setup scan"),
                             )
-                            .expect("relation evaluation"),
-                    )
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new(cell, "deferred"),
-            &case,
-            |b, benchmark_case| {
-                b.iter(|| {
-                    black_box(
-                        benchmark_case
-                            .evaluator
-                            .eval_flat_at_point::<F>(
-                                black_box(&benchmark_case.point),
-                                black_box(&benchmark_case.setup),
-                                black_box(benchmark_case.alpha),
-                                Some(black_box(F::one())),
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "structured_groups"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter_batched(
+                        || benchmark_case.prepare().expect("relation preparation"),
+                        |prepared| {
+                            black_box(
+                                prepared
+                                    .structured_groups()
+                                    .expect("structured group evaluation"),
                             )
-                            .expect("deferred relation evaluation"),
-                    )
-                });
-            },
-        );
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "quotient_tail"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter_batched(
+                        || benchmark_case.prepare().expect("relation preparation"),
+                        |prepared| {
+                            black_box(prepared.quotient_tail().expect("quotient-tail evaluation"))
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "relation_weight"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter_batched(
+                        || benchmark_case.prepare().expect("relation preparation"),
+                        |prepared| {
+                            black_box(
+                                prepared
+                                    .relation_weight()
+                                    .expect("relation weight evaluation"),
+                            )
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{cell}/{mode_name}"), "total_relation"),
+                &case,
+                |b, benchmark_case| {
+                    b.iter(|| {
+                        black_box(
+                            benchmark_case
+                                .evaluator
+                                .eval_flat_at_point::<F>(
+                                    black_box(&benchmark_case.point),
+                                    black_box(&benchmark_case.setup),
+                                    black_box(benchmark_case.alpha),
+                                )
+                                .expect("relation evaluation"),
+                        )
+                    });
+                },
+            );
+            if mode == RingRelationMode::QuotientLift {
+                group.bench_with_input(
+                    BenchmarkId::new(format!("{cell}/{mode_name}"), "deferred_relation"),
+                    &case,
+                    |b, benchmark_case| {
+                        b.iter(|| {
+                            black_box(
+                                benchmark_case
+                                    .evaluator
+                                    .eval_flat_at_point_with_deferred_setup::<F>(
+                                        black_box(&benchmark_case.point),
+                                        black_box(&benchmark_case.setup),
+                                        black_box(benchmark_case.alpha),
+                                        black_box(F::one()),
+                                    )
+                                    .expect("deferred relation evaluation"),
+                            )
+                        });
+                    },
+                );
+            }
+        }
     }
 
-    let multi_chunk =
-        relation_evaluator_benchmark_case_with_chunks(CommitmentRingDims::uniform(D), D, 8)
-            .expect("valid multi-chunk relation benchmark case");
-    for (mode, deferred_setup_claim) in [("direct", None), ("deferred", Some(F::one()))] {
+    let multi_chunk = relation_evaluator_benchmark_case_with_chunks(
+        RingRelationMode::QuotientLift,
+        CommitmentRingDims::uniform(D),
+        D,
+        8,
+    )
+    .expect("valid multi-chunk relation benchmark case");
+    for deferred in [false, true] {
+        let mode = if deferred { "deferred" } else { "direct" };
         group.bench_with_input(
             BenchmarkId::new("U-8chunks", mode),
             &multi_chunk,
             |b, benchmark_case| {
                 b.iter(|| {
-                    black_box(
+                    let result = if deferred {
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F>(
+                            .eval_flat_at_point_with_deferred_setup::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
-                                black_box(deferred_setup_claim),
+                                black_box(F::one()),
                             )
-                            .expect("multi-chunk relation evaluation"),
-                    )
+                    } else {
+                        benchmark_case.evaluator.eval_flat_at_point::<F>(
+                            black_box(&benchmark_case.point),
+                            black_box(&benchmark_case.setup),
+                            black_box(benchmark_case.alpha),
+                        )
+                    };
+                    black_box(result.expect("multi-chunk relation evaluation"))
                 });
             },
         );

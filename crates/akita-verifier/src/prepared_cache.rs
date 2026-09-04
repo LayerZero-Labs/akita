@@ -90,13 +90,23 @@ mod tests {
 
     #[test]
     fn terminal_builder_binds_the_resolved_schedule_and_installs() {
+        std::thread::Builder::new()
+            .name("terminal-cache-builder-test".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(terminal_builder_binds_the_resolved_schedule_and_installs_inner)
+            .expect("spawn terminal cache builder test")
+            .join()
+            .expect("terminal cache builder test thread");
+    }
+
+    fn terminal_builder_binds_the_resolved_schedule_and_installs_inner() {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let row = catalog
             .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
                 15, 1,
             )))
-            .expect("generated fp128 schedule");
+            .expect("workspace fp128 schedule");
         let selection = row.selection();
         let schedule = row.schedule();
         let requirement = terminal_ntt_cache_requirement(schedule).expect("terminal requirement");

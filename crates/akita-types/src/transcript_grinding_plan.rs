@@ -1,6 +1,7 @@
 //! Canonical grinding-plan derivation from public schedule geometry.
 
 use crate::narrowing::{usize_to_u32, usize_to_u64};
+use crate::transcript_grinding::GrindingPlanAccumulator;
 use crate::{
     multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
@@ -61,7 +62,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_candidate(
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_nonce_bits_for_planner_edge(
     params: &CommittedGroupParams,
-    output_witness_len: usize,
+    relation_geometry: crate::RelationAddressGeometry,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
     modulus_bits: u32,
@@ -69,20 +70,21 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     level: u32,
 ) -> Result<usize, AkitaError> {
     let capacity = challenge_capacity_bits(layout, modulus_bits, extension_degree)?;
-    let mut runs = Vec::new();
+    let mut accumulator = GrindingPlanAccumulator::new(capacity)?;
+    let mut push = |run| accumulator.push(run);
     let rounds = append_nonterminal(
-        &mut runs,
+        &mut push,
         capacity,
         extension_degree,
         level,
         params,
-        output_witness_len,
+        relation_geometry.relation_point_variable_count(),
         layout,
         successor,
     )?;
     if let FoldSuccessor::Terminal(terminal) = successor {
         append_terminal(
-            &mut runs,
+            &mut push,
             capacity,
             extension_degree,
             level.checked_add(1).ok_or_else(|| {
@@ -92,7 +94,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
             terminal,
         )?;
     }
-    Ok(GrindingPlan::new(runs, capacity)?.total_nonce_bits())
+    Ok(accumulator.total_nonce_bits())
 }
 
 fn derive_transcript_grinding_plan(
@@ -103,21 +105,36 @@ fn derive_transcript_grinding_plan(
 ) -> Result<GrindingPlan, AkitaError> {
     let capacity = challenge_capacity_bits(root_layout, modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
+    let mut push = |run| {
+        runs.push(run);
+        Ok(())
+    };
 
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+            FoldSuccessor::Recursive(&step.params)
+        });
+    let root_rounds = schedule
+        .root
+        .params
+        .relation_address_geometry(
+            root_layout,
+            extension_degree,
+            root_successor.ring_dimension(),
+            schedule.root.output_witness_len,
+        )?
+        .relation_point_variable_count();
     let mut predecessor_rounds = append_nonterminal(
-        &mut runs,
+        &mut push,
         capacity,
         extension_degree,
         0,
         &schedule.root.params,
-        schedule.root.output_witness_len,
+        root_rounds,
         root_layout,
-        schedule
-            .recursive_folds
-            .first()
-            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
-                FoldSuccessor::Recursive(&step.params)
-            }),
+        root_successor,
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -130,20 +147,29 @@ fn derive_transcript_grinding_plan(
             .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
                 FoldSuccessor::Recursive(&step.params)
             });
+        let relation_rounds = fold
+            .params
+            .relation_address_geometry(
+                &layout,
+                extension_degree,
+                successor.ring_dimension(),
+                fold.output_witness_len,
+            )?
+            .relation_point_variable_count();
         predecessor_rounds = append_nonterminal(
-            &mut runs,
+            &mut push,
             capacity,
             extension_degree,
             usize_to_u32(index + 1, "grinding level")?,
             &fold.params,
-            fold.output_witness_len,
+            relation_rounds,
             &layout,
             successor,
         )?;
     }
 
     append_terminal(
-        &mut runs,
+        &mut push,
         capacity,
         extension_degree,
         usize_to_u32(
@@ -158,30 +184,30 @@ fn derive_transcript_grinding_plan(
 
 #[allow(clippy::too_many_arguments)]
 fn append_nonterminal(
-    runs: &mut Vec<GrindingRun>,
+    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
     capacity: u32,
     extension_degree: usize,
     level: u32,
     params: &CommittedGroupParams,
-    output_witness_len: usize,
+    relation_rounds: usize,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
 ) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
-        append_eor(runs, capacity, extension_degree, level, layout)?;
+        append_eor(push, capacity, extension_degree, level, layout)?;
     }
 
     if layout.requires_row_batch_challenge() {
-        runs.push(GrindingRun::proof_of_work(
+        push(GrindingRun::proof_of_work(
             GrindingSite::EvaluationBatch { level },
             1,
             capacity,
-        )?);
+        )?)?;
     }
 
-    runs.push(GrindingRun::fold_response(level));
-    append_fold_queries(runs, level, params, layout)?;
+    push(GrindingRun::fold_response(level))?;
+    append_fold_queries(push, level, params, layout)?;
 
     let alpha_loss = (0..layout.num_groups()).try_fold(1u64, |largest, group_index| {
         let group = params.group_params(layout, group_index)?;
@@ -190,32 +216,29 @@ fn append_nonterminal(
             group.inner_commit_matrix_params().ring_dimension(),
         )?))
     })?;
-    runs.push(GrindingRun::proof_of_work(
+    push(GrindingRun::proof_of_work(
         GrindingSite::RingSwitchAlpha { level },
         alpha_loss,
         capacity,
-    )?);
+    )?)?;
 
-    let successor_d = successor.ring_dimension();
     let successor_opening_vars = successor.recursive_opening_num_vars()?;
-    let tau0_width = params
-        .relation_address_geometry(layout, extension_degree, successor_d, output_witness_len)?
-        .relation_point_variable_count();
+    let tau0_width = relation_rounds;
     if tau0_width > successor_opening_vars {
         return Err(AkitaError::InvalidSetup(
             "grinding Stage 2 point exceeds successor opening width".into(),
         ));
     }
-    runs.push(GrindingRun::proof_of_work(
+    push(GrindingRun::proof_of_work(
         GrindingSite::Tau0Point { level },
         multilinear_point_loss_factor(tau0_width)?,
         capacity,
-    )?);
-    runs.push(GrindingRun::proof_of_work(
+    )?)?;
+    push(GrindingRun::proof_of_work(
         GrindingSite::Tau1Point { level },
         multilinear_point_loss_factor(params.relation_row_index_num_vars(layout)?)?,
         capacity,
-    )?);
+    )?)?;
 
     let rounds = tau0_width;
     let basis = 1usize
@@ -232,7 +255,7 @@ fn append_nonterminal(
             })?;
         for round in 0..stage_shape.sumcheck_proof.0 {
             append_sumcheck(
-                runs,
+                push,
                 capacity,
                 SumcheckProtocol::Stage1,
                 level,
@@ -242,29 +265,29 @@ fn append_nonterminal(
             )?;
         }
         if stage_shape.child_claims > 0 {
-            runs.push(GrindingRun::proof_of_work(
+            push(GrindingRun::proof_of_work(
                 GrindingSite::Stage1InterstageBatch { level, stage },
                 powers_batch_loss_factor(stage_shape.child_claims)?,
                 capacity,
-            )?);
+            )?)?;
         }
     }
     if let Some(norm) = norm {
         if norm.subclaims > 0 {
-            runs.push(GrindingRun::proof_of_work(
+            push(GrindingRun::proof_of_work(
                 GrindingSite::L2SubclaimBatch { level },
                 powers_batch_loss_factor(norm.subclaims)?,
                 capacity,
-            )?);
+            )?)?;
         }
-        runs.push(GrindingRun::proof_of_work(
+        push(GrindingRun::proof_of_work(
             GrindingSite::L2NormMerge { level },
             1,
             capacity,
-        )?);
+        )?)?;
         for (round, &degree) in norm.sumcheck.iter().enumerate() {
             append_sumcheck(
-                runs,
+                push,
                 capacity,
                 SumcheckProtocol::PhysicalL2,
                 level,
@@ -273,31 +296,31 @@ fn append_nonterminal(
                 degree,
             )?;
         }
-        runs.push(GrindingRun::proof_of_work(
+        push(GrindingRun::proof_of_work(
             GrindingSite::L2VirtualBatch { level },
             powers_batch_loss_factor(norm.virtual_evaluations)?,
             capacity,
-        )?);
+        )?)?;
     }
     if params.payload_mode.is_compressed() {
-        runs.push(GrindingRun::proof_of_work(
+        push(GrindingRun::proof_of_work(
             GrindingSite::CompressionBinary { level },
             1,
             capacity,
-        )?);
+        )?)?;
     }
-    runs.push(GrindingRun::proof_of_work(
+    push(GrindingRun::proof_of_work(
         GrindingSite::Stage2Batch { level },
         1,
         capacity,
-    )?);
+    )?)?;
     for round in 0..rounds {
-        append_sumcheck(runs, capacity, SumcheckProtocol::Stage2, level, 0, round, 3)?;
+        append_sumcheck(push, capacity, SumcheckProtocol::Stage2, level, 0, round, 3)?;
     }
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
             for round in 0..prefix.profile.group.num_vars() {
-                append_sumcheck(runs, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
+                append_sumcheck(push, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
             }
         }
     }
@@ -305,7 +328,7 @@ fn append_nonterminal(
 }
 
 fn append_terminal(
-    runs: &mut Vec<GrindingRun>,
+    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -314,19 +337,19 @@ fn append_terminal(
 ) -> Result<(), AkitaError> {
     let layout = OpeningClaimsLayout::new(predecessor_rounds, 1)?;
     if extension_degree > 1 {
-        append_eor(runs, capacity, extension_degree, level, &layout)?;
+        append_eor(push, capacity, extension_degree, level, &layout)?;
     }
-    runs.push(GrindingRun::fold_response(level));
-    runs.push(GrindingRun::fold_challenge_group(
+    push(GrindingRun::fold_response(level))?;
+    push(GrindingRun::fold_challenge_group(
         level,
         0,
         usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
-    )?);
+    )?)?;
     Ok(())
 }
 
 fn append_fold_queries(
-    runs: &mut Vec<GrindingRun>,
+    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
     level: u32,
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
@@ -338,17 +361,17 @@ fn append_fold_queries(
             .num_polynomials()
             .checked_mul(params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        runs.push(GrindingRun::fold_challenge_group(
+        push(GrindingRun::fold_challenge_group(
             level,
             group,
             usize_to_u64(multiplicity, "fold coordinate count")?,
-        )?);
+        )?)?;
     }
     Ok(())
 }
 
 fn append_eor(
-    runs: &mut Vec<GrindingRun>,
+    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -360,21 +383,21 @@ fn append_eor(
             "extension-opening split exceeds opening arity".into(),
         ));
     }
-    runs.push(GrindingRun::proof_of_work(
+    push(GrindingRun::proof_of_work(
         GrindingSite::ExtensionOpeningPoint { level },
         multilinear_point_loss_factor(split_bits)?,
         capacity,
-    )?);
+    )?)?;
     if layout.requires_row_batch_challenge() {
-        runs.push(GrindingRun::proof_of_work(
+        push(GrindingRun::proof_of_work(
             GrindingSite::ExtensionOpeningClaimBatch { level },
             1,
             capacity,
-        )?);
+        )?)?;
     }
     for round in 0..layout.max_num_vars() - split_bits {
         append_sumcheck(
-            runs,
+            push,
             capacity,
             SumcheckProtocol::ExtensionOpeningReduction,
             level,
@@ -387,7 +410,7 @@ fn append_eor(
 }
 
 fn append_sumcheck(
-    runs: &mut Vec<GrindingRun>,
+    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
     capacity: u32,
     protocol: SumcheckProtocol,
     level: u32,
@@ -395,7 +418,7 @@ fn append_sumcheck(
     round: usize,
     degree: usize,
 ) -> Result<(), AkitaError> {
-    runs.push(GrindingRun::proof_of_work(
+    push(GrindingRun::proof_of_work(
         GrindingSite::SumcheckRound {
             protocol,
             level,
@@ -404,7 +427,7 @@ fn append_sumcheck(
         },
         polynomial_identity_loss_factor(degree)?,
         capacity,
-    )?);
+    )?)?;
     Ok(())
 }
 
@@ -446,13 +469,17 @@ mod tests {
         );
 
         let mut runs = Vec::new();
+        let mut push = |run| {
+            runs.push(run);
+            Ok(())
+        };
         let rounds = append_nonterminal(
-            &mut runs,
+            &mut push,
             128,
             1,
             0,
             &current,
-            output_witness_len,
+            expected_rounds,
             &layout,
             FoldSuccessor::Recursive(&successor),
         )
@@ -486,8 +513,18 @@ mod tests {
 
         let terminal = crate::TerminalFoldParams::from_expanded_group(successor);
         let mut terminal_runs = Vec::new();
-        append_terminal(&mut terminal_runs, 128, 4, 1, rounds, &terminal)
-            .expect("terminal grinding runs");
+        append_terminal(
+            &mut |run| {
+                terminal_runs.push(run);
+                Ok(())
+            },
+            128,
+            4,
+            1,
+            rounds,
+            &terminal,
+        )
+        .expect("terminal grinding runs");
         assert_eq!(
             terminal_runs
                 .iter()

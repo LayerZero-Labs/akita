@@ -112,16 +112,15 @@ pub(super) struct ScheduleMemoKey {
     pub(super) current_witness_len: usize,
     pub(super) current_lb: u32,
     pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    pub(super) incoming_setup_prefix: Option<usize>,
     pub(super) d_a: usize,
     pub(super) d_b: usize,
     pub(super) d_d: usize,
-    pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(super) topology: SuffixTopology,
 }
 
 impl ScheduleMemoKey {
     const fn is_direct(self) -> bool {
-        self.incoming_setup_prefix.is_none()
+        self.topology.incoming_setup_prefix().is_none()
     }
 }
 
@@ -257,6 +256,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
     pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
     pub(crate) level_zero_is_root: bool,
+    pub(crate) relation_traversal_order: RelationTraversalOrder,
+    pub(crate) relation_mode_filter: RelationModeFilter,
 }
 
 #[derive(Clone, Copy)]
@@ -265,9 +266,79 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_lb: u32,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    pub(crate) incoming_setup_prefix: Option<usize>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
-    pub(crate) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(crate) topology: SuffixTopology,
+}
+
+/// Complete suffix topology. Prefix-bearing states cannot also carry raw
+/// payload or reduced-relation phases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SuffixTopology {
+    Direct {
+        payload_phase: akita_types::CommitmentPayloadPhase,
+        relation_phase: RingRelationPhase,
+    },
+    SetupPrefixed {
+        natural_len: usize,
+    },
+}
+
+impl SuffixTopology {
+    #[must_use]
+    pub(crate) const fn incoming_setup_prefix(self) -> Option<usize> {
+        match self {
+            Self::Direct { .. } => None,
+            Self::SetupPrefixed { natural_len } => Some(natural_len),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn payload_phase(self) -> akita_types::CommitmentPayloadPhase {
+        match self {
+            Self::Direct { payload_phase, .. } => payload_phase,
+            Self::SetupPrefixed { .. } => akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        }
+    }
+
+    pub(crate) fn relation_domain(
+        self,
+        absolute_fold_level: usize,
+        opening: akita_types::OpeningMethod,
+    ) -> Result<RelationSearchDomain, AkitaError> {
+        let (relation_phase, consumes_setup_prefix) = match self {
+            Self::Direct { relation_phase, .. } => (relation_phase, false),
+            Self::SetupPrefixed { .. } => (RingRelationPhase::QuotientPrefix, true),
+        };
+        relation_phase.transitions(
+            absolute_fold_level,
+            RelationCandidateTopology::new(consumes_setup_prefix, opening),
+        )
+    }
+
+    #[must_use]
+    pub(crate) const fn direct_successor(
+        self,
+        payload_mode: akita_types::CommitmentPayloadMode,
+        transition: RelationTransition,
+    ) -> Self {
+        Self::Direct {
+            payload_phase: self.payload_phase().after(payload_mode),
+            relation_phase: transition.next_phase(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn offloaded_successor(
+        transition: RelationTransition,
+        payload_mode: akita_types::CommitmentPayloadMode,
+        natural_len: usize,
+    ) -> Option<Self> {
+        if transition.allows_setup_offload() && payload_mode.is_compressed() {
+            Some(Self::SetupPrefixed { natural_len })
+        } else {
+            None
+        }
+    }
 }
 
 impl SuffixState {
@@ -291,11 +362,10 @@ impl SuffixState {
             current_witness_len: self.current_witness_len,
             current_lb: self.current_lb,
             source_moment: self.source_moment,
-            incoming_setup_prefix: self.incoming_setup_prefix,
             d_a: memo_dimensions.d_a(),
             d_b: memo_dimensions.d_b(),
             d_d: memo_dimensions.d_d(),
-            payload_phase: self.payload_phase,
+            topology: self.topology,
         }
     }
 }

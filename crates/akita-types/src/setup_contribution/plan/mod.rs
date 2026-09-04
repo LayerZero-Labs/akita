@@ -21,20 +21,27 @@
 mod kernels;
 mod physical_b;
 mod prepare;
+mod reduced_role;
 mod scan;
 mod segments;
 mod setup_index_weight;
 mod structured;
+mod structured_reduced;
 #[cfg(test)]
 mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
+pub(crate) use types::ReducedRoleCoefficientState;
 pub(crate) use types::{
-    DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
+    DirectScanState, DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights,
+    SetupContributionGroupPlan, SetupUnitRange,
 };
 pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
-pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
+pub use types::{
+    PreparedCoefficientFunctional, PreparedRelationAddress, SetupContributionGroupInputs,
+    SetupContributionPlan,
+};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::{checked_slice, SetupProjectionGeometry};
@@ -52,6 +59,17 @@ fn divide_aligned(
     context: &'static str,
 ) -> Result<usize, AkitaError> {
     checked::exact_div(value, divisor).ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
+
+fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
+where
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
+{
+    crate::gadget_row_scalars::<F>(depth, log_basis)
+        .into_iter()
+        .map(|weight| E::one().mul_base(weight))
+        .collect()
 }
 
 #[cfg(test)]

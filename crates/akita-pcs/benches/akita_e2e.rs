@@ -22,6 +22,12 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
+#[path = "../tests/support/cross_mode.rs"]
+mod cross_mode;
+use cross_mode::cross_mode_catalogs;
+#[path = "support/relation_phase_timing.rs"]
+mod relation_phase_timing;
+
 type F = fp128::Field;
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
@@ -97,15 +103,19 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     }
 }
 
-/// Setup-contribution modes benchmarked per phase. Direct scans the expanded
-/// These scalar benches instantiate direct-schedule configs. Recursive stage-3
-/// setup contribution is benchmarked by the config-typed multi-group profile.
+/// Benchmark one direct-schedule dense configuration by protocol phase.
+/// Recursive Stage 3 setup contribution is measured by the config-typed
+/// multi-group profile instead.
 fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
+    measure_stage2: bool,
+    scheme: akita_pcs::AkitaCommitmentScheme<Cfg>,
 ) {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    if std::env::var_os("AKITA_RELATION_MODE_BENCH_ONLY").is_some() && !measure_stage2 {
+        return;
+    }
     let evals = make_dense_evals::<Cfg>(nv);
     let poly = DensePoly::<F>::from_field_evals(nv, &evals).unwrap();
     let pt = random_point(nv);
@@ -233,6 +243,45 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         })
     });
 
+    // Replay the complete honest verifier while Criterion accounts only for
+    // the per-fold Stage-2 spans nested inside the public verification call.
+    if measure_stage2 {
+        relation_phase_timing::report(label, nv, 3, || {
+            let mut transcript = AkitaTranscript::<F>::new(b"bench");
+            scheme
+                .batched_verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut transcript,
+                    verifier_claims(selection, &pt[..], &openings[..], &commitments[0]),
+                    BasisMode::Lagrange,
+                )
+                .unwrap();
+        });
+
+        group.bench_function(format!("verify_all_stage2/{mode_label}"), |b| {
+            b.iter_custom(|iterations| {
+                relation_phase_timing::measure_complete_stage2(iterations, || {
+                    let mut transcript = AkitaTranscript::<F>::new(b"bench");
+                    scheme
+                        .batched_verify(
+                            black_box(&proof),
+                            black_box(&verifier_setup),
+                            &mut transcript,
+                            black_box(verifier_claims(
+                                selection,
+                                &pt[..],
+                                &openings[..],
+                                &commitments[0],
+                            )),
+                            BasisMode::Lagrange,
+                        )
+                        .unwrap();
+                })
+            })
+        });
+    }
+
     group.bench_function(format!("e2e/{mode_label}"), |b| {
         b.iter(|| {
             let akita_prover::CommitOutput {
@@ -284,6 +333,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     nv: usize,
 ) {
+    if std::env::var_os("AKITA_RELATION_MODE_BENCH_ONLY").is_some() {
+        return;
+    }
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
@@ -492,13 +544,48 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 }
 
 fn bench_dense_nv14(c: &mut Criterion) {
-    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 14);
+    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 14, false, scheme);
+}
+fn bench_dense_nv14_quotient(c: &mut Criterion) {
+    let key =
+        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+    let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
+    assert_eq!(
+        catalogs
+            .quotient
+            .resolve_key(&key)
+            .expect("quotient row")
+            .selection(),
+        catalogs.quotient_selection,
+    );
+    let scheme = akita_pcs::AkitaCommitmentScheme::new(catalogs.quotient)
+        .expect("quotient-only schedule catalog");
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-quotient", 14, true, scheme);
+}
+fn bench_dense_nv14_reduced(c: &mut Criterion) {
+    let key =
+        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+    let catalogs = cross_mode_catalogs::<fp128::Dense>(&key).expect("cross-mode catalogs");
+    assert_eq!(
+        catalogs
+            .reduced
+            .resolve_key(&key)
+            .expect("reduced row")
+            .selection(),
+        catalogs.reduced_selection,
+    );
+    let scheme =
+        akita_pcs::AkitaCommitmentScheme::new(catalogs.reduced).expect("reduced schedule catalog");
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-reduced", 14, true, scheme);
 }
 fn bench_dense_nv16(c: &mut Criterion) {
-    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 16);
+    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 16, false, scheme);
 }
 fn bench_dense_nv24(c: &mut Criterion) {
-    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 24);
+    let scheme = load_workspace_scheme::<fp128::Dense>().expect("workspace schedule artifact");
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 24, false, scheme);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {
@@ -514,6 +601,8 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 criterion_group!(
     akita_benches,
     bench_dense_nv14,
+    bench_dense_nv14_quotient,
+    bench_dense_nv14_reduced,
     bench_dense_nv16,
     bench_dense_nv24,
     bench_onehot_nv15,
@@ -521,8 +610,12 @@ criterion_group!(
     bench_onehot_nv25,
 );
 
-/// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.
+/// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded. Set
+/// `AKITA_RELATION_MODE_BENCH_ONLY=1` to construct only the selected quotient
+/// and reduced relation-mode verifier cases.
 fn main() {
+    relation_phase_timing::init();
+
     #[cfg(feature = "parallel")]
     {
         let num_threads = if std::env::var("AKITA_PARALLEL")

@@ -188,17 +188,17 @@ where
     F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
-    let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
+    let selected_prefix = next_fold_level_params.setup_prefix().ok_or_else(|| {
         AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
     })?;
-    let slot = setup
-        .prefix_slots
-        .get(&selected_slot_id.slot_id().expect("setup prefix group"))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "planned setup-prefix slot is missing from verifier setup".to_string(),
-            )
-        })?;
+    let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
+        AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
+    })?;
+    let slot = setup.prefix_slots.get(&selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from verifier setup".to_string(),
+        )
+    })?;
     let setup_eval_len = setup_prefix_coverage_eval_len(
         None,
         &slot.id,

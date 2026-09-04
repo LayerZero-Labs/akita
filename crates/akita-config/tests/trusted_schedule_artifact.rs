@@ -172,6 +172,11 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     assert_eq!(loaded_row.selection(), checked_in_row.selection());
     assert_eq!(loaded_row.profiles(), checked_in_row.profiles());
     assert_eq!(loaded_row.schedule(), checked_in_row.schedule());
+    assert!(loaded_row
+        .schedule()
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.ring_relation_mode.is_reduced_evaluation()));
 }
 
 #[test]

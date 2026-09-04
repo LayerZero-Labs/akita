@@ -570,6 +570,11 @@ fn protocol_selector_rejects_compression_only_q128_d8_while_compression_prep_suc
     let cache = prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
         .expect("compression-only D8 cache");
     assert!(cache.has_cyclic());
+    let reduced =
+        prepare_reduced_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
+            .expect("reduced compression-only D8 cache");
+    assert!(reduced.has_negacyclic());
+    assert!(!reduced.has_cyclic());
     assert!(matches!(
         prepare_ntt_cache(
             flat.ring_view::<8>(1, 1).expect("matrix view"),

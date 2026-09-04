@@ -3,7 +3,9 @@
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_types::{CompressionChainPlan, CompressionChainWitness, RingVec, SisModulusProfileId};
+use akita_types::{
+    CompressionChainPlan, CompressionChainWitness, RingRelationMode, RingVec, SisModulusProfileId,
+};
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Dimension-erased output of one complete commitment compression chain.
@@ -30,6 +32,7 @@ where
             id: (),
             plan,
             coefficients: source.into_coeffs(),
+            relation_mode: RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -42,9 +45,10 @@ where
         .ring_dimension();
     let payload =
         RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
+    let quotients = output.relation.into_quotient_lift()?;
     Ok(CommitmentCompressionOutput {
         payload,
         witness: output.witness,
-        quotients: output.quotients,
+        quotients,
     })
 }

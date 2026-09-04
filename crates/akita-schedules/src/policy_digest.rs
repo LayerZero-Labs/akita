@@ -120,3 +120,23 @@ fn write_optional_usize(bytes: &mut Vec<u8>, value: Option<usize>) {
 fn write_u64(bytes: &mut Vec<u8>, value: u64) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::SelectionPolicyId;
+
+    #[test]
+    fn current_selection_objectives_do_not_reuse_retired_identity_tags() {
+        assert_eq!(SelectionPolicyId::MinEstimatedProofPayloadV2.tag(), 4);
+        assert_eq!(SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag(), 5);
+        assert_eq!(
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag(),
+            6
+        );
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinEstimatedProofPayloadV2.tag()));
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag()));
+        assert!(![1, 2, 3, 4, 5].contains(
+            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag()
+        ));
+    }
+}
