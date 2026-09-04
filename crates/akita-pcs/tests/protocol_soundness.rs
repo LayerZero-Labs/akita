@@ -1156,7 +1156,8 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
                 NV, 2,
             )))
             .expect("runtime schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let layout = plan.root.params.clone();
         let root_d = layout.d_a();
         let onehot_k = onehot_source_chunk_size::<Cfg>();

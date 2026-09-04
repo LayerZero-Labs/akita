@@ -22,7 +22,8 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     catalog
         .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("runtime schedule")
-        .into_schedule()
+        .schedule()
+        .clone()
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {

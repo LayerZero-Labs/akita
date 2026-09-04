@@ -6,9 +6,8 @@
 use super::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
-    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
-    verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
+    setup_matrix_field_elements_for_schedule, verifier_setup_matrix_capacity_for_schedule,
+    AkitaExpandedSetup, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
 };
 use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
@@ -64,99 +63,6 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
-}
-
-/// Running maximum over every setup matrix a sizing request can reach.
-///
-/// Observing a shape is the only way to raise the envelope, so a reachable
-/// shape can never be priced without also marking the request supported.
-struct SetupCapacityScan {
-    supported: bool,
-    capacity: SetupMatrixCapacity,
-}
-
-impl SetupCapacityScan {
-    fn new() -> Self {
-        Self {
-            supported: false,
-            capacity: SetupMatrixCapacity::minimum(),
-        }
-    }
-
-    fn observe(&mut self, field_elements: usize) {
-        self.supported = true;
-        self.capacity.num_field_elements = self.capacity.num_field_elements.max(field_elements);
-    }
-
-    fn observe_schedule(&mut self, schedule: &FoldSchedule) -> Result<(), AkitaError> {
-        self.observe(setup_matrix_capacity_for_schedule(schedule)?.num_field_elements);
-        Ok(())
-    }
-
-    fn finish(self, max_num_vars: usize) -> Result<SetupMatrixCapacity, AkitaError> {
-        if !self.supported {
-            return Err(AkitaError::InvalidSetup(format!(
-                "setup matrix sizing found no admitted schedules for max_num_vars={max_num_vars}"
-            )));
-        }
-        Ok(self.capacity)
-    }
-}
-
-/// Size the shared setup matrix from one validated trusted catalog.
-///
-/// Every admitted row is already expanded and audited. Setup sizing therefore
-/// scans those exact rows instead of consulting any compiled schedule table.
-pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
-    catalog: &akita_schedules::TrustedScheduleCatalog,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<SetupMatrixCapacity, AkitaError> {
-    crate::validate_trusted_schedule_catalog::<Cfg>(catalog)?;
-    validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
-
-    let mut scan = SetupCapacityScan::new();
-    for row in catalog.rows() {
-        for profile in &row.profiles().precommitteds {
-            if profile.group.num_vars() <= max_num_vars
-                && profile.group.num_polynomials() <= max_num_batched_polys
-            {
-                scan.observe(akita_types::commit_only_setup_field_elements(
-                    &profile.inner.matrix,
-                    &profile.outer.matrix,
-                    profile.outer_slice_count,
-                )?);
-            }
-        }
-
-        let key = AkitaScheduleLookupKey {
-            final_group: row.profiles().final_group.group,
-            precommitteds: row.profiles().precommitteds.clone(),
-        };
-        if key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-            scan.observe_schedule(row.schedule())?;
-        }
-    }
-    scan.finish(max_num_vars)
-}
-
-/// Validate setup-capacity metadata shared by sizing and setup-prefix planning.
-pub fn validate_setup_capacity_metadata(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<(), AkitaError> {
-    if max_num_batched_polys == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_batched_polys must be at least 1".to_string(),
-        ));
-    }
-    if max_num_vars >= usize::BITS as usize {
-        return Err(AkitaError::InvalidSetup(format!(
-            "verifier setup capacity ({max_num_vars} vars, {max_num_batched_polys} polynomials) \
-             exceeds preprocessing limits"
-        )));
-    }
-    Ok(())
 }
 
 /// Extract setup-level params from a `FoldSchedule`.

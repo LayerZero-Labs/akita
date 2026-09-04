@@ -34,8 +34,8 @@ const MAX_FAMILY_NAME_BYTES: usize = 128;
 pub(crate) const MAX_TRUSTED_CATALOG_ROWS: usize = 1 << 14;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScheduleCatalogArtifactRowV1 {
-    profiles: CommittedGroupBatchProfile,
     schedule: FoldSchedule,
 }
 
@@ -271,7 +271,20 @@ impl TrustedScheduleCatalog {
                             "invalid schedule artifact row {index}: {error}"
                         ))
                     })?;
-                Ok((row.profiles, row.schedule))
+                // Validate topology before using the root's final/precommitted views.
+                row.schedule.validate_structure()?;
+                let profiles = CommittedGroupBatchProfile {
+                    final_group: row.schedule.root.params.own_group().profile,
+                    precommitteds: row
+                        .schedule
+                        .root
+                        .params
+                        .precommitted_groups()
+                        .iter()
+                        .map(|group| group.profile)
+                        .collect(),
+                };
+                Ok((profiles, row.schedule))
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let catalog = Self::try_new(expected_family_name, rows, policy, ring_challenge_config)?;
@@ -350,7 +363,7 @@ impl TrustedScheduleCatalog {
     pub fn resolve_selection(
         &self,
         selection: OpeningScheduleSelection,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
+    ) -> Result<&ResolvedScheduleRow, AkitaError> {
         let index = self
             .rows_by_digest
             .binary_search_by_key(&selection.row_digest, |row| row.selection().row_digest)
@@ -359,7 +372,7 @@ impl TrustedScheduleCatalog {
                     "selected schedule row is not present in the trusted catalog".to_string(),
                 )
             })?;
-        self.rows_by_digest.get(index).cloned().ok_or_else(|| {
+        self.rows_by_digest.get(index).ok_or_else(|| {
             AkitaError::InvalidSetup("trusted schedule row index is out of bounds".to_string())
         })
     }
@@ -368,7 +381,7 @@ impl TrustedScheduleCatalog {
     pub fn resolve_key(
         &self,
         key: &AkitaScheduleLookupKey,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
+    ) -> Result<&ResolvedScheduleRow, AkitaError> {
         self.resolve_key_matching(key, None)
     }
 
@@ -376,7 +389,7 @@ impl TrustedScheduleCatalog {
     pub fn resolve_profiles(
         &self,
         profiles: &CommittedGroupBatchProfile,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
+    ) -> Result<&ResolvedScheduleRow, AkitaError> {
         self.resolve_key_matching(&key_for_profiles(profiles), Some(profiles))
     }
 
@@ -384,7 +397,7 @@ impl TrustedScheduleCatalog {
         &self,
         key: &AkitaScheduleLookupKey,
         exact_profiles: Option<&CommittedGroupBatchProfile>,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
+    ) -> Result<&ResolvedScheduleRow, AkitaError> {
         let order_key = key.canonical_order_key();
         let row_for_index = |row_index: usize| {
             self.rows_by_digest.get(row_index).ok_or_else(|| {
@@ -404,7 +417,7 @@ impl TrustedScheduleCatalog {
         {
             return Err(unsupported_schedule_lookup(key, exact_profiles.is_some()));
         }
-        Ok(row.clone())
+        Ok(row)
     }
 }
 
@@ -428,7 +441,6 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
         let mut rows = serializer.serialize_seq(Some(self.0.len()))?;
         for row in self.0 {
             rows.serialize_element(&ScheduleCatalogArtifactRowRefV1 {
-                profiles: row.profiles(),
                 schedule: row.schedule(),
             })?;
         }
@@ -438,7 +450,6 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
 
 #[derive(Serialize)]
 struct ScheduleCatalogArtifactRowRefV1<'a> {
-    profiles: &'a CommittedGroupBatchProfile,
     schedule: &'a FoldSchedule,
 }
 

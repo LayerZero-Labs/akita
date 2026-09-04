@@ -336,7 +336,8 @@ mod tests {
         let schedule = catalog
             .resolve_key(&AkitaScheduleLookupKey::single(group))
             .expect("adaptive schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let params = &schedule.terminal;
         let prefix_len = params
             .inner

@@ -70,7 +70,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         let schedule = match catalog.resolve_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(nv, 1),
         )) {
-            Ok(row) => row.into_schedule(),
+            Ok(row) => row.schedule().clone(),
             Err(_) => continue,
         };
         covered += 1;

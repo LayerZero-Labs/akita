@@ -3,13 +3,10 @@
 use std::collections::BTreeSet;
 
 use akita_error::AkitaError;
-use akita_schedules::{suffix_opening_layout, TrustedScheduleCatalog};
+use akita_schedules::suffix_opening_layout;
 use akita_types::{
-    active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,
-    SetupPrefixSlotId,
+    active_setup_field_len, padded_setup_prefix_len, FoldSchedule, SetupPrefixSlotId,
 };
-
-use crate::CommitmentConfig;
 
 fn setup_prefix_slot_matches(
     slot: &SetupPrefixSlotId,
@@ -69,34 +66,5 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         }
     }
 
-    Ok(ids.into_iter().collect())
-}
-
-/// Enumerate setup-prefix slots from one validated trusted catalog.
-pub fn setup_prefix_slot_ids_from_catalog<Cfg: CommitmentConfig>(
-    catalog: &TrustedScheduleCatalog,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
-    crate::validate_trusted_schedule_catalog::<Cfg>(catalog)?;
-    crate::validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
-    if !Cfg::recursive_setup_planning() {
-        return Ok(Vec::new());
-    }
-
-    let mut ids = BTreeSet::new();
-    for row in catalog.rows() {
-        let key = AkitaScheduleLookupKey {
-            final_group: row.profiles().final_group.group,
-            precommitteds: row.profiles().precommitteds.clone(),
-        };
-        if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-            continue;
-        }
-        let root_layout = key.opening_layout()?;
-        for slot_id in extract_setup_prefix_slot_ids_from_schedule(row.schedule(), &root_layout)? {
-            ids.insert(slot_id);
-        }
-    }
     Ok(ids.into_iter().collect())
 }

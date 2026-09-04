@@ -49,7 +49,8 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
         .schedules()
         .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
-        .into_schedule();
+        .schedule()
+        .clone();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<F, D, Cfg>(scheme, label, nv, &layout, Some(&plan), true);
@@ -85,7 +86,8 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         .schedules()
         .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
-        .into_schedule();
+        .schedule()
+        .clone();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
@@ -135,7 +137,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .schedules()
             .resolve_key(&AkitaScheduleLookupKey::single(group))
             .expect("schedule plan")
-            .into_schedule();
+            .schedule()
+            .clone();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
     } else {
@@ -144,7 +147,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .schedules()
             .resolve_key(&lookup_key)
             .expect("schedule plan")
-            .into_schedule();
+            .schedule()
+            .clone();
         let layout = scheme
             .schedules()
             .resolve_key(&lookup_key)
@@ -444,7 +448,8 @@ fn run_profile_onehot_fp128_with_cfg<
         .schedules()
         .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let selected_dims = std::iter::once(schedule.root.params.role_dims())
         .chain(
             schedule

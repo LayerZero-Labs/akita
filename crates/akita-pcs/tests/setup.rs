@@ -120,7 +120,7 @@ where
         ))
         .expect("schedule");
     let layout = row.schedule().root.params.clone();
-    let schedule = row.into_schedule();
+    let schedule = row.schedule().clone();
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
     let poly = DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
@@ -250,7 +250,7 @@ where
         ))
         .expect("schedule");
     let layout = row.schedule().root.params.clone();
-    let schedule = row.into_schedule();
+    let schedule = row.schedule().clone();
     let root_d = layout.d_a();
     let k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
         .expect("one-hot setup test requires a unit-one-hot config");

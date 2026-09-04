@@ -65,7 +65,7 @@ fn rejects_quotient_lift_after_reduced_evaluation_cutover() {
     assert!(
         matches!(
             validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("cannot resume quotient-lift")
+            Err(AkitaError::InvalidSetup(ref message)) if message.contains("ring relation mode disagrees with the reduced-evaluation suffix policy")
         ),
         "unexpected suffix validation result: {validation:?}"
     );
@@ -85,7 +85,7 @@ fn rejects_reduced_evaluation_without_trace_opening() {
     assert!(
         matches!(
             validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("require evaluation-trace")
+            Err(AkitaError::InvalidSetup(ref message)) if message.contains("ring relation mode disagrees with the reduced-evaluation suffix policy")
         ),
         "unexpected opening validation result: {validation:?}"
     );
@@ -102,7 +102,7 @@ fn rejects_setup_prefix_anywhere_in_reduced_evaluation_suffix() {
     assert!(
         matches!(
             validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("cannot consume a setup prefix")
+            Err(AkitaError::InvalidSetup(ref message)) if message.contains("ring relation mode disagrees with the reduced-evaluation suffix policy")
         ),
         "unexpected cutover-prefix validation result: {validation:?}"
     );
@@ -117,7 +117,7 @@ fn rejects_setup_prefix_anywhere_in_reduced_evaluation_suffix() {
     assert!(
         matches!(
             validation,
-            Err(AkitaError::InvalidSetup(ref message)) if message.contains("cannot consume a setup prefix")
+            Err(AkitaError::InvalidSetup(ref message)) if message.contains("ring relation mode disagrees with the reduced-evaluation suffix policy")
         ),
         "unexpected suffix-prefix validation result: {validation:?}"
     );

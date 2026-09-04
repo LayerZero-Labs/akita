@@ -70,11 +70,6 @@ impl ResolvedScheduleRow {
         }
         Ok(())
     }
-
-    /// Consume the resolved row into its expanded schedule.
-    pub fn into_schedule(self) -> FoldSchedule {
-        self.schedule
-    }
 }
 
 fn validate_canonical_transition_lengths(

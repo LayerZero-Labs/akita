@@ -1,7 +1,6 @@
 use akita_config::{
-    policy_of, proof_optimized::fp128, setup_prefix_slot_ids_from_catalog,
-    trusted_schedule_catalog_from_bytes, CommitmentConfig, RecursiveCommitmentConfig,
-    TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+    policy_of, proof_optimized::fp128, trusted_schedule_catalog_from_bytes, CommitmentConfig,
+    RecursiveCommitmentConfig, TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 use akita_serialization::AkitaSerialize;
@@ -27,7 +26,8 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
 }
 
 fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
-    setup_prefix_slot_ids_from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
+    akita_config::SetupRequirements::from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
+        .map(|requirements| requirements.prefix_slot_ids)
         .expect("derive recursive setup-prefix slots")
         .into_iter()
         .map(|slot| {
@@ -264,6 +264,14 @@ fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     assert_eq!(loaded.catalog_digest(), checked_in.catalog_digest());
     assert_eq!(loaded_row.selection(), checked_in_row.selection());
     assert_eq!(loaded_row.profiles(), checked_in_row.profiles());
+    assert!(std::ptr::eq(
+        loaded_row,
+        loaded.resolve_selection(loaded_row.selection()).unwrap()
+    ));
+    assert!(std::ptr::eq(
+        loaded_row,
+        loaded.resolve_profiles(loaded_row.profiles()).unwrap()
+    ));
     assert_eq!(loaded_row.schedule(), checked_in_row.schedule());
     assert!(loaded_row
         .schedule()
@@ -503,14 +511,60 @@ fn recursive_prefix_slot_id_fixture() {
 #[test]
 fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let dense = checked_in_catalog::<fp128::Dense>();
-    let zero_batch = setup_prefix_slot_ids_from_catalog::<fp128::Dense>(&dense, 14, 0)
+    let zero_batch = akita_config::SetupRequirements::from_catalog::<fp128::Dense>(&dense, 14, 0)
+        .map(|requirements| requirements.prefix_slot_ids)
         .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
     assert!(format!("{zero_batch}").contains("at least 1"));
 
     let recursive = checked_in_catalog::<RecursiveCommitmentConfig<fp128::OneHot>>();
-    let oversized_vars = setup_prefix_slot_ids_from_catalog::<
+    let oversized_vars = akita_config::SetupRequirements::from_catalog::<
         RecursiveCommitmentConfig<fp128::OneHot>,
     >(&recursive, usize::BITS as usize, 1)
+    .map(|requirements| requirements.prefix_slot_ids)
     .expect_err("oversized setup metadata must reject for recursive configs");
     assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
+}
+
+#[test]
+fn artifact_rows_reject_a_second_profile_authority() {
+    let bytes = checked_in_artifact_bytes::<fp128::Dense>();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.contains("\"profiles\""));
+    let duplicated = text.replacen("\"schedule\":", "\"profiles\":{},\"schedule\":", 1);
+    let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(duplicated.as_bytes())
+        .expect_err("serialized profiles must not supply a second authority");
+    assert!(error.to_string().contains("unknown field `profiles`"));
+}
+
+#[test]
+fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
+    type Cfg = fp128::Dense;
+    let catalog = checked_in_catalog::<Cfg>();
+    let row = catalog
+        .rows()
+        .find(|row| !row.profiles().precommitteds.is_empty())
+        .expect("dense grouped row");
+    let profile = row.profiles().precommitteds[0];
+    assert!(row.profiles().final_group.group.num_vars() > profile.group.num_vars());
+    let grouped_only = TrustedScheduleCatalog::try_new(
+        Cfg::schedule_family_name(),
+        [(row.profiles().clone(), row.schedule().clone())],
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+    .unwrap();
+    let required = akita_config::SetupRequirements::from_catalog::<Cfg>(
+        &grouped_only,
+        profile.group.num_vars(),
+        profile.group.num_polynomials(),
+    )
+    .expect("independent precommit remains supported");
+    let expected = akita_types::commit_only_setup_field_elements(
+        &profile.inner.matrix,
+        &profile.outer.matrix,
+        profile.outer_slice_count,
+    )
+    .unwrap();
+    assert_eq!(required.matrix_capacity.num_field_elements, expected);
+    assert!(required.prefix_slot_ids.is_empty());
 }

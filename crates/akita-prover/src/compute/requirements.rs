@@ -745,7 +745,8 @@ mod tests {
                 32, 1,
             )))
             .expect("generated schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let mut expected_root_level_commits = NttExecutionRequirements::default();
@@ -801,7 +802,8 @@ mod tests {
                 32, 1,
             )))
             .expect("generated schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
         let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
         let root = &schedule.root.params;
@@ -822,7 +824,8 @@ mod tests {
                 32, 1,
             )))
             .expect("workspace schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let mut params = schedule.root.params.clone();
         params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
         let mut requirements = NttExecutionRequirements::default();
@@ -853,7 +856,8 @@ mod tests {
                 PolynomialGroupLayout::singleton(26),
             ))
             .expect("generated dense schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let root = &schedule.root.params;
@@ -893,7 +897,8 @@ mod tests {
                     PolynomialGroupLayout::singleton(num_vars),
                 ))
                 .expect("generated dense schedule")
-                .into_schedule();
+                .schedule()
+                .clone();
             let root = &schedule.root.params;
             let width = root.inner().matrix.input_width();
             let domain = signed_commit_domain(
@@ -934,13 +939,15 @@ mod tests {
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp32 dense schedule")
-                .into_schedule(),
+                .schedule()
+                .clone(),
             fp64_catalog
                 .resolve_key(&AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp64 dense schedule")
-                .into_schedule(),
+                .schedule()
+                .clone(),
         ] {
             let root = &schedule.root.params;
             assert!(matches!(

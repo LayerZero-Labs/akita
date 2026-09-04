@@ -37,7 +37,8 @@ fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
             PolynomialGroupLayout::singleton(num_vars),
         ))
         .expect("generated singleton schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let root = &schedule.root.params;
     RootShape {
         inner_basis: root.inner().digits.log_basis,

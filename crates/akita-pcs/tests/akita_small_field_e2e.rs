@@ -560,7 +560,8 @@ fn fp32_onehot_multi_group() {
                 PRE_NV, 1,
             )))
             .expect("pre schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let pre_params = &pre_group_schedule.root.params;
         let pre_poly = grouped_poly(pre_params, 1);
 
@@ -593,7 +594,8 @@ fn fp32_onehot_multi_group() {
                 precommitteds: vec![pre_commitment.profile],
             })
             .expect("multi-group schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let final_params = &multi_schedule.root.params;
         let final_poly = grouped_poly(final_params, 2);
 

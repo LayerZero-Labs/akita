@@ -225,7 +225,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
 
     let setup_envelope =
-        akita_config::trusted_setup_matrix_capacity::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+        akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+            .map(|requirements| requirements.matrix_capacity)
             .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");

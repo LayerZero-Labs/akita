@@ -51,7 +51,8 @@ where
             .schedules()
             .resolve_key(&schedule_key)
             .expect("recursive direct schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive schedule must carry setup-prefix metadata"
@@ -382,7 +383,8 @@ where
             .schedules()
             .resolve_key(&schedule_key)
             .expect("schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         assert_eq!(
             schedule.root.params.precommitted_groups().len(),
             1,

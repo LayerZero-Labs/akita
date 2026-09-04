@@ -75,7 +75,8 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
     );
 
     let expected_capacity =
-        akita_config::trusted_setup_matrix_capacity::<Cfg>(scheme.schedules(), 14, 1)
+        akita_config::SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), 14, 1)
+            .map(|requirements| requirements.matrix_capacity)
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(
@@ -364,7 +365,8 @@ fn expected_same_point_batched_shape(
         .schedules()
         .resolve_key(&key)
         .expect("batched root runtime plan")
-        .into_schedule();
+        .schedule()
+        .clone();
     let root_step = &schedule.root;
     let root_params = &root_step.params;
     let num_fold_levels = schedule.num_fold_levels();

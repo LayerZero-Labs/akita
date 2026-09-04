@@ -216,7 +216,8 @@ fn fp128_dense_mc() {
                 akita_types::PolynomialGroupLayout::singleton(16),
             ))
             .expect("dense multi-chunk schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         assert_eq!(
             schedule.root.params.witness_chunk.num_chunks, 8,
             "W8R2 regression profile must retain eight root witness chunks"
@@ -504,7 +505,8 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
                     .expect("root group layout"),
             ))
             .expect("layout")
-            .into_schedule()
+            .schedule()
+            .clone()
             .root
             .params;
 
@@ -580,7 +582,8 @@ fn fp128_onehot_oversized_setup() {
                     .expect("singleton group layout"),
             ))
             .expect("layout")
-            .into_schedule()
+            .schedule()
+            .clone()
             .root
             .params;
         let d = layout.d_a();

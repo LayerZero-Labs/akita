@@ -58,17 +58,19 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 + root.block_index_bits()
                 + root.d_a().trailing_zeros() as usize;
             let (poly, evals) = make_dense_poly(full_num_vars);
-            let quotient_capacity = akita_config::trusted_setup_matrix_capacity::<Cfg>(
+            let quotient_capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(
                 quotient_scheme.schedules(),
                 full_num_vars,
                 1,
             )
+            .map(|requirements| requirements.matrix_capacity)
             .expect("quotient setup capacity");
-            let reduced_capacity = akita_config::trusted_setup_matrix_capacity::<Cfg>(
+            let reduced_capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(
                 reduced_scheme.schedules(),
                 full_num_vars,
                 1,
             )
+            .map(|requirements| requirements.matrix_capacity)
             .expect("reduced setup capacity");
             let setup =
                 if quotient_capacity.num_field_elements >= reduced_capacity.num_field_elements {

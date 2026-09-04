@@ -67,7 +67,8 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
                     .expect("singleton group layout"),
             ))
             .expect("shipped L2 schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let l2_step = schedule
             .recursive_folds
             .iter()
@@ -263,7 +264,8 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
                     .expect("singleton group layout"),
             ))
             .expect("shipped fp32 schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let terminal_params = &schedule.terminal;
         let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
 

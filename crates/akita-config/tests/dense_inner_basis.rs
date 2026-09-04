@@ -34,7 +34,8 @@ struct Snapshot {
 }
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-    let schedule = catalog::<Cfg>()
+    let catalog = catalog::<Cfg>();
+    let schedule = catalog
         .resolve_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
         ))

@@ -159,7 +159,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .schedules()
         .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group_layout))
         .expect("batched schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let effective_schedule = plan.unwrap_or(&schedule);
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");

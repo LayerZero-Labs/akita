@@ -68,7 +68,9 @@ pub mod proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod schedule_artifact_tests;
-pub mod setup_prefix_slots;
+mod setup_prefix_slots;
+mod setup_requirements;
+pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements};
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod transcript_binding;
@@ -81,11 +83,9 @@ pub use akita_schedules::{
 };
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
-    setup_level_params_from_schedule, trusted_setup_matrix_capacity,
-    validate_setup_capacity_metadata,
+    setup_level_params_from_schedule,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
-pub use setup_prefix_slots::setup_prefix_slot_ids_from_catalog;
 pub use transcript_binding::bind_transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
@@ -601,7 +601,8 @@ mod fp128_policy_tests {
             let schedule = catalog
                 .resolve_key(&AkitaScheduleLookupKey::single(group))
                 .unwrap()
-                .into_schedule();
+                .schedule()
+                .clone();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
@@ -675,11 +676,13 @@ mod fp128_policy_tests {
         let dense = dense_catalog
             .resolve_key(&AkitaScheduleLookupKey::single(dense_key))
             .expect("adaptive dense schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
         let onehot = onehot_catalog
             .resolve_key(&AkitaScheduleLookupKey::single(onehot_key))
             .expect("adaptive onehot schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -694,7 +697,8 @@ mod fp128_policy_tests {
         let schedule = catalog
             .resolve_key(&AkitaScheduleLookupKey::single(key))
             .expect("adaptive batched onehot schedule")
-            .into_schedule();
+            .schedule()
+            .clone();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
@@ -710,11 +714,11 @@ mod fp128_policy_tests {
             ))
             .expect("generated row");
 
-        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             schedule.root.input_witness_len /= 2;
         });
         assert!(!root_input_error.to_string().is_empty());
-        let transition_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let transition_error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
             schedule.root.output_witness_len -= alignment;
             if let Some(next) = schedule.recursive_folds.first_mut() {
@@ -744,7 +748,7 @@ mod fp128_policy_tests {
                 (!row.schedule().recursive_folds.is_empty()).then_some(row)
             })
             .expect("recursive generated row");
-        let error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<fp128::OneHot>(row, |schedule| {
             let alignment = schedule.recursive_folds[0].params.d_a().max(
                 if schedule.recursive_folds.len() > 1 {
                     schedule.recursive_folds[1].params.d_a()
@@ -786,7 +790,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
             let step = schedule
                 .recursive_folds
                 .iter_mut()
@@ -828,7 +832,7 @@ mod fp128_policy_tests {
                     .then_some(row)
             })
             .expect("generated row with a setup prefix");
-        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+        let error = mutated_row_admission_error::<RecursiveOneHot>(row, |schedule| {
             let step = schedule
                 .recursive_folds
                 .iter_mut()

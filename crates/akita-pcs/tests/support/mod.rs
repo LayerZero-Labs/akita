@@ -281,11 +281,12 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let base = akita_config::trusted_setup_matrix_capacity::<Base>(
+        let base = akita_config::SetupRequirements::from_catalog::<Base>(
             catalog,
             max_num_vars,
             max_num_batched_polys,
-        )?;
+        )
+        .map(|requirements| requirements.matrix_capacity)?;
         Ok(SetupMatrixCapacity {
             num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
                 AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
@@ -324,7 +325,7 @@ where
                     })?
             }
         };
-        let mut schedule = base.into_schedule();
+        let mut schedule = base.schedule().clone();
         let policy = policy_of::<Self>();
         let root = &mut schedule.root.params;
         let d_a = root.inner().matrix.ring_dimension();
@@ -677,7 +678,7 @@ where
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(catalog, key, 64)?;
         let profiles = base.profiles().clone();
-        let mut schedule = base.into_schedule();
+        let mut schedule = base.schedule().clone();
         let params = if LEVEL == 0 {
             &mut schedule.root.params
         } else if LEVEL == 1 {

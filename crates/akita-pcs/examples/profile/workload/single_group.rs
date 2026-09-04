@@ -143,7 +143,8 @@ fn run_prove<
                 .schedules()
                 .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group_layout))
                 .expect("runtime schedule")
-                .into_schedule(),
+                .schedule()
+                .clone(),
         )
     } else {
         None

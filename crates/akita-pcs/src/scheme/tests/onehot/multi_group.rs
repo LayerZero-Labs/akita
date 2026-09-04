@@ -62,7 +62,8 @@ where
         .schedules()
         .resolve_key(multi_group_key)
         .expect("multi-group runtime schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
     let cached_backend = CpuBackend::with_resource_limits(

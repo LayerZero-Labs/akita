@@ -195,7 +195,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .schedules()
         .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let pre_points = (0..PRE_GROUPS)
         .map(|_| random_claim_point::<FF, Cfg::ExtField>(pre_num_vars, &mut point_rng))
         .collect::<Vec<_>>();

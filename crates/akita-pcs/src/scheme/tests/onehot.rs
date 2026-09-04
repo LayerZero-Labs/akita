@@ -176,7 +176,8 @@ fn group_batch_schedule_preserves_precommitted_order() {
         .schedules()
         .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let root = multi_group_root_params(&schedule);
     let main_params = schedule.root.params.clone();
 
@@ -273,7 +274,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         .schedules()
         .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
-        .into_schedule();
+        .schedule()
+        .clone();
     let main_params = multi_group_root_params(&multi_group_schedule);
     let final_polys = [
         debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7001),

@@ -38,7 +38,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .schedules()
             .resolve_key(&schedule_key)
             .expect("recursive profile schedule resolves")
-            .into_schedule();
+            .schedule()
+            .clone();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive profile must carry setup-prefix metadata"
