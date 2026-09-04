@@ -189,6 +189,43 @@ slot, whereas the BN254 slot has roughly 254 bits and this shell has roughly
 139. The bounded-fiber reduction is the applicable route in this
 sub-field-size regime.
 
+Pairwise invertibility is not the actual endpoint. If `d_max` is the maximum,
+over fixed accepted anchors, of the number of other accepted challenges with a
+non-unit difference, `M` coordinates and `Q` Fiat-Shamir queries contribute at
+most
+
+```text
+(Q + 1) * M * (1 + d_max) / |C|.
+```
+
+The extra one charges equality of the forked challenge. The full derivation,
+the distinction between Cyclo's two-fresh definition and PikkuFold's
+fixed-anchor definition, and exact query-budget tables are in
+[`APPROXIMATE_STRONG_SAMPLING.md`](APPROXIMATE_STRONG_SAMPLING.md).
+
+A higher-support operating point is now also certified:
+
+```text
+scripts/bn254_challenge_units/d128_uniform_w40_operator_norm/
+```
+
+It uses the complete signed weight-40 shell and runtime operator threshold 15.
+An exact degree-30 moment certificate proves acceptance probability at least
+`0.461570934374891162`, accepted support at least
+`2^149.857657644806`, and expected trials below `2.167`. Relative to the
+weight-35 threshold-14 candidate, it spends five additional nonzero
+coefficients and one operator-threshold unit to gain `11.205` certified support
+bits.
+
+Under an explicitly heuristic independent-edge model of the BN254 collision
+graph, both full-D128 candidates have maximum non-unit degree at most two with
+more than 128 bits of model confidence. Conditional on `d_max <= 2`, the
+weight-40 support leaves room for `Q <= 4,947` even at `M = 256`, before other
+knowledge-error terms. This is not yet a BN254 theorem. Exhaustive scaled-ring
+experiments found the algebraic evaluation maps far more injective than random
+maps, which is encouraging but also shows that the random model is not a
+calibrated substitute for a proof.
+
 Substitution `Y = X^(d / 128)` carries the same strong challenge set and inverse
 into every ambient power-of-two ring whose degree `d` is a multiple of 128. The
 completed S72 result therefore covers D256 and every larger such production dimension;
