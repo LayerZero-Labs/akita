@@ -5,334 +5,222 @@ witness. The schedule also selects how each commitment group is opened.
 
 ## Subring coefficient packing
 
-This section explains why a challenge from a smaller ring lets Akita use a
-shorter partial evaluation. The main fact is a commutation rule. Akita can
-first fold the source and then take a partial evaluation, or it can first take
-the partial evaluations and then fold them. Both orders give the same result.
+The preceding pages established the two semantic facts needed by
+`SubringCoefficientPacking`:
 
-The rule holds because the challenge acts only on the coefficient axis that the
-partial evaluation keeps.
+1. the [direct packed scalar
+   row](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
+   recombines the packed opening digits into the original scalar claim; and
+2. [packing commutes with the sparse source
+   fold](./akita-fold.md#subring-coefficient-packing-consistency), so the
+   packed partial and folded source describe the same random combination.
 
-### The three rings
+This section starts from those facts and explains their physical realization:
+the packing quotient, its coordinate planes, and evaluation at the ring-switch
+challenge.
 
-Let `K` be the base field. Let `E` be the field that contains the opening
-point, with extension degree `k = [E:K]`. The schedule selects an A ring
-dimension `d_A` and a challenge subring dimension `s` that satisfy
+### Native geometry
 
-```text
-d_A = k h s
-```
+Let $F$ be the base field and $E$ the opening field, with $k=[E:F]$. The
+schedule chooses $D$, $s$, and a packing factor $\eta$ satisfying
 
-for a power of two `h`. The protocol then uses three rings.
+$$
+D=k\eta s.
+$$
 
-| Ring | Definition | Job |
+The implementation and live specification call these values `d_A`, `s`, and
+`h`, respectively. The three relevant rings are
+
+| Ring | Definition | Physical role |
 |---|---|---|
-| A ring | `R = K[X]/(X^d_A + 1)` | Holds the committed source and the A relation |
-| Challenge subring | `S = K[Y]/(Y^s + 1)` | Holds each sparse fold challenge |
-| Extension opening ring | `C = E[Y]/(Y^s + 1)` | Holds each shortened partial evaluation |
+| A ring | $R=F[X]/(X^D+1)$ | source witness and A rows |
+| challenge subring | $S=F[U]/(U^s+1)$ | sparse fold challenges |
+| extension opening ring | $C=E[U]/(U^s+1)$ | packed partial and packing quotient |
 
-Only `S` embeds into `R`. The embedding is
+The embedding used by the A relation is
 
-```text
-Y -> X^(k h).
-```
+$$
+\iota:S\hookrightarrow R,
+\qquad
+\iota(U)=X^{k\eta}.
+$$
 
-This is a ring embedding because
+The [two-dimensional source
+table](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
+already showed how the $u$ columns are contracted and the $j$ rows are kept.
+This page starts from its output. One packed partial has $s$ coefficients in
+$E$. Expanding each coefficient in the canonical $E/F$ basis gives the
+following physical representation:
 
-```text
-(X^(k h))^s = X^d_A = -1 in R.
-```
+| Object | Logical shape | Base-field storage | Width |
+|---|---|---|---:|
+| all packed partials $e_i(U)$ | one $s$-coefficient element of $C$ per claim/block pair | `[claim][block][extension coordinate][subring coefficient]` | $ks$ per pair |
+| one group's $Q_{\mathrm{pack}}(U)$ | one degree-below-$s$ polynomial in $E[U]$ | `[extension coordinate][subring coefficient]` | $ks$ |
 
-The relation `Y^s = -1` in `S` is therefore preserved in `R`. The protocol does
-not sample a general A ring challenge and then delete most of its coefficients.
-It samples an element of the smaller ring `S`. After embedding into `R`, those
-coefficients occupy regularly spaced positions.
-
-The opening ring `C` has the same polynomial modulus as `S`, but its
-coefficients lie in `E`. It is useful to view it as `k` base field coordinate
-planes, each of length `s`.
-
-The number `s` is the polynomial dimension of the challenge ring. It is not
-the extension degree and it is not the number of challenges. Akita samples one
-challenge for each live claim and block pair. Each such challenge has `s`
-coefficient positions:
-
-```text
-c_i(Y) = c_(i,0) + c_(i,1)Y + ... + c_(i,s-1)Y^(s-1).
-```
-
-The challenge is sparse, so the schedule selects how many of those positions
-are nonzero. The dimension `s` determines the challenge family and the number
-of extension field coefficients retained by each partial.
-
-### Split the A ring coefficient index
-
-Every A ring coefficient index has one unique form
-
-```text
-ell = a + k h j,
-
-0 <= a < k h,
-0 <= j < s.
-```
-
-The index `a` is the part that the partial evaluation contracts. The index `j`
-is the part that remains. For one block `i` and one position `x`, write
-
-```text
-F_(i,x)(X)
-  = sum_(j < s) sum_(a < k h)
-      f_(i,x,a,j) X^(a + k h j).
-```
-
-The coefficient variables in the opening point split in the same order.
-`r_pack` has `log2(k h)` coordinates and supplies the weights for `a`.
-`r_tail` has `log2(s)` coordinates and later supplies the weights for `j`.
-
-The following grid shows the layout. Each cell is one coefficient in `K`.
-
-```text
-                         contracted by r_pack
-                    a = 0   1   2   ...   k h - 1
-                  +--------------------------------
-       j = 0      |  f     f   f           f       | -> e_i[0]   in E
-       j = 1      |  f     f   f           f       | -> e_i[1]   in E
-       j = 2      |  f     f   f           f       | -> e_i[2]   in E
-         ...      |  ...                         ...|
-       j = s - 1  |  f     f   f           f       | -> e_i[s-1] in E
-                  +--------------------------------
-
-                    k h coefficients in K              s values in E
-```
-
-The position point `r_M` also contracts the position index `x`. After these two
-contractions, the prover has one polynomial
-
-```text
-e_i(Y)
-  = sum_(x,a,j)
-      w(r_M, x) w(r_pack, a) f_(i,x,a,j) Y^j
-  in C.
-```
-
-Here and below, `E` is the extension field and lowercase `e_i` is a partial
-evaluation.
-
-### Why the partial is shorter
-
-An evaluation trace partial uses one full A ring element. It therefore has
-`d_A` base field coordinates.
-
-The packed partial has `s` coefficients in `E`. Each coefficient in `E` has
-`k` coordinates in `K`, so the packed partial has
-
-```text
-k s = d_A / h
-```
-
-base field coordinates. The exact reduction factor is `h`.
-
-The contraction consumes `k h` base field coefficients for each fixed `j` and
-returns one value in `E`. That value still needs `k` base field coordinates.
-The contraction therefore removes a factor of `h`, not a factor of `k h`.
-
-The implementation stores the packed partial in this order:
-
-```text
-[claim][block][extension coordinate][subring coefficient].
-```
-
-At a nonterminal fold, the prover decomposes these `k s` coordinates into
-opening digits. The D commitment, or its compressed H form, binds those digits
-before the fold challenge is sampled. The shorter coordinate list reduces the
-D or H input and the part of the next witness that carries the opening digits.
-
-For an admitted geometry with `B` live claim and block pairs, opening digit
-depth `delta_open`, and D ring dimension `d_D`, the number of D ring input
-elements changes from
-
-```text
-evaluation trace:  B * (d_A / d_D) * delta_open
-coefficient packing: B * (k s / d_D) * delta_open.
-```
-
-This is the direct reduction in the partial evaluation part of the relation.
-
-### Why the challenge subring makes this valid
-
-For each claim and block pair `i`, Akita samples
-
-```text
-c_i(Y) in S.
-```
-
-The A relation uses the embedded challenge
-
-```text
-c_i(X^(k h)) in R.
-```
-
-Its nonzero coefficients occur only at A ring positions
-
-```text
-0, k h, 2 k h, ..., (s - 1) k h.
-```
-
-Multiplication by this embedded challenge changes `j` but does not mix the
-different values of `a`. Negacyclic wraparound in `j` produces the same minus
-sign in `S` and `R`. The partial evaluation can therefore contract `a` before
-or after challenge multiplication.
-
-```text
-source family {F_(i,x)}_x -- multiply by c_i(X^(k h)) --> {Z_x}_x
-             |                                                  |
-             | contract x and a                                | contract x and a
-             v                                                  v
-       partial e_i in C -- multiply by c_i(Y) ---------->    L(Z) in C
-```
-
-Writing this diagram as an equation gives
-
-```text
-L(c_i(X^(k h)) F_i) = c_i(Y) L(F_i).
-```
-
-After summing the blocks, an honest witness satisfies
-
-```text
-L(Z)(Y) = sum_i c_i(Y) e_i(Y)  in C.
-```
-
-This identity is the reason the protocol can replace a full A ring partial
-with the shorter packed partial. A general challenge in `R` would mix `a` and
-`j`. The contraction would then discard information needed to reproduce the
-fold, and this identity would fail.
-
-### Finish the claimed opening
-
-The partial leaves the `j` index open. The scalar opening row contracts it with
-the tail point and contracts the block index with `r_B`:
-
-```text
-sum_i w(r_B, i)
-  sum_(j < s) w(r_tail, j) e_i[j]
-  = v in E.
-```
-
-This is the original extension field opening claim. Coefficient packing does
-not use a trace map. It therefore does not need extension opening reduction,
-or EOR, when `k > 1`.
+Within either object, one extension-coordinate plane contains all $s$
+coefficients in increasing $j$ order. Its width $ks=D/\eta$ is **not** the
+dimension of one larger ring. A packed partial is one logical $C$-valued
+element represented by $k$ base-field planes. The quotient has the same
+coefficient shape, but is kept as a degree-below-$s$ representative in
+$E[U]$. The D commitment, or its compressed H realization, binds the
+digit-decomposed partial planes before the fold challenge is sampled.
 
 ### The packing consistency quotient
 
-Ordinary multiplication of two degree less than `s` polynomials can have
-degree as high as `2s - 2`. Equality in `C` means that the difference is a
-multiple of `Y^s + 1`. The prover supplies the quotient `Q_pack` such that
+Let $e_i(U)\in C$ be the packed partial for a live claim/block pair and let
+$c_i(U)\in S$ be its fold challenge. For the folded-source digits, use the
+shorthand
 
-```text
-sum_i c_i(Y) e_i(Y) - L(G z_hat)(Y)
-  = (Y^s + 1) Q_pack(Y).
-```
+$$
+G\hat{\mathbf z}
+:=
+\left(
+\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}
+\right)_{p,a}.
+$$
 
-The quotient has `s` coefficients in `E`, so it also has exactly `k s` base
-field coordinates before digit decomposition. It receives the same factor `h`
-coordinate reduction as a packed partial.
+This notation preserves the $(p,a)$ vector: the sum recomposes only the fold
+digit index $f$. Applying the packing map gives $L(G\hat{\mathbf z})(U)$.
+Semantic consistency says
 
-The verifier checks this identity at `Y = alpha`. It evaluates the same
-challenge at two different points:
+$$
+\sum_i c_i(U)e_i(U)=L(G\hat{\mathbf z})(U)
+\qquad\text{in }C.
+$$
 
-```text
-c_i(alpha)            for packing consistency,
-c_i(alpha^(k h))      for the A relation.
-```
+Canonical representatives of the two sides need not be equal as ordinary
+polynomials. Their difference is divisible by the cyclotomic modulus, so the
+prover supplies
 
-There is one challenge and one coefficient list. The two evaluations follow
-from the embedding `Y -> X^(k h)`.
+$$
+Q_{\mathrm{pack}}(U)\in E[U],
+\qquad
+\deg Q_{\mathrm{pack}}<s,
+$$
 
-Stage 2 checks the scalar opening and the packing consistency equation against
-the same final witness evaluation point used by the range and native relation
-terms. It keeps the packing weights in a factorized form. The prover and
-verifier do not allocate one dense weight table with the size of the complete
-witness.
+such that the following identity holds in $E[U]$:
 
-### One packing fold in order
+$$
+\boxed{
+\sum_i c_i(U)e_i(U)-L(G\hat{\mathbf z})(U)
+=
+(U^s+1)Q_{\mathrm{pack}}(U).
+}
+\tag{1}
+$$
 
-1. The schedule fixes `d_A`, `s`, the opening basis, and the challenge family.
-2. The prover contracts the position axis and the `a` coefficient axis to form
-   each `e_i(Y)`.
-3. The prover decomposes the `k s` base field coordinates of each partial into
-   digits and binds their D or H payload.
-4. The transcript samples one `c_i(Y)` for every live claim and block pair.
-5. The prover folds the A ring sources with `c_i(X^(k h))` and computes
-   `Q_pack` from the high half of `sum_i c_i(Y)e_i(Y)`.
-6. The prover binds `Q_pack` and the next witness, then the transcript samples
-   `alpha`.
-7. Stage 2 checks the claimed opening and the packing consistency equation.
-   The A rows check the same challenges through their embedded A ring form.
+The quotient also has $s$ coefficients in $E$, hence $k$ coordinate planes of
+length $s$. Its digit coordinates occupy the consistency-row slot in the
+shared pre-compression quotient range. In Stage 2, the packed E and Q events
+join the common relation-weight factorization, while the folded-source side is
+the separate packing-Z structured term. These contributions replace the
+legacy `EvaluationTrace` consistency coefficients; they do not add a second
+copy of the obligation.
 
-### Worked production example
+### Evaluate the native relations at one challenge
 
-Consider the fp32 candidate
+After the quotient and next witness are bound, the transcript samples the
+ring-switch challenge $\alpha$. Evaluating Equation (1) at $U=\alpha$ gives
+
+$$
+\sum_i c_i(\alpha)e_i(\alpha)
+-L(G\hat{\mathbf z})(\alpha)
+=
+(\alpha^s+1)Q_{\mathrm{pack}}(\alpha).
+\tag{2}
+$$
+
+The A rows use the same challenge polynomials through the embedding. For a
+challenge
+
+$$
+c_i(U)=\sum_{j=0}^{s-1}c_{i,j}U^j,
+$$
+
+the two required evaluations are
+
+$$
+c_i(\alpha)
+\qquad\text{and}\qquad
+\iota(c_i)(\alpha)
+=
+c_i(\alpha^{k\eta}).
+\tag{3}
+$$
+
+Equation (3) does not introduce a second transcript challenge. It evaluates
+one coefficient list in the two native geometries required by packing
+consistency and the A relation.
+
+### One packing fold in transcript order
+
+1. The schedule fixes $D$, $s$, the canonical extension basis, and the sparse
+   challenge family.
+2. The prover forms each packed partial and digit-decomposes its $ks$
+   base-field coordinates.
+3. The prover binds the complete D payload, or its compressed H payload.
+4. The transcript samples one $c_i(U)$ for each live claim/block pair.
+5. The prover folds the A-ring sources with $c_i(X^{k\eta})$ and computes
+   $Q_{\mathrm{pack}}$.
+6. The prover binds $Q_{\mathrm{pack}}$ and the next witness; only then does
+   the transcript sample $\alpha$.
+7. Stage 2 checks the scalar opening, Equation (2), and the A rows using the
+   two evaluations in Equation (3).
+
+This ordering fixes the packed digits before the subring challenges and fixes
+the quotient and next witness before the evaluation point.
+
+### Worked production geometry
+
+For the fp32 candidate
 
 ```text
 d_A = 1024,
 k   = 4,
 s   = 128,
 h   = 2,
-k h = 8.
+k h = 8,
 ```
 
-The A ring coefficient index is `a + 8j`. For each fixed `j`, the partial
-evaluation contracts eight base field coefficients into one value in the
-degree four extension field. That extension value uses four base field
-coordinates.
+the A-ring coefficient index is `a + 8j`. For every fixed `j`, the partial
+contracts eight base-field coefficients into one element of the degree-four
+extension field. That value occupies four base-field coordinates:
 
 ```text
-evaluation trace partial:  1024 coordinates in K
+evaluation-trace partial:  1024 coordinates in F
 packed partial:              128 values in E
-                            = 128 * 4
-                            = 512 coordinates in K
+                             128 * 4 = 512 coordinates in F
 ```
 
-The packed partial and `Q_pack` are each half as wide as their full A ring
-counterparts. The challenge embeds at exponents `0, 8, 16, ..., 1016`.
+The packed partial and $Q_{\mathrm{pack}}$ are each half as wide as their
+full-A-ring counterparts. The challenge embeds at exponents
+`0, 8, 16, ..., 1016`.
 
-Choosing `s = 64` with the same `d_A` and `k` would give `h = 4` and only 256
-base field coordinates per partial. That choice needs a heavier sparse
-challenge to retain the required entropy. It can therefore increase the A
-response bound or change the next witness. The planner prices the complete
-schedule rather than always choosing the smallest `s`.
+Choosing `s = 64` with the same `d_A` and `k` would instead give `h = 4` and
+256 base-field coordinates per packed object. That smaller subring needs a
+different sparse challenge family and can increase the A response bound or
+change the recursive suffix. The planner therefore prices the complete
+schedule rather than minimizing `s` alone.
 
-### What the size claim does and does not mean
+### Scope and schedule placement
 
-Coefficient packing gives two direct savings at an eligible fold.
+Packing gives two direct savings at an eligible fold: it removes EOR for a
+proper extension-field opening, and it reduces each partial and packing
+quotient from $D$ to $ks$ base-field coordinates before digit decomposition.
+It does not shrink every proof component by $\eta$; gadget depths, matrix
+ranks, compression payloads, response bounds, and later folds can change.
 
-1. It removes EOR when the opening point lies in a proper extension field.
-2. It reduces each partial and each packing quotient from `d_A` to `k s`
-   base field coordinates before digit decomposition.
+Current generated schedules use packing only at existing nonterminal absolute
+fold levels 0 and 1. Every group in such a fold must have a feasible packing
+assignment, and one fold cannot mix packing with `EvaluationTrace`. Later
+recursive folds and the terminal use `EvaluationTrace`; packing adds neither
+an EOR payload nor a packing terminal.
 
-It does not reduce every proof component by `h`. Gadget depths, matrix ranks,
-compression output sizes, response bounds, and later folds can all change. A
-fixed size H payload can also hide some of the raw coordinate reduction. The
-planner therefore computes the complete setup and proof cost from the selected
-geometry.
-
-### Protocol placement
-
-Production planning considers packing only at absolute fold levels 0 and 1.
-Those folds use the coefficient `L∞` A security route. Later folds and the
-terminal use evaluation trace. A nonterminal level 0 or 1 state without a
-complete packing assignment is unsupported.
-
-Commitment identity records the coefficient representation and the A and B
-matrices. It does not record the consuming opening method, `s`, or challenge.
-The schedule and transcript descriptor record that opening plan. This lets a
-later evaluation trace fold consume a flat witness or setup prefix produced by
-an earlier packing fold without changing its commitment identity.
-
-The prover binds the complete D payload, or its compressed H payload, before it
-draws the subring challenge. It binds `Q_pack` and the next witness before it
-draws `alpha`. The verifier replays the same order.
+This chapter documents the implemented relation and schedule boundary. The
+active design record gives the formal planner and soundness requirements,
+including the implemented coordinatewise CWSS accounting. The equations here
+are protocol relations; by themselves, they are not an end-to-end soundness
+theorem.
 
 ## The root fold
 
@@ -343,23 +231,28 @@ group rules for its folded witness and an incoming setup prefix.
 
 ## Ring switching
 
-The lattice fold lifts the relation `M w = h` from
-`R_q = Z_q[X]/(X^D+1)` to `Z_q[X]` through its unique quotient. The prover
-computes native ring quotients with paired cyclic and negacyclic NTTs. A packing
-consistency row instead has modulus dimension `s` and `k` coordinate planes.
-Its physical width is `k s`; it is not a ring of dimension `k s`.
+Every physical cyclotomic-ring row is lifted through its own unique quotient
+before evaluation at $\alpha$. An ordinary row in
+$F[X]/(X^{d_i}+1)$ uses denominator $X^{d_i}+1$ and evaluates it as
+$\alpha^{d_i}+1$. A packing consistency relation instead uses $k$ coordinate
+planes with denominator $U^s+1$, producing the factor $\alpha^s+1$ in
+Equation (2).
 
-This ring switch is distinct from EOR. EOR changes an extension valued opening
+This ring switch is distinct from EOR. EOR changes an extension-valued opening
 claim before the lattice relation. Ring switching proves the polynomial
-quotients of the lattice relation itself.
+quotients of the physical lattice relations themselves.
 
 ## Implementation map
 
-- `crates/akita-prover/src/protocol/ring_relation.rs`.
-- `crates/akita-prover/src/protocol/ring_switch.rs`.
-- `crates/akita-prover/src/protocol/coefficient_packing.rs`.
-- `crates/akita-types/src/subring_coefficient_packing.rs`.
-- `crates/akita-types/src/proof/coefficient_packing_relation.rs`.
-- `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
-  rejects a proof whose dimensions or quotient structure do not match the
-  selected schedule.
+- `crates/akita-prover/src/protocol/ring_relation.rs` assembles ordinary
+  relation terms.
+- `crates/akita-prover/src/protocol/ring_switch.rs` computes native-ring
+  quotients and their evaluations.
+- `crates/akita-prover/src/protocol/coefficient_packing.rs` forms packed
+  partials and the packing quotient.
+- `crates/akita-types/src/subring_coefficient_packing.rs` defines and validates
+  the packing geometry.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs` supplies the
+  factorized Stage-2 packing relation.
+- `crates/akita-verifier/src/protocol/core/fold/` reconstructs the scheduled
+  relations and rejects inconsistent dimensions or quotient structure.
