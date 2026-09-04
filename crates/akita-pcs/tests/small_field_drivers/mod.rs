@@ -74,7 +74,7 @@ where
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =

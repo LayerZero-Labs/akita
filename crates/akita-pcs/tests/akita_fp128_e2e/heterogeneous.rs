@@ -21,9 +21,9 @@ fn heterogeneous_group_types() {
         const DENSE_PRE_NV: usize = 15;
         const FINAL_NV: usize = 16;
         let onehot_scheme =
-            load_workspace_scheme::<OneHotCfg>().expect("embedded one-hot schedule catalog");
+            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
         let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("embedded dense schedule catalog");
+            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
 
         let setup = onehot_scheme.setup_prover(FINAL_NV, 4).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
@@ -252,9 +252,9 @@ fn bounded_dense_precommit_with_onehot_final_group() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
-            .expect("embedded bounded-dense schedule catalog");
+            .expect("workspace bounded-dense schedule catalog");
         let onehot_scheme =
-            load_workspace_scheme::<OneHotCfg>().expect("embedded one-hot schedule catalog");
+            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
         // Full-width `u64` coefficients on both signs — the workload the bounded
         // preset exists for — including the `±u64::MAX` endpoints. `commit` must
         // accept all of them under `log_commit_bound = 65`, the signed bit width
@@ -503,7 +503,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let setup = scheme.setup_prover(NV, 1).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
@@ -636,9 +636,9 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
-            .expect("embedded bounded-dense schedule catalog");
+            .expect("workspace bounded-dense schedule catalog");
         let dense_scheme =
-            load_workspace_scheme::<DenseCfg>().expect("embedded dense schedule catalog");
+            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
         let setup = bounded_scheme.setup_prover(NV, 1).expect("bounded setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
@@ -745,7 +745,7 @@ fn heterogeneous_compute_backends() {
     run_on_large_stack(|| {
         const NV: usize = 16;
         type Cfg = fp128::Dense;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();

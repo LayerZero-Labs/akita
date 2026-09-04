@@ -154,7 +154,7 @@ macro_rules! small_field_test {
 
                 for &final_nv in &[$($fnv),+] {
                     let scheme = load_workspace_scheme::<$cfg>()
-                        .expect("embedded schedule catalog");
+                        .expect("workspace schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
                         2,
@@ -339,7 +339,7 @@ macro_rules! small_field_test {
 
                 for &final_nv in &[$($fnv),+] {
                     let scheme = load_workspace_scheme::<$cfg>()
-                        .expect("embedded schedule catalog");
+                        .expect("workspace schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
                         2,
@@ -541,7 +541,7 @@ fn fp32_onehot_multi_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<SmallCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<SmallCfg>().expect("workspace schedule catalog");
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
             let onehot_k =
                 akita_config::unit_onehot_source_chunk_size::<SmallCfg>().expect("one-hot config");

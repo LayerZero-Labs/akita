@@ -330,7 +330,7 @@ fn fp128_onehot_mc() {
 #[test]
 fn fp128_onehot_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let polys: Vec<_> = (0..batch_size)
             .map(|i| make_onehot_poly::<OneHotCfg>(nv, 0xa66e_0000 + nv as u64 * 100 + i as u64))
             .collect();
@@ -408,7 +408,7 @@ fn fp128_onehot_batched() {
 #[test]
 fn fp128_dense_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
         let seeds: Vec<u64> = (0..batch_size)
             .map(|i| 0xd3e5_0000 + nv as u64 * 100 + i as u64)
             .collect();
@@ -494,7 +494,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
     run_on_large_stack(|| {
         const NV: usize = 17;
         const BATCH: usize = 4;
-        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
         let layout = scheme
             .schedules()
@@ -570,7 +570,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
 #[test]
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = scheme
             .schedules()
@@ -673,7 +673,7 @@ fn fp128_dense_monomial_basis() {
     init_rayon_pool();
     run_on_large_stack(|| {
         const NV: usize = 14;
-        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
         let evals = dense_field_evals(NV, 0xb0b0_0000);
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
         let pt = random_point(NV, 0xc0de_0000);

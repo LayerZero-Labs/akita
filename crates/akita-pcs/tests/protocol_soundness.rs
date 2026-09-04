@@ -348,7 +348,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         const D: usize = 256;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(&scheme, DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
@@ -381,7 +381,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
         const NV: usize = 20;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let layout = scheme
             .schedules()
@@ -492,7 +492,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         const D: usize = 256;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(
@@ -550,7 +550,7 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         let nv = 4;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
         let err = scheme
             .schedules()
             .resolve_key(&AkitaScheduleLookupKey::single(
@@ -577,7 +577,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let nv = ONEHOT_TEST_NV;
         let layout = scheme
@@ -737,7 +737,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         type SF = fp32::Field;
         type SE = fp32::ExtensionField;
         const LABEL: &[u8] = b"soundness/fp32-ext4-eor";
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let polys = [ext4_onehot_poly(0), ext4_onehot_poly(1)];
         let poly_refs: Vec<_> = polys.iter().collect();
@@ -1031,7 +1031,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         type Cfg = fp128::Dense;
         const NV: usize = 16;
         const LABEL: &[u8] = b"soundness/batched-dense-payload";
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let len = 1usize << NV;
         let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
@@ -1148,7 +1148,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         // recursive suffix.
         const NV: usize = 20;
         const LABEL: &[u8] = b"soundness/batched-onehot-terminal";
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let plan = scheme
             .schedules()
@@ -1312,7 +1312,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         type Cfg = fp128::Dense;
         const D: usize = 256;
         const LABEL: &[u8] = b"soundness/profile-geometry";
-        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(&scheme, DENSE_TEST_NV, LABEL);

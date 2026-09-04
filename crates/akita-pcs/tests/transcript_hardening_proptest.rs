@@ -24,7 +24,7 @@ fn batch_case(index: usize) -> (usize, usize) {
 
 fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
-    let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
+    let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
 
     let (num_vars, total_claims) = batch_case(shape_index);
     let opening_batch =

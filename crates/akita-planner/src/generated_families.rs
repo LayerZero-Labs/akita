@@ -164,7 +164,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 
 /// Bounded dense keys.
 ///
-/// 14 is the producer for the bounded precommit descriptor embedded in the
+/// 14 is the producer for the bounded precommit descriptor stored in the
 /// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
 /// and 26 are the sizes where the bound's setup and next-witness savings are
 /// measured against the matching `fp128_dense` rows.

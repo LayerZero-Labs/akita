@@ -49,14 +49,16 @@ fn onehot_source_chunk_size<C: CommitmentConfig>() -> usize {
 
 #[test]
 fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
-    let embedded = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("embedded schedule catalog");
-    let artifact = embedded.to_artifact_bytes().expect("schedule artifact");
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
+    let artifact = workspace_catalog
+        .to_artifact_bytes()
+        .expect("schedule artifact");
     let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
 
     assert_eq!(
         scheme.schedules().catalog_digest(),
-        embedded.catalog_digest()
+        workspace_catalog.catalog_digest()
     );
     let key =
         akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
@@ -66,9 +68,9 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
             .resolve_key(&key)
             .expect("artifact row")
             .selection(),
-        embedded
+        workspace_catalog
             .resolve_key(&key)
-            .expect("embedded row")
+            .expect("artifact row")
             .selection()
     );
 

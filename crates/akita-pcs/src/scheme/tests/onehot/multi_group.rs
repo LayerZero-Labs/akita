@@ -400,16 +400,16 @@ fn multi_group_root_folded_group_binding_round_trips() {
 fn multi_group_root_allows_precommitted_arity_above_final_group() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
-    let embedded = akita_config::test_support::workspace_schedule_catalog::<PlannerCfg>()
+    let workspace_catalog = akita_config::test_support::workspace_schedule_catalog::<PlannerCfg>()
         .expect("workspace schedule artifact");
-    let key = multi_group_key(&embedded, 20, 14, &[1], 1);
-    embedded
+    let key = multi_group_key(&workspace_catalog, 20, 14, &[1], 1);
+    workspace_catalog
         .resolve_key(&key)
         .expect_err("synthetic planner row must not be shipped");
     let synthetic = PlannerCfg::derive_catalog_row(&key).expect("synthetic planner row");
     let schedules = akita_config::TrustedScheduleCatalog::try_new(
         PlannerCfg::schedule_family_name(),
-        embedded
+        workspace_catalog
             .rows()
             .map(|row| (row.profiles().clone(), row.schedule().clone()))
             .chain(std::iter::once((

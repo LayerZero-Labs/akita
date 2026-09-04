@@ -30,7 +30,7 @@ struct FoldLinfGrindFixture {
 }
 
 fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
-    let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+    let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     let row = scheme
@@ -304,7 +304,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let num_vars = FOLD_LINF_E2E_NV;
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");

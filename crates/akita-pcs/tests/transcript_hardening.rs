@@ -48,7 +48,7 @@ fn preamble_separation_changes_first_challenge() {
 fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
@@ -314,7 +314,7 @@ impl ProofTamper {
 fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
         let layout = scheme
@@ -419,7 +419,7 @@ fn terminal_shape_terminal_response_mut(
 fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let poly = make_onehot_poly::<OneHotCfg>(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
