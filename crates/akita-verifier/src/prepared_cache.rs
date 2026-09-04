@@ -80,7 +80,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::OneHot, test_support::TestScheduleProvider};
+    use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaScheduleLookupKey,
         AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
@@ -92,11 +92,11 @@ mod tests {
     fn terminal_builder_binds_the_resolved_schedule_and_installs() {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
-        let row = OneHot::resolve_catalog_row_for_key(
-            &catalog,
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(15, 1)),
-        )
-        .expect("generated fp128 schedule");
+        let row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                15, 1,
+            )))
+            .expect("generated fp128 schedule");
         let selection = row.selection();
         let schedule = row.schedule();
         let requirement = terminal_ntt_cache_requirement(schedule).expect("terminal requirement");

@@ -58,9 +58,3 @@ impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfi
         true
     }
 }
-
-#[cfg(any(test, feature = "test-support"))]
-impl<Cfg> crate::test_support::TestScheduleProvider for RecursiveCommitmentConfig<Cfg> where
-    Cfg: RecursiveScheduleConfig + crate::test_support::TestScheduleProvider
-{
-}

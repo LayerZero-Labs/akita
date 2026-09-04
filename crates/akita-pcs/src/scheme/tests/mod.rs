@@ -1,5 +1,4 @@
 use super::*;
-use akita_config::test_support::TestScheduleProvider;
 
 fn workspace_scheme<C>() -> Result<AkitaCommitmentScheme<C>, AkitaError>
 where

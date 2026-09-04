@@ -414,10 +414,14 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     final_size: usize,
     check_group_binding: bool,
     max_cached_ring_switch_elements: usize,
+    resolve_row: impl Fn(
+        &akita_config::TrustedScheduleCatalog,
+        &akita_types::AkitaScheduleLookupKey,
+    ) -> Result<akita_config::ResolvedScheduleRow, akita_error::AkitaError>,
 ) -> AkitaBatchedProof<OneHotF, OneHotF>
 where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
-    ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF> + TestScheduleProvider,
+    ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
     let embedded = akita_config::test_support::workspace_schedule_catalog::<ProtocolCfg>()
         .expect("embedded schedule catalog");
@@ -426,19 +430,21 @@ where
     let pre_layouts = pre_sizes
         .iter()
         .map(|&num_polynomials| {
-            ProtocolCfg::profile_without_precommitted_groups(
-                &embedded,
-                akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
-            )
-            .expect("independent profile")
+            embedded
+                .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                    akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
+                ))
+                .expect("independent row")
+                .profiles()
+                .final_group
         })
         .collect::<Vec<_>>();
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds: pre_layouts.clone(),
     };
-    let requested_row = ProtocolCfg::resolve_catalog_row_for_key(&embedded, &multi_group_key)
-        .expect("multi-group runtime schedule");
+    let requested_row =
+        resolve_row(&embedded, &multi_group_key).expect("multi-group runtime schedule");
     let multi_group_schedule = requested_row.schedule().clone();
 
     // Synthetic test configs may generate a row that is intentionally absent
@@ -790,19 +796,43 @@ where
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true, usize::MAX);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(
+        14,
+        20,
+        &[1],
+        2,
+        true,
+        usize::MAX,
+        |catalog, key| catalog.resolve_key(key),
+    );
 }
 
 #[test]
 fn multi_group_root_allows_precommitted_arity_above_final_group() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
-    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false, usize::MAX);
+    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(
+        20,
+        14,
+        &[1],
+        1,
+        false,
+        usize::MAX,
+        |_, key| PlannerCfg::derive_catalog_row(key),
+    );
 }
 
 #[test]
 fn multi_group_root_opens_multi_polynomial_precommitted_group() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false, usize::MAX);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(
+        14,
+        20,
+        &[2],
+        1,
+        false,
+        usize::MAX,
+        |catalog, key| catalog.resolve_key(key),
+    );
 }
 
 #[test]
@@ -814,9 +844,17 @@ fn three_group_cached_and_streamed_proofs_are_identical() {
         4,
         false,
         usize::MAX,
+        |catalog, key| catalog.resolve_key(key),
     );
-    let streamed =
-        multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1, 1], 4, false, 0);
+    let streamed = multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(
+        14,
+        20,
+        &[1, 1],
+        4,
+        false,
+        0,
+        |catalog, key| catalog.resolve_key(key),
+    );
     assert_eq!(streamed, cached, "cached and streamed proofs differ");
 }
 
@@ -830,6 +868,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
         1,
         false,
         usize::MAX,
+        |catalog, key| catalog.resolve_key(key),
     );
 }
 

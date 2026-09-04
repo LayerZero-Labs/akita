@@ -3,12 +3,12 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{test_support::TestScheduleProvider, CommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
 };
 
-fn schedule<Cfg: CommitmentConfig + TestScheduleProvider>(num_vars: usize) -> FoldSchedule {
+fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("workspace schedule catalog");
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
@@ -19,7 +19,8 @@ fn schedule<Cfg: CommitmentConfig + TestScheduleProvider>(num_vars: usize) -> Fo
             PolynomialGroupLayout::new(num_vars, 1)
         }
     };
-    Cfg::resolve_catalog_row_for_key(&catalog, &AkitaScheduleLookupKey::single(group))
+    catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("runtime schedule")
         .into_schedule()
 }

@@ -38,9 +38,11 @@ fn w8r2_profiling_key(
     base_catalog: &akita_config::TrustedScheduleCatalog,
 ) -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted =
-        fp128::OneHotMultiChunk::profile_without_precommitted_groups(base_catalog, pre_group)
-            .expect("independent profile");
+    let precommitted = base_catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .expect("independent row")
+        .profiles()
+        .final_group;
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
@@ -56,15 +58,15 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         .expect("recursive W8R2 catalog");
     let key = w8r2_profiling_key(&base_catalog);
     let root_layout = key.opening_layout().expect("root layout");
-    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&catalog, &key).expect("W8R2 schedule");
+    let schedule = catalog.resolve_key(&key).expect("W8R2 schedule");
     assert_w8r2_profile_shape(schedule.schedule());
     let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
-    let setup_for_two =
-        W8R2Cfg::setup_matrix_capacity(&catalog, 32, 2).expect("setup capacity for K=2");
-    let setup_for_four =
-        W8R2Cfg::setup_matrix_capacity(&catalog, 32, 4).expect("setup capacity for K=4");
+    let setup_for_two = akita_config::trusted_setup_matrix_capacity::<W8R2Cfg>(&catalog, 32, 2)
+        .expect("setup capacity for K=2");
+    let setup_for_four = akita_config::trusted_setup_matrix_capacity::<W8R2Cfg>(&catalog, 32, 4)
+        .expect("setup capacity for K=4");
     let incoming_prefixes = schedule
         .schedule()
         .recursive_folds
@@ -122,7 +124,8 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>()
         .expect("recursive W8R2 catalog");
     let key = w8r2_profiling_key(&base_catalog);
-    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&catalog, &key)
+    let schedule = catalog
+        .resolve_key(&key)
         .expect("W8R2 schedule")
         .into_schedule();
     let first_recursive = &schedule.recursive_folds[0].params;

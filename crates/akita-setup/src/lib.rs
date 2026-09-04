@@ -566,8 +566,6 @@ fn validate_cached_matrix<F: Field + CanonicalEncoding + Valid>(
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
-    #[cfg(feature = "disk-persistence")]
-    use akita_config::test_support::TestScheduleProvider;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_types::SetupMatrixCapacity;
     #[cfg(feature = "disk-persistence")]
@@ -619,16 +617,6 @@ mod tests {
 
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             Cfg::committed_source_class()
-        }
-    }
-
-    impl akita_config::test_support::TestScheduleProvider for WrongModulusProfileConfig {
-        fn setup_matrix_capacity(
-            _catalog: &akita_config::TrustedScheduleCatalog,
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
-            panic!("invalid config reached setup capacity materialization")
         }
     }
 
@@ -951,9 +939,10 @@ mod tests {
                 let large = new_prover_setup::<TestF, Cfg>(&schedules(), LARGE_VARS, 1).unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
                 let catalog = schedules();
-                let small_required = Cfg::setup_matrix_capacity(&catalog, SMALL_VARS, 1)
-                    .unwrap()
-                    .num_field_elements;
+                let small_required =
+                    akita_config::trusted_setup_matrix_capacity::<Cfg>(&catalog, SMALL_VARS, 1)
+                        .unwrap()
+                        .num_field_elements;
                 assert!(large_fields >= small_required);
 
                 let covered = new_prover_setup::<TestF, Cfg>(&schedules(), SMALL_VARS, 1).unwrap();
@@ -992,13 +981,15 @@ mod tests {
                 let small = AkitaProverSetup::generate_with_capacity(
                     SMALL_VARS,
                     1,
-                    Cfg::setup_matrix_capacity(&schedules(), SMALL_VARS, 1).unwrap(),
+                    akita_config::trusted_setup_matrix_capacity::<Cfg>(&schedules(), SMALL_VARS, 1)
+                        .unwrap(),
                 )
                 .unwrap();
                 let large = AkitaProverSetup::generate_with_capacity(
                     LARGE_VARS,
                     1,
-                    Cfg::setup_matrix_capacity(&schedules(), LARGE_VARS, 1).unwrap(),
+                    akita_config::trusted_setup_matrix_capacity::<Cfg>(&schedules(), LARGE_VARS, 1)
+                        .unwrap(),
                 )
                 .unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
@@ -1107,16 +1098,19 @@ mod tests {
                     load_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
 
                 let catalog = schedules();
-                let lp = Cfg::resolve_catalog_row_for_opening(
-                    &catalog,
-                    &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
-                        .expect("singleton opening batch"),
-                )
-                .unwrap()
-                .schedule()
-                .root
-                .params
-                .clone();
+                let opening = akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
+                    .expect("singleton opening batch");
+                let lp = catalog
+                    .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                        opening
+                            .root_final_group_layout()
+                            .expect("root group layout"),
+                    ))
+                    .unwrap()
+                    .schedule()
+                    .root
+                    .params
+                    .clone();
                 let num_coeffs = lp.blocks().live_blocks * lp.blocks().positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);

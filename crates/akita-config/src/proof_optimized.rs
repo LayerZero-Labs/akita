@@ -308,8 +308,6 @@ macro_rules! impl_proof_optimized_preset {
 
         }
 
-        #[cfg(any(test, feature = "test-support"))]
-        impl $crate::test_support::TestScheduleProvider for $cfg {}
     };
 }
 

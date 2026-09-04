@@ -10,7 +10,6 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
-use akita_config::test_support::TestScheduleProvider;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::backend::DenseView;
@@ -202,7 +201,13 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         .expect("embedded schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::resolve_catalog_row_for_opening(&schedules, &opening_batch)
+    let key = akita_types::AkitaScheduleLookupKey::single(
+        opening_batch
+            .root_final_group_layout()
+            .expect("root group layout"),
+    );
+    let params = schedules
+        .resolve_key(&key)
         .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     assert_eq!(
@@ -212,7 +217,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
 
     let setup_envelope =
-        Cfg::setup_matrix_capacity(&schedules, CONTRACT_NUM_VARS, 1).expect("envelope");
+        akita_config::trusted_setup_matrix_capacity::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+            .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
     let contract_backend = ContractCommitBackend;

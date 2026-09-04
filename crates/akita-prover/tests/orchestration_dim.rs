@@ -3,9 +3,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
-use akita_config::{
-    effective_batched_schedule, test_support::TestScheduleProvider, CommitmentConfig,
-};
+use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
     CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -20,7 +18,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
         .expect("workspace schedule catalog");
     let nv = 14;
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
-    let expected = Cfg::resolve_catalog_row_for_key(&catalog, &key).expect("runtime schedule");
+    let expected = catalog.resolve_key(&key).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
     let profiles = CommittedGroupBatchProfile {
@@ -31,8 +29,9 @@ fn batched_selection_preserves_typed_schedule_topology() {
         .expect("valid profile"),
         precommitteds: Vec::new(),
     };
-    let selected =
-        Cfg::resolve_catalog_row_for_profiles(&catalog, &profiles).expect("selected schedule");
+    let selected = catalog
+        .resolve_profiles(&profiles)
+        .expect("selected schedule");
     let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)
         .expect("effective schedule");
     assert_eq!(
@@ -49,11 +48,11 @@ fn batched_selection_preserves_typed_schedule_topology() {
 fn role_dispatch_rejects_wrong_inner_dimension() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
         .expect("workspace schedule catalog");
-    let schedule = fp128::Dense::resolve_catalog_row_for_key(
-        &catalog,
-        &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16)),
-    )
-    .expect("runtime schedule");
+    let schedule = catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(16),
+        ))
+        .expect("runtime schedule");
     let dims = schedule.schedule().root.params.role_dims();
     assert!(validate_role_dispatch::<128>(dims, RingRole::Inner).is_err());
 }
@@ -64,17 +63,17 @@ fn real_presets_validate_against_setup_ring_dimension() {
         .expect("fp64 workspace schedule catalog");
     let fp128_catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
         .expect("fp128 workspace schedule catalog");
-    let fp64_schedule = fp64::Dense::resolve_catalog_row_for_key(
-        &fp64_catalog,
-        &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
-    )
-    .expect("fp64 schedule");
+    let fp64_schedule = fp64_catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(14),
+        ))
+        .expect("fp64 schedule");
     validate_schedule_ring_dims(fp64_schedule.schedule()).expect("adaptive fp64 schedule envelope");
 
-    let fp128_schedule = fp128::Dense::resolve_catalog_row_for_key(
-        &fp128_catalog,
-        &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
-    )
-    .expect("fp128 schedule");
+    let fp128_schedule = fp128_catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(14),
+        ))
+        .expect("fp128 schedule");
     validate_schedule_ring_dims(fp128_schedule.schedule()).expect("adaptive schedule envelope");
 }

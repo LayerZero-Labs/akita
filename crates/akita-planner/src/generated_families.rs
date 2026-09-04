@@ -289,8 +289,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 /// Frozen profile a group commits with when it has no precommitted groups.
 ///
 /// Generation cannot read the catalog it is producing, so this plans the row
-/// instead of selecting it. `CommitmentConfig::profile_without_precommitted_groups`
-/// is the runtime counterpart, and
+/// instead of selecting it. `TrustedScheduleCatalog::resolve_key` is the runtime counterpart, and
 /// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
 /// agree on every shipped descriptor.
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(

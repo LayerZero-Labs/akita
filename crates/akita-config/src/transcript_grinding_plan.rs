@@ -32,7 +32,6 @@ where
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::test_support::TestScheduleProvider;
     use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
     use jolt_field::PseudoMersenne;
 
@@ -41,7 +40,10 @@ mod tests {
         let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &layout)
+        let row = catalog
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                layout.root_final_group_layout().expect("root group"),
+            ))
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");
@@ -95,7 +97,10 @@ mod tests {
         let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &layout)
+        let row = catalog
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                layout.root_final_group_layout().expect("root group"),
+            ))
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");

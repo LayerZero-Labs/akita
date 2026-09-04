@@ -11,9 +11,7 @@ use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
-use akita_types::{
-    AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity,
-};
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -63,22 +61,17 @@ macro_rules! impl_multi_chunk_companion {
                 $profile.cfg()
             }
         }
-
-        #[cfg(any(test, feature = "test-support"))]
-        impl $crate::test_support::TestScheduleProvider for $cfg {}
     };
 }
 
 pub mod proof_optimized;
 pub mod recursive_commitment;
+#[cfg(test)]
+mod schedule_artifact_tests;
 pub mod schedule_selection;
 pub mod setup_prefix_slots;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-#[cfg(test)]
-use test_support::TestScheduleProvider;
-#[cfg(test)]
-mod schedule_artifact_tests;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
@@ -443,30 +436,6 @@ mod tests {
         }
     }
 
-    impl crate::test_support::TestScheduleProvider for SingleExtensionConfig {
-        fn setup_matrix_capacity(
-            _catalog: &crate::TrustedScheduleCatalog,
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            Ok(SetupMatrixCapacity::minimum())
-        }
-    }
-
-    impl crate::test_support::TestScheduleProvider for WrongDeclaredExtensionDegree {
-        fn setup_matrix_capacity(
-            catalog: &crate::TrustedScheduleCatalog,
-            max_num_vars: usize,
-            max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            SingleExtensionConfig::setup_matrix_capacity(
-                catalog,
-                max_num_vars,
-                max_num_batched_polys,
-            )
-        }
-    }
-
     #[test]
     fn config_samples_extension_challenge() {
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -702,18 +671,14 @@ mod fp128_policy_tests {
         let dense_key = PolynomialGroupLayout::singleton(32);
         let onehot_key = PolynomialGroupLayout::new(32, 1);
 
-        let dense = fp128::Dense::resolve_catalog_row_for_key(
-            &dense_catalog,
-            &AkitaScheduleLookupKey::single(dense_key),
-        )
-        .expect("adaptive dense schedule")
-        .into_schedule();
-        let onehot = fp128::OneHot::resolve_catalog_row_for_key(
-            &onehot_catalog,
-            &AkitaScheduleLookupKey::single(onehot_key),
-        )
-        .expect("adaptive onehot schedule")
-        .into_schedule();
+        let dense = dense_catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(dense_key))
+            .expect("adaptive dense schedule")
+            .into_schedule();
+        let onehot = onehot_catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(onehot_key))
+            .expect("adaptive onehot schedule")
+            .into_schedule();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -725,12 +690,10 @@ mod fp128_policy_tests {
             .expect("one-hot schedule catalog");
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let schedule = fp128::OneHot::resolve_catalog_row_for_key(
-            &catalog,
-            &AkitaScheduleLookupKey::single(key),
-        )
-        .expect("adaptive batched onehot schedule")
-        .into_schedule();
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(key))
+            .expect("adaptive batched onehot schedule")
+            .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
@@ -740,7 +703,10 @@ mod fp128_policy_tests {
         let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
             .expect("one-hot schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &opening_batch)
+        let row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                opening_batch.root_final_group_layout().expect("root group"),
+            ))
             .expect("generated row");
 
         let root_input_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
@@ -769,7 +735,11 @@ mod fp128_policy_tests {
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 (!row.schedule().recursive_folds.is_empty()).then_some(row)
             })
             .expect("recursive generated row");
@@ -803,8 +773,11 @@ mod fp128_policy_tests {
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row =
-                    RecursiveOneHot::resolve_catalog_row_for_opening(&catalog, &layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 row.schedule()
                     .recursive_folds
                     .iter()
@@ -842,8 +815,11 @@ mod fp128_policy_tests {
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row =
-                    RecursiveOneHot::resolve_catalog_row_for_opening(&catalog, &layout).ok()?;
+                let row = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout().ok()?,
+                    ))
+                    .ok()?;
                 row.schedule()
                     .recursive_folds
                     .iter()
@@ -887,13 +863,10 @@ mod independent_commitment_tests {
             .expect("one-hot schedule catalog");
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let profile = fp128::OneHot::profile_without_precommitted_groups(&catalog, group)
-            .expect("independent profile");
-        let scalar_row = fp128::OneHot::resolve_catalog_row_for_key(
-            &catalog,
-            &AkitaScheduleLookupKey::single(group),
-        )
-        .expect("generated scalar row");
+        let scalar_row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .expect("generated scalar row");
+        let profile = scalar_row.profiles().final_group;
         assert_eq!(profile, scalar_row.profiles().final_group);
         assert_eq!(profile.inner.matrix.ring_dimension(), 256);
         assert_eq!(profile.outer.matrix.ring_dimension(), 64);

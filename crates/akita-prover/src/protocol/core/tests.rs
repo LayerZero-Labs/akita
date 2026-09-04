@@ -1,6 +1,6 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{proof_optimized::fp128::OneHot, test_support::TestScheduleProvider};
+use akita_config::proof_optimized::fp128::OneHot;
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};
@@ -500,18 +500,20 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let precommitted =
-        OneHot::profile_without_precommitted_groups(&catalog, PolynomialGroupLayout::new(16, 1))
-            .expect("independent profile");
-    let schedule = OneHot::resolve_catalog_row_for_key(
-        &catalog,
-        &AkitaScheduleLookupKey {
+    let precommitted = catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            16, 1,
+        )))
+        .expect("independent row")
+        .profiles()
+        .final_group;
+    let schedule = catalog
+        .resolve_key(&AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
-        },
-    )
-    .expect("multi-group schedule")
-    .into_schedule();
+        })
+        .expect("multi-group schedule")
+        .into_schedule();
     let root_params = schedule.root.params.clone();
     assert_eq!(root_params.precommitted_groups().len(), 2);
     for precommitted in root_params.precommitted_groups() {

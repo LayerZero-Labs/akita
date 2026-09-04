@@ -510,11 +510,14 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
 
-        let profile = OneHotCfg::profile_without_precommitted_groups(
-            scheme.schedules(),
-            akita_types::PolynomialGroupLayout::new(NV, 1),
-        )
-        .expect("one-hot profile");
+        let profile = scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .expect("one-hot row")
+            .profiles()
+            .final_group;
         // Dense all-ones: inside the digit envelope, outside the source class.
         let dense = akita_prover::DensePoly::<F>::from_field_evals(NV, &[F::one(); 1usize << NV])
             .expect("dense poly");
@@ -690,11 +693,14 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // Without the declaration half of the accepted-interval intersection this
         // would commit successfully on a schedule priced for a narrower range —
         // the regression this test exists to catch.
-        let profile = BoundedDenseCfg::profile_without_precommitted_groups(
-            bounded_scheme.schedules(),
-            akita_types::PolynomialGroupLayout::new(NV, 1),
-        )
-        .expect("bounded profile");
+        let profile = bounded_scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .expect("bounded row")
+            .profiles()
+            .final_group;
         let (_, representable) = akita_types::sis::checked_balanced_digit_representable_bounds(
             profile.inner.digits.log_basis,
             profile.inner.digits.num_digits,

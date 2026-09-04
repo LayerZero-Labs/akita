@@ -4,7 +4,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_config::test_support::TestScheduleProvider;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
@@ -530,16 +529,12 @@ fn small_field_dense_uncataloged_roots_fail_fast() {
     let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
         .expect("fp64 dense catalog");
     for result in [
-        fp32::Dense::resolve_catalog_row_for_key(
-            &fp32_catalog,
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV)),
-        ),
-        fp64::Dense::resolve_catalog_row_for_key(
-            &fp64_catalog,
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(
-                SMALL_FIELD_TEST_NV + 1,
-            )),
-        ),
+        fp32_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
+        )),
+        fp64_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
+        )),
     ] {
         assert!(matches!(
             result,
@@ -556,11 +551,12 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
         type Cfg = fp128::Dense;
         let nv = 4;
         let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
-        let err = Cfg::resolve_catalog_row_for_key(
-            scheme.schedules(),
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv)),
-        )
-        .expect_err("tiny roots must not produce a degenerate proof schedule");
+        let err = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(nv),
+            ))
+            .expect_err("tiny roots must not produce a degenerate proof schedule");
         assert!(matches!(
             err,
             akita_error::AkitaError::UnsupportedSchedule(_)

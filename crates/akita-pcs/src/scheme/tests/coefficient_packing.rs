@@ -104,7 +104,8 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
         .expect("workspace schedule catalog");
     let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
-    let row = PackingCfg::resolve_catalog_row_for_opening(&catalog, &opening_batch).unwrap();
+    let key = AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+    let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
     let mut schedule = row.schedule().clone();
     schedule.terminal.input_witness_len += 1;
     schedule
@@ -132,8 +133,9 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .expect("workspace schedule catalog");
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
-            let row =
-                PackingCfg::resolve_catalog_row_for_opening(&catalog, &opening_batch).unwrap();
+            let key =
+                AkitaScheduleLookupKey::single(opening_batch.root_final_group_layout().unwrap());
+            let row = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
             let schedules = akita_config::TrustedScheduleCatalog::try_new(
                 PackingCfg::schedule_family_name(),
                 [(row.profiles().clone(), row.schedule().clone())],
@@ -399,19 +401,16 @@ fn fixed_root_packing_round_trips_in_both_bases() {
 
                     macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
                         ($config:ty, $context:literal) => {{
-                            let result = <$config>::resolve_catalog_row_for_opening(
-                                &catalog,
-                                &opening_batch,
-                            )
-                            .and_then(|row| {
-                                akita_config::TrustedScheduleCatalog::try_new(
-                                    <$config>::schedule_family_name(),
-                                    [(row.profiles().clone(), row.schedule().clone())],
-                                    &akita_config::policy_of::<$config>(),
-                                    <$config>::ring_challenge_config,
-                                )
-                            })
-                            .and_then(AkitaCommitmentScheme::<$config>::new);
+                            let result = <$config>::derive_row(&catalog, &key)
+                                .and_then(|row| {
+                                    akita_config::TrustedScheduleCatalog::try_new(
+                                        <$config>::schedule_family_name(),
+                                        [(row.profiles().clone(), row.schedule().clone())],
+                                        &akita_config::policy_of::<$config>(),
+                                        <$config>::ring_challenge_config,
+                                    )
+                                })
+                                .and_then(AkitaCommitmentScheme::<$config>::new);
                             assert!(
                                 result.is_err(),
                                 concat!($context, " must reject at the trusted catalog boundary")

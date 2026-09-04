@@ -97,7 +97,7 @@ mod tests {
     use super::*;
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
-    use akita_config::{proof_optimized::fp128::OneHot, test_support::TestScheduleProvider};
+    use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
         prepare_ntt_cache, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
         FlatMatrix, NttCacheMode, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
@@ -333,10 +333,10 @@ mod tests {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let group = PolynomialGroupLayout::new(15, 1);
-        let schedule =
-            OneHot::resolve_catalog_row_for_key(&catalog, &AkitaScheduleLookupKey::single(group))
-                .expect("adaptive schedule")
-                .into_schedule();
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .expect("adaptive schedule")
+            .into_schedule();
         let params = &schedule.terminal;
         let prefix_len = params
             .inner

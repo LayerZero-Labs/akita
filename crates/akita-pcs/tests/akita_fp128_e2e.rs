@@ -87,7 +87,7 @@ mod common;
 mod heterogeneous;
 mod matrix_drivers;
 
-use akita_config::{proof_optimized::fp128, test_support::TestScheduleProvider, CommitmentConfig};
+use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, MultilinearPolynomial,
     OpeningCluster, ProverComputeStack, RingSwitchCluster, TensorCluster, UniformProverStack,
@@ -211,14 +211,12 @@ fn fp128_dense_mc() {
         let catalog =
             akita_config::test_support::workspace_schedule_catalog::<fp128::DenseMultiChunk>()
                 .expect("dense multi-chunk catalog");
-        let schedule = fp128::DenseMultiChunk::resolve_catalog_row_for_key(
-            &catalog,
-            &akita_types::AkitaScheduleLookupKey::single(
+        let schedule = catalog
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(16),
-            ),
-        )
-        .expect("dense multi-chunk schedule")
-        .into_schedule();
+            ))
+            .expect("dense multi-chunk schedule")
+            .into_schedule();
         assert_eq!(
             schedule.root.params.outer_slice_count(),
             akita_types::CommitmentSliceCount::EIGHT,
@@ -300,7 +298,12 @@ fn fp128_onehot_mc_catalog_resolves() {
         akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>()
             .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    fp128::OneHotMultiChunk::resolve_catalog_row_for_opening(&catalog, &opening_batch)
+    catalog
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            opening_batch
+                .root_final_group_layout()
+                .expect("root group layout"),
+        ))
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -499,7 +502,13 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
         const BATCH: usize = 4;
         let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
-        let layout = DenseCfg::resolve_catalog_row_for_opening(scheme.schedules(), &opening_batch)
+        let layout = scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                opening_batch
+                    .root_final_group_layout()
+                    .expect("root group layout"),
+            ))
             .expect("layout")
             .into_schedule()
             .root
