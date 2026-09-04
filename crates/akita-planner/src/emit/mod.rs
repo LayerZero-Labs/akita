@@ -39,19 +39,48 @@ pub struct PrecommittedProducer {
 }
 
 impl PrecommittedProducer {
+    /// Bind one frozen descriptor to the producer facts used by offline
+    /// grouped-root sizing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the descriptor is invalid for
+    /// the producer field or the fold policy disagrees with its declared source
+    /// class.
+    pub fn try_new(
+        descriptor: GroupCommitPhaseParams,
+        contract: CommittedSourceContract,
+        fold_policy: HonestFoldPolicySpec,
+    ) -> Result<Self, AkitaError> {
+        let field_bits = contract.decomposition().field_bits();
+        descriptor.validate_frozen_precommit(field_bits)?;
+        if fold_policy != contract.class().honest_fold_policy(field_bits) {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted producer fold policy does not match its source contract".into(),
+            ));
+        }
+        Ok(Self {
+            descriptor,
+            contract,
+            fold_policy,
+        })
+    }
+
     /// Capture the producer contract and its offline sizing projection together.
     #[cfg(feature = "catalog-gen")]
     pub fn from_config<Cfg: akita_config::CommitmentConfig>(
         descriptor: GroupCommitPhaseParams,
     ) -> Result<Self, AkitaError> {
-        Ok(Self {
+        Self::try_new(
             descriptor,
-            contract: Cfg::committed_source_contract()?,
-            fold_policy: akita_config::honest_fold_policy_of::<Cfg>(),
-        })
+            Cfg::committed_source_contract()?,
+            akita_config::honest_fold_policy_of::<Cfg>(),
+        )
     }
 
-    const fn descriptor(self) -> GroupCommitPhaseParams {
+    /// Frozen commit-phase descriptor used in the grouped lookup key.
+    #[must_use]
+    pub const fn descriptor(self) -> GroupCommitPhaseParams {
         self.descriptor
     }
 
@@ -62,7 +91,6 @@ impl PrecommittedProducer {
         self.contract
     }
 
-    #[cfg(feature = "catalog-gen")]
     const fn fold_policy(self) -> HonestFoldPolicySpec {
         self.fold_policy
     }
@@ -104,7 +132,6 @@ impl GroupedGenerationRequest {
         &self.precommitted_producers
     }
 
-    #[cfg(feature = "catalog-gen")]
     pub(crate) fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
         self.precommitted_producers
             .iter()

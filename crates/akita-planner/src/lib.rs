@@ -3,6 +3,9 @@
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
 //! optimize a schedule lookup key under its catalog-bound selection policy.
+//! [`find_adapted_schedule`] is the bounded alternative for adding exact
+//! precommitted producers to an approved scalar row while retaining its
+//! structural schedule skeleton.
 //! Every per-preset input is carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
@@ -36,9 +39,9 @@ pub use emit::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, ArtifactOutput,
     EmitSpec, MaterializationDiagnostics,
 };
-pub use planner::find_schedule;
 #[cfg(feature = "test-support")]
 pub use planner::find_schedule_for_test_relation_mode;
+pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
 pub use schedule_params::suffix_opening_layout;
 #[cfg(feature = "test-support")]

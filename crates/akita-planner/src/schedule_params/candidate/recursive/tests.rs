@@ -28,6 +28,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
             fold_level: 3,
             source_moment,
             relation_traversal_order: RelationTraversalOrder::Canonical,
+            guide: None,
         };
         let fold_policy = if retain_split_frontier {
             FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled)
@@ -80,6 +81,7 @@ fn combined_relation_views_match_mode_specific_searches() {
         fold_level: 3,
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let relation_domain = RingRelationPhase::QuotientPrefix
         .transitions(
@@ -138,6 +140,7 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
         fold_level: 3,
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let relation_domain = RelationSearchDomain::ReducedOnly;
     for fold_policy in [
@@ -186,6 +189,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
                 fold_level: 2,
                 source_moment: None,
                 relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
             },
             FoldCandidatePolicy::Best,
             RelationSearchDomain::QuotientOnly,
@@ -224,6 +228,7 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         fold_level: 2,
         source_moment: None,
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let search = prepare_recursive_level_search(
         &request,
