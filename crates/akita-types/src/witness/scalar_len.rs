@@ -1,29 +1,25 @@
 use akita_error::AkitaError;
 
 use super::{
-    align_witness_offset, dyadic_block_ranges, witness_unit_lengths, WitnessLayout,
+    dyadic_block_ranges, witness_unit_lengths, RelationQuotientPlan, WitnessLayout,
     MAX_WITNESS_CHUNKS,
 };
-use crate::{
-    CommittedGroupParams, CompressionChainPlan, OpeningClaimsLayout, RelationRowFamily,
-    RelationWitnessGeometry, COMPRESSION_MAP_COUNT,
-};
+use crate::{CommittedGroupParams, OpeningClaimsLayout, RelationWitnessGeometry};
 
 impl WitnessLayout {
     /// Compute the exact live length of a scalar witness without materializing
     /// its address ranges.
     ///
     /// This is the candidate-aware counterpart of [`Self::new`] for planner
-    /// hot paths. `None` means that a compressed B or D source exceeds the
-    /// protocol compression cap. All other malformed geometry remains an
-    /// error.
-    pub fn try_scalar_live_coeff_len(
+    /// hot paths. The caller validates compression-source feasibility before
+    /// constructing `relation_geometry`; all malformed geometry is an error.
+    pub fn scalar_live_coeff_len(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
         relation_geometry: &RelationWitnessGeometry,
         num_chunks: usize,
-        quotient_depth: usize,
-    ) -> Result<Option<usize>, AkitaError> {
+        quotient_plan: RelationQuotientPlan,
+    ) -> Result<usize, AkitaError> {
         if opening_batch.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "scalar witness sizing requires exactly one opening group".into(),
@@ -34,9 +30,9 @@ impl WitnessLayout {
                 "scalar witness sizing does not accept precommitted groups".into(),
             ));
         }
-        if num_chunks == 0 || quotient_depth == 0 {
+        if num_chunks == 0 {
             return Err(AkitaError::InvalidSetup(
-                "witness layout requires non-empty groups, chunks, and quotient depth".into(),
+                "witness layout requires non-empty groups and chunks".into(),
             ));
         }
         if num_chunks > MAX_WITNESS_CHUNKS {
@@ -94,105 +90,22 @@ impl WitnessLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 
-        let relation_layout = relation_geometry.rhs_layout();
-        let row_families = relation_layout.row_families()?;
-        let first_compression_row = row_families
-            .iter()
-            .position(|row| {
-                matches!(
-                    row,
-                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
-                )
-            })
-            .unwrap_or(row_families.len());
-        for row in &row_families[..first_compression_row] {
-            let len = quotient_depth
-                .checked_mul(row.geometry().physical_coefficient_width())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
-            cursor = cursor
-                .checked_add(len)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R range overflow".into()))?;
-        }
-        if !lp.payload_mode.is_compressed() {
-            return Ok(Some(cursor));
-        }
-
-        let b_source_coefficients = params
-            .logical_b_rows_len()?
-            .checked_mul(role_dims.d_b())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation B compression shape overflow".into())
-            })?;
-        let Some(b_plan) = CompressionChainPlan::try_for_complete_source(
-            lp.outer().matrix.sis_modulus_profile(),
-            b_source_coefficients,
-        )?
-        else {
-            return Ok(None);
-        };
-        let d_source_coefficients = lp
-            .open()
-            .matrix
-            .output_rank()
-            .checked_mul(role_dims.d_d())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation D compression shape overflow".into())
-            })?;
-        let Some(d_plan) = CompressionChainPlan::try_for_complete_source(
-            lp.open().matrix.sis_modulus_profile(),
-            d_source_coefficients,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
-        cursor = align_witness_offset(
+        let successor_a_alignment = relation_geometry.relation_coefficient_block_len()?;
+        super::tail::measure(
+            lp,
+            relation_geometry,
+            1,
+            successor_a_alignment,
             cursor,
-            relation_coefficient_block,
-            "compression witness alignment overflow",
-        )?;
-        for map_index in 0..COMPRESSION_MAP_COUNT {
-            let b_map = *b_plan
-                .maps()
-                .get(map_index)
-                .ok_or_else(|| AkitaError::InvalidSetup("compression B map is missing".into()))?;
-            let d_map = *d_plan
-                .maps()
-                .get(map_index)
-                .ok_or_else(|| AkitaError::InvalidSetup("compression D map is missing".into()))?;
-            cursor = align_witness_offset(
-                cursor,
-                b_map.ring_dimension().max(d_map.ring_dimension()),
-                "compression layer alignment overflow",
-            )?;
-            cursor = cursor
-                .checked_add(b_map.padded_digit_count())
-                .and_then(|n| n.checked_add(d_map.padded_digit_count()))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression witness range overflow".into())
-                })?;
-            for ring_dim in [b_map.ring_dimension(), d_map.ring_dimension()] {
-                let len = quotient_depth.checked_mul(ring_dim).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient width overflow".into())
-                })?;
-                cursor = cursor.checked_add(len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient range overflow".into())
-                })?;
-            }
-        }
-        Ok(Some(align_witness_offset(
-            cursor,
-            relation_coefficient_block,
-            "compression witness suffix alignment overflow",
-        )?))
+            quotient_plan,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpeningMethod, RelationRowGeometry, SisModulusProfileId};
+    use crate::{OpeningMethod, RelationRowFamily, RelationRowGeometry, SisModulusProfileId};
 
     fn base_params(mixed_dimensions: bool) -> CommittedGroupParams {
         let profile = if mixed_dimensions {
@@ -245,37 +158,50 @@ mod tests {
                 crate::CommitmentPayloadMode::Raw,
                 crate::CommitmentPayloadMode::Compressed,
             ] {
-                for num_polynomials in [1, 2, 5] {
-                    for num_chunks in [1, 2, 4] {
-                        let mut params = base.clone();
-                        params.payload_mode = payload_mode;
-                        let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
-                            .expect("scalar opening batch");
-                        let relation_geometry =
-                            RelationWitnessGeometry::for_evaluation_trace_execution(
+                for ring_relation_mode in [
+                    crate::RingRelationMode::QuotientLift,
+                    crate::RingRelationMode::ReducedEvaluation,
+                ] {
+                    for num_polynomials in [1, 2, 5] {
+                        for num_chunks in [1, 2, 4] {
+                            let mut params = base.clone();
+                            params.payload_mode = payload_mode;
+                            params.ring_relation_mode = ring_relation_mode;
+                            let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
+                                .expect("scalar opening batch");
+                            let relation_geometry =
+                                RelationWitnessGeometry::for_evaluation_trace_execution(
+                                    &params,
+                                    &opening_batch,
+                                )
+                                .expect("relation geometry");
+                            let quotient_plan = match ring_relation_mode {
+                                crate::RingRelationMode::QuotientLift => {
+                                    RelationQuotientPlan::quotient_lift(2).unwrap()
+                                }
+                                crate::RingRelationMode::ReducedEvaluation => {
+                                    RelationQuotientPlan::ReducedEvaluation
+                                }
+                            };
+                            let materialized = WitnessLayout::new(
                                 &params,
                                 &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                quotient_plan,
                             )
-                            .expect("relation geometry");
-                        let materialized = WitnessLayout::new(
-                            &params,
-                            &opening_batch,
-                            &relation_geometry,
-                            num_chunks,
-                            2,
-                        )
-                        .expect("materialized witness layout")
-                        .live_coeff_len();
-                        let scalar = WitnessLayout::try_scalar_live_coeff_len(
-                            &params,
-                            &opening_batch,
-                            &relation_geometry,
-                            num_chunks,
-                            2,
-                        )
-                        .expect("scalar witness sizing")
-                        .expect("compression source is supported");
-                        assert_eq!(scalar, materialized);
+                            .expect("materialized witness layout")
+                            .live_coeff_len();
+                            let scalar = WitnessLayout::scalar_live_coeff_len(
+                                &params,
+                                &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                quotient_plan,
+                            )
+                            .expect("scalar witness sizing");
+                            assert_eq!(scalar, materialized);
+                        }
                     }
                 }
             }
@@ -291,9 +217,14 @@ mod tests {
             let relation_geometry =
                 RelationWitnessGeometry::for_evaluation_trace_execution(&params, &opening_batch)
                     .expect("relation geometry");
-            let layout =
-                WitnessLayout::new(&params, &opening_batch, &relation_geometry, num_chunks, 2)
-                    .expect("chunked witness layout");
+            let layout = WitnessLayout::new(
+                &params,
+                &opening_batch,
+                &relation_geometry,
+                num_chunks,
+                RelationQuotientPlan::quotient_lift(2).unwrap(),
+            )
+            .expect("chunked witness layout");
 
             let units = layout.units();
             let z_len = units[0].z_range().len();
@@ -426,9 +357,14 @@ mod tests {
             );
 
             for num_chunks in [1, 2] {
-                let layout =
-                    WitnessLayout::new(&params, &opening_batch, &relation_geometry, num_chunks, 2)
-                        .expect("packing witness layout");
+                let layout = WitnessLayout::new(
+                    &params,
+                    &opening_batch,
+                    &relation_geometry,
+                    num_chunks,
+                    RelationQuotientPlan::quotient_lift(2).unwrap(),
+                )
+                .expect("packing witness layout");
                 for unit in layout.units() {
                     assert_eq!(
                         unit.e_range().len(),
@@ -451,15 +387,14 @@ mod tests {
                 }
                 assert_eq!(layout.r_rows()[0].geometry(), opening_geometry);
                 assert_eq!(layout.r_rows()[0].range().len(), 2 * 128);
-                let scalar = WitnessLayout::try_scalar_live_coeff_len(
+                let scalar = WitnessLayout::scalar_live_coeff_len(
                     &params,
                     &opening_batch,
                     &relation_geometry,
                     num_chunks,
-                    2,
+                    RelationQuotientPlan::quotient_lift(2).unwrap(),
                 )
-                .expect("scalar packing size")
-                .expect("supported compression source");
+                .expect("scalar packing size");
                 assert_eq!(scalar, layout.live_coeff_len());
                 if num_chunks == params.witness_chunk.num_chunks {
                     let field_quotient_depth = crate::sis::compute_num_digits_field_width(
@@ -471,7 +406,7 @@ mod tests {
                         &opening_batch,
                         &relation_geometry,
                         num_chunks,
-                        field_quotient_depth,
+                        RelationQuotientPlan::quotient_lift(field_quotient_depth).unwrap(),
                     )
                     .expect("field-bit witness layout");
                     assert_eq!(
@@ -521,7 +456,7 @@ mod tests {
                         &opening_batch,
                         &relation_geometry,
                         num_chunks,
-                        2,
+                        RelationQuotientPlan::quotient_lift(2).unwrap(),
                     )
                     .expect("materialized witness layout");
                     let materialized_body = layout

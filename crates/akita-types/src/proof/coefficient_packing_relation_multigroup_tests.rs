@@ -67,7 +67,10 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<F>(params.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+            params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let relation_address = RelationAddressGeometry::for_relation(

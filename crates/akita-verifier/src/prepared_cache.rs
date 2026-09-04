@@ -90,6 +90,16 @@ mod tests {
 
     #[test]
     fn terminal_builder_binds_the_resolved_schedule_and_installs() {
+        std::thread::Builder::new()
+            .name("terminal-cache-builder-test".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(terminal_builder_binds_the_resolved_schedule_and_installs_inner)
+            .expect("spawn terminal cache builder test")
+            .join()
+            .expect("terminal cache builder test thread");
+    }
+
+    fn terminal_builder_binds_the_resolved_schedule_and_installs_inner() {
         let row = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(15, 1),
         ))

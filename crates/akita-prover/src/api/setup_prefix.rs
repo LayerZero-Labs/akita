@@ -158,6 +158,7 @@ where
             id: (),
             plan,
             coefficients: raw_commitment.into_coeffs(),
+            relation_mode: akita_types::RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -170,10 +171,11 @@ where
         .ring_dimension();
     let commitment_payload =
         RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
+    let quotients = output.relation.into_quotient_lift()?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,
-        &output.quotients,
+        &quotients,
     )?;
     let id = SetupPrefixSlotId {
         natural_len,

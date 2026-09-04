@@ -157,6 +157,13 @@ where
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; D]]],
     ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError>;
+
+    /// Exact-shape negacyclic-only compression products for reduced evaluation.
+    fn compression_negacyclic_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 /// Negacyclic digit mat-vec operations shared by commitment and protocol code.

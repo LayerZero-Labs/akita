@@ -22,6 +22,9 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+mod cross_mode;
+pub(crate) use cross_mode::{CrossModeConfig, QuotientMode, ReducedMode};
+
 #[derive(Clone)]
 struct SyntheticResolvedRow {
     config: TypeId,
@@ -552,15 +555,24 @@ where
             )?;
         rebuild_group_output_matrices(successor_witness, 1, Self::EXT_DEGREE)?;
 
-        let prefix_positions = prefix_ring_slots.min(256);
+        let outer_slices = successor_witness.outer_slice_count().get();
+        let max_prefix_positions = prefix_ring_slots
+            .checked_div(outer_slices)
+            .filter(|positions| positions.is_power_of_two())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "packing setup prefix cannot be partitioned across its outer slices".into(),
+                )
+            })?;
+        let prefix_positions = max_prefix_positions.min(256);
         let prefix_blocks = prefix_ring_slots
             .checked_div(prefix_positions)
-            .filter(|blocks| {
-                *blocks >= successor_witness.outer_slice_count().get()
-                    && prefix_ring_slots.is_multiple_of(prefix_positions)
-            })
+            .filter(|blocks| *blocks >= outer_slices)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("packing setup prefix has no balanced split".into())
+                AkitaError::InvalidSetup(format!(
+                    "packing setup prefix has no balanced split: slots={prefix_ring_slots}, positions={prefix_positions}, outer_slices={}",
+                    outer_slices,
+                ))
             })?;
         let mut prefix_source_params = successor_witness.clone();
         prefix_source_params.set_setup_prefix(None)?;

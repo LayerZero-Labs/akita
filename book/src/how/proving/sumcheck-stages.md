@@ -405,11 +405,13 @@ Stage 2 always proves three statements about the same committed digit witness $w
 3. the opening claim for this fold is consistent with $w$.
 
 The protocol fuses all three statements into one sumcheck. The range-image and
-opening-consistency terms are shared by both payload modes. Raw mode uses only
-the ordinary fold-relation term. Compressed mode adds the compact $\mathbf
-F/\mathbf H$ relation weights and a support-restricted $\{-1,0\}$ constraint
-for the compression digits. We first isolate the ordinary relation term, then
-add the shared and mode-specific terms.
+opening-consistency terms are shared by both payload modes and both
+ring-relation modes. Raw payload uses only the ordinary physical rows;
+compressed payload adds compact $\mathbf F/\mathbf H$ relation weights and a
+support-restricted $\{-1,0\}$ constraint for the compression digits. Separately,
+quotient lifting uses a factored relation weight over explicit quotient digits,
+whereas reduced evaluation uses a dense prover weight table over a witness with
+no quotient ranges. Neither axis adds a second Stage-2 sumcheck.
 
 When Stage 1 also proves a physical norm, Stage 2 adds the Z virtualization
 relation derived from the schedule. It proves that each final physical response
@@ -419,11 +421,12 @@ challenge after it has absorbed all Stage 1 claims, including the ordinary
 range image. This order prevents one false virtual relation from canceling
 another.
 
-### Start with the ordinary ring relation
+### Start with the schedule-selected ring relation
 
-The physical row families and the quotient extension are derived in [Raw and
-compressed realizations of an Akita fold](./akita-fold-realizations.md). Here
-we start from their extended relation and explain how Stage 2 proves it.
+The physical row families and both ring-relation realizations are derived in
+[Payload and ring-relation realizations of an Akita
+fold](./akita-fold-realizations.md). We first derive the existing quotient-lift
+factorization, then state the reduced-evaluation replacement.
 
 Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
 row $i$ of the ordinary extended fold relation be
@@ -433,7 +436,8 @@ $$
 \tag{3}
 $$
 
-The extended relation includes the quotient witness, so Equation (3) is an
+In quotient-lift mode, the extended relation includes the quotient witness, so
+Equation (3) is an
 equality rather than a congruence modulo a ring polynomial. The public right
 side $h_i$ is zero for some rows and contains the public data
 for the remaining rows.
@@ -556,36 +560,66 @@ common-alpha factorization and are included in $R_{\mathrm{ord}}$. The
 packing-Z and direct-opening contributions are ordered structured linear terms
 that are not forced into it.
 
+Reduced evaluation starts from the same physical rows but replaces each
+unreduced product coefficient by the public signed-wrap kernel
+$\kappa_{A,\alpha}$. After row batching and flattening, define
+$R_{\mathrm{red}}(x)$ to be the complete coefficient multiplying witness entry
+$w(x)$. It satisfies the same scalar claim
+
+$$
+h_{\tau}^{\mathrm{raw}}
+=\sum_x w(x)R_{\mathrm{red}}(x),
+$$
+
+but it does not generally factor as one coefficient-power table times one lane
+table. The prover therefore materializes and folds $R_{\mathrm{red}}$ as one
+ephemeral dense Stage-2 oracle. The verifier evaluates its final MLE from
+terminal residue kernels and the fused setup scan without materializing this
+table.
+
+For the rest of this chapter, let
+
+$$
+R_{\mathrm{rel}}
+=
+\begin{cases}
+R_{\mathrm{ord}}, & \text{quotient lifting},\\
+R_{\mathrm{red}}, & \text{reduced evaluation}.
+\end{cases}
+$$
+
 ### Raw and compressed relation terms
 
-Raw mode has no payload-compression term $C_{\mathrm{comp}}$. Equation (7) is
-its ordinary relation component, and its $\mathbf B$ and $\mathbf D$
+Raw mode has no payload-compression term $C_{\mathrm{comp}}$. The mode-selected
+$R_{\mathrm{rel}}$ is its complete relation component, and its $\mathbf B$ and $\mathbf D$
 right-hand sides contain the transmitted semantic commitments. The scheduled
 opening method still contributes $C_{\mathrm{method}}$ below.
 
-Compressed mode retains the method-selected ordinary relation and its
-quotients, but sets the $\mathbf B$ and $\mathbf D$ right-hand sides to zero.
+Compressed mode retains the method-selected ordinary relation and, in
+quotient-lift mode, its quotients, but sets the $\mathbf B$ and $\mathbf D$
+right-hand sides to zero.
 Their rows now also contain the source-recomposition terms, and the physical
 row domain additionally contains the $\mathbf F_1$, $\mathbf H_1$,
-$\mathbf F_2$, and $\mathbf H_2$ rows. Thus $R_{\mathrm{ord}}$ remains one
+$\mathbf F_2$, and $\mathbf H_2$ rows. Thus $R_{\mathrm{rel}}$ remains one
 component of the compressed relation, but it is not a complete relation
 identity by itself.
 
-To derive the missing component directly, lift each compressed physical row in
-its native ring and evaluate it at $\alpha$. Define
+To derive the missing component directly, process each compressed physical row
+in its native ring using the selected relation realization. Define
 $C_{\mathrm{comp}}(x)$ to be the coefficient multiplying the flat witness
 entry $w(x)$ in the $\tau_1$-weighted sum of all linear terms not already in
-$R_{\mathrm{ord}}$.
+$R_{\mathrm{rel}}$.
 
-The intuition is simpler than the expanded formula. Its first line is only the
-increment to the existing $\mathbf B$ rows: $\mathbf B\hat{\mathbf t}$ and
-their ordinary quotient terms are already in $R_{\mathrm{ord}}$, so
-$C_{\mathrm{comp}}$ adds the missing negative recomposition term. The second
-and third lines are the two newly added physical rows: $\mathbf F_1$ links the
-two compression layers, while $\mathbf F_2$ binds the last layer to the
-terminal payload $p_F$. Their quotient terms merely lift those native-ring
-congruences to exact identities. Suppressing component indices, the resulting
-contribution of one $\mathbf F$ chain is
+In quotient-lift mode, the intuition is simpler than the expanded formula. Its
+first line is only the increment to the existing $\mathbf B$ rows:
+$\mathbf B\hat{\mathbf t}$ and their ordinary quotient terms are already in
+$R_{\mathrm{ord}}$, so $C_{\mathrm{comp}}$ adds the missing negative
+recomposition term. The second and third lines are the two newly added
+physical rows: $\mathbf F_1$ links the two compression layers, while
+$\mathbf F_2$ binds the last layer to the terminal payload $p_F$. Their
+quotient terms lift those native-ring congruences to exact identities.
+Suppressing component indices, the quotient-lift contribution of one
+$\mathbf F$ chain is
 
 $$
 \begin{aligned}
@@ -608,8 +642,15 @@ row weight of $\mathbf F_\ell$, and $q_{F,\ell}$ is the quotient ring element
 that lifts that compression row. The $\mathbf H$ chain contributes the
 analogous terms with $B,F$ replaced by $D,H$. Summing these coefficient
 weights over every $\mathbf F$ chain and the shared $\mathbf H$ chain gives
-the single compact Boolean table $C_{\mathrm{comp}}$. Define the complete
-compressed right-hand side by
+the single compact Boolean table $C_{\mathrm{comp}}$.
+
+Reduced-evaluation mode has the same row ownership and batching, but replaces
+each parenthesized lifted identity by its terminal-residue kernel. It has no
+$q_{F,\ell}$ or $q_{H,\ell}$ witness spans. The verifier evaluates the
+$\mathbf F/\mathbf H$ residue kernels from their separately owned canonical
+compression-relation program; they are not columns of the fused public
+$\mathbf A/\mathbf B/\mathbf D$ setup tensor. Define the complete compressed
+right-hand side in either mode by
 
 $$
 h_{\tau}^{\mathrm{comp}}
@@ -619,13 +660,13 @@ $$
 
 The nonzero new targets in $h_{\tau}^{\mathrm{comp}}$ are carried by the
 terminal $p_F$ and $p_H$ rows. Adding the directly collected compression
-weights to $R_{\mathrm{ord}}$ gives the full compressed relation identity
+weights to $R_{\mathrm{rel}}$ gives the full compressed relation identity
 
 $$
 h_{\tau}^{\mathrm{comp}}
 =
 \sum_x w(x)
-\bigl(R_{\mathrm{ord}}(x)+C_{\mathrm{comp}}(x)\bigr).
+\bigl(R_{\mathrm{rel}}(x)+C_{\mathrm{comp}}(x)\bigr).
 \tag{7b}
 $$
 
@@ -727,9 +768,10 @@ The implementation does not materialize a dense
 $T_{\mathrm{open}}$ table. Define the method-dependent weight
 $C_{\mathrm{method}}(x)$ as follows. For `EvaluationTrace`, it is the compact
 trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$; its legacy
-fold-consistency row is already in $R_{\mathrm{ord}}$. For
-`SubringCoefficientPacking`, $R_{\mathrm{ord}}$ contains the packed E/Q
-relation events in place of the legacy consistency coefficients, while
+fold-consistency row is already in $R_{\mathrm{rel}}$. For
+`SubringCoefficientPacking`, which production schedules pair only with
+quotient lifting, $R_{\mathrm{rel}}=R_{\mathrm{ord}}$ contains the packed E/Q
+relation events in place of the legacy consistency coefficients. Its
 $C_{\mathrm{method}}$ is the ordered sum of only the packing-Z and
 direct-opening terms. Each contribution is therefore included exactly once.
 Stage 2 folds each structured linear term under the same challenges and sums
@@ -758,7 +800,7 @@ C_0^{\mathrm{raw}}
 =\sum_x \bigl[{}
 &\gamma\operatorname{eq}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
-&+w(x)R_{\mathrm{ord}}(x)\\
+&+w(x)R_{\mathrm{rel}}(x)\\
 &+w(x)C_{\mathrm{method}}(x)
 \bigr].
 \end{aligned}
@@ -784,7 +826,7 @@ C_0^{\mathrm{comp}}
 =\sum_x \bigl[{}
 &\gamma\operatorname{eq}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
-&+w(x)R_{\mathrm{ord}}(x)\\
+&+w(x)R_{\mathrm{rel}}(x)\\
 &+w(x)C_{\mathrm{comp}}(x)\\
 &+\rho B_{\mathrm{comp}}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
@@ -841,7 +883,7 @@ $$
 C_n^{\mathrm{raw}}={}
 &\gamma\operatorname{eq}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
-&+\widetilde w(r_2)\widetilde R_{\mathrm{ord}}(r_2)\\
+&+\widetilde w(r_2)\widetilde R_{\mathrm{rel}}(r_2)\\
 &+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
 \end{aligned}
 \tag{11}
@@ -855,7 +897,7 @@ $$
 C_n^{\mathrm{comp}}={}
 &\gamma\operatorname{eq}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
-&+\widetilde w(r_2)\widetilde R_{\mathrm{ord}}(r_2)\\
+&+\widetilde w(r_2)\widetilde R_{\mathrm{rel}}(r_2)\\
 &+\widetilde w(r_2)\widetilde C_{\mathrm{comp}}(r_2)\\
 &+\rho\widetilde B_{\mathrm{comp}}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
@@ -893,6 +935,10 @@ determines whether the verifier scans the public A/B/D setup directly or
 defers that contribution to Stage 3. Current schedules permit recursive setup
 offloading only inside the compressed prefix, but the Stage-3 algebra remains
 an A/B/D setup product and does not include the $\mathbf F/\mathbf H$ maps.
+Reduced evaluation is admitted only with direct setup contribution, so any
+fold that reaches Stage 3 necessarily uses quotient lifting. Schedule
+validation rejects a reduced fold with an incoming setup prefix or deferred
+Stage 3 before transcript replay.
 
 After Stage 2 fixes its final relation-address point, let $S[\lambda,y]$ be
 coefficient $y$ of shared setup ring $\lambda$, and let $W(\lambda)$ collect

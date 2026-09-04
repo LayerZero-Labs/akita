@@ -56,6 +56,40 @@ fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
 }
 
 #[test]
+fn reduced_evaluation_source_moment_omits_only_quotient_rows() {
+    let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
+    let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
+    for payload_mode in [
+        akita_types::CommitmentPayloadMode::Raw,
+        akita_types::CommitmentPayloadMode::Compressed,
+    ] {
+        let mut lifted = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+        lifted.payload_mode = payload_mode;
+        lifted.ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
+        let mut reduced = lifted.clone();
+        reduced.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+
+        let lifted_moment =
+            next_source_moment(&lifted, &opening, &[source], 128, 2).expect("lifted moment");
+        let reduced_moment =
+            next_source_moment(&reduced, &opening, &[source], 128, 2).expect("reduced moment");
+
+        assert!(lifted_moment.components[R_COMPONENT].mean_l2_sq > 0);
+        assert_eq!(
+            reduced_moment.components[R_COMPONENT],
+            SourceMomentComponent::default()
+        );
+        for component in [Z_COMPONENT, E_COMPONENT, T_COMPONENT, COMPRESSION_COMPONENT] {
+            assert_eq!(
+                reduced_moment.components[component],
+                lifted_moment.components[component]
+            );
+        }
+        assert!(reduced_moment.mean_l2_sq() < lifted_moment.mean_l2_sq());
+    }
+}
+
+#[test]
 fn field_plane_moments_include_the_residual_top_plane() {
     let energy = field_digit_energy(1_000_000, 64, 6, 11).unwrap();
     let expected = 1_000_000.0 * (10.0 * 341.5 + 21.5);
@@ -169,6 +203,35 @@ fn gaussian_z_model_matches_measured_cross_field_states() {
             relative_error <= 0.02,
             "response={response} basis={log_basis}: predicted={predicted}, observed={observed}, error={relative_error}"
         );
+    }
+}
+
+#[test]
+fn rounded_normal_digit_moment_matches_two_sided_reference() {
+    fn reference(sigma: f64, basis: i64) -> f64 {
+        let radius = (8.0 * sigma + 0.5).ceil() as i64;
+        let mut moment = 0.0;
+        let mut lower_cdf = normal_cdf((-radius as f64 - 0.5) / sigma);
+        for value in -radius..=radius {
+            let upper_cdf = normal_cdf((value as f64 + 0.5) / sigma);
+            let probability = upper_cdf - lower_cdf;
+            let digit = centered_residue(value, basis) as f64;
+            moment += probability * digit * digit;
+            lower_cdf = upper_cdf;
+        }
+        moment
+    }
+
+    for basis in [2, 4, 8, 16, 64] {
+        for sigma in [0.1, 0.75, 1.5, basis as f64 * 0.9] {
+            let expected = reference(sigma, basis);
+            let actual = rounded_normal_digit_second_moment(sigma, basis);
+            let tolerance = expected.abs().max(1.0) * 1e-12;
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "sigma={sigma} basis={basis}: actual={actual}, expected={expected}"
+            );
+        }
     }
 }
 

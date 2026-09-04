@@ -1,5 +1,18 @@
 use super::*;
 
+pub(super) enum Stage2Compression<E: Field> {
+    Raw,
+    QuotientLift {
+        weights: akita_types::CompressionRelationWeights<E>,
+        support: akita_types::NegativeBinarySupport,
+        binary_batching: E,
+    },
+    ReducedEvaluation {
+        support: akita_types::NegativeBinarySupport,
+        binary_batching: E,
+    },
+}
+
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     level: u32,
@@ -95,7 +108,7 @@ pub(super) fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
-    binary_batching: Option<E>,
+    compression: Stage2Compression<E>,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
@@ -120,30 +133,31 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    let (common_alpha_factor, relation_lane_weights) = rs
-        .relation_weight_factorization
-        .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = geometry.relation_coefficient_block_len();
-    if common_alpha_factor.len() != expected_factor_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "common alpha factor has length {}, expected {expected_factor_len}",
-            common_alpha_factor.len(),
-        )));
-    }
+    let relation_weights = rs.relation_weights;
     let domain_len = domain.domain_len();
-    let mut linear_weights = Vec::new();
-    let mut binary_intervals = Vec::new();
-    if let Some(weights) = rs.compression_relation_weights {
-        if weights.physical_field_len() != domain_len {
-            return Err(AkitaError::InvalidSetup(
-                "compression relation domain disagrees with Stage 2".into(),
-            ));
+    let (mut linear_weights, binary_intervals, binary_batching) = match compression {
+        Stage2Compression::Raw => (Vec::new(), Vec::new(), E::zero()),
+        Stage2Compression::QuotientLift {
+            weights,
+            support,
+            binary_batching,
+        } => {
+            if weights.physical_field_len() != domain_len {
+                return Err(AkitaError::InvalidSetup(
+                    "compression relation domain disagrees with Stage 2".into(),
+                ));
+            }
+            (
+                weights.into_sparse_entries()?,
+                support.intervals().to_vec(),
+                binary_batching,
+            )
         }
-        linear_weights = weights.into_sparse_entries()?;
-        binary_intervals = NegativeBinarySupport::new(plan.witness_layout(), domain_len)?
-            .intervals()
-            .to_vec();
-    }
+        Stage2Compression::ReducedEvaluation {
+            support,
+            binary_batching,
+        } => (Vec::new(), support.intervals().to_vec(), binary_batching),
+    };
     let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
     if let Some(norm) = &physical_l2 {
         let families = norm.plan.virtualization_families(&norm.batching)?;
@@ -164,7 +178,7 @@ where
                 linear_weights,
                 &binary_intervals,
                 stage1_point,
-                binary_batching.unwrap_or_else(E::zero),
+                binary_batching,
             )
         })
         .transpose()?;
@@ -178,8 +192,7 @@ where
         stage1_point,
         range_image_evaluation,
         plan.digit_range_plan().basis(),
-        common_alpha_factor,
-        relation_lane_weights,
+        relation_weights,
         live_relation_lane_count,
         relation_lane_variable_count,
         relation_coefficient_variable_count,

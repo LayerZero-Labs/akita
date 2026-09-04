@@ -389,7 +389,13 @@ impl FoldSchedule {
                 "root fold payload must be compressed".into(),
             ));
         }
+        if root_commitment.ring_relation_mode != crate::RingRelationMode::QuotientLift {
+            return Err(AkitaError::InvalidSetup(
+                "nonterminal level 0 requires quotient-lift ring relations".into(),
+            ));
+        }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
+        let mut relation_phase = crate::RingRelationPhase::QuotientPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             step.params.validate_group_topology()?;
             if !step.params.precommitted_groups().is_empty() {
@@ -399,6 +405,22 @@ impl FoldSchedule {
             }
             step.params.validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.setup_prefix().is_some();
+            let absolute_level = index + 1;
+            if !relation_phase
+                .candidate_modes(
+                    absolute_level,
+                    crate::RelationCandidateTopology::new(
+                        consumes_setup_prefix,
+                        step.params.opening_method(),
+                    ),
+                )
+                .contains(&step.params.ring_relation_mode)
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "nonterminal level {absolute_level} ring relation mode disagrees with the reduced-evaluation suffix policy"
+                )));
+            }
+            relation_phase = relation_phase.after(step.params.ring_relation_mode);
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"

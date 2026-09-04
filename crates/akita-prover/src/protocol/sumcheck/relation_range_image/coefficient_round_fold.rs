@@ -86,12 +86,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn fuse_folded_coefficients_and_compute_next_round(
         &self,
         folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
-        let old_coeff_count = self.common_alpha_factor.len();
+        let old_coeff_count = weights.common_alpha_factor().len();
         let next_coeff_count = old_coeff_count / 2;
         debug_assert_eq!(next_alpha_factor.len(), next_coeff_count);
         debug_assert_eq!(folded_witness.len(), self.live_lane_count * old_coeff_count);
@@ -110,7 +111,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map(|(lane, target)| {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = self.relation_lane_weights[lane];
+                let lane_weight = weights.relation_lane_weights()[lane];
                 let linear_lane = self.linear_terms.resolve_lane(lane);
                 if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(
@@ -156,7 +157,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             for (lane, target) in output.chunks_mut(next_coeff_count).enumerate() {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = self.relation_lane_weights[lane];
+                let lane_weight = weights.relation_lane_weights()[lane];
                 let linear_lane = self.linear_terms.resolve_lane(lane);
                 let round_terms = if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(

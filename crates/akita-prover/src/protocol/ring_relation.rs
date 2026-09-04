@@ -4,8 +4,7 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel,
-    RingSwitchRelationPlan, RootOpeningSource, RuntimeRingSwitchProveBackend,
+    OpeningFoldKernel, OperationCtx, RootOpeningSource, RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
@@ -33,17 +32,22 @@ use super::core::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
 };
 use super::fold_grind;
-use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
-use crate::backend::RingSwitchRelationView;
-
+use super::ring_relation_witness::{
+    RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
+};
 mod compression_witness;
+mod d_rows;
 mod relation_quotient;
+
+use d_rows::{compute_relation_d_rows, RelationDRows};
 
 pub(crate) use compression_witness::{
     materialize_compression_witness, CompressionSourceId, CompressionSourceWitness,
     CompressionWitnessMaterialization,
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
+#[cfg(test)]
+pub(crate) use relation_quotient::{multi_group_quotient_calls, reset_multi_group_quotient_calls};
 
 struct EvaluationTraceOpeningMaterial<F: Field> {
     e_folded: RingVec<F>,
@@ -321,71 +325,6 @@ where
             "sparse batched fold is unsupported for this polynomial backend".to_string(),
         )),
     }
-}
-
-struct RelationDRows<F: Field, const D: usize> {
-    reduced: Vec<CyclotomicRing<F, D>>,
-    quotients: Vec<CyclotomicRing<F, D>>,
-}
-
-/// Compute the private D-block rows `v = D * e_hat` and their relation quotients.
-///
-/// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
-/// the opening digits at the D-role ring dimension. Callers extract both from
-/// the schedule; this function must not read schedule types.
-fn compute_relation_d_rows<F, RB, const D: usize>(
-    ring_switch_ctx: &OperationCtx<'_, F, RB>,
-    d_row_len: usize,
-    log_basis: u32,
-    e_hat: &DigitBlocks,
-) -> Result<RelationDRows<F, D>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    RB: RingSwitchProveBackend<F, D>,
-{
-    let backend = ring_switch_ctx.backend();
-    let prepared = ring_switch_ctx.prepared();
-    let _span = tracing::info_span!(
-        "compute_relation_v",
-        e_hat_planes = e_hat.typed_planes::<D>()?.len()
-    )
-    .entered();
-    let rows = RingSwitchRelationKernel::relation_rows(
-        backend,
-        prepared,
-        RingSwitchRelationView {
-            e_hat: e_hat.typed_planes::<D>()?,
-            t_hat: &[],
-            z_segment: &[],
-            z_folded_centered_inf_norm: 0,
-        },
-        RingSwitchRelationPlan {
-            n_d: d_row_len,
-            n_b: 0,
-            n_a: 0,
-            log_basis_open: log_basis,
-            log_basis_outer: log_basis,
-        },
-    )?;
-    if rows.d_negacyclic.len() != d_row_len
-        || rows.d_cyclic.len() != d_row_len
-        || !rows.b_cyclic.is_empty()
-        || !rows.a_quotients.is_empty()
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let quotients = rows
-        .d_cyclic
-        .iter()
-        .zip(&rows.d_negacyclic)
-        .map(|(cyclic, reduced)| {
-            relation_quotient::quotient_from_cyclic_and_reduced(cyclic, reduced)
-        })
-        .collect();
-    Ok(RelationDRows {
-        reduced: rows.d_negacyclic,
-        quotients,
-    })
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
@@ -722,21 +661,35 @@ impl RingRelationProver {
             dims.d_d(),
             |D_D| {
                 if d_row_len == 0 {
-                    Ok::<_, AkitaError>((
-                        RingVec::from_coeffs(Vec::new()),
-                        RingVec::from_coeffs(Vec::new()),
-                    ))
+                    let d_quotients = match lp.ring_relation_mode {
+                        akita_types::RingRelationMode::QuotientLift => {
+                            RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new()))
+                        }
+                        akita_types::RingRelationMode::ReducedEvaluation => {
+                            RelationDQuotientWitness::ReducedEvaluation
+                        }
+                    };
+                    Ok::<_, AkitaError>((RingVec::from_coeffs(Vec::new()), d_quotients))
                 } else {
                     let d_rows = compute_relation_d_rows::<F, RB, D_D>(
                         ring_switch_ctx,
                         d_row_len,
                         d_log_basis,
                         e_hat,
+                        lp.ring_relation_mode,
                     )?;
-                    Ok::<_, AkitaError>((
-                        RingVec::from_ring_elems(&d_rows.reduced),
-                        RingVec::from_ring_elems(&d_rows.quotients),
-                    ))
+                    match d_rows {
+                        RelationDRows::QuotientLift { reduced, quotients } => Ok((
+                            RingVec::from_ring_elems(&reduced),
+                            RelationDQuotientWitness::QuotientLift(RingVec::from_ring_elems(
+                                &quotients,
+                            )),
+                        )),
+                        RelationDRows::ReducedEvaluation { reduced } => Ok((
+                            RingVec::from_ring_elems(&reduced),
+                            RelationDQuotientWitness::ReducedEvaluation,
+                        )),
+                    }
                 }
             }
         )
@@ -758,6 +711,7 @@ impl RingRelationProver {
                         plan,
                         &hints[group_index],
                         group_payloads[relation_group_index].clone(),
+                        lp.ring_relation_mode,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -766,6 +720,7 @@ impl RingRelationProver {
                 relation_rhs_layout,
                 retained_outer_sources,
                 &v,
+                lp.ring_relation_mode,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(

@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
@@ -11,7 +11,7 @@ use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
     CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
-    NegativeBinarySupport, OpeningFamily,
+    NegativeBinarySupport, OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -128,9 +128,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-    compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
-    negative_binary_support: Option<&'a NegativeBinarySupport>,
-    binary_batching: Option<E>,
+    compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
@@ -140,6 +138,20 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
+}
+
+pub(crate) enum Stage2CompressionOracle<'a, E: Field> {
+    Raw,
+    QuotientLift {
+        weights: &'a CompressionRelationWeights<E>,
+        support: &'a NegativeBinarySupport,
+        binary_batching: E,
+    },
+    ReducedEvaluation {
+        weights: &'a ReducedCompressionRelationWeights<E>,
+        support: &'a NegativeBinarySupport,
+        binary_batching: E,
+    },
 }
 
 impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
@@ -157,9 +169,7 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
-        negative_binary_support: Option<&'a NegativeBinarySupport>,
-        binary_batching: Option<E>,
+        compression: Stage2CompressionOracle<'a, E>,
         setup: &'a AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
@@ -188,9 +198,7 @@ where
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
-            compression_relation_weights,
-            negative_binary_support,
-            binary_batching,
+            compression,
             setup_claim,
             setup,
             alpha,
@@ -231,14 +239,28 @@ where
             self.witness_eval
         };
 
+        let relation_is_reduced = matches!(
+            &self.relation_matrix_evaluator.groups,
+            PreparedRelationGroups::ReducedEvaluation(_)
+        );
         let evaluate_relation_weight = || {
-            let _span = tracing::info_span!("stage2_relation_weight").entered();
-            self.relation_matrix_evaluator.eval_flat_at_point::<F>(
-                challenges,
-                self.setup,
-                self.alpha,
-                self.setup_claim,
-            )
+            // `cfg_join!` may execute this closure on a Rayon worker which does
+            // not inherit the caller's `stage2_verifier` span. Carry the
+            // authenticated relation mode on this worker-local owner so phase
+            // diagnostics cannot silently lose coefficient-packing folds.
+            let _span =
+                tracing::info_span!("stage2_relation_weight", reduced = relation_is_reduced)
+                    .entered();
+            match self.setup_claim {
+                Some(claim) => self
+                    .relation_matrix_evaluator
+                    .eval_flat_at_point_with_deferred_setup::<F>(
+                        challenges, self.setup, self.alpha, claim,
+                    ),
+                None => self
+                    .relation_matrix_evaluator
+                    .eval_flat_at_point::<F>(challenges, self.setup, self.alpha),
+            }
         };
         let (relation_weight, coefficient_packing_weight) = match &self.opening_semantics.0 {
             OpeningFamily::EvaluationTrace(_) => (evaluate_relation_weight()?, E::zero()),
@@ -249,20 +271,22 @@ where
                 (relation_weight?, coefficient_packing_weight?)
             }
         };
-        let compression_oracle = match (
-            self.compression_relation_weights,
-            self.negative_binary_support,
-            self.binary_batching,
-        ) {
-            (Some(weights), Some(support), Some(binary_batching)) => {
-                let compression_relation_weight = weights.evaluate_at_point(challenges)?;
-                let binary_weight = support
-                    .evaluate_restricted_equality_at_point(&self.stage1_point, challenges)?;
-                w_eval * compression_relation_weight
-                    + binary_batching * binary_weight * w_eval * (w_eval + E::one())
-            }
-            (None, None, None) => E::zero(),
-            _ => return Err(AkitaError::InvalidProof),
+        let compression_oracle = {
+            let _span = tracing::info_span!(
+                "stage2_compression_oracle",
+                reduced = matches!(
+                    self.compression,
+                    Stage2CompressionOracle::ReducedEvaluation { .. }
+                )
+            )
+            .entered();
+            evaluate_compression_oracle(
+                &self.compression,
+                self.setup,
+                &self.stage1_point,
+                challenges,
+                w_eval,
+            )?
         };
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
@@ -301,6 +325,51 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn evaluate_compression_oracle<F, E>(
+    compression: &Stage2CompressionOracle<'_, E>,
+    setup: &AkitaExpandedSetup<F>,
+    stage1_point: &[E],
+    point: &[E],
+    witness_evaluation: E,
+) -> Result<E, AkitaError>
+where
+    F: Field,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    match compression {
+        Stage2CompressionOracle::QuotientLift {
+            weights,
+            support,
+            binary_batching,
+        } => {
+            let relation_weight = weights.evaluate_at_point(point)?;
+            let binary_weight =
+                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
+            Ok(witness_evaluation * relation_weight
+                + *binary_batching
+                    * binary_weight
+                    * witness_evaluation
+                    * (witness_evaluation + E::one()))
+        }
+        Stage2CompressionOracle::ReducedEvaluation {
+            weights,
+            support,
+            binary_batching,
+        } => {
+            let relation_weight = weights.evaluate_at_point(setup, point)?;
+            let binary_weight =
+                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
+            Ok(witness_evaluation * relation_weight
+                + *binary_batching
+                    * binary_weight
+                    * witness_evaluation
+                    * (witness_evaluation + E::one()))
+        }
+        Stage2CompressionOracle::Raw => Ok(E::zero()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,13 +377,13 @@ mod tests {
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics,
-        prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels,
-        relation_rhs_coeff_len, AkitaSetupDescriptor, BasisMode,
-        CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-        OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
-        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+        prepare_coefficient_packing_verifier_batch_semantics, relation_rhs_coeff_len,
+        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
+        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
+        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
+        RingRelationGroupOpening, RingRelationInstance, RingVec, SisModulusProfileId,
+        SubringCoefficientPackingGeometry, WitnessLayout,
     };
     use jolt_field::Zero;
     use jolt_field::{Ext2, Prime64Offset59};
@@ -362,7 +431,8 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            r_decomp_levels::<F>(params.open().digits.log_basis),
+            akita_types::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
+                .expect("relation quotient plan"),
         )
         .unwrap();
         let relation_address_geometry = RelationAddressGeometry::for_relation(
@@ -467,15 +537,15 @@ mod tests {
             .unwrap();
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
-            groups: Vec::new(),
+            groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
-            flat_context: Some(FlatRelationContext {
+            flat_context: FlatRelationContext {
                 level_params: params.clone(),
                 opening_batch: opening_batch.clone(),
                 witness_layout: Arc::new(witness_layout),
                 extension_degree: <E as ExtField<F>>::DEGREE,
-            }),
+            },
             setup_plan_cache: Default::default(),
         };
         let setup: AkitaExpandedSetup<F> =
@@ -496,9 +566,7 @@ mod tests {
             E::from_u64(23),
             vec![E::zero(); domain.num_vars()],
             &evaluator,
-            None,
-            None,
-            None,
+            Stage2CompressionOracle::Raw,
             &setup,
             alpha,
             None,
@@ -540,3 +608,7 @@ mod tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "stage2/compressed_reduced_tests.rs"]
+mod compressed_reduced_tests;

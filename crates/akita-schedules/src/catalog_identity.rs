@@ -632,6 +632,7 @@ fn write_generated_fold_core(h: &mut Fnv64, fold: GeneratedFoldCore) {
     write_generated_group(h, fold.group);
     write_generated_open_matrix(h, fold.open_commit_matrix);
     write_generated_partition(h, fold.witness_chunks);
+    h.write_u64(u64::from(fold.ring_relation_mode.tag()));
 }
 
 fn write_generated_root_fold(h: &mut Fnv64, fold: &GeneratedRootFold) {
@@ -790,6 +791,26 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(test)]
+mod selection_policy_identity_tests {
+    use crate::SelectionPolicyId;
+
+    #[test]
+    fn root_output_objectives_do_not_reuse_legacy_catalog_tags() {
+        assert_eq!(SelectionPolicyId::MinEstimatedProofPayloadV2.tag(), 4);
+        assert_eq!(SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag(), 5);
+        assert_eq!(
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag(),
+            6
+        );
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinEstimatedProofPayloadV2.tag()));
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag()));
+        assert!(![1, 2, 3, 4, 5].contains(
+            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag()
+        ));
     }
 }
 

@@ -1010,6 +1010,27 @@ pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usiz
     )
 }
 
+/// Prepare the exact-prefix negacyclic-only cache used by reduced-evaluation
+/// compressed commitments.
+///
+/// This uses the compression CRT selector because compression-only ring
+/// degrees need not belong to the ordinary protocol NTT ladder.
+#[tracing::instrument(
+    skip_all,
+    name = "prepare_reduced_compression_ntt_cache",
+    fields(ring_d = D, rings = matrix.as_slice().len())
+)]
+pub fn prepare_reduced_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    prepare_ntt_cache_with_tail_prefix(
+        matrix,
+        NttCacheMode::Negacyclic,
+        None,
+        select_compression_crt_ntt_params::<F, D>()?,
+    )
+}
+
 fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,

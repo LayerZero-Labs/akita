@@ -108,6 +108,8 @@ pub struct CommittedGroupParams {
     pub open_matrix: OpenCommitMatrixParams,
     /// Public B/D payload encoding selected for this fold level.
     pub payload_mode: crate::CommitmentPayloadMode,
+    /// Schedule-bound realization of this fold's complete ring relation.
+    pub ring_relation_mode: crate::RingRelationMode,
     /// Physical source encoding authenticated by A and B.
     pub source_encoding: crate::CommittedSourceEncoding,
     /// Multi-chunk witness layout this level commits under.
@@ -120,6 +122,7 @@ impl CommittedGroupParams {
         groups: Vec<GroupOpenPhaseParams>,
         open_matrix: OpenCommitMatrixParams,
         payload_mode: crate::CommitmentPayloadMode,
+        ring_relation_mode: crate::RingRelationMode,
         source_encoding: crate::CommittedSourceEncoding,
         witness_chunk: crate::witness::ChunkedWitnessCfg,
     ) -> Result<Self, AkitaError> {
@@ -127,6 +130,7 @@ impl CommittedGroupParams {
             groups: FoldGroups::try_from_vec(groups)?,
             open_matrix,
             payload_mode,
+            ring_relation_mode,
             source_encoding,
             witness_chunk,
         })
@@ -821,7 +825,7 @@ impl CommittedGroupParams {
             opening_batch,
             &relation_geometry,
             self.witness_chunk.num_chunks,
-            crate::sis::compute_num_digits_field_width(field_bits, self.open().digits.log_basis),
+            crate::RelationQuotientPlan::for_field_bits(self, field_bits)?,
         )?;
         Ok(witness_layout.live_coeff_len())
     }

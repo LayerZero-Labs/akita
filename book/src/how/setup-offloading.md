@@ -145,7 +145,7 @@ The planner keeps an offloaded edge only when all of the following are true:
 Among feasible schedules, the production policy first minimizes that remaining
 direct setup capacity. It then compares exact estimated proof bytes, including
 every Stage 3 proof. Later tie breaks prefer a smaller total setup envelope and
-then the canonical schedule order.
+then a smaller root output witness before the canonical schedule order.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
 and its direct child. This `RootAndFirstChildV1` domain is part of the catalog

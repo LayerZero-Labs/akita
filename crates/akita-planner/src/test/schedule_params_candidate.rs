@@ -131,6 +131,7 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
         groups,
         open_matrix,
         params.payload_mode,
+        params.ring_relation_mode,
         params.source_encoding,
         params.witness_chunk,
     )
@@ -243,25 +244,26 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
+            relation_traversal_order: RelationTraversalOrder::Canonical,
         },
-        RecursiveSetupPrefix::None,
+        RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
         FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
     let linf = candidates
         .iter()
-        .filter(|(params, _)| {
+        .filter(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
         .count();
     let l2 = candidates
         .iter()
-        .filter(|(params, _)| {
+        .filter(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -270,12 +272,12 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
     assert!(l2 > 0);
     let l2_block_index_bits = candidates
         .iter()
-        .filter_map(|(params, _)| {
+        .filter_map(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
-            .then_some(params.block_index_bits())
+            .then_some(candidate.block_index_bits())
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(l2_block_index_bits.len(), 1);
@@ -308,15 +310,17 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_open: 3,
         fold_level: 1,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+        relation_traversal_order: RelationTraversalOrder::Canonical,
     };
     let candidates = derive_fold_candidates(
         request,
-        RecursiveSetupPrefix::None,
+        RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
         FoldCandidatePolicy::Best,
     )
     .expect("packing candidates");
     assert!(!candidates.is_empty());
-    for (params, next_witness_len) in &candidates {
+    for (candidate, next_witness_len) in &candidates {
+        let params = &candidate;
         assert_eq!(
             params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
@@ -360,15 +364,13 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     let mut prefix_cache = SetupPrefixSearchCache::default();
     let with_prefix = derive_fold_candidates(
         request,
-        RecursiveSetupPrefix::Search {
-            cache: &mut prefix_cache,
-            natural_len: 1 << 14,
-        },
+        RecursiveFoldWork::setup_prefixed(&mut prefix_cache, 1 << 14),
         FoldCandidatePolicy::Best,
     )
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
-    for (params, next_witness_len) in with_prefix {
+    for (candidate, next_witness_len) in with_prefix {
+        let params = candidate;
         let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
             prefix.opening.opening_method,
@@ -473,6 +475,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
+                relation_traversal_order: RelationTraversalOrder::Canonical,
             };
             let split_bounds = if without_bounds {
                 SplitBoundPolicy::DisabledForOracle
@@ -481,14 +484,14 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             };
             derive_fold_candidates(
                 request,
-                RecursiveSetupPrefix::None,
+                RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
                 FoldCandidatePolicy::Frontier(split_bounds),
             )
         };
         let canonical = |candidates: Vec<(CommittedGroupParams, usize)>| {
             candidates
                 .into_iter()
-                .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+                .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
                 .collect::<std::collections::BTreeSet<_>>()
         };
         let exhaustive = canonical(derive(true).expect("bounds-disabled frontier"));
@@ -536,15 +539,15 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let (first_params, first_next_witness_len) = &candidates[0];
     let opening_layout = key.opening_layout().expect("root opening layout");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(first_params.clone());
-    let (packing_direct_bytes, _) =
-        akita_schedules::planner_support::nonterminal_level_payload_bytes(
-            &policy,
-            first_params,
-            &opening_layout,
-            akita_types::FoldSuccessor::Terminal(&terminal),
-            *first_next_witness_len,
-        )
-        .expect("packing level payload");
+    let packing_payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+        &policy,
+        first_params,
+        &opening_layout,
+        akita_types::FoldSuccessor::Terminal(&terminal),
+        *first_next_witness_len,
+    )
+    .expect("packing level payload");
+    let packing_direct_bytes = packing_payload.direct;
     assert_eq!(
         packing_direct_bytes,
         akita_types::level_proof_bytes(
@@ -683,9 +686,13 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &product_key,
+        &[
+            honest_fold_policy_of::<Dense>(),
+            honest_fold_policy_of::<Dense>(),
+        ],
     )
     .expect("root precommit opening products");
-    assert_eq!(opening_products.len(), 4);
+    assert_eq!(opening_products.len(), 3);
     assert!(opening_products
         .iter()
         .all(|assignment| assignment.len() == 2));
@@ -693,6 +700,67 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening.method(),
         OpeningMethod::SubringCoefficientPacking { .. }
     )));
+
+    let precommit_domain = PlannerOpeningCandidate::coefficient_packing_domain(
+        0,
+        policy.claim_ext_degree,
+        CommitmentRingDims {
+            inner: frozen_group.inner.matrix.ring_dimension(),
+            outer: frozen_group.outer.matrix.ring_dimension(),
+            opening: dimensions.d_d(),
+        },
+    )
+    .expect("precommit opening domain");
+    let exhaustive_products = precommit_domain
+        .iter()
+        .flat_map(|&left| precommit_domain.iter().map(move |&right| vec![left, right]))
+        .collect::<Vec<_>>();
+    let materialized_root_domain = |products: &[Vec<PlannerOpeningCandidate>]| {
+        products
+            .iter()
+            .flat_map(|product| {
+                crate::planner::root_level_candidates_for_basis(
+                    &product_key,
+                    honest_fold_policy_of::<Dense>(),
+                    &[
+                        honest_fold_policy_of::<Dense>(),
+                        honest_fold_policy_of::<Dense>(),
+                    ],
+                    &policy,
+                    dimensions,
+                    opening,
+                    product,
+                    Dense::inner_basis_range().0,
+                    Dense::opening_basis_range().0,
+                )
+                .expect("materialized root candidate domain")
+            })
+            .map(|(params, output_witness_len)| {
+                (params.canonical_descriptor_bytes(), output_witness_len)
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        materialized_root_domain(&opening_products),
+        materialized_root_domain(&exhaustive_products),
+        "one canonical representative per multiset must preserve the exhaustive root domain"
+    );
+
+    let repeated_key = AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group; 16],
+    };
+    let repeated_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &repeated_key,
+        &vec![honest_fold_policy_of::<Dense>(); 16],
+    )
+    .expect("symmetric root precommit opening products");
+    assert_eq!(repeated_products.len(), 17);
+    assert!(repeated_products
+        .iter()
+        .all(|assignment| assignment.len() == 16));
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
@@ -703,6 +771,10 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 opening: 512,
             },
             &product_key,
+            &[
+                honest_fold_policy_of::<Dense>(),
+                honest_fold_policy_of::<Dense>(),
+            ],
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
     assert!(incompatible_products.is_empty());
@@ -904,7 +976,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     )
     .expect("base level payload");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
-    let (runtime, stage3) = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+    let runtime = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         &params,
         &opening_layout,
@@ -912,8 +984,8 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         output_witness_len,
     )
     .expect("runtime level payload");
-    assert_eq!(stage3, 0);
-    assert_eq!(runtime - base, expected_eor);
+    assert_eq!(runtime.stage3, 0);
+    assert_eq!(runtime.direct - base, expected_eor);
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -952,212 +1024,8 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     }
 }
 
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+#[path = "schedule_params_candidate/compression_source.rs"]
+mod compression_source;
 
-    struct FixedFoldPolicy;
-
-    impl HonestFoldPolicy for FixedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(2)
-        }
-    }
-
-    let policy = policy_of::<OneHot>();
-    let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
-            .expect("production challenge for candidate A dimension");
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &challenge,
-            challenge_dimension: dimensions.d_a(),
-            dimensions,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count,
-            witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
-            log_basis_open: 3,
-            width_s,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .unwrap()
-    };
-
-    for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
-        assert!(
-            candidate(CommitmentRingDims::uniform(64), outer_slice_count, 8).is_some(),
-            "shared A/B request should admit S={}",
-            outer_slice_count.get(),
-        );
-    }
-
-    assert!(candidate(
-        CommitmentRingDims::uniform(128),
-        akita_types::CommitmentSliceCount::FOUR,
-        8,
-    )
-    .is_some());
-    assert!(candidate(
-        CommitmentRingDims::uniform(128),
-        akita_types::CommitmentSliceCount::EIGHT,
-        8,
-    )
-    .is_none());
-
-    let d64_challenge =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("production D64 challenge");
-    assert!(
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &d64_challenge,
-            challenge_dimension: 64,
-            dimensions: CommitmentRingDims::uniform(64),
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            witness_norms: FoldWitnessNorms::bounded(3, 64),
-            log_basis_open: 3,
-            width_s: usize::MAX,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .is_err()
-    );
-
-    struct OversizedFoldPolicy;
-
-    impl HonestFoldPolicy for OversizedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(1 << 20)
-        }
-    }
-
-    assert!(
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &OversizedFoldPolicy,
-            ring_challenge_cfg: &d64_challenge,
-            challenge_dimension: 64,
-            dimensions: CommitmentRingDims::uniform(64),
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            witness_norms: FoldWitnessNorms::bounded(3, 64),
-            log_basis_open: 3,
-            width_s: 8,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .unwrap()
-        .is_none()
-    );
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
-
-    struct FixedFoldPolicy;
-
-    impl HonestFoldPolicy for FixedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(2)
-        }
-    }
-
-    let policy = policy_of::<OneHot>();
-    let dimensions = CommitmentRingDims::uniform(256);
-    let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
-        .expect("production challenge for candidate A dimension");
-    let num_claims = 1;
-    let width_s = 8;
-    let mut raw_candidate = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-        policy: &policy,
-        fold_policy: &FixedFoldPolicy,
-        ring_challenge_cfg: &challenge,
-        challenge_dimension: dimensions.d_a(),
-        dimensions,
-        payload_mode: akita_types::CommitmentPayloadMode::Raw,
-        num_claims,
-
-        num_live_ring_elements_per_claim: 64,
-        num_positions_per_block: 8,
-        num_live_blocks: 8,
-
-        num_chunks: 1,
-        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-        witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
-        log_basis_open: 3,
-        width_s,
-        num_digits_outer: 2,
-        modeled_linf_cap: None,
-    })
-    .unwrap()
-    .expect("raw candidate has certified minimum A/B ranks");
-    let outer = raw_candidate.outer_commit_matrix;
-    let field_bytes = outer.sis_modulus_profile().field_bits().div_ceil(8) as usize;
-    let over_cap_rank =
-        akita_types::MAX_COMPRESSION_INPUT_BYTES.div_ceil(dimensions.d_b() * field_bytes) + 1;
-    raw_candidate.outer_commit_matrix = OuterCommitMatrixParams::try_new(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        over_cap_rank.max(outer.output_rank()),
-        outer.input_width(),
-        outer.coeff_linf_bound(),
-        outer.ring_dimension(),
-    )
-    .expect("larger-than-minimum rank remains SIS certified");
-
-    let mut params = CommittedGroupParams::params_only(
-        policy.sis_modulus_profile,
-        dimensions.d_a(),
-        3,
-        raw_candidate.inner_commit_matrix.output_rank(),
-        raw_candidate.outer_commit_matrix.output_rank(),
-        1,
-        challenge,
-    )
-    .with_decomp(width_s, width_s * 8, 1, 2, 2)
-    .unwrap();
-    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
-    params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
-    params.own_group_mut().profile.group = PolynomialGroupLayout::singleton(14);
-    params.own_group_mut().opening.num_digits_fold = raw_candidate.num_digits_fold;
-    assert!(params.compression_sources_supported().unwrap());
-    params
-        .validate_commitment_request(2, num_claims)
-        .expect("raw S1 geometry does not execute compression");
-
-    let mut compressed = params;
-    compressed.payload_mode = akita_types::CommitmentPayloadMode::Compressed;
-    assert!(!compressed.compression_sources_supported().unwrap());
-    assert!(compressed
-        .validate_commitment_request(2, num_claims)
-        .is_err());
-}
+#[path = "schedule_params_candidate/shared_ab.rs"]
+mod shared_ab;

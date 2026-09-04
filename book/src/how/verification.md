@@ -97,6 +97,22 @@ the negative-binary support from `WitnessLayout` and evaluates the stage-1
 equality table restricted to those intervals; compression roles never enlarge
 or shrink the ordinary A/B/D common address block.
 
+The same validated fold parameters select the Stage-2 ring-relation
+realization. `QuotientLift` evaluates the factored ordinary relation and its
+explicit quotient spans. `ReducedEvaluation` instead evaluates terminal
+signed-wrap residue kernels for the A/B/D rows and the separately owned F/H
+compression program; its witness layout contains no ordinary or compression
+quotient spans. Both paths close the same schedule-bound native-ring statement
+and feed the same next-witness opening into the successor. There is no
+proof-controlled mode bit or fallback path.
+
+Schedule validation admits reduced evaluation only as a monotone suffix from
+absolute level 2, with evaluation-trace openings and direct setup
+contribution. It rejects coefficient packing, an incoming setup prefix,
+deferred Stage 3, or a later return to quotient lifting before transcript
+replay. Raw versus compressed payload and `L∞` versus `L2` response security
+remain independent choices within that admitted suffix.
+
 An L2 fold at D64 or D128 also replays operator norm rejection from the
 transcript. The schedule fixes the sparse challenge family and both the true
 subset threshold and strict integer threshold. A challenge is accepted only

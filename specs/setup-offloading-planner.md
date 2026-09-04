@@ -25,7 +25,7 @@ The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
 this document are historical where they conflict with
 [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 This document remains authoritative for recursive offloading feasibility,
-contraction, and the shared adaptive first-direct-setup selection objective.
+contraction, and the mode-specific schedule-selection objectives.
 
 The current target is the planner-selected policy in this revision. It
 supersedes the original rollout rule that forced setup offloading at fold
@@ -73,13 +73,15 @@ Offloaded: successor receives [S_prefix, W]
 An offloaded transition is feasible only when the successor can commit the
 exact prefix, the complete successor witness contracts the entering balanced
 witness by at least threefold, and the resulting suffix strictly reduces the
-power-of-two capacity of the first remaining direct setup scan. The planner may select zero, one, or several
-offloaded levels. No fold index, contiguity rule, or prefix-size threshold
-decides the count.
+power-of-two capacity of the first remaining direct setup scan. The planner may
+select zero, one, or several offloaded levels. No fold index, contiguity rule,
+or prefix-size threshold decides the count.
 
-The selected schedule minimizes the padded capacity of the first remaining direct setup footprint and
-then exact estimated proof bytes, including Stage 3. Equal candidates then use
-the smaller total physical setup envelope and the canonical schedule descriptor.
+The selected recursive schedule first minimizes the power-of-two capacity
+covering its total physical setup envelope. Within that capacity, it minimizes
+the padded capacity of the first remaining direct setup footprint and then
+exact estimated proof bytes, including Stage 3. Equal candidates use root
+output-witness length and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
 prefix as a precommitted group and the folded witness as the final group.
 Recursive multi-group generated schedules are stored separately from ordinary
@@ -249,21 +251,128 @@ not verifier security assumptions. Security continues to follow from the exact
 prefix commitment, descriptor binding, Stage 3 verification, and the SIS
 parameters of the selected commitment matrices.
 
-Among feasible complete schedules, the PR #318 policy compares:
+Among feasible complete schedules, adaptive direct planning compares:
 
 ```text
 (
     first_direct_padded_setup_capacity,
     exact_estimated_proof_bytes,
     total_setup_field_elements,
+    root_output_witness_len,
     canonical_descriptor,
 )
 ```
 
-where `exact_estimated_proof_bytes` includes every Stage 3 payload. Adaptive
-direct and recursive planning share the projected suffix frontier over these
-coordinates. The descriptor is only a complete-schedule tie-break. Generated
-catalogs bind the selection policy that produced them.
+### Why adaptive direct planning starts with first-direct capacity
+
+This section records the motivation for the current versioned objective. It is
+not a protocol invariant, a security claim, or a claim that setup size alone
+predicts verifier time. Measurements or a better verifier cost model may
+justify a different objective in a later policy version.
+
+The setup quantities in the objective have different scopes:
+
+| Quantity | Definition |
+| --- | --- |
+| First-direct natural setup length | Exact active A, B, or D coefficient prefix scanned at the first edge whose setup is not offloaded |
+| First-direct padded setup capacity | First-direct natural length rounded up to the smallest power of two |
+| Total setup field elements | Largest physical setup-matrix or setup-slot footprint used anywhere in the schedule; this is a reusable maximum, not a sum |
+| Padded total-setup capacity | Total setup field elements rounded up to the smallest power of two |
+
+For an adaptive direct schedule, the first direct edge is the root. Its padded
+capacity is a deliberately rough, verifier-focused proxy: direct setup scanning
+is expected to be a major verifier cost, so the planner first prefers the
+smallest power-of-two bucket for that scan. It does not minimize the natural
+length exactly. If the smallest feasible natural length lies in a bucket of
+capacity `C`, every other length in that same bucket is at most `C` and less
+than twice the smallest length. Proof bytes can therefore select a moderately
+larger scan within the winning bucket instead of suffering an arbitrary proof
+regression to save a small number of setup fields.
+
+The objective intentionally does not begin with the maximum setup footprint
+over the complete direct schedule. Adaptive search gives the first two fold
+levels a wider parameter domain than the uniform suffix. On small rows, a
+second or later fold can consequently have a larger setup matrix than the root.
+Making that suffix maximum the leading direct objective can reward a shallow
+schedule that avoids the later matrix by stopping early and returning a larger
+terminal witness. First-direct capacity isolates the scan the direct policy is
+trying to improve from this small-row artifact. Total setup remains a later
+comparison coordinate and a resource-admission quantity; the planner does not
+otherwise ignore it.
+
+The same definition also composes with setup offloading. Each offloaded edge
+moves the first remaining direct scan farther into the schedule, so the metric
+continues to describe the direct verifier work that remains instead of naming
+a fixed fold index. Terminal A-matrix work and other later verifier costs are
+not fully represented by this proxy. That limitation is part of the rationale
+for keeping the objective versioned and revisable.
+
+Recursive setup planning compares a power-of-two setup-envelope capacity
+instead of the exact first coordinate:
+
+```text
+(
+    next_power_of_two(total_setup_field_elements),
+    first_direct_padded_setup_capacity,
+    exact_estimated_proof_bytes,
+    first_direct_output_witness_len,
+    canonical_descriptor,
+)
+```
+
+### Why recursive planning starts with padded total-setup capacity
+
+This rationale is an empirical design hypothesis, not a protocol or security
+requirement. Recursive setup offloading can reduce the first remaining direct
+scan by moving a producer's active setup into a committed prefix. That move does
+not eliminate setup work: the prefix has its own commitment matrices and setup
+slot, and its successor adds a Stage 3 proof. Optimizing only the first-direct
+scan could therefore relocate cost into a larger setup object instead of
+reducing the schedule's overall setup requirement.
+
+The recursive objective uses each coordinate for a separate purpose:
+
+1. **Padded total-setup capacity** bounds the largest setup matrix or setup slot
+   needed anywhere in the schedule. The power-of-two bucket matches the setup
+   prefix's index-domain and provisioning granularity. Exact footprints within
+   one bucket are deliberately treated as equivalent.
+2. **First-direct padded setup capacity** then minimizes the direct verifier
+   scan that remains after the selected offloaded prefix. Unlike a fixed fold
+   index, this coordinate follows the point where direct setup work resumes.
+3. **Exact estimated proof bytes** account for the complete wire cost, including
+   every Stage 3 payload introduced by offloading. This coordinate prevents a
+   setup-equivalent schedule from buying a smaller intermediate witness with a
+   larger proof.
+4. **First-direct output-witness length** breaks remaining proof-byte ties in
+   favor of less downstream work after direct setup resumes. It is primarily a
+   coarse prover-work proxy, but a smaller witness can also help later verifier
+   work and sometimes downstream proof geometry. These effects are correlated,
+   not a calibrated runtime or byte-cost model, so this heuristic remains after
+   the setup and complete-proof coordinates. That placement also limits its
+   ability to favor a larger gadget basis or another parameter choice merely
+   because that choice emits fewer field elements.
+5. **Canonical descriptor** gives the final deterministic representative.
+
+There is no exact-total-setup coordinate after the padded envelope. Adding one
+would partially undo the intended slack by distinguishing schedules that use
+the same provisioned setup capacity. A setup budget may still reject an exact
+footprint before objective comparison.
+
+The history behind this split is also empirical. The setup-envelope pruning
+experiment first applied an exact envelope objective to adaptive direct rows
+and a padded envelope objective to recursive rows. Exact envelope-first direct
+selection produced shallow, proof-heavy schedules, so commit `a9f8bd814`
+restored direct V2 while retaining padded recursive V3. The padded recursive
+coordinate also made the schedule-wide maximum an early monotone bound; local
+release measurements during that experiment reduced representative recursive
+searches by roughly 6–16 times. A later output-before-proof experiment in
+commit `9698637df` reduced selected first-direct witnesses but exposed proof-size
+regressions. The current order consequently treats first-direct output as a
+proof-byte tie-break. These observations explain the policy; they do not show
+that it is globally optimal, and future end-to-end measurements may justify a
+new policy version.
+
+Generated catalogs bind the versioned selection policy that produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the
@@ -283,18 +392,20 @@ The generated catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
-uniform direct policy = MinEstimatedProofPayload
-adaptive and recursive policy = MinFirstDirectSetupThenPayload
+uniform direct policy = MinEstimatedProofPayloadV2
+adaptive direct policy = MinFirstDirectSetupThenPayloadV2
+recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
-schedule mode. Uniform direct planning selects `MinEstimatedProofPayload`.
-Adaptive dimension or recursive setup planning selects
-`MinFirstDirectSetupThenPayload`. The scalar boundary disables recursive setup
-search but retains the adaptive objective when its dimension domain remains
-adaptive.
+schedule mode. Uniform direct planning selects `MinEstimatedProofPayloadV2`.
+Adaptive direct planning retains `MinFirstDirectSetupThenPayloadV2`.
+Recursive setup planning selects
+`MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`. The scalar boundary
+disables recursive setup search but retains the adaptive objective when its
+dimension domain remains adaptive.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -426,8 +537,8 @@ when `i + 1` would be the last fold.
 
 If fold `i` has a direct successor, fold `i + 1` receives only `[W_{i+1}]`, even
 when fold `i` itself consumed two groups. A later edge remains structurally free
-to offload again. Under the setup-first comparator such a transition is normally
-dominated after the first direct setup scan, but this is a selection consequence,
+to offload again. The setup-envelope-first comparator retains that transition
+when it can improve the complete schedule; this is a selection consequence,
 not a schedule-validation rule.
 
 ## Typed ownership and required changes
@@ -1050,9 +1161,10 @@ the candidate score that decides whether and how long to offload.
       at least threefold after counting both the recursive witness and padded
       full-field prefix inputs, and strictly reduces the padded capacity of the
       first remaining direct setup scan.
-- [x] The selected schedule lexicographically minimizes first direct padded setup
-      capacity, exact estimated proof bytes, total setup, and the canonical
-      descriptor within the supported setup envelope.
+- [x] The selected recursive schedule lexicographically minimizes padded total
+      setup-envelope capacity, first-direct padded setup capacity, first-direct
+      output-witness length, exact estimated proof bytes, and the canonical
+      descriptor.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
 - [x] Exact proof accounting includes every Stage 3 payload before candidate

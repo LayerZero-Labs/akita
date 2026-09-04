@@ -10,7 +10,7 @@ use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionRelationWeights, FpExtEncoding, RingVec,
+    CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, RingVec,
 };
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
@@ -43,10 +43,10 @@ pub struct RingSwitchOutput<E: Field> {
     pub(crate) w_evals_compact: crate::backend::packed_digits::PackedSignedDigits,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
-    /// Exact common-alpha factorization of the tau1-weighted relation table.
-    pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
-    /// Sparse-compilable compact-geometry F/H relation weights.
-    pub(crate) compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    /// Mode-typed ordinary and compression ring-relation weights.
+    pub(crate) relation_weights: crate::protocol::sumcheck::RelationWeightOracle<E>,
+    /// Atomic payload-mode state for Stage-2 compression and binary terms.
+    pub(crate) compression: RingSwitchCompression<E>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.
@@ -57,6 +57,17 @@ pub struct RingSwitchOutput<E: Field> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+pub(crate) enum RingSwitchCompression<E: Field> {
+    Raw,
+    QuotientLift {
+        weights: CompressionRelationWeights<E>,
+        support: NegativeBinarySupport,
+    },
+    ReducedEvaluation {
+        support: NegativeBinarySupport,
+    },
 }
 
 /// Transcript-complete ring-switch state and the exact relation authority

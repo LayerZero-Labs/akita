@@ -42,6 +42,7 @@ transcript-keccak = [
 catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen", "akita-config/all-schedules"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
+test-support = []
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }

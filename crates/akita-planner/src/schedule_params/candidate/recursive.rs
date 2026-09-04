@@ -1,17 +1,27 @@
 use super::*;
 
+mod frontier;
 mod level_search;
+#[cfg(all(test, feature = "catalog-gen"))]
+mod oracle;
 mod split;
+mod views;
 
+use frontier::derive_fold_candidate_frontier;
 use level_search::{
     attach_recursive_setup_prefix, finalize_recursive_level_candidate,
     prepare_recursive_level_search, RecursiveLevelSearch,
+};
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(crate) use oracle::{
+    derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
 pub(crate) use split::recursive_split_search_domain;
 use split::recursive_witness_body_lower_bound;
 pub(super) use split::{
     recursive_candidate_order_key, recursive_split_lower_bound, RecursiveSplitLowerBoundInput,
 };
+pub(crate) use views::derive_recursive_candidate_views;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RecursiveCandidateRequest<'a> {
@@ -25,9 +35,10 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) log_basis_open: u32,
     pub(crate) fold_level: usize,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    pub(crate) relation_traversal_order: RelationTraversalOrder,
 }
 
-pub(crate) enum RecursiveSetupPrefix<'a> {
+enum RecursiveSetupPrefix<'a> {
     None,
     Search {
         cache: &'a mut SetupPrefixSearchCache,
@@ -35,10 +46,43 @@ pub(crate) enum RecursiveSetupPrefix<'a> {
     },
 }
 
+pub(crate) enum RecursiveFoldWork<'a> {
+    Direct {
+        relation_domain: RelationSearchDomain,
+    },
+    SetupPrefixed {
+        cache: &'a mut SetupPrefixSearchCache,
+        natural_len: usize,
+    },
+}
+
+impl<'a> RecursiveFoldWork<'a> {
+    pub(crate) const fn direct(relation_domain: RelationSearchDomain) -> Self {
+        Self::Direct { relation_domain }
+    }
+
+    pub(crate) fn setup_prefixed(
+        cache: &'a mut SetupPrefixSearchCache,
+        natural_len: usize,
+    ) -> Self {
+        Self::SetupPrefixed { cache, natural_len }
+    }
+
+    fn into_search_parts(self) -> (RecursiveSetupPrefix<'a>, RelationSearchDomain) {
+        match self {
+            Self::Direct { relation_domain } => (RecursiveSetupPrefix::None, relation_domain),
+            Self::SetupPrefixed { cache, natural_len } => (
+                RecursiveSetupPrefix::Search { cache, natural_len },
+                RelationSearchDomain::QuotientOnly,
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SplitBoundPolicy {
     Enabled,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     DisabledForOracle,
 }
 
@@ -88,16 +132,17 @@ impl RecursiveCandidateContext<'_, '_> {
     fn candidate_core(
         &self,
         block_index_bits: usize,
+        num_chunks: usize,
+        delta_commit: usize,
+        delta_open: usize,
     ) -> Result<Option<RecursiveCandidateCore>, AkitaError> {
         let request = self.request;
         let policy = request.policy;
         let ring_challenge_cfg = request.opening.challenge_config();
         let dimensions = request.dimensions;
         let search = self.search;
-        let source = request.source;
         let log_basis_inner = request.log_basis_inner;
         let log_basis_open = request.log_basis_open;
-        let fold_level = request.fold_level;
         let num_ring_elems = search.num_ring_elems;
         let reduced_vars = search.reduced_vars;
         if reduced_vars <= 2
@@ -107,19 +152,12 @@ impl RecursiveCandidateContext<'_, '_> {
         {
             return Ok(None);
         }
-        let num_chunks = policy.chunks_at_level(fold_level);
         let num_positions_per_block = 1usize
             .checked_shl((reduced_vars - block_index_bits) as u32)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
             })?;
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
-        let open_decomp = DecompositionParams {
-            log_basis: log_basis_open,
-            ..policy.decomposition
-        };
-        let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
-        let delta_open = num_digits_open(open_decomp);
         let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit)
         else {
             return Ok(None);
@@ -201,6 +239,7 @@ impl RecursiveCandidateContext<'_, '_> {
     fn candidates_from_core(
         &self,
         core: &RecursiveCandidateCore,
+        relation_domain: RelationSearchDomain,
     ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
         let request = self.request;
         let d_a = request.dimensions.d_a();
@@ -242,52 +281,59 @@ impl RecursiveCandidateContext<'_, '_> {
             else {
                 continue;
             };
-            candidates.push(CommittedGroupParams::try_new(
-                // A recursive candidate consumes no frozen groups, so its own
-                // new group is the whole list.
-                vec![akita_types::GroupOpenPhaseParams {
-                    profile: akita_types::GroupCommitPhaseParams {
-                        version: akita_types::GroupCommitPhaseParams::VERSION,
-                        // It commits one polynomial over the witness arriving at
-                        // its level.
-                        group: akita_types::PolynomialGroupLayout::singleton(
-                            akita_types::padded_boolean_opening_vars(request.current_witness_len)?,
-                        ),
-                        blocks: akita_types::BlockGeometry::new(
-                            core.num_ring_elems,
-                            core.num_positions_per_block,
-                            core.num_live_blocks,
-                        ),
-                        outer_slice_count,
-                        inner: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(
-                                request.log_basis_inner,
-                                core.num_digits_inner,
+            for transition in relation_domain.transitions_in(self.request.relation_traversal_order)
+            {
+                let params = CommittedGroupParams::try_new(
+                    // A recursive candidate consumes no frozen groups, so its own
+                    // new group is the whole list.
+                    vec![akita_types::GroupOpenPhaseParams {
+                        profile: akita_types::GroupCommitPhaseParams {
+                            version: akita_types::GroupCommitPhaseParams::VERSION,
+                            // It commits one polynomial over the witness arriving at
+                            // its level.
+                            group: akita_types::PolynomialGroupLayout::singleton(
+                                akita_types::padded_boolean_opening_vars(
+                                    request.current_witness_len,
+                                )?,
                             ),
-                            core.inner_commit_matrix,
-                        ),
-                        outer: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(
-                                request.log_basis_open,
-                                core.num_digits_open,
+                            blocks: akita_types::BlockGeometry::new(
+                                core.num_ring_elems,
+                                core.num_positions_per_block,
+                                core.num_live_blocks,
                             ),
-                            outer_commit_matrix,
-                        ),
-                    },
-                    opening: akita_types::GroupOpeningPlan {
-                        opening_method: request.opening.method(),
-                        fold_challenge_config: request.opening.challenge_config(),
-                        log_basis_open: request.log_basis_open,
-                        num_digits_open: core.num_digits_open,
-                        num_digits_fold: core.num_digits_fold,
-                    },
-                    setup_natural_len: None,
-                }],
-                core.open_commit_matrix,
-                request.payload_mode,
-                source_encoding,
-                crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
-            )?);
+                            outer_slice_count,
+                            inner: akita_types::RoleParams::new(
+                                akita_types::GadgetDigits::new(
+                                    request.log_basis_inner,
+                                    core.num_digits_inner,
+                                ),
+                                core.inner_commit_matrix,
+                            ),
+                            outer: akita_types::RoleParams::new(
+                                akita_types::GadgetDigits::new(
+                                    request.log_basis_open,
+                                    core.num_digits_open,
+                                ),
+                                outer_commit_matrix,
+                            ),
+                        },
+                        opening: akita_types::GroupOpeningPlan {
+                            opening_method: request.opening.method(),
+                            fold_challenge_config: request.opening.challenge_config(),
+                            log_basis_open: request.log_basis_open,
+                            num_digits_open: core.num_digits_open,
+                            num_digits_fold: core.num_digits_fold,
+                        },
+                        setup_natural_len: None,
+                    }],
+                    core.open_commit_matrix,
+                    request.payload_mode,
+                    *transition,
+                    source_encoding,
+                    crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
+                )?;
+                candidates.push(params);
+            }
         }
         Ok(candidates)
     }
@@ -302,6 +348,7 @@ struct RecursiveSplitBounds {
 impl RecursiveCandidateContext<'_, '_> {
     fn walk_splits(
         &self,
+        relation_domain: RelationSearchDomain,
         mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
         mut visit: impl FnMut(LayoutCandidateScore, usize, CommittedGroupParams, usize),
     ) -> Result<(), AkitaError> {
@@ -315,6 +362,10 @@ impl RecursiveCandidateContext<'_, '_> {
             log_basis: request.log_basis_open,
             ..policy.decomposition
         });
+        let opening_width = request
+            .opening
+            .method()
+            .physical_coefficient_width(policy.claim_ext_degree, request.dimensions.d_a())?;
         let splits = recursive_split_search_domain(
             policy.recursive_split_search_policy,
             search.num_ring_elems,
@@ -327,10 +378,7 @@ impl RecursiveCandidateContext<'_, '_> {
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: request.dimensions.d_a(),
-                opening_width: request.opening.method().physical_coefficient_width(
-                    policy.claim_ext_degree,
-                    request.dimensions.d_a(),
-                )?,
+                opening_width,
                 reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,
@@ -344,43 +392,53 @@ impl RecursiveCandidateContext<'_, '_> {
             if !admit_split(r, bounds) {
                 continue;
             }
-            let Some(core) = self.candidate_core(r)? else {
+            let Some(core) = self.candidate_core(r, search.num_chunks, delta_commit, delta_open)?
+            else {
                 continue;
             };
-            let base_slice_candidates = self.candidates_from_core(&core)?;
+            let base_slice_candidates = self.candidates_from_core(&core, relation_domain)?;
             for setup_prefix in &search.setup_prefixes {
-                let mut slice_candidates = Vec::new();
-                for base_candidate in &base_slice_candidates {
-                    let candidate_params = attach_recursive_setup_prefix(
-                        setup_prefix.as_ref(),
-                        policy.claim_ext_degree,
-                        base_candidate.clone(),
-                    )?;
-                    if !candidate_params.compression_sources_supported()? {
-                        continue;
-                    }
-                    slice_candidates.push(candidate_params);
-                }
-                for candidate_params in crate::schedule_params::prune_locally_unprofitable_slices(
-                    policy,
-                    &search.opening_layout,
-                    slice_candidates,
-                )? {
-                    let Some((score, params, next_witness_len)) =
-                        finalize_recursive_level_candidate(policy, search, candidate_params)?
-                    else {
-                        continue;
-                    };
-                    if bounds.score.is_some_and(|bound| bound > score.0)
-                        || bounds
-                            .witness_body
-                            .is_some_and(|bound| bound > next_witness_len)
+                for transition in
+                    relation_domain.transitions_in(self.request.relation_traversal_order)
+                {
+                    let mut mode_slices = Vec::with_capacity(base_slice_candidates.len());
+                    for base_candidate in base_slice_candidates
+                        .iter()
+                        .filter(|candidate| candidate.ring_relation_mode == *transition)
                     {
-                        return Err(AkitaError::InvalidSetup(
-                            "recursive split lower bound exceeds a materialized candidate".into(),
-                        ));
+                        let params = attach_recursive_setup_prefix(
+                            setup_prefix.as_ref(),
+                            policy.claim_ext_degree,
+                            base_candidate.clone(),
+                        )?;
+                        if params.compression_sources_supported()? {
+                            mode_slices.push(params);
+                        }
                     }
-                    visit(score, r, params, next_witness_len);
+                    for params in crate::schedule_params::prune_locally_unprofitable_slices(
+                        policy,
+                        &search.opening_layout,
+                        mode_slices,
+                    )? {
+                        let relation_mode = *transition;
+                        let Some((score, params, next_witness_len)) =
+                            finalize_recursive_level_candidate(policy, search, params)?
+                        else {
+                            continue;
+                        };
+                        if relation_mode == akita_types::RingRelationMode::QuotientLift
+                            && (bounds.score.is_some_and(|bound| bound > score.0)
+                                || bounds
+                                    .witness_body
+                                    .is_some_and(|bound| bound > next_witness_len))
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "recursive split lower bound exceeds a materialized candidate"
+                                    .into(),
+                            ));
+                        }
+                        visit(score, r, params, next_witness_len);
+                    }
                 }
             }
         }
@@ -388,41 +446,78 @@ impl RecursiveCandidateContext<'_, '_> {
     }
 }
 
-fn best_linf_candidate(
+type BestLinfCandidate = (usize, CommittedGroupParams, usize);
+
+fn best_linf_candidates_for(
     context: &RecursiveCandidateContext<'_, '_>,
-) -> Result<Option<(usize, CommittedGroupParams, usize)>, AkitaError> {
-    // Larger `r` wins exact score ties inside the policy-selected domain.
-    let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
+    relation_domain: RelationSearchDomain,
+) -> Result<Vec<BestLinfCandidate>, AkitaError> {
+    // Larger `r` wins exact score ties independently for each relation mode.
+    let mut best = std::collections::BTreeMap::<
+        akita_types::RingRelationMode,
+        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
+    >::new();
     let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
     context.walk_splits(
+        relation_domain,
         |_, bounds| {
-            best_score
-                .get()
-                .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+            relation_domain.has_multiple_modes()
+                || best_score
+                    .get()
+                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
         },
-        |score, r, candidate_params, next_witness_len| {
+        |score, r, candidate, next_witness_len| {
             if !context
                 .successor_policy
                 .admits(context.search.current_witness_len, next_witness_len)
             {
                 return;
             }
-            if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
+            let mode = candidate.ring_relation_mode;
+            if best.get(&mode).is_none_or(|(best_score, best_r, _, _)| {
                 recursive_candidate_order_key(score, r)
                     < recursive_candidate_order_key(*best_score, *best_r)
             }) {
-                best_score.set(Some(score));
-                best = Some((score, r, candidate_params, next_witness_len));
+                if !relation_domain.has_multiple_modes() {
+                    best_score.set(Some(score));
+                }
+                best.insert(mode, (score, r, candidate, next_witness_len));
             }
         },
     )?;
 
-    Ok(best.map(|(_, r, params, next)| (r, params, next)))
+    Ok(best
+        .into_values()
+        .map(|(_, r, candidate, next)| (r, candidate, next))
+        .collect())
+}
+
+fn all_linf_candidates_for(
+    context: &RecursiveCandidateContext<'_, '_>,
+    relation_domain: RelationSearchDomain,
+) -> Result<Vec<BestLinfCandidate>, AkitaError> {
+    let mut candidates = Vec::new();
+    context.walk_splits(
+        relation_domain,
+        |_, _| true,
+        |_, split, candidate, next_witness_len| {
+            if context
+                .successor_policy
+                .admits(context.search.current_witness_len, next_witness_len)
+                && !candidates
+                    .iter()
+                    .any(|(_, existing, next)| existing == &candidate && *next == next_witness_len)
+            {
+                candidates.push((split, candidate, next_witness_len));
+            }
+        },
+    )?;
+    Ok(candidates)
 }
 
 fn append_selective_l2_candidates(
     candidates: &mut Vec<(CommittedGroupParams, usize)>,
-    best_modeled: Option<&(usize, CommittedGroupParams, usize)>,
+    best_modeled: Option<&BestLinfCandidate>,
     request: &RecursiveCandidateRequest<'_>,
     search: &RecursiveLevelSearch,
     successor_policy: SuccessorPolicy,
@@ -461,10 +556,27 @@ fn append_selective_l2_candidates(
         source_moment: Some(source_moment),
         successor_policy,
     };
-    let Some(mut l2_core) = l2_context.candidate_core(*block_index_bits)? else {
+    let l2_delta_commit = l2_request
+        .source
+        .num_digits_inner(policy.decomposition, l2_request.log_basis_inner)?;
+    let l2_delta_open = num_digits_open(DecompositionParams {
+        log_basis: l2_request.log_basis_open,
+        ..policy.decomposition
+    });
+    let Some(mut l2_core) = l2_context.candidate_core(
+        *block_index_bits,
+        search.num_chunks,
+        l2_delta_commit,
+        l2_delta_open,
+    )?
+    else {
         return Ok(());
     };
-    let linf_slices = l2_context.candidates_from_core(&l2_core)?;
+    let relation_transition = best_modeled
+        .map(|(_, candidate, _)| candidate.ring_relation_mode)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 candidate is missing its relation".into()))?;
+    let relation_domain = RelationSearchDomain::for_mode(relation_transition);
+    let linf_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
     if linf_slices.is_empty() {
         return Ok(());
     }
@@ -491,29 +603,30 @@ fn append_selective_l2_candidates(
         return Ok(());
     }
     l2_core.inner_commit_matrix = inner_commit_matrix;
-    let mut base_slices = l2_context.candidates_from_core(&l2_core)?;
+    let mut base_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
     base_slices.retain(|candidate| {
         linf_slices
             .iter()
             .any(|linf| linf.outer_slice_count() == candidate.outer_slice_count())
     });
     for setup_prefix in &search.setup_prefixes {
-        let mut sliced = Vec::new();
-        for base_params in &base_slices {
+        let mut sliced = Vec::with_capacity(base_slices.len());
+        for base_candidate in &base_slices {
             let params = attach_recursive_setup_prefix(
                 setup_prefix.as_ref(),
                 policy.claim_ext_degree,
-                base_params.clone(),
+                base_candidate.clone(),
             )?;
             if params.compression_sources_supported()? {
                 sliced.push(params);
             }
         }
-        for params in crate::schedule_params::prune_locally_unprofitable_slices(
+        let retained_slices = crate::schedule_params::prune_locally_unprofitable_slices(
             policy,
             &search.opening_layout,
             sliced,
-        )? {
+        )?;
+        for params in retained_slices {
             let Some((_, params, next_witness_len)) =
                 finalize_recursive_level_candidate(policy, search, params)?
             else {
@@ -530,6 +643,7 @@ fn append_selective_l2_candidates(
 fn derive_best_fold_candidates(
     request: RecursiveCandidateRequest<'_>,
     setup_prefix: RecursiveSetupPrefix<'_>,
+    relation_domain: RelationSearchDomain,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(&request, setup_prefix)? else {
         return Ok(Vec::new());
@@ -540,32 +654,33 @@ fn derive_best_fold_candidates(
         source_moment: request.source_moment,
         successor_policy: SuccessorPolicy::RequireContraction,
     };
-    let best_modeled = best_linf_candidate(&modeled_context)?;
+    let best_modeled = best_linf_candidates_for(&modeled_context, relation_domain)?;
     let mut candidates: Vec<_> = best_modeled
-        .as_ref()
-        .map(|(_, params, next)| (params.clone(), *next))
-        .into_iter()
+        .iter()
+        .map(|(_, candidate, next)| (candidate.clone(), *next))
         .collect();
     if request.source_moment.is_some() {
         let universal_context = RecursiveCandidateContext {
             source_moment: None,
             ..modeled_context
         };
-        if let Some((_, params, next)) = best_linf_candidate(&universal_context)? {
-            let universal = (params, next);
+        for (_, candidate, next) in best_linf_candidates_for(&universal_context, relation_domain)? {
+            let universal = (candidate, next);
             if !candidates.contains(&universal) {
                 candidates.push(universal);
             }
         }
     }
     if !request.opening.is_coefficient_packing() {
-        append_selective_l2_candidates(
-            &mut candidates,
-            best_modeled.as_ref(),
-            &request,
-            &search,
-            SuccessorPolicy::RequireContraction,
-        )?;
+        for best in &best_modeled {
+            append_selective_l2_candidates(
+                &mut candidates,
+                Some(best),
+                &request,
+                &search,
+                SuccessorPolicy::RequireContraction,
+            )?;
+        }
     }
     Ok(candidates)
 }
@@ -590,287 +705,66 @@ pub(crate) fn derive_terminal_candidates(
         source_moment: request.source_moment,
         successor_policy: SuccessorPolicy::AllowNonContracting,
     };
-    let best_modeled = best_linf_candidate(&modeled_context)?;
-    let mut candidates = best_modeled
-        .as_ref()
-        .map(|(_, params, next)| (params.clone(), *next))
-        .into_iter()
+    let retain_setup_frontier = matches!(
+        request.policy.selection_policy,
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+    );
+    let modeled = if retain_setup_frontier {
+        all_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?
+    } else {
+        best_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?
+    };
+    let mut candidates = modeled
+        .iter()
+        .map(|(_, candidate, next)| (candidate.clone(), *next))
         .collect::<Vec<_>>();
     if request.source_moment.is_some() {
         let universal_context = RecursiveCandidateContext {
             source_moment: None,
             ..modeled_context
         };
-        if let Some((_, params, next)) = best_linf_candidate(&universal_context)? {
-            let universal = (params, next);
+        let universal = if retain_setup_frontier {
+            all_linf_candidates_for(&universal_context, RelationSearchDomain::QuotientOnly)?
+        } else {
+            best_linf_candidates_for(&universal_context, RelationSearchDomain::QuotientOnly)?
+        };
+        for (_, candidate, next) in universal {
+            let universal = (candidate, next);
             if !candidates.contains(&universal) {
                 candidates.push(universal);
             }
         }
     }
-    append_selective_l2_candidates(
-        &mut candidates,
-        best_modeled.as_ref(),
-        &request,
-        &search,
-        SuccessorPolicy::AllowNonContracting,
-    )?;
-    Ok(candidates.into_iter().map(|(params, _)| params).collect())
-}
-
-pub(crate) struct RecursiveCandidateViews {
-    pub(crate) terminal: Vec<CommittedGroupParams>,
-    pub(crate) folds: Vec<(CommittedGroupParams, usize)>,
-}
-
-/// Derive the terminal and fold views of one EvaluationTrace search together.
-///
-/// Both views use the same split candidates and materialized matrices, but
-/// retain their distinct admission rules: terminal construction may use a
-/// non-contracting successor, while an emitted fold must contract.
-pub(crate) fn derive_recursive_candidate_views(
-    request: RecursiveCandidateRequest<'_>,
-    fold_policy: FoldCandidatePolicy,
-) -> Result<RecursiveCandidateViews, AkitaError> {
-    if request.opening.is_coefficient_packing() {
-        return Err(AkitaError::InvalidSetup(
-            "combined terminal/fold search requires EvaluationTrace".into(),
-        ));
-    }
-    let (retain_split_frontier, split_bounds) = match fold_policy {
-        FoldCandidatePolicy::Best => (false, SplitBoundPolicy::Enabled),
-        FoldCandidatePolicy::Frontier(bounds) => (true, bounds),
-    };
-    let Some(search) = prepare_recursive_level_search(&request, RecursiveSetupPrefix::None)? else {
-        return Ok(RecursiveCandidateViews {
-            terminal: Vec::new(),
-            folds: Vec::new(),
-        });
-    };
-    let base_context = RecursiveCandidateContext {
-        request: &request,
-        search: &search,
-        source_moment: request.source_moment,
-        successor_policy: SuccessorPolicy::AllowNonContracting,
-    };
-    let mut terminal_pairs = Vec::new();
-    let mut folds = Vec::new();
-    let mut terminal_best_modeled = None;
-    let mut fold_best_modeled = None;
-
-    for (source_index, candidate_source_moment) in
-        [request.source_moment, None].into_iter().enumerate()
-    {
-        if source_index != 0 && request.source_moment.is_none() {
-            break;
-        }
-        let context = RecursiveCandidateContext {
-            source_moment: candidate_source_moment,
-            ..base_context
-        };
-        let terminal_best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
-        let fold_best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
-        let mut terminal_best = None;
-        let mut fold_best = None;
-        context.walk_splits(
-            |_, bounds| {
-                if !split_bounds.is_enabled() {
-                    return true;
-                }
-                let terminal_admits = terminal_best_score
-                    .get()
-                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0));
-                let fold_admits = if retain_split_frontier {
-                    let frontier_admits = bounds
-                        .witness_body
-                        .is_none_or(|bound| bound < request.current_witness_len);
-                    frontier_admits
-                        || (source_index == 0
-                            && fold_best_score.get().is_none_or(|score| {
-                                bounds.score.is_none_or(|bound| bound <= score.0)
-                            }))
-                } else {
-                    fold_best_score
-                        .get()
-                        .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
-                };
-                terminal_admits || fold_admits
-            },
-            |score, r, params, next_witness_len| {
-                if terminal_best
-                    .as_ref()
-                    .is_none_or(|(best_score, best_r, _, _)| {
-                        recursive_candidate_order_key(score, r)
-                            < recursive_candidate_order_key(*best_score, *best_r)
-                    })
-                {
-                    terminal_best_score.set(Some(score));
-                    terminal_best = Some((score, r, params.clone(), next_witness_len));
-                }
-                if next_witness_len >= request.current_witness_len {
-                    return;
-                }
-                if fold_best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
-                    recursive_candidate_order_key(score, r)
-                        < recursive_candidate_order_key(*best_score, *best_r)
-                }) {
-                    fold_best_score.set(Some(score));
-                    fold_best = Some((score, r, params.clone(), next_witness_len));
-                }
-                if retain_split_frontier
-                    && next_witness_len < request.current_witness_len
-                    && !folds.contains(&(params.clone(), next_witness_len))
-                {
-                    folds.push((params, next_witness_len));
-                }
-            },
+    for best in &modeled {
+        append_selective_l2_candidates(
+            &mut candidates,
+            Some(best),
+            &request,
+            &search,
+            SuccessorPolicy::AllowNonContracting,
         )?;
-
-        if let Some((_, r, params, next)) = terminal_best {
-            let candidate = (params, next);
-            if !terminal_pairs.contains(&candidate) {
-                terminal_pairs.push(candidate.clone());
-            }
-            if source_index == 0 {
-                terminal_best_modeled = Some((r, candidate.0, candidate.1));
-            }
-        }
-        if let Some((_, r, params, next)) = fold_best {
-            if source_index == 0 && next < request.current_witness_len {
-                fold_best_modeled = Some((r, params.clone(), next));
-            }
-            if !retain_split_frontier
-                && next < request.current_witness_len
-                && !folds.contains(&(params.clone(), next))
-            {
-                folds.push((params, next));
-            }
-        }
     }
-
-    append_selective_l2_candidates(
-        &mut terminal_pairs,
-        terminal_best_modeled.as_ref(),
-        &request,
-        &search,
-        SuccessorPolicy::AllowNonContracting,
-    )?;
-    append_selective_l2_candidates(
-        &mut folds,
-        fold_best_modeled.as_ref(),
-        &request,
-        &search,
-        SuccessorPolicy::RequireContraction,
-    )?;
-    Ok(RecursiveCandidateViews {
-        terminal: terminal_pairs
-            .into_iter()
-            .map(|(params, _)| params)
-            .collect(),
-        folds,
-    })
+    Ok(candidates
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect())
 }
 
 /// Derive recursive fold candidates under the requested retention policy.
 pub(crate) fn derive_fold_candidates(
     request: RecursiveCandidateRequest<'_>,
-    setup_prefix: RecursiveSetupPrefix<'_>,
+    work: RecursiveFoldWork<'_>,
     policy: FoldCandidatePolicy,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let (setup_prefix, relation_domain) = work.into_search_parts();
     match policy {
-        FoldCandidatePolicy::Best => derive_best_fold_candidates(request, setup_prefix),
+        FoldCandidatePolicy::Best => {
+            derive_best_fold_candidates(request, setup_prefix, relation_domain)
+        }
         FoldCandidatePolicy::Frontier(bounds) => {
-            derive_fold_candidate_frontier(request, setup_prefix, bounds)
+            derive_fold_candidate_frontier(request, setup_prefix, bounds, relation_domain)
         }
     }
-}
-
-fn derive_fold_candidate_frontier(
-    request: RecursiveCandidateRequest<'_>,
-    setup_prefix: RecursiveSetupPrefix<'_>,
-    split_bounds: SplitBoundPolicy,
-) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-    let Some(search) = prepare_recursive_level_search(&request, setup_prefix)? else {
-        return Ok(Vec::new());
-    };
-    let modeled_context = RecursiveCandidateContext {
-        request: &request,
-        search: &search,
-        source_moment: request.source_moment,
-        successor_policy: SuccessorPolicy::RequireContraction,
-    };
-    let mut candidates = Vec::new();
-    let mut best_modeled_with_score: Option<(
-        LayoutCandidateScore,
-        usize,
-        CommittedGroupParams,
-        usize,
-    )> = None;
-    let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
-    for (source_index, candidate_source_moment) in
-        [request.source_moment, None].into_iter().enumerate()
-    {
-        if candidate_source_moment.is_none()
-            && request.source_moment.is_none()
-            && !candidates.is_empty()
-        {
-            break;
-        }
-        let context = RecursiveCandidateContext {
-            source_moment: candidate_source_moment,
-            ..modeled_context
-        };
-        context.walk_splits(
-            |_, bounds| {
-                if !split_bounds.is_enabled() {
-                    return true;
-                }
-                let frontier_admits = bounds
-                    .witness_body
-                    .is_none_or(|bound| bound < request.current_witness_len);
-                if source_index != 0 {
-                    return frontier_admits;
-                }
-                let best_search_admits = best_modeled_score
-                    .get()
-                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0));
-                frontier_admits || best_search_admits
-            },
-            |score, r, params, next_witness_len| {
-                if source_index == 0
-                    && next_witness_len < request.current_witness_len
-                    && best_modeled_with_score
-                        .as_ref()
-                        .is_none_or(|(best_score, best_r, _, _)| {
-                            recursive_candidate_order_key(score, r)
-                                < recursive_candidate_order_key(*best_score, *best_r)
-                        })
-                {
-                    best_modeled_score.set(Some(score));
-                    best_modeled_with_score = Some((score, r, params.clone(), next_witness_len));
-                }
-                if next_witness_len < request.current_witness_len
-                    && !candidates.contains(&(params.clone(), next_witness_len))
-                {
-                    candidates.push((params, next_witness_len));
-                }
-            },
-        )?;
-        if request.source_moment.is_none() {
-            break;
-        }
-    }
-    let best_modeled = best_modeled_with_score.map(|(_, r, params, next)| (r, params, next));
-    if !request.opening.is_coefficient_packing() {
-        append_selective_l2_candidates(
-            &mut candidates,
-            best_modeled.as_ref(),
-            &request,
-            &search,
-            SuccessorPolicy::RequireContraction,
-        )?;
-    }
-    Ok(candidates)
 }
 
 #[cfg(all(test, feature = "catalog-gen"))]

@@ -43,5 +43,9 @@ pub use emit::{
     EmitSpec, GeneratedOutput, MaterializationDiagnostics,
 };
 pub use planner::find_schedule;
+#[cfg(feature = "test-support")]
+pub use planner::find_schedule_for_test_relation_mode;
 pub use policy::InnerBasisSource;
 pub use schedule_params::suffix_opening_layout;
+#[cfg(feature = "test-support")]
+pub use schedule_params::TestRelationModeFilter;

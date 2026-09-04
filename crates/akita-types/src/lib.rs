@@ -28,6 +28,7 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+mod ring_relation_mode;
 pub mod schedule;
 pub mod schedule_selection;
 pub mod setup_contribution;
@@ -98,24 +99,24 @@ pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
     centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_ifma52,
     ntt_cache_requires_exactness_tail, planned_exact_ntt_cache_bytes,
-    prepare_compression_ntt_cache, prepare_ntt_cache, prepared_verifier_ntt_cache_metadata,
-    select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
-    NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
-    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata, ProtocolCrtNttParams,
-    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+    prepare_compression_ntt_cache, prepare_ntt_cache, prepare_reduced_compression_ntt_cache,
+    prepared_verifier_ntt_cache_metadata, select_compression_crt_ntt_params, select_crt_ntt_params,
+    NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
+    PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
-    build_compression_relation_weights, build_terminal_response,
-    build_terminal_response_from_groups, canonical_extension_opening_reduction_shape,
-    canonical_proof_shape, commit_only_setup_field_elements,
-    compression_relation_claim_from_rhs_extension, decode_terminal_z_golomb_payload,
-    derive_public_matrix_prefix, draw_group_fold_challenges, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
-    prepare_coefficient_packing_batch_semantics,
+    build_compression_relation_weights, build_reduced_compression_relation_weights,
+    build_terminal_response, build_terminal_response_from_groups,
+    canonical_extension_opening_reduction_shape, canonical_proof_shape,
+    commit_only_setup_field_elements, compression_relation_claim_from_rhs_extension,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    evaluate_reduced_compression_map, folded_root_supports_opening_shape, generate_relation_rhs,
+    padded_setup_prefix_len, prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
     raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
@@ -141,7 +142,8 @@ pub use proof::{
     GroupBatchStatement, GroupFoldChallenges, LevelProofShape, NegativeBinarySupport,
     NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation, RelationAddressGeometry,
+    PreparedOpeningPoint, PreparedRingMultiplier, ProverCommitmentRows, PublicMatrixDerivation,
+    ReducedCoefficientFunctional, ReducedCompressionRelationWeights, RelationAddressGeometry,
     RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
     RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
     RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
@@ -160,6 +162,7 @@ pub use proof::{
     DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
+pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
@@ -171,8 +174,9 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
+    ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
+    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupProjectionGeometry,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
@@ -222,6 +226,7 @@ pub use transcript_grinding_plan::{
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
-    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,
+    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
+    QuotientCoefficientBreakdown, RelationQuotientLayout, RelationQuotientPlan, WitnessLayout,
     WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };

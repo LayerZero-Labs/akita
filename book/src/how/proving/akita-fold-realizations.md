@@ -1,24 +1,31 @@
-# Raw and compressed realizations of an Akita fold
+# Payload and ring-relation realizations of an Akita fold
 
 This page starts from the [four semantic relation
 families](./akita-fold.md#the-four-semantic-relation-families) derived on the
-previous page and explains how they become physical proof rows. Two independent
-schedule choices are involved:
+previous page and explains how they become physical proof rows. Three schedule
+choices are involved:
 
 | Choice | Alternatives | What it changes |
 |---|---|---|
 | opening method | `EvaluationTrace`, `SubringCoefficientPacking` | opening-digit geometry, source-consistency realization, scalar opening row |
 | payload mode | raw, compressed | how $\mathbf B\hat{\mathbf t}$ and $\mathbf D\hat{\mathbf e}$ are publicly bound |
+| ring-relation mode | `QuotientLift`, `ReducedEvaluation` | how physical ring equations become field equations for Stage 2 |
 
 Raw mode transmits the semantic commitments directly. Compressed mode keeps
 those values private, binds them to smaller terminal payloads through two-map
 commitment chains, and adds the corresponding witness segments and physical
 rows. Neither payload choice changes which opening method was scheduled.
 
-After defining the two payload modes, the page explains the method-dependent
-consistency geometry and lifts every physical row in its native ring before
-evaluation at the ring-switch challenge. It then separates those physical
-rows from the field-valued virtual opening row consumed by Stage 2.
+Quotient lifting adds private polynomial-modulus quotient digits. Reduced
+evaluation instead transposes negacyclic reduction into public coefficient
+weights and omits those digits. Relation mode is independent of raw versus
+compressed payload where schedule validation permits the combination;
+production coefficient-packing folds remain quotient-lift-only.
+
+After defining the payload modes, the page explains the method-dependent
+consistency geometry and both ring-relation realizations before evaluation at
+the ring-switch challenge. It then separates those physical rows from the
+field-valued virtual opening row consumed by Stage 2.
 
 ## Contents
 
@@ -31,7 +38,9 @@ rows from the field-valued virtual opening row consumed by Stage 2.
   - [One recommitment step](#one-recommitment-step)
   - [The two-map commitment chains](#the-two-map-commitment-chains)
   - [Additional physical relations and witness](#additional-physical-relations-and-witness)
-- [Lift the physical ring relations before sumcheck](#lift-the-physical-ring-relations-before-sumcheck)
+- [Ring-relation realization before sumcheck](#ring-relation-realization-before-sumcheck)
+  - [Quotient lifting](#quotient-lifting)
+  - [Reduced evaluation](#reduced-evaluation)
 - [The scalar opening claim is a method-dependent virtual row](#the-scalar-opening-claim-is-a-method-dependent-virtual-row)
 - [Code reference](#code-reference)
 
@@ -142,12 +151,11 @@ the packed coordinate-plane relations described below. It therefore does not
 reuse the single ordinary `consistency` row counted in this example.
 
 Equation (17) is still a relation in the native cyclotomic ring; it is not yet
-the exact field identity consumed by sumcheck. The section
-[Lift the physical ring relations before
-sumcheck](#lift-the-physical-ring-relations-before-sumcheck) adds the quotient
-witness needed to lift every physical row and then evaluates the lifted rows
-at the ring-switch challenge. That step applies to both realizations and is
-deferred until after the compressed rows have also been defined.
+the exact field identity consumed by sumcheck. The
+[ring-relation realization](#ring-relation-realization-before-sumcheck) later
+on this page explains the two schedule-selected ways to obtain that field
+identity. This step is deferred until after the compressed rows have also been
+defined.
 
 ### Compressed realization
 
@@ -611,12 +619,30 @@ $$
 \boldsymbol\xi_{H,2}.
 $$
 
-The next section adds one quotient-digit row for every physical ring row and
-gives their exact placement in raw and compressed witnesses. The restricted
-$\{-1,0\}$ check on the compression digits is described with the Stage 2
-sumcheck rather than as another physical ring row.
+The next section explains when the witness adds one quotient-digit row for
+every physical ring row and when reduced evaluation omits all such rows. The
+restricted $\{-1,0\}$ check on the compression digits is described with the
+Stage 2 sumcheck rather than as another physical ring row.
 
-## Lift the physical ring relations before sumcheck
+## Ring-relation realization before sumcheck
+
+The schedule stores one `RingRelationMode` per nonterminal fold. It is bound by
+the effective schedule descriptor before the outgoing witness commitment and
+the ring-switch challenge `alpha`. The terminal fold has no mode because it
+checks its clear response directly.
+
+The payload and ring-relation axes produce four witness shapes:
+
+| Payload | Quotient lifting | Reduced evaluation |
+|---|---|---|
+| raw | Z/E/T and ordinary quotient digits | Z/E/T |
+| compressed | Z/E/T, F/H digits, ordinary quotients, and F/H quotients | Z/E/T and F/H digits |
+
+`WitnessLayout` is the authority for these ranges. An omitted quotient is not a
+zero-width placeholder and does not enter Stage 1, Stage 2, response sizing, or
+the successor commitment.
+
+### Quotient lifting
 
 The payload mode determines which commitment rows exist; the opening method
 determines how the first semantic family enters this lift.
@@ -790,13 +816,70 @@ field even though they originated in different cyclotomic rings. Equation
 explains how $\tau_1$ batches its physical rows and how the resulting relation
 is proved over the flat witness address.
 
+### Reduced evaluation
+
+Reduced evaluation checks the same native-ring equation without introducing
+$r_i$. For a public multiplier
+$A(X)=\sum_{k=0}^{d-1}a_kX^k$ and private witness coefficients $w_j$, define
+
+$$
+\kappa_{A,\alpha}(j)
+=\left(A(X)X^j\bmod(X^d+1)\right)(\alpha).
+$$
+
+Then
+
+$$
+(A\circledast W)(\alpha)
+=\sum_{j=0}^{d-1}w_j\kappa_{A,\alpha}(j),
+$$
+
+so reduction is moved into public weights rather than a private quotient. The
+weights are prepared in linear time:
+
+$$
+\kappa_{A,\alpha}(0)=A(\alpha),
+\qquad
+\kappa_{A,\alpha}(j+1)
+=\alpha\kappa_{A,\alpha}(j)
+-(\alpha^d+1)a_{d-1-j}.
+$$
+
+This recurrence never divides by $\alpha^d+1$; an evaluation point that is a
+root of the modulus remains valid. Each physical row uses its own native
+dimension, including the F/H compression rows.
+
+At the verifier's final multilinear point, an exact physical coefficient
+window has equality weights $e_j$. The transposed terminal functional obeys
+
+$$
+H_0=\sum_je_j\alpha^j,
+\qquad
+H_{k+1}=\alpha H_k-(\alpha^d+1)e_{d-1-k}.
+$$
+
+The verifier uses this $O(d)$ functional state for structured terms and for
+the existing fused A/B/D setup traversal. Compression F/H maps use their
+canonical compression program with the same reduced semantics. The verifier
+does not materialize a witness-sized table or rescan A, B, and D separately.
+The prover currently materializes one ephemeral dense Stage-2 weight table;
+that table is folded by sumcheck but is neither committed nor serialized.
+
+Production schedules admit reduced evaluation only as a monotone,
+setup-direct `EvaluationTrace` suffix beginning at absolute level 2. It composes
+with raw or compressed payloads and with Linf or selective L2 security. An
+incoming setup prefix, a later setup-offload edge, coefficient packing, or a
+return to quotient lifting is rejected by `FoldSchedule::validate_structure`.
+These are the supported scope of the current implementation, not algebraic
+claims that reduced evaluation could never support a broader protocol.
+
 ## The scalar opening claim is a method-dependent virtual row
 
 Two different statements involve $\hat e$, and they should not be conflated:
 
 | Statement | Form | Physical ring row? | Ring-switch quotient? |
 |---|---|---:|---:|
-| opening commitment | $\mathbf D\hat{\mathbf e}=\mathbf v_D$ | yes | yes |
+| opening commitment | $\mathbf D\hat{\mathbf e}=\mathbf v_D$ | yes | only in `QuotientLift` |
 | evaluation correctness | $\sum_xw(x)T_{\mathrm{open}}(x)=v_{\mathrm{open}}$ | no | no |
 
 The scheduled opening method prepares the second statement. `EvaluationTrace`
@@ -857,19 +940,24 @@ page.
 4. **Construct the committed relation witness.**
    [`ring_switch_build_w`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/coeffs.rs)
    derives $\hat{\mathbf t}$ from the semantic inner rows stored in the hint,
-   emits $\hat{\mathbf z}$, $\hat{\mathbf e}$, and $\hat{\mathbf t}$, and
-   invokes
+   and emits $\hat{\mathbf z}$, $\hat{\mathbf e}$, and $\hat{\mathbf t}$. In
+   quotient-lift mode it invokes
    [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs)
    to compute one quotient in every physical row's native ring. In compressed
-   mode it also emits the two $\mathbf F/\mathbf H$ digit layers. `WitnessLayout`
-   determines the quotient placement and alignment.
-5. **Prepare the Stage 2 relation evaluators.** The ordinary
+   mode it also emits the two $\mathbf F/\mathbf H$ digit layers. In reduced
+   mode it dispatches before quotient construction and uses negacyclic-only D
+   and compression products. `WitnessLayout` determines which ranges and
+   alignment are live.
+5. **Prepare the Stage 2 relation evaluators.** Quotient lifting uses the
+   factored
    [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs)
-   path handles the `consistency`, $\mathbf A$, $\mathbf B$, and $\mathbf D$
-   contributions. Compressed mode additionally uses
+   path for the `consistency`, $\mathbf A$, $\mathbf B$, and $\mathbf D$
+   contributions. Reduced evaluation uses the semantic compiler in
+   `ring_switch/relation_weights/compiler.rs` to build one dense Stage-2
+   weight oracle. Compressed mode additionally uses
    [`build_compression_relation_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
-   for the recomposition, $\mathbf F/\mathbf H$, and compression-quotient
-   contributions, and
+   or its reduced counterpart for the recomposition, $\mathbf F/\mathbf H$,
+   and mode-selected compression-quotient contributions, while
    [`NegativeBinarySupport`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
    restricts the separate $w(w+1)=0$ check to the compression-digit spans.
    The scheduled opening method contributes separate $\tau_1$-weighted Stage-2
@@ -887,7 +975,7 @@ derive t_hat and u = B t_hat
         |
         `-- compressed --> F chain ----------> public p_F
                              |
-                             `--> retained F digits and quotients
+                             `--> retained F digits
 
 position-folded values E_b
         |
@@ -906,9 +994,12 @@ compressed: assemble_compressed_relation_rhs(p_F, p_H)
                          |
                          v
                 ring_switch_build_w
+                  |              |
+           quotient lift    reduced evaluation
+             add R digits      no R digits
                          |
                          v
-          ordinary evaluator
+          factored or dense relation evaluator
           + optional compression evaluator
           + optional {-1, 0} support evaluator
           + method-selected opening terms
@@ -965,8 +1056,9 @@ does not store a materialized $\hat{\mathbf t}$ or a separate copy of
 $\mathbf u$. `ring_switch_build_w` derives $\hat{\mathbf t}$ from its semantic
 inner rows. At the aggregate level, `RingRelationWitness::compression` holds
 the optional materialized $\mathbf F/\mathbf H$ chains used by this fold. The
-quotient output is computed afterward and placed together with the ordinary
-and optional compression digits according to `WitnessLayout`.
+quotient output is computed afterward only in quotient-lift mode. Reduced
+evaluation places only the ordinary and optional compression digits according
+to `WitnessLayout`.
 
 ### Verifier reconstruction
 
@@ -992,10 +1084,16 @@ assemble_relation_rhs
               |
      RingRelationInstance::new
               |
-     ring_switch_verifier
-       |-- ordinary relation evaluator
-       |-- optional compact F/H evaluator
-       `-- optional {-1, 0} support evaluator
+      authenticated relation mode
+       |                     |
+ quotient lift       reduced evaluation
+ quotient tail       terminal residue kernels
+ common alpha        fused direct setup scan
+       |                     |
+       +----------+----------+
+                  |
+     optional compact F/H evaluator
+     + optional {-1, 0} support evaluator
               |
           Stage 2 verifier
 ```

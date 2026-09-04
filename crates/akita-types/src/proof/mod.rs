@@ -8,6 +8,7 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
+mod coefficient_functional;
 mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
@@ -48,8 +49,9 @@ pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
+pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
@@ -62,7 +64,9 @@ pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
 pub use compression_relation_weights::{
-    build_compression_relation_weights, CompressionRelationWeights, NegativeBinarySupport,
+    build_compression_relation_weights, build_reduced_compression_relation_weights,
+    evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
+    ReducedCompressionRelationWeights,
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,

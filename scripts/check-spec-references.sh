@@ -28,6 +28,7 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'effective_batched_schedule'
   'akita-scheme'
   'akita-cfg'
   'akita-derive'
@@ -126,6 +127,8 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 # only these live design records unless --all.
 live_specs=(
   specs/akita-compute-backend-metal.md
+  specs/quotient-free-tail-ring-relations.md
+  specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md

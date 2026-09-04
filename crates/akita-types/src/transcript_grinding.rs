@@ -480,6 +480,67 @@ pub struct GrindingPlan {
     expanded_query_count: u64,
 }
 
+pub(crate) struct GrindingPlanAccumulator {
+    nominal_capacity_bits: u32,
+    run_count: u32,
+    total_nonce_bits: usize,
+    expanded_query_count: u64,
+}
+
+impl GrindingPlanAccumulator {
+    pub(crate) fn new(nominal_capacity_bits: u32) -> Result<Self, AkitaError> {
+        if nominal_capacity_bits == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "grinding nominal capacity must be nonzero".into(),
+            ));
+        }
+        Ok(Self {
+            nominal_capacity_bits,
+            run_count: 0,
+            total_nonce_bits: 0,
+            expanded_query_count: 0,
+        })
+    }
+
+    pub(crate) fn push(&mut self, run: GrindingRun) -> Result<(), AkitaError> {
+        self.run_count = self.run_count.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("grinding plan run count exceeds u32".into())
+        })?;
+        run.validate()?;
+        if run.kind() == GrindingQueryKind::ProofOfWork
+            && run.grind_bits != grind_bits_for_loss(run.loss_factor, self.nominal_capacity_bits)?
+        {
+            return Err(AkitaError::InvalidSetup(
+                "proof-of-work run target does not match its loss and capacity".into(),
+            ));
+        }
+        let multiplicity = usize::try_from(run.multiplicity).map_err(|_| {
+            AkitaError::InvalidSetup("grinding run multiplicity exceeds usize".into())
+        })?;
+        let run_bits = usize::from(run.nonce_bits)
+            .checked_mul(multiplicity)
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding run bit count overflow".into()))?;
+        self.total_nonce_bits = self
+            .total_nonce_bits
+            .checked_add(run_bits)
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
+        self.expanded_query_count = self
+            .expanded_query_count
+            .checked_add(run.multiplicity)
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding query count overflow".into()))?;
+        if self.expanded_query_count >= u64::from(u32::MAX) {
+            return Err(AkitaError::InvalidSetup(
+                "grinding plan query count must be less than 2^32".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn total_nonce_bits(&self) -> usize {
+        self.total_nonce_bits
+    }
+}
+
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
 pub use replay::{
@@ -516,49 +577,15 @@ where
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.
     pub fn new(runs: Vec<GrindingRun>, nominal_capacity_bits: u32) -> Result<Self, AkitaError> {
-        if nominal_capacity_bits == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "grinding nominal capacity must be nonzero".into(),
-            ));
-        }
-        u32::try_from(runs.len())
-            .map_err(|_| AkitaError::InvalidSetup("grinding plan run count exceeds u32".into()))?;
-        let mut total_nonce_bits = 0usize;
-        let mut expanded_query_count = 0u64;
-        for run in &runs {
-            run.validate()?;
-            if run.kind() == GrindingQueryKind::ProofOfWork
-                && run.grind_bits != grind_bits_for_loss(run.loss_factor, nominal_capacity_bits)?
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "proof-of-work run target does not match its loss and capacity".into(),
-                ));
-            }
-            let multiplicity = usize::try_from(run.multiplicity).map_err(|_| {
-                AkitaError::InvalidSetup("grinding run multiplicity exceeds usize".into())
-            })?;
-            let run_bits = usize::from(run.nonce_bits)
-                .checked_mul(multiplicity)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("grinding run bit count overflow".into())
-                })?;
-            total_nonce_bits = total_nonce_bits.checked_add(run_bits).ok_or_else(|| {
-                AkitaError::InvalidSetup("grinding plan bit count overflow".into())
-            })?;
-            expanded_query_count = expanded_query_count
-                .checked_add(run.multiplicity)
-                .ok_or_else(|| AkitaError::InvalidSetup("grinding query count overflow".into()))?;
-        }
-        if expanded_query_count >= u64::from(u32::MAX) {
-            return Err(AkitaError::InvalidSetup(
-                "grinding plan query count must be less than 2^32".into(),
-            ));
+        let mut accumulator = GrindingPlanAccumulator::new(nominal_capacity_bits)?;
+        for &run in &runs {
+            accumulator.push(run)?;
         }
         Ok(Self {
             runs,
             nominal_capacity_bits,
-            total_nonce_bits,
-            expanded_query_count,
+            total_nonce_bits: accumulator.total_nonce_bits,
+            expanded_query_count: accumulator.expanded_query_count,
         })
     }
 

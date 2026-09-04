@@ -286,6 +286,39 @@ is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
 [Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
+## Reduced ring-relation soundness
+
+Quotient lifting and reduced evaluation enforce the same native-ring
+relations through different witness geometries. For one physical row of native
+dimension $d$, reduced evaluation forms the residual
+
+$$
+Z(X)
+=
+\left(\sum_c A_c(X)W_c(X)-Y(X)\right)
+\bmod (X^d+1).
+$$
+
+The protocol checks $Z(\alpha)$ at the existing ring-switch challenge
+$\alpha$. If the row relation is false, $Z$ is a nonzero polynomial of degree
+less than $d$, so random evaluation over the extension challenge field has the
+usual Schwartz--Zippel bound. The existing $\tau_1$ challenge batches the
+canonically ordered physical rows after each has been reduced in its own native
+ring dimension.
+
+The schedule, witness layout, relation mode, public statement, commitments,
+and outgoing witness are bound before $\alpha$ is sampled. Consequently the
+prover cannot choose the relation realization or its witness after seeing the
+evaluation point. `RingRelationMode` is part of the instance descriptor and
+effective schedule digest, not a proof field.
+
+Reduced evaluation never divides by $\alpha^d+1$. An evaluation point that is
+a root of the cyclotomic modulus therefore needs no special rejection: the
+signed-wrap residue recurrence and terminal verifier kernel remain defined.
+Removing quotient spans also does not change the A-role SIS binding argument,
+the digit-range proof, or the scheduled `L∞`/`L2` response cap. It only removes
+coordinates that existed to witness polynomial divisibility.
+
 ## Subring coefficient packing
 
 For the coefficient layout, the three ring domains, and the exact reason the

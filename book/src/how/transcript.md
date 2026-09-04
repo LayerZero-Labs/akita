@@ -65,10 +65,16 @@ shape rather than trusting those choices from later proof bytes.
 
 ### Integrator note (Jolt / recursion hosts)
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently **`1`**. Validation rejects
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently **`4`**. Validation rejects
 any other version. Pin an exact Akita git revision and rerun prove and verify
 integration tests when upgrading. The repository does not promise
 compatibility across revisions.
+
+Each nonterminal plan entry binds its `RingRelationMode`. Changing a fold from
+quotient lifting to reduced evaluation therefore changes both the canonical
+plan bytes and the transcript preamble before the shared ring-switch challenge
+`alpha` is sampled. The mode is schedule-owned rather than serialized in the
+proof, and verification never retries the other mode after a mismatch.
 
 After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
 `false` on the wire. Ongoing wire regression is covered by serde roundtrips and

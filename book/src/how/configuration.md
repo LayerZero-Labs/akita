@@ -47,7 +47,8 @@ not part of `schedules-default`; applications must enable it explicitly.
 A `FoldSchedule` stores one root `FoldParams`, zero or more recursive
 `FoldParams`, and one `TerminalFoldParams`. Each nonterminal `FoldParams` points
 to one `CommittedGroupParams`. That value owns the fold's groups, the shared D
-matrix, payload mode, source encoding, and witness chunk layout.
+matrix, payload mode, ring-relation mode, source encoding, and witness chunk
+layout.
 
 The groups are stored in protocol order. An incoming setup prefix comes first,
 then ordinary precommitted groups, and the fold's own new group comes last.
@@ -109,6 +110,31 @@ expansion checks those edges and never reruns the search. See
 [Setup offloading](./setup-offloading.md) for the selection rules, setup
 artifacts, and recursive claim flow.
 
+### Ring-relation cutover
+
+Every nonterminal fold selects one `RingRelationMode`. `QuotientLift` adds
+explicit quotient witness spans and proves exact lifted polynomial identities.
+`ReducedEvaluation` proves the same native-ring equations after evaluation at
+the transcript challenge, using signed-wrap residue kernels instead of quotient
+witnesses. The choice is independent of raw versus compressed payload and of
+the `L∞` versus `L2` response-security route.
+
+The currently admitted reduced mode is deliberately narrower than its
+algebraic definition. Levels 0 and 1 use quotient lifting. From level 2 onward,
+the planner may choose one monotone reduced-evaluation suffix, but only for
+`EvaluationTrace` openings with direct setup contribution. A reduced fold
+cannot consume an incoming setup prefix, defer the A/B/D setup product to Stage
+3, or switch back to quotient lifting later. These are product-scope admission
+rules, not claims that the excluded combinations are mathematically
+impossible. Runtime schedule validation checks them before proving or
+transcript replay.
+
+The suffix search prices both realizations using their exact witness layouts,
+proof sizes, setup requirements, response models, and successor states. A
+generated row records the selected mode at every nonterminal level. The mode
+is part of the canonical plan descriptor and transcript preamble; it is not a
+proof-supplied negotiation field and there is no verifier fallback.
+
 ### Selective L2 candidates
 
 The coefficient `L∞` route remains available at every fold. A production
@@ -137,8 +163,9 @@ applies the following rules.
   square is one.
 * The Z part uses the centered residues of a rounded normal variable. Its
   variance comes from the previous source energy and the challenge energy.
-* The E, T, and R parts use the centered field digit moment for every live
-  scalar. The final digit plane uses its actual remaining field width.
+* The E and T parts, plus the R quotient part when present, use the centered
+  field digit moment for every live scalar. A reduced-evaluation fold has no R
+  quotient span. The final digit plane uses its actual remaining field width.
 * Negative binary compression contributes one half unit of expected energy per
   coefficient.
 * Extension tensor packing multiplies the logical energy by `(2K - 1) / K`,
@@ -192,10 +219,12 @@ factor from `d_A = k h s`. It rejects unsupported challenge families and
 invalid D divisibility before it constructs matrices.
 
 The planner does not minimize `s`, `h`, or `d_A` directly. It keeps the same
-objective as other schedules. It minimizes setup field elements first and
-proof payload second, then applies the canonical deterministic ordering. This
-allows a larger A ring to win when its lower module rank reduces the complete
-setup.
+complete-schedule objective as other candidates. Depending on the catalog
+policy, the numeric prefix is either proof payload then total setup, or first
+direct-setup capacity then proof payload then total setup. Exact numeric ties
+prefer the smaller root output witness before the canonical descriptor breaks
+the final tie. This allows a larger A ring to win when its lower module rank
+reduces the complete setup or proof suffix.
 
 Nonterminal folds at levels 0 and 1 require coefficient packing. A state with
 no complete packing assignment is unsupported. Later nonterminal folds and the

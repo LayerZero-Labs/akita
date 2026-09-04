@@ -19,7 +19,9 @@ fn batch_case(index: usize) -> (usize, usize) {
         0 => (14, 1),
         1 => (15, 2),
         2 => (17, 4),
-        _ => (24, 1),
+        // Keep one recursive row for terminal-window coverage without turning
+        // this transcript-semantic test into a large-prover benchmark.
+        _ => (16, 1),
     }
 }
 
@@ -98,7 +100,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         );
     }
     let terminal_e_hat = assert_terminal_event_order_if_present(&prover_public);
-    if num_vars >= 20 {
+    if shape_index == 3 {
         let terminal_e_hat =
             terminal_e_hat.expect("recursive corpus case must include a terminal fold");
         let tau0 = first_label_index(&prover_public, labels::CHALLENGE_TAU0)

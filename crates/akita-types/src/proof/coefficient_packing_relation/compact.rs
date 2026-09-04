@@ -150,6 +150,8 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
         self.validate_point(point)?;
         let evaluate_affine = || -> Result<E, AkitaError> {
             let mut coefficient_evaluations = [None; usize::BITS as usize];
+            let mut base_offsets = Vec::new();
+            let mut base_scales = Vec::new();
             let mut affine = E::zero();
             let mut family_index = 0usize;
             while let Some(family) = self.affine_relation_families.get(family_index) {
@@ -191,12 +193,12 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
                 let group_len = group_end
                     .checked_sub(family_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                let mut base_offsets = Vec::new();
-                let mut base_scales = Vec::new();
-                base_offsets.try_reserve_exact(group_len).map_err(|_| {
+                base_offsets.clear();
+                base_scales.clear();
+                base_offsets.try_reserve(group_len).map_err(|_| {
                     AkitaError::InvalidInput("packing affine base allocation failed".into())
                 })?;
-                base_scales.try_reserve_exact(group_len).map_err(|_| {
+                base_scales.try_reserve(group_len).map_err(|_| {
                     AkitaError::InvalidInput("packing affine scale allocation failed".into())
                 })?;
                 let family_group = self
@@ -466,7 +468,32 @@ pub(super) fn prepare_compact_factors<E: Field>(
             }
         }
         reserve_families(&mut affine_relation_families, plane_segments)?;
-        let direct_count = plane_segments
+        // A full direct-opening plane can cross several physical E role
+        // subcolumns. When those boundaries are coefficient-aligned, retain
+        // the role as another unit tensor axis instead of emitting one family
+        // per subcolumn. Unlike the affine relation above, this source term
+        // has no alpha weight along the role axis.
+        let compact_role_axis = if s > inputs.d_d && s.is_multiple_of(inputs.d_d) {
+            let role_subcolumns = s / inputs.d_d;
+            let role_stride = inputs
+                .opening_gadget
+                .len()
+                .checked_mul(inputs.d_d)
+                .ok_or_else(|| AkitaError::InvalidSetup("packing role stride overflow".into()))?;
+            Some(EqPairTensorAxis::unit(
+                role_subcolumns,
+                inputs.d_d,
+                role_stride,
+            ))
+        } else {
+            None
+        };
+        let direct_plane_segments = if compact_role_axis.is_some() {
+            k
+        } else {
+            plane_segments
+        };
+        let direct_count = direct_plane_segments
             .checked_mul(digit_segments.len())
             .and_then(|count| count.checked_mul(block_segments.len()))
             .ok_or_else(|| AkitaError::InvalidInput("packing family count overflow".into()))?;
@@ -514,7 +541,40 @@ pub(super) fn prepare_compact_factors<E: Field>(
                     digit_weights: Arc::clone(&opening_gadget),
                     outer_weights: Arc::clone(&challenge_weights),
                 });
+                plane_offset += coefficient_count;
+            }
+        }
 
+        let claim_stride = unit
+            .num_live_blocks()
+            .checked_mul(semantic_stride)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("direct-opening claim stride overflow".into())
+            })?;
+        for (plane, &basis_element) in inputs.basis_elements.iter().enumerate() {
+            let mut plane_offset = 0usize;
+            while plane_offset < s {
+                let flat = plane
+                    .checked_mul(s)
+                    .and_then(|base| base.checked_add(plane_offset))
+                    .ok_or_else(|| AkitaError::InvalidSetup("packing plane overflow".into()))?;
+                let role_subcolumn = flat / inputs.d_d;
+                let role_coefficient = flat % inputs.d_d;
+                let coefficient_count = if compact_role_axis.is_some() {
+                    if role_coefficient != 0 {
+                        return Err(AkitaError::InvalidSetup(
+                            "compact packing role axis is not coefficient aligned".into(),
+                        ));
+                    }
+                    inputs.d_d
+                } else {
+                    (inputs.d_d - role_coefficient).min(s - plane_offset)
+                };
+                if compact_role_axis.is_some() && coefficient_count > s - plane_offset {
+                    return Err(AkitaError::InvalidSetup(
+                        "compact packing role axis exceeds its plane".into(),
+                    ));
+                }
                 for (digit_segment, digit_axis) in digit_segments.iter().zip(&opening_digit_axes) {
                     for block_segment in &block_segments {
                         let physical_start = unit.e_coefficient_index(
@@ -539,30 +599,32 @@ pub(super) fn prepare_compact_factors<E: Field>(
                             .get(digit_segment.start)
                             .copied()
                             .ok_or(AkitaError::InvalidProof)?;
+                        let mut axes = vec![EqPairTensorAxis::unit(coefficient_count, 1, 1)];
+                        if let Some(role_axis) = &compact_role_axis {
+                            axes.push(role_axis.clone());
+                        }
+                        axes.extend([
+                            digit_axis.clone(),
+                            EqPairTensorAxis::unit(block_segment.len(), s, semantic_stride),
+                            EqPairTensorAxis::dense(
+                                0,
+                                claim_stride,
+                                Arc::clone(&claim_coefficients),
+                            ),
+                        ]);
                         direct_opening_families.push(EqPairTensorFamily::new(
                             left_offset,
                             physical_start,
                             inputs.scalar_claim_weight * basis_element * opening_weight,
-                            vec![
-                                EqPairTensorAxis::unit(coefficient_count, 1, 1),
-                                digit_axis.clone(),
-                                EqPairTensorAxis::unit(block_segment.len(), s, semantic_stride),
-                                EqPairTensorAxis::dense(
-                                    0,
-                                    unit.num_live_blocks()
-                                        .checked_mul(semantic_stride)
-                                        .ok_or_else(|| {
-                                            AkitaError::InvalidSetup(
-                                                "direct-opening claim stride overflow".into(),
-                                            )
-                                        })?,
-                                    Arc::clone(&claim_coefficients),
-                                ),
-                            ],
+                            axes,
                         )?);
                     }
                 }
-                plane_offset += coefficient_count;
+                if compact_role_axis.is_some() {
+                    plane_offset = s;
+                } else {
+                    plane_offset += coefficient_count;
+                }
             }
         }
     }

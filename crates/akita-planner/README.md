@@ -2,8 +2,11 @@
 
 The `akita-planner` crate computes the parameters of each fold level in the
 Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
-direct and recursive schedules minimize first-direct padded setup capacity,
-then proof bytes and total setup.
+direct schedules minimize first-direct padded setup capacity, then proof bytes,
+total setup, and root output-witness length. Recursive schedules first minimize
+the power-of-two capacity covering total setup, then first-direct capacity,
+proof bytes, and first-direct output-witness length. Numeric ties go directly
+to the canonical descriptor.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -22,13 +25,30 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-uniform direct: (proof bytes, total setup, descriptor)
-adaptive direct or recursive: (first-direct padded capacity, proof bytes,
-                               total setup, descriptor)
+uniform direct:  (proof bytes, total setup, root output witness, descriptor)
+adaptive direct: (first-direct padded capacity, proof bytes,
+                  total setup, root output witness, descriptor)
+recursive:       (padded total-setup capacity, first-direct padded capacity,
+                  proof bytes, first-direct output witness, descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
 schedule, it is the first edge after the setup-prefix chain.
+
+First-direct capacity is a verifier-cost proxy, not a complete runtime model.
+Its power-of-two bucket permits proof-size improvements within a factor-two
+setup-scan bound and avoids letting a later, unusually large suffix matrix
+control the leading direct objective. The
+[planner rationale](../../specs/setup-offloading-planner.md#why-adaptive-direct-planning-starts-with-first-direct-capacity)
+defines the related setup quantities and records the limitations of this design
+choice.
+
+Recursive setup planning uses a different leading metric because offloading can
+move setup cost into a committed prefix. It first fixes the power-of-two
+capacity covering every setup object, then minimizes the remaining direct scan,
+proof bytes, and first-direct output witness. The
+[recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
+explains why exact setup inside the winning bucket is not another tie-break.
 
 The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
@@ -103,9 +123,13 @@ Conceptually, a candidate level answers three questions:
 - How many bytes does it cost to prove the next witness?
 - How many field elements will the next witness contain?
 - What padded setup capacity is exposed at the first direct edge, and what is
-  the total setup envelope?
+  the first direct output-witness length and total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
+Adaptive direct planning retains the first-direct-first V2 objective. Recursive
+setup planning compares total setup at next-power-of-two capacity, then
+minimizes first-direct capacity and proof bytes within the winning bucket
+before comparing first-direct output-witness length.
 
 ## Root Level Search
 
@@ -146,9 +170,11 @@ After that candidate is chosen, the suffix DP still performs the important globa
 The memoized suffix state tracks the level, current witness length, active
 basis choices, and parent-visible geometry. Uniform direct search keeps its
 proof-first frontier. Adaptive direct and recursive search share one projected
-frontier: a first-direct setup projection and a proof-payload projection. A
-candidate is pruned only when both projections make it irrelevant to every
-parent transition. Ordinary recursive folds construct the single canonical
+frontier: a setup-aware first-direct projection and a setup-aware proof-payload
+projection. A candidate is pruned only when both projections make it irrelevant
+to every parent transition. At a complete root, a level setup bound larger than
+the best complete envelope rejects both its direct and offloaded branches.
+Ordinary recursive folds construct the single canonical
 consistency/A/B/D relation and produce another recursive witness. The typed
 terminal fold constructs no relation matrix or quotient: it receives
 transcript-bound inner `t` from its predecessor and checks raw `e`, `t`, and
@@ -276,8 +302,8 @@ scripts/generate-schedule-tables.sh fp32_dense fp64_dense
 
 Add `--row-progress` when one of those searches is slow. It reports start,
 completion, elapsed time, and the selected objective, proof bytes, total setup,
-first-direct capacity, dimensions, and fold count for each flattened row
-request. It is disabled by default.
+first-direct capacity, root output-witness length, dimensions, and fold count
+for each flattened row request. It is disabled by default.
 
 `--check-catalog` is a same-revision drift guard. It compares the union of the
 compiled and regenerated keys and labels those sides explicitly in its stable

@@ -26,6 +26,7 @@ impl CommittedGroupParams {
                 ring_dimension,
             ),
             payload_mode: crate::CommitmentPayloadMode::Compressed,
+            ring_relation_mode: crate::RingRelationMode::QuotientLift,
             source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             // A zeroed shell whose only group is its own; callers fill the
@@ -121,6 +122,7 @@ impl CommittedGroupParams {
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
             payload_mode: self.payload_mode,
+            ring_relation_mode: self.ring_relation_mode,
             source_encoding: self.source_encoding,
             witness_chunk: self.witness_chunk,
             open_matrix: OpenCommitMatrixParams::new_unchecked(
@@ -181,6 +183,7 @@ impl CommittedGroupParams {
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
             payload_mode: other.payload_mode,
+            ring_relation_mode: other.ring_relation_mode,
             source_encoding: other.source_encoding,
             // The chunk layout is a property of the committed witness, sized with
             // the ranks, so it stays with `self` like the SIS buckets.

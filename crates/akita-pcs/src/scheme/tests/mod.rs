@@ -50,6 +50,7 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
 mod coefficient_packing;
+mod cross_mode;
 mod dense_group;
 mod layout;
 mod onehot;

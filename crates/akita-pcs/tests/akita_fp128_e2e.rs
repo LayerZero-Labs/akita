@@ -226,19 +226,13 @@ fn fp128_dense_mc() {
         .expect("dense multi-chunk schedule")
         .into_schedule();
         assert_eq!(
-            schedule.root.params.outer_slice_count(),
-            akita_types::CommitmentSliceCount::EIGHT,
-            "multi-chunk regression profile must pin the exact S=8 root geometry"
+            schedule.root.params.witness_chunk.num_chunks, 8,
+            "W8R2 regression profile must retain eight root witness chunks"
         );
         let first_fold = schedule
             .recursive_folds
             .first()
             .expect("dense multi-chunk schedule must have a recursive fold");
-        assert_eq!(
-            first_fold.params.outer_slice_count(),
-            akita_types::CommitmentSliceCount::ONE,
-            "multi-chunk regression profile must pin the selected S=1 level-one geometry"
-        );
         assert_eq!(
             first_fold.params.witness_chunk.num_chunks, 8,
             "W8R2 regression profile must retain eight witness chunks"

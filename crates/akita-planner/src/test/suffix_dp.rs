@@ -2,16 +2,22 @@ use super::offloaded_witness_contracts;
 use std::collections::VecDeque;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
+    let topology = incoming_setup_prefix.map_or(
+        super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+        |natural_len| super::SuffixTopology::SetupPrefixed { natural_len },
+    );
     super::ScheduleMemoKey {
         level,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix,
         d_a: 64,
         d_b: 64,
         d_d: 64,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology,
     }
 }
 
@@ -21,16 +27,49 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
     for key in [direct, prefixed] {
-        memo.insert(key, super::empty_suffix_result());
+        memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result());
+    memo.insert(direct, super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
+}
+
+#[test]
+fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
+    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+
+    let prefix = super::RingRelationPhase::QuotientPrefix;
+    let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
+    let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
+    assert_eq!(prefix.candidate_modes(1, direct_trace), &[QuotientLift]);
+    assert_eq!(
+        prefix.candidate_modes(2, direct_trace),
+        &[QuotientLift, ReducedEvaluation]
+    );
+    assert_eq!(
+        reduced.candidate_modes(2, direct_trace),
+        &[ReducedEvaluation]
+    );
+    assert_eq!(prefix.after(ReducedEvaluation), reduced);
+    assert!(reduced
+        .candidate_modes(
+            2,
+            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace
+        )
+        .is_empty());
+
+    let quotient_key = memo_key(2, None);
+    let mut reduced_key = quotient_key;
+    reduced_key.topology = super::SuffixTopology::Direct {
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: reduced,
+    };
+    assert_ne!(quotient_key, reduced_key);
 }
 
 #[test]
@@ -113,6 +152,22 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         "successors in one parent-observable bucket must price identically"
     );
 
+    let mut reduced_successor = evaluation_trace.clone();
+    reduced_successor.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        reduced_successor.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        evaluation_trace.recursive_opening_num_vars().unwrap(),
+        reduced_successor.recursive_opening_num_vars().unwrap()
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&reduced_successor), None).unwrap(),
+        "relation details invisible to the parent must share one successor class"
+    );
+
     let mut descriptor_distinct = evaluation_trace.clone();
     let inner = descriptor_distinct.inner().matrix;
     descriptor_distinct.own_group_mut().profile.inner.matrix =
@@ -142,11 +197,20 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     );
     let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
     let grind_bits = |successor| {
+        let successor = akita_types::FoldSuccessor::Recursive(successor);
+        let relation_geometry = evaluation_trace
+            .relation_address_geometry(
+                &layout,
+                policy.claim_ext_degree,
+                successor.ring_dimension(),
+                512,
+            )
+            .unwrap();
         akita_types::transcript_grinding_nonce_bits_for_planner_edge(
             &evaluation_trace,
-            512,
+            relation_geometry,
             &layout,
-            akita_types::FoldSuccessor::Recursive(successor),
+            successor,
             policy.decomposition.field_bits(),
             policy.claim_ext_degree,
             1,
@@ -157,6 +221,11 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         grind_bits(&evaluation_trace),
         grind_bits(&descriptor_distinct),
         "one parent-observable successor class must have one grinding price"
+    );
+    assert_eq!(
+        grind_bits(&evaluation_trace),
+        grind_bits(&reduced_successor),
+        "relation details invisible to the parent must not change grinding price"
     );
 
     let outer = wider_opening.outer().matrix;
@@ -199,9 +268,11 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
     let d64 = akita_types::CommitmentRingDims::uniform(64);
     let d256 = akita_types::CommitmentRingDims::uniform(256);
@@ -240,9 +311,11 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
 
     assert_eq!(

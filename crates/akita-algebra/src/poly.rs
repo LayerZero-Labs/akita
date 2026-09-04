@@ -185,47 +185,52 @@ fn multilinear_eval_ref<E: Field>(evals: &[E], point: &[E]) -> E {
     }
 }
 
-/// Fold an evaluation table in place by binding its first variable to `r`,
-/// halving the table size.
+/// Fold a nonempty evaluation prefix in place by binding its first variable
+/// to `r`, treating a missing final odd entry as implicit zero-padding.
 ///
 /// # Panics
 ///
-/// Panics if the evaluation table length is not a power of two or has fewer
-/// than 2 elements. This is a prover-only helper where the caller guarantees
-/// well-formed input.
+/// Panics if the evaluation prefix is empty. This is a prover-only helper where
+/// the caller guarantees a nonempty live domain.
 #[tracing::instrument(skip_all, name = "fold_evals_in_place")]
 pub fn fold_evals_in_place<E: Fold>(evals: &mut Vec<E>, r: E) {
-    assert!(
-        evals.len().is_power_of_two(),
-        "evals length must be a power of two"
-    );
-    assert!(evals.len() >= 2, "evals must have at least 2 elements");
-    let half = evals.len() / 2;
+    assert!(!evals.is_empty(), "evaluation prefix must be nonempty");
+    let next_len = evals.len().div_ceil(2);
     let ctx = E::precompute(r);
 
-    // The fold writes output index `i` while reading inputs `2*i`/`2*i+1`, so a
-    // naive in-place parallel loop would race (writing `evals[i]` clobbers an
-    // input `evals[2*i']` another task still needs). For large tables we instead
-    // build a fresh buffer in parallel; small/late rounds stay in-place serial
-    // to avoid rayon fork-join overhead.
+    // A parallel in-place loop races because output `i` can clobber an input
+    // needed by an earlier output. Large tables therefore use one parallel
+    // destination allocation; small and late-round prefixes stay serial and
+    // allocation-free to avoid Rayon and allocation overhead.
     #[cfg(feature = "parallel")]
     {
         const PAR_FOLD_THRESHOLD: usize = 1 << 12;
-        if half >= PAR_FOLD_THRESHOLD {
-            let src: &[E] = evals;
-            let folded: Vec<E> = (0..half)
+        if next_len >= PAR_FOLD_THRESHOLD {
+            let source: &[E] = evals;
+            let folded = (0..next_len)
                 .into_par_iter()
-                .map(|i| E::fold_one(&ctx, src[2 * i], src[2 * i + 1]))
+                .map(|target| {
+                    let source_index = 2 * target;
+                    let left = source[source_index];
+                    let right = source
+                        .get(source_index + 1)
+                        .copied()
+                        .unwrap_or_else(E::zero);
+                    E::fold_one(&ctx, left, right)
+                })
                 .collect();
             *evals = folded;
             return;
         }
     }
 
-    for i in 0..half {
-        evals[i] = E::fold_one(&ctx, evals[2 * i], evals[2 * i + 1]);
+    for target in 0..next_len {
+        let source = 2 * target;
+        let left = evals[source];
+        let right = evals.get(source + 1).copied().unwrap_or_else(E::zero);
+        evals[target] = E::fold_one(&ctx, left, right);
     }
-    evals.truncate(half);
+    evals.truncate(next_len);
 }
 
 /// Evaluate a multilinear polynomial with small integer evaluations at a
@@ -306,5 +311,53 @@ pub fn multilinear_eval_small<E: Field + Unreduced + Ring>(
 pub fn trim_trailing_zeros<E: Field>(coeffs: &mut Vec<E>) {
     while coeffs.len() > 1 && coeffs.last().is_some_and(|c| c.is_zero()) {
         coeffs.pop();
+    }
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::fold_evals_in_place;
+    use jolt_field::{Prime64Offset59, Ring, Zero};
+
+    #[test]
+    fn fold_matches_independent_pair_evaluation() {
+        type F = Prime64Offset59;
+        let original = (0..1 << 14)
+            .map(|index| F::from_u64((index as u64).wrapping_mul(17).wrapping_add(11)))
+            .collect::<Vec<_>>();
+        let challenge = F::from_u64(29);
+        let expected = original
+            .chunks_exact(2)
+            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+            .collect::<Vec<_>>();
+        let mut folded = original;
+
+        fold_evals_in_place(&mut folded, challenge);
+
+        assert_eq!(folded, expected);
+    }
+
+    #[test]
+    fn fold_zero_pads_an_odd_live_prefix() {
+        type F = Prime64Offset59;
+        let original = (0..(1 << 14) + 1)
+            .map(|index| F::from_u64(index as u64 + 3))
+            .collect::<Vec<_>>();
+        let challenge = F::from_u64(13);
+        let expected = (0..original.len().div_ceil(2))
+            .map(|target| {
+                let left = original[2 * target];
+                let right = original
+                    .get(2 * target + 1)
+                    .copied()
+                    .unwrap_or_else(F::zero);
+                left + challenge * (right - left)
+            })
+            .collect::<Vec<_>>();
+        let mut actual = original;
+
+        fold_evals_in_place(&mut actual, challenge);
+
+        assert_eq!(actual, expected);
     }
 }

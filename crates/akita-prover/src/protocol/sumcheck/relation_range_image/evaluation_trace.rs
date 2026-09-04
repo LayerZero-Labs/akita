@@ -801,8 +801,8 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     #[inline]
-    pub(crate) fn pair_from_flat_index(&self, index0: usize, coeff_count: usize) -> (E, E) {
-        debug_assert_eq!(self.coeff_count, coeff_count);
+    pub(crate) fn pair_from_flat_index(&self, index0: usize) -> (E, E) {
+        let coeff_count = self.coeff_count;
         debug_assert!(coeff_count.is_power_of_two());
         let coefficient0 = index0 & (coeff_count - 1);
         let lane0 = index0 >> coeff_count.trailing_zeros();

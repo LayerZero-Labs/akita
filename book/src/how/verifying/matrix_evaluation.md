@@ -52,8 +52,10 @@ for each compression map:
 
 In compressed mode, the public right hand side is zero for the ordinary B and
 D rows and for every nonterminal compression row. The terminal F and H rows
-contain the fixed public payloads. The quotient witness still covers every
-physical row at that row's native ring dimension.
+contain the fixed public payloads. Quotient-lift relation mode gives every
+physical row a quotient witness at that row's native ring dimension. Reduced
+evaluation keeps the same rows and right hand sides but omits every ordinary
+and compression quotient range.
 
 `RelationRhsLayout::row_families` is the row-order authority. The code does not
 maintain a second verifier-specific row list.
@@ -69,8 +71,8 @@ chunk 0:
 chunk 1:
     group in relation order: [Z | E | T]
 ...
-shared ordinary quotient rows
-compression digits, alignment ranges, and compression quotient rows
+optional shared ordinary quotient rows
+compression digits, alignment ranges, and optional compression quotient rows
 ```
 
 For a group with `B_g` exact live blocks and `C` chunks, chunk `c` owns
@@ -94,8 +96,9 @@ The three ordinary segments have different ownership rules:
 - `T` is partitioned by the same block ownership. It contains the inner
   commitment images used by the B relation.
 
-The ordinary quotient rows and the compression suffix are shared once after
-all chunk and group units.
+The ordinary quotient rows, when present, and the compression suffix are
+shared once after all chunk and group units. In reduced-evaluation mode the
+compression suffix contains F/H digits and alignment only.
 
 Each unit carries an exact global block range. Relation, setup, and trace
 evaluators consume these checked ranges. They do not reconstruct offsets from
@@ -121,12 +124,13 @@ verifier needs the multilinear extension
 eq(\tau_1,i)eq(x,j)M_{i,j}.
 ```
 
-The ring switch challenge `alpha` evaluates each native ring row. The verifier
-factors the common low coefficient coordinates from `x`, applies the powers of
-`alpha` for those coordinates, and evaluates the remaining relation lane
-address with a bounded equality window.
+The ring switch challenge `alpha` evaluates each native ring row. The schedule
+selects one of two coefficient functionals. Quotient lifting factors the common
+low coefficient coordinates from `x` and applies powers of `alpha`. Reduced
+evaluation contracts the exact physical equality window against a terminal
+residue kernel, which already includes those coefficient coordinates.
 
-The final result has three ordinary parts:
+In quotient-lift mode, the final result has three ordinary parts:
 
 ```math
 \widetilde M
@@ -141,12 +145,27 @@ The final result has three ordinary parts:
 The compressed F and H contribution is prepared separately and added by the
 Stage 2 verifier. This keeps the ordinary A, B, and D setup geometry unchanged.
 
+In reduced-evaluation mode there is no quotient term and no outer common-alpha
+factor:
+
+```math
+\widetilde M
+=
+\widetilde M_{\mathrm{structured,reduced}}
++
+\widetilde M_{\mathrm{setup,reduced}}.
+```
+
+The separately prepared compressed F/H contribution uses the same reduced
+functional and is added once.
+
 ### Structured witness terms
 
 The structured term covers the non-setup coefficients of the consistency, A,
 B, and D rows. Its inputs include:
 
-- sparse fold challenges evaluated at powers of `alpha`;
+- sparse fold challenges evaluated against the mode-selected coefficient
+  functional;
 - opening point weights for source positions and live blocks;
 - gadget weights for the A, B, and D decompositions;
 - exact group, claim, chunk, and block ranges from `WitnessLayout`; and
@@ -168,12 +187,20 @@ It supports two ways to obtain the same value:
 The mode changes where the setup inner product is checked. It does not change
 the relation polynomial.
 
+Reduced evaluation is admitted only with direct setup contribution. The plan
+prepares one terminal residue functional for each distinct checked native
+coefficient window, then reuses the existing fused A/B/D traversal with those
+weights. It does not create one kernel per setup lane or scan the three roles
+separately.
+
 ### Quotient term
 
-Each physical row has quotient digits for division by `X^D + 1` at its native
-ring dimension. The verifier evaluates those explicit digits and multiplies by
-the row weight and the evaluated denominator. Compression quotient rows are
-handled by the separate compression evaluator and are not counted twice.
+In quotient-lift mode, each physical row has quotient digits for division by
+`X^D + 1` at its native ring dimension. The verifier evaluates those explicit
+digits and multiplies by the row weight and the evaluated denominator.
+Compression quotient rows are handled by the separate compression evaluator
+and are not counted twice. Reduced evaluation has no quotient term; the signed
+wrap contribution is already present in the terminal residue functional.
 
 ## Setup roles and mixed rings
 
@@ -191,9 +218,10 @@ spec defines the E and T verifier cutover. Its target physical order is:
 ```
 
 The setup matrix and relation witness use the same subcolumn and digit axes.
-At the ring evaluation point `alpha`, a role subcolumn `s` of dimension `r`
-has weight `alpha^(s * r)`. The verifier includes this power in the projected
-equality tensor and applies the role gadget power on the digit axis.
+In quotient-lift mode, a role subcolumn `s` of dimension `r` has weight
+`alpha^(s * r)`. In reduced mode, the checked physical window selects the
+corresponding entries of the terminal residue functional. Both modes apply the
+role gadget power on the digit axis.
 
 When the projection ratio is one, the verifier does not allocate projection
 powers or multiply by one. It uses the unprojected contiguous equality window
@@ -220,12 +248,16 @@ Ring-switch preparation validates all public geometry before it creates a
 - checked relation address geometry; and
 - the shared `WitnessLayout` and group metadata needed to build setup tensors.
 
-At the final Stage 2 point, `eval_flat_at_point` prepares the common relation
-point, evaluates the structured terms, obtains the direct or deferred setup
-term, evaluates the quotient tail, and applies the common low coefficient
-factor.
+At the final Stage 2 point, `evaluate_relation_at_point` dispatches once on the
+authenticated relation mode. The quotient branch obtains the direct or
+deferred setup term, evaluates the quotient tail, and applies the common low
+coefficient factor. The reduced branch rejects deferred setup, evaluates the
+structured and fused direct-setup terms with terminal residue kernels, omits
+the quotient tail, and returns the already complete flat MLE.
 
-The dense matrix and dense relation weights exist only as test oracles.
+The verifier never materializes dense relation weights. Dense verifier tables
+exist only as test oracles. The prover's reduced mode does use one ephemeral
+dense Stage-2 weight table; it is not a verifier allocation or proof field.
 
 ## Safety contract
 
@@ -239,9 +271,11 @@ also checked before use.
 
 Direct setup evaluation is linear in the public setup prefix because those
 coefficients are arbitrary and must be read. Structured terms are linear in
-their explicit challenges and quotient digits, with logarithmic equality
-contractions over repeated affine address axes. The verifier never scales with
-the prover's materialized relation table.
+their explicit challenges and any live quotient digits, with logarithmic
+equality contractions over repeated affine address axes. Reduced preparation
+uses `O(d)` auxiliary extension-field state for native ring dimension `d` and
+the same single setup scan. The verifier never scales with the prover's
+materialized relation table.
 
 ## Code map
 
@@ -251,6 +285,9 @@ the prover's materialized relation table.
 - Witness ranges: `crates/akita-types/src/witness.rs`.
 - Relation address geometry:
   `crates/akita-types/src/proof/relation_address.rs`.
+- Residue and terminal coefficient functionals:
+  `crates/akita-algebra/src/ring/residue.rs` and
+  `crates/akita-types/src/proof/coefficient_functional.rs`.
 - Verifier preparation:
   `crates/akita-verifier/src/protocol/ring_switch.rs`.
 - Final point evaluation:

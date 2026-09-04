@@ -291,6 +291,7 @@ fn generated_fold_core(p: &CommittedGroupParams) -> GeneratedFoldCore {
         group: committed_group(p),
         open_commit_matrix: open_matrix_params(&p.open().matrix, p.open().digits.log_basis),
         witness_chunks: p.witness_chunk.num_chunks as u32,
+        ring_relation_mode: p.ring_relation_mode,
     }
 }
 
@@ -521,11 +522,23 @@ fn emit_frozen_group(value: &GeneratedFrozenGroup) -> String {
 
 fn emit_fold_core(fold: GeneratedFoldCore) -> String {
     format!(
-        "GeneratedFoldCore {{ group: {}, open_commit_matrix: {}, witness_chunks: {} }}",
+        "GeneratedFoldCore {{ group: {}, open_commit_matrix: {}, witness_chunks: {}, ring_relation_mode: {} }}",
         emit_group(fold.group),
         emit_open_matrix(fold.open_commit_matrix),
         fold.witness_chunks,
+        emit_ring_relation_mode(fold.ring_relation_mode),
     )
+}
+
+fn emit_ring_relation_mode(mode: akita_types::RingRelationMode) -> &'static str {
+    match mode {
+        akita_types::RingRelationMode::QuotientLift => {
+            "akita_types::RingRelationMode::QuotientLift"
+        }
+        akita_types::RingRelationMode::ReducedEvaluation => {
+            "akita_types::RingRelationMode::ReducedEvaluation"
+        }
+    }
 }
 
 fn emit_setup_prefix(prefix: &GeneratedSetupPrefix) -> String {

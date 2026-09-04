@@ -3,7 +3,8 @@
 use akita_error::AkitaError;
 use akita_types::{
     centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
-    NttCacheKey, NttTransformDomain, SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
+    NttCacheKey, NttTransformDomain, RingRelationMode, SetupPrefixSlotId, SisModulusProfileId,
+    TerminalFoldParams,
 };
 
 /// Compute cluster that owns one public-matrix transform request.
@@ -72,32 +73,7 @@ impl NttExecutionRequirements {
         for precommitted in root.precommitted_groups() {
             requirements.add_precommitted_relation(0, precommitted, root_num_chunks)?;
         }
-        let root_open_extent = matrix_extent(
-            root.open().matrix.output_rank(),
-            root.open().matrix.input_width(),
-        )?;
-        requirements.add_matrix(
-            0,
-            NttOperationCluster::RingSwitch,
-            NttCacheKey::from_matrix_shape(
-                root.open().matrix.ring_dimension(),
-                root.open().matrix.output_rank(),
-                root.open().matrix.input_width(),
-                NttTransformDomain::Negacyclic,
-            )?,
-            root_open_extent,
-        )?;
-        requirements.add_matrix(
-            0,
-            NttOperationCluster::RingSwitch,
-            NttCacheKey::from_matrix_shape(
-                root.open().matrix.ring_dimension(),
-                root.open().matrix.output_rank(),
-                root.open().matrix.input_width(),
-                NttTransformDomain::Cyclic,
-            )?,
-            root_open_extent,
-        )?;
+        requirements.add_opening_relation(0, root)?;
 
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
             let predecessor_level = index;
@@ -116,32 +92,7 @@ impl NttExecutionRequirements {
                 )?;
                 requirements.add_precommitted_relation(level, prefix, num_chunks)?;
             }
-            let open_extent = matrix_extent(
-                step.params.open().matrix.output_rank(),
-                step.params.open().matrix.input_width(),
-            )?;
-            requirements.add_matrix(
-                level,
-                NttOperationCluster::RingSwitch,
-                NttCacheKey::from_matrix_shape(
-                    step.params.open().matrix.ring_dimension(),
-                    step.params.open().matrix.output_rank(),
-                    step.params.open().matrix.input_width(),
-                    NttTransformDomain::Negacyclic,
-                )?,
-                open_extent,
-            )?;
-            requirements.add_matrix(
-                level,
-                NttOperationCluster::RingSwitch,
-                NttCacheKey::from_matrix_shape(
-                    step.params.open().matrix.ring_dimension(),
-                    step.params.open().matrix.output_rank(),
-                    step.params.open().matrix.input_width(),
-                    NttTransformDomain::Cyclic,
-                )?,
-                open_extent,
-            )?;
+            requirements.add_opening_relation(level, &step.params)?;
         }
 
         requirements.add_terminal(schedule.recursive_folds.len(), &schedule.terminal)?;
@@ -271,7 +222,8 @@ impl NttExecutionRequirements {
                 params.outer().matrix.output_rank(),
                 params.outer().matrix.input_width(),
             )?,
-        )
+        )?;
+        Ok(())
     }
 
     fn add_group_relation(
@@ -280,23 +232,62 @@ impl NttExecutionRequirements {
         params: &CommittedGroupParams,
         num_chunks: usize,
     ) -> Result<(), AkitaError> {
-        self.add_relation_ab(
-            level,
-            params.inner().matrix.ring_dimension(),
-            params.inner().matrix.output_rank(),
-            params.inner().matrix.input_width(),
-            params.outer().matrix.ring_dimension(),
-            params.outer().matrix.output_rank(),
-            params.outer().matrix.input_width(),
-            params.open().digits.log_basis,
-            params.num_digits_fold(),
-            num_chunks,
-            params.inner().matrix.sis_modulus_profile(),
-        )?;
-        for precommitted in params.precommitted_groups() {
-            self.add_precommitted_relation(level, precommitted, num_chunks)?;
+        match params.ring_relation_mode {
+            RingRelationMode::QuotientLift => {
+                self.add_relation_ab(
+                    level,
+                    params.inner().matrix.ring_dimension(),
+                    params.inner().matrix.output_rank(),
+                    params.inner().matrix.input_width(),
+                    params.outer().matrix.ring_dimension(),
+                    params.outer().matrix.output_rank(),
+                    params.outer().matrix.input_width(),
+                    params.open().digits.log_basis,
+                    params.num_digits_fold(),
+                    num_chunks,
+                    params.inner().matrix.sis_modulus_profile(),
+                )?;
+                for precommitted in params.precommitted_groups() {
+                    self.add_precommitted_relation(level, precommitted, num_chunks)?;
+                }
+            }
+            RingRelationMode::ReducedEvaluation => {}
         }
         Ok(())
+    }
+
+    fn add_opening_relation(
+        &mut self,
+        level: usize,
+        params: &CommittedGroupParams,
+    ) -> Result<(), AkitaError> {
+        let open = &params.open().matrix;
+        let extent = matrix_extent(open.output_rank(), open.input_width())?;
+        self.add_matrix(
+            level,
+            NttOperationCluster::RingSwitch,
+            NttCacheKey::from_matrix_shape(
+                open.ring_dimension(),
+                open.output_rank(),
+                open.input_width(),
+                NttTransformDomain::Negacyclic,
+            )?,
+            extent,
+        )?;
+        match params.ring_relation_mode {
+            RingRelationMode::QuotientLift => self.add_matrix(
+                level,
+                NttOperationCluster::RingSwitch,
+                NttCacheKey::from_matrix_shape(
+                    open.ring_dimension(),
+                    open.output_rank(),
+                    open.input_width(),
+                    NttTransformDomain::Cyclic,
+                )?,
+                extent,
+            ),
+            RingRelationMode::ReducedEvaluation => Ok(()),
+        }
     }
 
     fn add_precommitted_relation(
@@ -820,6 +811,35 @@ mod tests {
                 && entry.key.ring_d == root.inner().matrix.ring_dimension()
         }));
         assert!(complete.entries().len() >= prove.entries().len());
+    }
+
+    #[test]
+    #[cfg(feature = "schedules-default")]
+    fn reduced_relation_requirements_have_no_quotient_only_transforms() {
+        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::new(32, 1),
+        ))
+        .expect("generated schedule")
+        .into_schedule();
+        let mut params = schedule.root.params.clone();
+        params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
+        let mut requirements = NttExecutionRequirements::default();
+
+        requirements
+            .add_group_relation(2, &params, params.witness_chunk.num_chunks)
+            .unwrap();
+        requirements.add_opening_relation(2, &params).unwrap();
+
+        assert_eq!(requirements.entries().len(), 1);
+        assert!(requirements.entries().iter().all(|entry| {
+            entry.fold_level == 2
+                && entry.cluster == NttOperationCluster::RingSwitch
+                && entry.key.domain == NttTransformDomain::Negacyclic
+        }));
+        assert_eq!(
+            requirements.entries()[0].key.ring_d,
+            params.open().matrix.ring_dimension()
+        );
     }
 
     #[test]

@@ -71,7 +71,10 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
         &opening_batch,
         &relation_geometry,
         1,
-        r_decomp_levels::<F>(params.open().digits.log_basis),
+        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+            params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let relation_address_geometry = RelationAddressGeometry::for_relation(

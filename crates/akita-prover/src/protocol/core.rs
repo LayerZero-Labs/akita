@@ -41,10 +41,10 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
     Commitment, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldParams, FoldSchedule, NegativeBinarySupport, OpeningClaimsLayout,
-    PolynomialGroupLayout, PreparedOpeningPoint, RelationWitnessGeometry,
-    RingMultiplierOpeningPoint, RingVec, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    FoldLevelProof, FoldParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    PreparedOpeningPoint, RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, TerminalFoldParams,
+    TerminalLevelProof,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
