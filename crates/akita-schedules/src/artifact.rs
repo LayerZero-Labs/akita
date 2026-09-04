@@ -9,6 +9,8 @@ use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::ser::Formatter;
+use std::io::{self, Write};
 
 use crate::policy_digest::policy_digest;
 use crate::resolve::ResolvedScheduleRow;
@@ -315,9 +317,148 @@ impl TrustedScheduleCatalog {
 }
 
 fn encode_artifact(artifact: &ScheduleCatalogArtifactV1) -> Result<Vec<u8>, AkitaError> {
-    serde_json::to_vec_pretty(artifact).map_err(|error| {
+    let mut serializer =
+        serde_json::Serializer::with_formatter(Vec::new(), ReadableArtifactFormatter::default());
+    artifact.serialize(&mut serializer).map_err(|error| {
         AkitaError::InvalidSetup(format!("failed to encode schedule artifact: {error}"))
-    })
+    })?;
+    Ok(serializer.into_inner())
+}
+
+#[derive(Default)]
+struct ReadableArtifactFormatter {
+    containers: Vec<ArtifactContainer>,
+}
+
+struct ArtifactContainer {
+    pretty: bool,
+    has_value: bool,
+}
+
+impl ReadableArtifactFormatter {
+    fn begin_container<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        delimiter: u8,
+        pretty: bool,
+    ) -> io::Result<()> {
+        self.containers.push(ArtifactContainer {
+            pretty,
+            has_value: false,
+        });
+        writer.write_all(&[delimiter])
+    }
+
+    fn end_container<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        delimiter: u8,
+    ) -> io::Result<()> {
+        let container = self.containers.pop().ok_or_else(|| {
+            io::Error::other("JSON serializer emitted an unbalanced container callback")
+        })?;
+        if container.pretty && container.has_value {
+            writer.write_all(b"\n")?;
+            write_indent(writer, self.containers.len())?;
+        }
+        writer.write_all(&[delimiter])
+    }
+
+    fn begin_value<W: Write + ?Sized>(&self, writer: &mut W, first: bool) -> io::Result<()> {
+        let container = self.containers.last().ok_or_else(|| {
+            io::Error::other("JSON serializer emitted a value outside a container")
+        })?;
+        if container.pretty {
+            writer.write_all(if first { b"\n" } else { b",\n" })?;
+            write_indent(writer, self.containers.len())
+        } else if first {
+            Ok(())
+        } else {
+            writer.write_all(b",")
+        }
+    }
+
+    fn finish_value(&mut self) -> io::Result<()> {
+        self.containers
+            .last_mut()
+            .ok_or_else(|| {
+                io::Error::other("JSON serializer finished a value outside a container")
+            })?
+            .has_value = true;
+        Ok(())
+    }
+}
+
+impl Formatter for ReadableArtifactFormatter {
+    fn begin_array<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        // Break top-level arrays and row-owned lists (precommitments and
+        // recursive folds). Keep arrays inside profiles and folds compact.
+        let pretty = matches!(self.containers.len(), 1 | 4);
+        self.begin_container(writer, b'[', pretty)
+    }
+
+    fn end_array<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.end_container(writer, b']')
+    }
+
+    fn begin_array_value<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.begin_value(writer, first)
+    }
+
+    fn end_array_value<W: Write + ?Sized>(&mut self, _writer: &mut W) -> io::Result<()> {
+        self.finish_value()
+    }
+
+    fn begin_object<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        // Break the catalog, each row, and the row's profile/schedule pair.
+        // Nested protocol records stay compact on their structural line.
+        let depth = self.containers.len();
+        let pretty = matches!(depth, 0 | 2 | 3);
+        self.begin_container(writer, b'{', pretty)
+    }
+
+    fn end_object<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.end_container(writer, b'}')
+    }
+
+    fn begin_object_key<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.begin_value(writer, first)
+    }
+
+    fn begin_object_value<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        let separator = if self
+            .containers
+            .last()
+            .ok_or_else(|| {
+                io::Error::other("JSON serializer emitted an object value outside an object")
+            })?
+            .pretty
+        {
+            b": " as &[u8]
+        } else {
+            b":"
+        };
+        writer.write_all(separator)
+    }
+
+    fn end_object_value<W: Write + ?Sized>(&mut self, _writer: &mut W) -> io::Result<()> {
+        self.finish_value()
+    }
+}
+
+fn write_indent<W: Write + ?Sized>(writer: &mut W, depth: usize) -> io::Result<()> {
+    for _ in 0..depth {
+        writer.write_all(b"  ")?;
+    }
+    Ok(())
 }
 
 fn unsupported_schedule_lookup(key: &AkitaScheduleLookupKey, exact_profiles: bool) -> AkitaError {

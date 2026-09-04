@@ -329,9 +329,10 @@ constructing the scheme.
 
 ### External artifact contract
 
-The host-facing artifact is deterministically pretty-printed canonical JSON for
-auditability, readable diffs, and operational tooling. It contains fully
-expanded rows; loading never runs planner search.
+The host-facing artifact is deterministically formatted canonical JSON for
+auditability, readable diffs, and operational tooling. Structural catalog and
+row boundaries use line breaks while nested row payloads stay compact. It
+contains fully expanded rows; loading never runs planner search.
 `TrustedScheduleCatalog::from_artifact_bytes` checks the configured bounds and
 metadata, reconstructs every `ResolvedScheduleRow`, sorts rows by digest, builds
 the separate prover-key index, rejects duplicates, and recomputes the catalog
