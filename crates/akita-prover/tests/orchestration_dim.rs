@@ -3,13 +3,11 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
-use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
     CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
     RingRole,
 };
-use jolt_field::Zero;
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
@@ -20,7 +18,6 @@ fn batched_selection_preserves_typed_schedule_topology() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
     let expected = catalog.resolve_key(&key).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-    let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
@@ -32,8 +29,13 @@ fn batched_selection_preserves_typed_schedule_topology() {
     let selected = catalog
         .resolve_profiles(&profiles)
         .expect("selected schedule");
-    let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)
-        .expect("effective schedule");
+    selected
+        .validate_opening_layout(&batch)
+        .expect("matching layout");
+    assert!(selected
+        .validate_opening_layout(&OpeningClaimsLayout::new(nv + 1, 1).unwrap())
+        .is_err());
+    let actual = selected;
     assert_eq!(
         actual.schedule().recursive_folds.len(),
         expected.schedule().recursive_folds.len()

@@ -322,7 +322,8 @@ impl SuffixTopology {
             Self::Direct { relation_phase, .. } => (relation_phase, false),
             Self::SetupPrefixed { .. } => (RingRelationPhase::QuotientPrefix, true),
         };
-        relation_phase.transitions(
+        RelationSearchDomain::for_topology(
+            relation_phase,
             absolute_fold_level,
             RelationCandidateTopology::new(consumes_setup_prefix, opening),
             diagnostics,
@@ -341,21 +342,21 @@ impl SuffixTopology {
     pub(crate) const fn direct_successor(
         self,
         payload_mode: akita_types::CommitmentPayloadMode,
-        transition: RelationTransition,
+        transition: akita_types::RingRelationMode,
     ) -> Self {
         Self::Direct {
             payload_phase: self.payload_phase().after(payload_mode),
-            relation_phase: transition.next_phase(),
+            relation_phase: self.relation_phase().after(transition),
         }
     }
 
     #[must_use]
     pub(crate) const fn offloaded_successor(
-        transition: RelationTransition,
+        transition: akita_types::RingRelationMode,
         payload_mode: akita_types::CommitmentPayloadMode,
         natural_len: usize,
     ) -> Option<Self> {
-        if transition.allows_setup_offload() && payload_mode.is_compressed() {
+        if !transition.is_reduced_evaluation() && payload_mode.is_compressed() {
             Some(Self::SetupPrefixed { natural_len })
         } else {
             None

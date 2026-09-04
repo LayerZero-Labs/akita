@@ -54,8 +54,7 @@ pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
 #[cfg(feature = "test-support")]
 pub use relation_transition::TestRelationModeFilter;
 pub(crate) use relation_transition::{
-    ReducedTransitionRejection, RelationCandidateTopology, RelationModeFilter,
-    RelationSearchDomain, RelationTransition, RelationTraversalOrder, RingRelationPhase,
+    ReducedTransitionRejection, RelationModeFilter, RelationSearchDomain, RelationTraversalOrder,
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
@@ -643,3 +642,5 @@ mod adaptive_dimension_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/adaptive_search.rs"]
 mod adaptive_search_tests;
+
+pub(crate) use akita_types::{RelationCandidateTopology, RingRelationPhase};

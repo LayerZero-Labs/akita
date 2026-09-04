@@ -5,7 +5,7 @@ pub(super) fn derive_fold_candidate_frontier(
     setup_prefix: RecursiveSetupPrefix<'_>,
     split_bounds: SplitBoundPolicy,
     relation_domain: RelationSearchDomain,
-) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(&request, setup_prefix)? else {
         return Ok(Vec::new());
     };
@@ -18,12 +18,7 @@ pub(super) fn derive_fold_candidate_frontier(
     let mut candidates = Vec::new();
     let mut best_modeled_with_score = std::collections::BTreeMap::<
         akita_types::RingRelationMode,
-        (
-            LayoutCandidateScore,
-            usize,
-            RecursiveRelationCandidate,
-            usize,
-        ),
+        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
     >::new();
     let mut all_modeled = Vec::<BestLinfCandidate>::new();
     let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
@@ -61,7 +56,7 @@ pub(super) fn derive_fold_candidate_frontier(
                 frontier_admits || best_search_admits
             },
             |score, r, candidate, next_witness_len| {
-                let mode = candidate.relation_transition.mode();
+                let mode = candidate.ring_relation_mode;
                 if source_index == 0
                     && next_witness_len < request.current_witness_len
                     && !all_modeled.iter().any(|(_, existing, next)| {

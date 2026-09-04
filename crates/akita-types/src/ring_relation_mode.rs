@@ -52,6 +52,95 @@ impl RingRelationMode {
     }
 }
 
+/// Monotone phase for recursive ring-relation realization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RingRelationPhase {
+    /// Quotient lifting remains available and an eligible direct fold may
+    /// begin the reduced-evaluation suffix.
+    #[default]
+    QuotientPrefix,
+    /// Every later committed fold uses reduced evaluation.
+    ReducedEvaluationSuffix,
+}
+
+/// Typed topology visible to the canonical relation transition authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelationCandidateTopology {
+    /// Evaluation trace without a setup prefix.
+    DirectEvaluationTrace,
+    /// Coefficient packing without a setup prefix.
+    DirectCoefficientPacking,
+    /// Evaluation trace consuming a setup prefix.
+    SetupPrefixedEvaluationTrace,
+    /// Coefficient packing consuming a setup prefix.
+    SetupPrefixedCoefficientPacking,
+}
+
+impl RelationCandidateTopology {
+    /// Classify a fold by its opening method and setup-prefix input.
+    pub const fn new(consumes_setup_prefix: bool, opening: crate::OpeningMethod) -> Self {
+        match (consumes_setup_prefix, opening) {
+            (false, crate::OpeningMethod::EvaluationTrace) => Self::DirectEvaluationTrace,
+            (false, crate::OpeningMethod::SubringCoefficientPacking { .. }) => {
+                Self::DirectCoefficientPacking
+            }
+            (true, crate::OpeningMethod::EvaluationTrace) => Self::SetupPrefixedEvaluationTrace,
+            (true, crate::OpeningMethod::SubringCoefficientPacking { .. }) => {
+                Self::SetupPrefixedCoefficientPacking
+            }
+        }
+    }
+
+    /// Whether this topology admits reduced evaluation.
+    pub const fn is_direct_evaluation_trace(self) -> bool {
+        matches!(self, Self::DirectEvaluationTrace)
+    }
+
+    /// Whether this fold consumes a setup prefix.
+    pub const fn consumes_setup_prefix(self) -> bool {
+        matches!(
+            self,
+            Self::SetupPrefixedEvaluationTrace | Self::SetupPrefixedCoefficientPacking
+        )
+    }
+
+    /// Whether the opening packs subring coefficients.
+    pub const fn uses_coefficient_packing(self) -> bool {
+        matches!(
+            self,
+            Self::DirectCoefficientPacking | Self::SetupPrefixedCoefficientPacking
+        )
+    }
+}
+
+impl RingRelationPhase {
+    /// Legal committed relation modes at this point in the monotone suffix.
+    pub const fn candidate_modes(
+        self,
+        absolute_level: usize,
+        topology: RelationCandidateTopology,
+    ) -> &'static [RingRelationMode] {
+        let eligible = absolute_level >= 2 && topology.is_direct_evaluation_trace();
+        match (self, eligible) {
+            (Self::QuotientPrefix, true) => &[
+                RingRelationMode::QuotientLift,
+                RingRelationMode::ReducedEvaluation,
+            ],
+            (Self::QuotientPrefix, false) => &[RingRelationMode::QuotientLift],
+            (Self::ReducedEvaluationSuffix, true) => &[RingRelationMode::ReducedEvaluation],
+            (Self::ReducedEvaluationSuffix, false) => &[],
+        }
+    }
+
+    /// Phase after selecting one of the legal candidate modes.
+    pub const fn after(self, mode: RingRelationMode) -> Self {
+        match mode {
+            RingRelationMode::QuotientLift => Self::QuotientPrefix,
+            RingRelationMode::ReducedEvaluation => Self::ReducedEvaluationSuffix,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

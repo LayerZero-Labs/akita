@@ -68,7 +68,6 @@ pub mod proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod schedule_artifact_tests;
-pub mod schedule_selection;
 pub mod setup_prefix_slots;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -86,9 +85,7 @@ pub use proof_optimized::{
     validate_setup_capacity_metadata,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
-pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_from_catalog;
-
 pub use transcript_binding::bind_transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 

@@ -7,10 +7,7 @@ use crate::compute::{
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::SelectedProverOpeningData;
-use akita_config::{
-    effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
-    TrustedScheduleCatalog,
-};
+use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
 use jolt_field::{AdditiveGroup, CanonicalEncoding};
 
 /// Drive batched proving end-to-end under config `Cfg`.
@@ -86,11 +83,9 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     let (selection, claims) = opening.into_low_level_parts();
-    let opening_claims = claims.opening_claims();
     let opening_batch = claims.opening_layout()?;
-    let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
     let resolved = schedules.resolve_selection(selection)?;
-    let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
+    resolved.validate_opening_layout(&opening_batch)?;
     let schedule = resolved.schedule();
     schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;

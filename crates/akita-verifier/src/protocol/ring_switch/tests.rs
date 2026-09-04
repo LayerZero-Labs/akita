@@ -428,12 +428,8 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .is_none());
 
     let mut mismatched = evaluator.clone();
-    mismatched
-        .flat_context
-        .as_mut()
-        .unwrap()
-        .level_params
-        .ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
+    mismatched.flat_context.level_params.ring_relation_mode =
+        akita_types::RingRelationMode::QuotientLift;
     assert!(
         super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
             &mismatched,

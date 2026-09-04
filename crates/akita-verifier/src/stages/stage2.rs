@@ -540,12 +540,12 @@ mod tests {
             groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
-            flat_context: Some(FlatRelationContext {
+            flat_context: FlatRelationContext {
                 level_params: params.clone(),
                 opening_batch: opening_batch.clone(),
                 witness_layout: Arc::new(witness_layout),
                 extension_degree: <E as ExtField<F>>::DEGREE,
-            }),
+            },
             setup_plan_cache: Default::default(),
         };
         let setup: AkitaExpandedSetup<F> =
