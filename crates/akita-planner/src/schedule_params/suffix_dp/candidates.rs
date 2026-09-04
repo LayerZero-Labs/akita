@@ -310,7 +310,7 @@ fn opening_work_domain(
                 dimensions,
             )?
         };
-        let root_precommit_products = if early_packing_level {
+        let root_precommit_products = if early_packing_level && !packing_domain.is_empty() {
             root_level_key
                 .map(|root_key| {
                     let products = packing_precommit_opening_products(
