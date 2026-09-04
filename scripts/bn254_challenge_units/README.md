@@ -138,13 +138,56 @@ standalone checker binds the position mask, shell, fixed-point containment,
 eight modular moment computations, polynomial positivity, union bound, and
 support floor. Its remaining obligation is an exact evaluation-kernel
 certificate through squared norm 156. The calibrated workload below explains
-why S72 is the practical native choice. S88 and S80 still need both artifacts.
-In general, a native candidate needs:
+why S72 is the practical zero-collision native choice. S88 and S80 still need
+both artifacts. In general, a strong native candidate needs:
 
 1. an exhaustive evaluation-kernel certificate excluding every nonzero vector
    through the row's difference bound; and
 2. an exact accepted-support certificate for the selected operator-norm
    threshold.
+
+## Uniform D128 approximate-strong candidate
+
+The S72 result obtains a zero collision probability by concentrating entropy
+in 72 positions. A second design point now uses the full D128 signed ternary
+shell:
+
+```text
+scripts/bn254_challenge_units/d128_uniform_w35_operator_norm/
+```
+
+Every raw challenge has exactly 35 signed-unit coefficients across all 128
+positions. Its energy is 35 rather than S72's 58. An exact degree-30 moment
+certificate proves at least `2^138.653104393085` accepted challenges under the
+q=48 runtime predicate at threshold 14, with a certified acceptance
+probability of at least `0.494326711912590588`. This gives at most 2.023 trials
+in expectation.
+
+The extra 10 support bits permit a bounded-collision proof instead of an
+all-pairs unit-difference proof. It is enough to prove that the full rank-128
+BN254 evaluation lattice has minimum squared norm at least 76. That lower
+bound implies, by a spherical inner-product argument, that every evaluation
+fiber contains at most 12 challenges. A union bound over the 128 split roots
+would then give
+
+```text
+epsilon_C < 2^-128.193672774448.
+```
+
+The support, operator norm, list-size reduction, and conditional security
+calculation are exact and independently checkable. The radius-75 kernel lower
+bound is still open. Its Gaussian ball-volume estimate is about `2^-45.252`,
+but a short BKZ-40 basis still projects roughly `2^94` exact enumeration nodes.
+This is a substantially smaller mathematical target than excluding the full
+difference ball through radius 140, but it still needs stronger lattice
+reduction or a sharper exact certificate before the approximate-strong claim
+is complete.
+
+This candidate should not be justified by PikkuFold's slot-uniformity
+heuristic: PikkuFold requires the challenge set to be at least as large as one
+slot, whereas the BN254 slot has roughly 254 bits and this shell has roughly
+139. The bounded-fiber reduction is the applicable route in this
+sub-field-size regime.
 
 Substitution `Y = X^(d / 128)` carries the same strong challenge set and inverse
 into every ambient power-of-two ring whose degree `d` is a multiple of 128. The
