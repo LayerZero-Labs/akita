@@ -2,6 +2,11 @@
 
 ## Result
 
+The one-round full-D128 weight-35 and weight-40 candidates in this note do not
+currently have a rigorous fixed-anchor collision bound. In particular, the
+independent-edge calculation below is not a security result and must not be
+used to instantiate Akita.
+
 Pairwise-unit differences are sufficient but unnecessary. The property used by
 Akita's coordinate-wise extractor is the fixed-anchor bound
 
@@ -94,8 +99,9 @@ following model predictions conservative within that model:
 | weight 35 | 2^-75.185 | 2^-183.697 |
 | weight 40 | 2^-41.274 | 2^-138.483 |
 
-Thus the model supports `d_max <= 2` at more than 128 bits for both candidates.
-Conditional on that statement, the query budgets above follow exactly.
+Thus the model predicts `d_max <= 2` at more than 128 bits for both candidates.
+This prediction is not accepted as a theorem. Conditional on an independently
+proved `d_max <= 2`, the query budgets above would follow exactly.
 
 This is not a proof about BN254. The challenge supports have fewer elements
 than one BN254 slot, so PikkuFold's `|C| >= q^e` near-uniform-slot heuristic

@@ -148,6 +148,21 @@ both artifacts. In general, a strong native candidate needs:
 
 ## Uniform D128 approximate-strong candidate
 
+The completed S72 theorem also has a rigorous single-challenge full-D128 unit
+image:
+
+```text
+scripts/bn254_challenge_units/FULL_D128_UNIT_IMAGE.md
+```
+
+It maps every accepted S72 challenge `c` to `(1+X)c`. Since `1+X` is a unit,
+the map preserves cardinality and pairwise-unit differences exactly. The
+resulting set still has at least `2^128.632167631106` challenges, collectively
+covers every D128 coefficient position, has squared coefficient norm at most
+168, and has operator norm below 36. Challenge multiplication remains the
+original sparse multiplication followed by one shift-add. This is a wrapper
+around S72, not a theorem for the native full shells.
+
 The S72 result obtains a zero collision probability by concentrating entropy
 in 72 positions. A second design point now uses the full D128 signed ternary
 shell:
@@ -217,14 +232,10 @@ weight-35 threshold-14 candidate, it spends five additional nonzero
 coefficients and one operator-threshold unit to gain `11.205` certified support
 bits.
 
-Under an explicitly heuristic independent-edge model of the BN254 collision
-graph, both full-D128 candidates have maximum non-unit degree at most two with
-more than 128 bits of model confidence. Conditional on `d_max <= 2`, the
-weight-40 support leaves room for `Q <= 4,947` even at `M = 256`, before other
-knowledge-error terms. This is not yet a BN254 theorem. Exhaustive scaled-ring
-experiments found the algebraic evaluation maps far more injective than random
-maps, which is encouraging but also shows that the random model is not a
-calibrated substitute for a proof.
+An independent-edge model predicts small non-unit degree for both large
+full-D128 candidates, but that model is not a security result. The weight-35
+and weight-40 candidates remain unproved until they have an exact fixed-anchor
+bound. Scaled-ring experiments likewise do not substitute for that theorem.
 
 Substitution `Y = X^(d / 128)` carries the same strong challenge set and inverse
 into every ambient power-of-two ring whose degree `d` is a multiple of 128. The
