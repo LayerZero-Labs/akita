@@ -643,13 +643,14 @@ fn setup_primary_strictly_dominates(
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
                 || (left_score.first_direct_setup_capacity
                     == right_score.first_direct_setup_capacity
-                    && (left_score.first_direct_output_witness_len
-                        < right_score.first_direct_output_witness_len
-                        || (left_score.first_direct_output_witness_len
-                            == right_score.first_direct_output_witness_len
-                            && left_score
-                                .cost
-                                .strictly_better_for_every_parent(right_score.cost)))));
+                    && (left_score
+                        .cost
+                        .strictly_better_for_every_parent(right_score.cost)
+                        || (left_score
+                            .cost
+                            .never_worse_for_every_parent(right_score.cost)
+                            && left_score.first_direct_output_witness_len
+                                < right_score.first_direct_output_witness_len))));
     }
     left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
         || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
@@ -674,12 +675,17 @@ fn setup_projection_dominates(
     if !left.admission.admits_every_parent_of(right.admission) {
         return false;
     }
-    let equal_later_coordinates_are_canonical = left
+    let cost_never_worse = left
         .score
         .cost
-        .never_worse_for_every_parent(right.score.cost)
+        .never_worse_for_every_parent(right.score.cost);
+    let equal_output_is_canonical = cost_never_worse
+        && left.score.first_direct_output_witness_len
+            == right.score.first_direct_output_witness_len
         && left.context == right.context
         && left.descriptor <= right.descriptor;
+    let equal_later_coordinates_are_canonical =
+        cost_never_worse && left.context == right.context && left.descriptor <= right.descriptor;
     if matches!(
         selection_policy,
         crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
@@ -688,15 +694,14 @@ fn setup_projection_dominates(
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
                 || (left.score.first_direct_setup_capacity
                     == right.score.first_direct_setup_capacity
-                    && (left.score.first_direct_output_witness_len
-                        < right.score.first_direct_output_witness_len
-                        || (left.score.first_direct_output_witness_len
-                            == right.score.first_direct_output_witness_len
-                            && (left
-                                .score
-                                .cost
-                                .strictly_better_for_every_parent(right.score.cost)
-                                || equal_later_coordinates_are_canonical)))));
+                    && (left
+                        .score
+                        .cost
+                        .strictly_better_for_every_parent(right.score.cost)
+                        || (cost_never_worse
+                            && left.score.first_direct_output_witness_len
+                                < right.score.first_direct_output_witness_len)
+                        || equal_output_is_canonical)));
     }
     left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
         || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity

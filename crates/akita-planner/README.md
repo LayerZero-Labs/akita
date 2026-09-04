@@ -2,11 +2,11 @@
 
 The `akita-planner` crate computes the parameters of each fold level in the
 Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
-direct schedules minimize first-direct padded setup capacity, then proof bytes
-and total setup. Recursive schedules first minimize the power-of-two capacity
-covering total setup, then first-direct capacity, first-direct output witness,
-and proof bytes. Recursive numeric ties go directly to the canonical
-descriptor; direct policies retain their root output-witness tie-break.
+direct schedules minimize first-direct padded setup capacity, then proof bytes,
+total setup, and root output-witness length. Recursive schedules first minimize
+the power-of-two capacity covering total setup, then first-direct capacity,
+proof bytes, and first-direct output-witness length. Numeric ties go directly
+to the canonical descriptor.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -26,14 +26,29 @@ The complete schedule orders are:
 
 ```text
 uniform direct:  (proof bytes, total setup, root output witness, descriptor)
-adaptive direct: (first-direct padded capacity, proof bytes, total setup,
-                  root output witness, descriptor)
+adaptive direct: (first-direct padded capacity, proof bytes,
+                  total setup, root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
-                  first-direct output witness, proof bytes, descriptor)
+                  proof bytes, first-direct output witness, descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
 schedule, it is the first edge after the setup-prefix chain.
+
+First-direct capacity is a verifier-cost proxy, not a complete runtime model.
+Its power-of-two bucket permits proof-size improvements within a factor-two
+setup-scan bound and avoids letting a later, unusually large suffix matrix
+control the leading direct objective. The
+[planner rationale](../../specs/setup-offloading-planner.md#why-adaptive-direct-planning-starts-with-first-direct-capacity)
+defines the related setup quantities and records the limitations of this design
+choice.
+
+Recursive setup planning uses a different leading metric because offloading can
+move setup cost into a committed prefix. It first fixes the power-of-two
+capacity covering every setup object, then minimizes the remaining direct scan,
+proof bytes, and first-direct output witness. The
+[recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
+explains why exact setup inside the winning bucket is not another tie-break.
 
 The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
@@ -113,8 +128,8 @@ Conceptually, a candidate level answers three questions:
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
 Adaptive direct planning retains the first-direct-first V2 objective. Recursive
 setup planning compares total setup at next-power-of-two capacity, then
-minimizes first-direct capacity and output-witness length within the winning
-bucket before comparing proof bytes.
+minimizes first-direct capacity and proof bytes within the winning bucket
+before comparing first-direct output-witness length.
 
 ## Root Level Search
 

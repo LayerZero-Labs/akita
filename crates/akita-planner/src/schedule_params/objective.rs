@@ -29,8 +29,8 @@ pub(crate) enum CompleteObjectiveBound {
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
-        first_direct_output_witness_len: usize,
         proof_bytes: usize,
+        first_direct_output_witness_len: usize,
     },
 }
 
@@ -58,8 +58,8 @@ impl CompleteObjectiveBound {
                         setup_field_elements,
                     ),
                     first_direct_setup_capacity,
-                    first_direct_output_witness_len,
                     proof_bytes,
+                    first_direct_output_witness_len,
                 }
             }
         }
@@ -102,19 +102,19 @@ impl CompleteObjectiveBound {
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
-                first_direct_output_witness_len,
                 proof_bytes,
+                first_direct_output_witness_len,
             } => {
                 (
                     setup_envelope_capacity,
                     first_direct_setup_capacity,
-                    first_direct_output_witness_len,
                     proof_bytes,
+                    first_direct_output_witness_len,
                 ) > (
                     akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
                     incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.first_direct_output_witness_len,
                     incumbent.proof_bytes(),
+                    incumbent.first_direct_output_witness_len,
                 )
             }
         }
@@ -143,19 +143,19 @@ impl CompleteObjectiveBound {
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
-                first_direct_output_witness_len,
                 proof_bytes,
+                first_direct_output_witness_len,
             } => {
                 setup_envelope_capacity
                     >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (
                         first_direct_setup_capacity,
-                        first_direct_output_witness_len,
                         proof_bytes,
+                        first_direct_output_witness_len,
                     ) > (
                         incumbent.first_direct_setup_capacity.field_elements(),
-                        incumbent.first_direct_output_witness_len,
                         incumbent.proof_bytes(),
+                        incumbent.first_direct_output_witness_len,
                     )
             }
             Self::Direct { .. } => false,

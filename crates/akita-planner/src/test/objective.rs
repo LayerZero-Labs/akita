@@ -52,8 +52,8 @@ fn padded_setup_envelope_first(
         objective: CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
-            first_direct_output_witness_len,
             proof_bytes,
+            first_direct_output_witness_len,
         },
         legacy_root_output_witness_len: None,
         descriptor: vec![descriptor],
@@ -95,17 +95,17 @@ fn padded_setup_envelope_tolerates_raw_setup_within_one_capacity() {
 }
 
 #[test]
-fn padded_setup_envelope_prefers_first_direct_output_before_proof() {
+fn padded_setup_envelope_prefers_proof_before_first_direct_output() {
     let smaller_output = padded_setup_envelope_first(30, 16, 999, 101, 2);
     let smaller_proof = padded_setup_envelope_first(31, 16, 1_000, 100, 1);
-    assert!(smaller_output < smaller_proof);
+    assert!(smaller_proof < smaller_output);
 
     let smaller_descriptor = padded_setup_envelope_first(31, 16, 999, 101, 1);
     assert!(smaller_descriptor < smaller_output);
 }
 
 #[test]
-fn padded_setup_envelope_goes_directly_from_proof_to_descriptor() {
+fn padded_setup_envelope_uses_descriptor_after_output() {
     let smaller_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 1);
     let larger_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 2);
     assert_eq!(smaller_descriptor.legacy_root_output_witness_len, None);
@@ -193,8 +193,8 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
-            first_direct_output_witness_len: 1_000,
             proof_bytes,
+            first_direct_output_witness_len: 1_000,
         }
     };
     assert!(padded_envelope_bound(31, 32, 1).is_strictly_worse_than(incumbent));

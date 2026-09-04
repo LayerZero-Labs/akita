@@ -1265,8 +1265,8 @@ elements, root output-witness length, and the canonical descriptor. Recursive
 catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
 compares the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, first-direct output-witness length, and
-proof payload. A numeric tie then goes directly to the canonical descriptor.
+before comparing first-direct capacity, proof payload, and first-direct
+output-witness length. A numeric tie then goes directly to the canonical descriptor.
 No objective component for `s`, `d_A`, rank, fold count, or prover time is
 added.
 
@@ -1310,10 +1310,10 @@ stress point. All 67 retained rows change exact schedule identity, as expected
 for this breaking protocol and planner-policy cutover.
 
 Across the 67 retained logical keys, setup improves on 45 rows, is equal on
-six, and regresses on 16. Its sum falls from 7,022,341,504 to 3,483,331,328
-field elements, a 50.40% reduction. Proof payload improves on 65 rows and
-regresses on two. Its sum falls from 4,965,430 to 4,451,696 bytes, a 10.35%
-reduction. Fourteen rows use fewer fold levels, 40 retain their count, and 13
+six, and regresses on 16. Its sum falls from 7,022,341,504 to 3,483,724,544
+field elements, a 50.39% reduction. Proof payload improves on 66 rows and
+regresses on one. Its sum falls from 4,965,430 to 4,433,327 bytes, a 10.72%
+reduction. Fourteen rows use fewer fold levels, 41 retain their count, and 12
 use more levels.
 
 The first-direct setup capacity improves on 64 retained rows, is equal on three,
@@ -1438,8 +1438,8 @@ The planner MUST keep the search bounded in the following ways.
 - Add report columns for opening method, challenge subring dimension, packing
   factor, security route, first-direct padded capacity, total setup field
   elements, and proof bytes.
-- Preserve the shared first-direct, proof-payload, total-setup objective without
-  adding an `s` or `d_A` objective component.
+- Preserve the shared first-direct, proof-payload, total-setup, output-witness
+  objective without adding an `s` or `d_A` objective component.
 - Report every catalog regression. Do not reject the feature only because a
   minor row regresses.
 
@@ -1507,8 +1507,8 @@ The planner MUST keep the search bounded in the following ways.
 - [x] Adaptive direct catalogs minimize first-direct setup capacity, proof
       payload, exact total setup, root output-witness length, and the canonical
       descriptor. Recursive catalogs minimize padded total setup-envelope
-      capacity, first-direct setup capacity, first-direct output-witness length,
-      proof payload, and then the canonical descriptor. The objective has no
+      capacity, first-direct setup capacity, proof payload, first-direct
+      output-witness length, and then the canonical descriptor. The objective has no
       explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.

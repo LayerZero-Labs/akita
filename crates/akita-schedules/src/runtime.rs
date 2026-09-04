@@ -69,8 +69,8 @@ pub enum SelectionPolicyId {
     /// Pick first direct setup, proof bytes, total setup, root output witness,
     /// then descriptor.
     MinFirstDirectSetupThenPayloadV2,
-    /// Pick power-of-two setup-envelope capacity, first direct setup, first
-    /// direct output witness, proof bytes, then descriptor.
+    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
+    /// bytes, first direct output witness, then descriptor.
     MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3,
 }
 

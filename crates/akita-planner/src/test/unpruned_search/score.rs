@@ -14,8 +14,8 @@ enum OracleObjective {
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
-        first_direct_output_witness_len: usize,
         proof_bytes: usize,
+        first_direct_output_witness_len: usize,
     },
 }
 
@@ -86,8 +86,8 @@ pub(super) fn score(
                             .into(),
                     )
                 })?,
-                first_direct_output_witness_len: candidate.first_direct_output_witness_len,
                 proof_bytes: candidate.cost.proof_bytes(),
+                first_direct_output_witness_len: candidate.first_direct_output_witness_len,
             }
         }
     };
