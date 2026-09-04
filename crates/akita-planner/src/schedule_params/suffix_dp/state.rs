@@ -196,7 +196,12 @@ impl ScheduleMemo {
         })
     }
 
-    pub(super) fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
+    pub(super) fn insert(
+        &mut self,
+        key: ScheduleMemoKey,
+        result: Arc<SuffixResult>,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
+    ) {
         if let Entry::Occupied(mut existing) = self.entries.entry(key) {
             existing.insert(MemoEntry {
                 result,
@@ -226,6 +231,13 @@ impl ScheduleMemo {
                 referenced: false,
             },
         );
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_memo_occupancy(
+                self.entries.len(),
+                self.direct_insertion_order.len(),
+                self.prefixed_insertion_order.len(),
+            );
+        }
     }
 
     pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
@@ -304,6 +316,7 @@ impl SuffixTopology {
         self,
         absolute_fold_level: usize,
         opening: akita_types::OpeningMethod,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) -> Result<RelationSearchDomain, AkitaError> {
         let (relation_phase, consumes_setup_prefix) = match self {
             Self::Direct { relation_phase, .. } => (relation_phase, false),
@@ -312,7 +325,16 @@ impl SuffixTopology {
         relation_phase.transitions(
             absolute_fold_level,
             RelationCandidateTopology::new(consumes_setup_prefix, opening),
+            diagnostics,
         )
+    }
+
+    #[must_use]
+    pub(crate) const fn relation_phase(self) -> RingRelationPhase {
+        match self {
+            Self::Direct { relation_phase, .. } => relation_phase,
+            Self::SetupPrefixed { .. } => RingRelationPhase::QuotientPrefix,
+        }
     }
 
     #[must_use]

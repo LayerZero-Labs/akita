@@ -825,6 +825,7 @@ def extract_summary(
     grinding_plan_summary: dict[str, object] | None = None
     grinding_plan_runs: list[dict[str, object]] = []
     onehot_commit_schedules: list[dict[str, object]] = []
+    relation_phase_timings: list[dict[str, object]] = []
     active_verify_mode = "multi threaded"
 
     for line in log_text.splitlines():
@@ -839,6 +840,17 @@ def extract_summary(
         elif "profile verification start" in line and kvs.get("label") == mode:
             active_verify_mode = kvs["verify_mode"].replace("_", " ")
             summary["verification_modes"] = "multi_and_single"
+        elif "verifier relation phase timing" in line and kvs.get("label") == mode:
+            relation_phase_timings.append(
+                {
+                    "verify_mode": kvs["verify_mode"].replace("_", " "),
+                    "relation_mode": kvs["relation_mode"],
+                    "phase": kvs["phase"],
+                    "calls": int(kvs["calls"]),
+                    "mean_elapsed_nanos": int(kvs["mean_elapsed_nanos"]),
+                    "total_elapsed_nanos": int(kvs["total_elapsed_nanos"]),
+                }
+            )
         elif is_info_event(line, "setup sizes") and kvs.get("label") == mode:
             setup_vector_bytes = int(kvs["setup_vector_bytes"])
             summary["setup_vector_bytes"] = setup_vector_bytes
@@ -1034,6 +1046,7 @@ def extract_summary(
                     "num_digits_outer": int(kvs["num_digits_outer"]),
                     "num_digits_open": int(kvs["num_digits_open"]),
                     "num_digits_fold": int(kvs["num_digits_fold"]),
+                    "relation_mode": kvs.get("relation_mode", "quotient_lift"),
                     "num_digits_quotient": int(
                         kvs.get(
                             "num_digits_quotient",
@@ -1234,6 +1247,7 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "relation_mode": kvs.get("relation_mode", "quotient_lift"),
                 "num_digits_quotient": int(
                     kvs.get(
                         "num_digits_quotient",
@@ -1418,6 +1432,8 @@ def extract_summary(
             summary["grind_nonces"] = ",".join(
                 str(level["grind_nonce_val"]) for level in grind_rows
             )
+    if relation_phase_timings:
+        summary["relation_phase_timings"] = relation_phase_timings
     if grinding_plan_summary is not None:
         grinding_plan_runs.sort(key=lambda run: int(run["run_index"]))
         expected_indices = list(range(int(grinding_plan_summary["run_count"])))
@@ -1781,6 +1797,37 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     if grind_retry_observations:
         combined["grind_retry_observations"] = grind_retry_observations
 
+    phase_samples: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    for summary in summaries:
+        timings = summary.get("relation_phase_timings")
+        if not isinstance(timings, list):
+            continue
+        for timing in timings:
+            if not isinstance(timing, dict):
+                continue
+            key = (
+                str(timing["verify_mode"]),
+                str(timing["relation_mode"]),
+                str(timing["phase"]),
+            )
+            phase_samples.setdefault(key, []).append(timing)
+    if phase_samples:
+        combined["relation_phase_timings"] = [
+            {
+                "verify_mode": key[0],
+                "relation_mode": key[1],
+                "phase": key[2],
+                "calls": int(statistics.median(int(value["calls"]) for value in values)),
+                "mean_elapsed_nanos": int(
+                    statistics.median(int(value["mean_elapsed_nanos"]) for value in values)
+                ),
+                "total_elapsed_nanos": int(
+                    statistics.median(int(value["total_elapsed_nanos"]) for value in values)
+                ),
+            }
+            for key, values in sorted(phase_samples.items())
+        ]
+
     for key in TIMING_SAMPLE_METRICS:
         values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
         if values:
@@ -2088,6 +2135,12 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
                 level["current_w_len"] = level.get("current_w_groups", [])
             level.setdefault("setup_prefix_natural_field_elements", 0)
             level.setdefault("setup_prefix_padded_field_elements", 0)
+            level.setdefault("relation_mode", "quotient_lift")
+            groups = level.get("groups")
+            if isinstance(groups, list):
+                for group in groups:
+                    if isinstance(group, dict):
+                        group.setdefault("relation_mode", level["relation_mode"])
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
         warning = public_opening_groups_warning(normalized)
@@ -2241,6 +2294,57 @@ def render_metric_row(
 
     columns.append(numeric_delta(current, main_baseline, metric.key))
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
+
+
+def render_relation_phase_timings(summary: dict[str, object]) -> None:
+    timings = summary.get("relation_phase_timings")
+    if not isinstance(timings, list) or not timings:
+        return
+    print("#### Verifier relation phases")
+    print()
+    print("| Verifier | Relation mode | Phase | Calls | Replay total | Mean per call |")
+    print("| --- | --- | --- | ---: | ---: | ---: |")
+    phase_labels = {
+        "coefficient_functional_preparation": "Functional preparation",
+        "structured_groups": "Structured groups",
+        "setup_scan": "Setup scan",
+        "quotient_tail": "Quotient tail",
+        "complete_stage2": "Complete Stage 2",
+    }
+    relation_labels = {"quotient": "Quotient lift", "reduced": "Reduced evaluation"}
+    for timing in timings:
+        if not isinstance(timing, dict):
+            continue
+        print(
+            "| "
+            + " | ".join(
+                [
+                    md_text(str(timing["verify_mode"])),
+                    relation_labels.get(
+                        str(timing["relation_mode"]), str(timing["relation_mode"])
+                    ),
+                    phase_labels.get(str(timing["phase"]), str(timing["phase"])),
+                    fmt_count(float(timing["calls"])),
+                    fmt_milliseconds(float(timing["total_elapsed_nanos"]) / 1_000_000_000),
+                    fmt_milliseconds(float(timing["mean_elapsed_nanos"]) / 1_000_000_000),
+                ]
+            )
+            + " |"
+        )
+    totals = []
+    for key, label in [
+        ("verify_total_s", "multi threaded"),
+        ("verify_single_total_s", "single threaded"),
+    ]:
+        if summary.get(key) is not None:
+            totals.append(f"{label} `{fmt_milliseconds(float(summary[key]))}ms`")
+    print()
+    if totals:
+        print("- Complete verification: " + "; ".join(totals) + ".")
+    print(
+        "- Phase values come from one untimed honest replay after the measured verification; "
+        "the complete-verification totals above remain the normal measured runs."
+    )
 
 
 def parameter_value(
@@ -3161,6 +3265,8 @@ def render_report(args: argparse.Namespace) -> int:
                 print()
                 print(f"- Sample ranges: {', '.join(ranges)}.")
 
+        print()
+        render_relation_phase_timings(current)
         print()
         render_execution_parameters(current, main_case)
         onehot_schedules = current.get("onehot_commit_schedules")

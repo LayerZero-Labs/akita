@@ -85,6 +85,7 @@ fn combined_relation_views_match_mode_specific_searches() {
         .transitions(
             request.fold_level,
             RelationCandidateTopology::DirectEvaluationTrace,
+            None,
         )
         .expect("direct relation transitions");
     let expected = [QuotientLift, ReducedEvaluation]

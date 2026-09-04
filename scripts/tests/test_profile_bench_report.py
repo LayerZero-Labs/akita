@@ -536,6 +536,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
+                "relation_mode": "quotient_lift",
                 "num_digits_quotient": 26,
                 "input_witness_len": 1024,
                 # Legacy scalar `current_w_len` is not a group breakdown.
@@ -732,6 +733,79 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("input width 128", report)
         self.assertIn("r shared quotient: 22 digits", report)
         self.assertNotIn("<sub>Merge base</sub>", report)
+
+    def test_mixed_relation_schedule_reports_cutover_without_reduced_quotient_rows(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_fold_details
+
+        def level(index: int, relation_mode: str, quotient_digits: int) -> str:
+            return (
+                "INFO planned fold level label=onehot_fp128 "
+                f"level={index} d=64 d_a=64 d_b=64 d_d=64 "
+                "n_a=3 n_b=2 n_d=2 challenge_l1_mass=53 "
+                "log_basis_inner=5 log_basis_outer=6 log_basis_open=6 "
+                "position_index_bits=7 block_index_bits=3 "
+                "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+                "block_index_domain_size=8 num_positions_per_block=128 "
+                "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+                f"delta_fold=2 relation_mode={relation_mode} "
+                f"num_digits_quotient={quotient_digits} "
+                f"input_witness_len={4096 >> index} output_witness_len={2048 >> index} "
+                f"current_w_len=folded={4096 >> index} next_w_len={2048 >> index}"
+            )
+
+        summary = extract_summary(
+            "\n".join(
+                [
+                    level(0, "quotient_lift", 22),
+                    level(1, "quotient_lift", 22),
+                    level(2, "reduced_evaluation", 0),
+                ]
+            ),
+            "onehot_fp128",
+            24,
+            1,
+        )
+        planned = summary["planned_levels"]
+        self.assertEqual(
+            [entry["relation_mode"] for entry in planned],
+            ["quotient_lift", "quotient_lift", "reduced_evaluation"],
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(planned, [], None, None, None, None)
+        report = output.getvalue()
+
+        self.assertEqual(report.count("r shared quotient:"), 2)
+        self.assertIn("Ring relation: Quotient lift (shared R rows)", report)
+        self.assertIn("Ring relation: Reduced evaluation (no R rows)", report)
+
+    def test_verifier_relation_phase_timings_are_parsed_and_rendered(self) -> None:
+        from scripts.profile_bench_report import (
+            extract_summary,
+            render_relation_phase_timings,
+        )
+
+        log = (
+            "INFO verifier relation phase timing label=onehot_fp128 "
+            "verify_mode=single_threaded relation_mode=reduced "
+            "phase=structured_groups calls=3 mean_elapsed_nanos=2000000 "
+            "total_elapsed_nanos=6000000\n"
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        summary["verify_single_total_s"] = 0.012
+        timing = summary["relation_phase_timings"][0]
+        self.assertEqual(timing["verify_mode"], "single threaded")
+        self.assertEqual(timing["relation_mode"], "reduced")
+        self.assertEqual(timing["total_elapsed_nanos"], 6_000_000)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_relation_phase_timings(summary)
+        report = output.getvalue()
+        self.assertIn("Reduced evaluation", report)
+        self.assertIn("Structured groups", report)
+        self.assertIn("single threaded `12.0ms`", report)
 
     def test_terminal_fold_reports_its_full_geometry(self) -> None:
         from scripts.profile_bench_report import (

@@ -27,13 +27,13 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     let prefixed = memo_key(2, Some(1));
     let mut memo = super::ScheduleMemo::new();
     for key in [direct, prefixed] {
-        memo.insert(key, super::empty_suffix_result());
+        memo.insert(key, super::empty_suffix_result(), None);
     }
     assert!(memo.contains(&direct));
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&prefixed));
 
-    memo.insert(direct, super::empty_suffix_result());
+    memo.insert(direct, super::empty_suffix_result(), None);
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
@@ -48,7 +48,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
     let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
     assert_eq!(
         prefix
-            .transitions(1, direct_trace)
+            .transitions(1, direct_trace, None)
             .unwrap()
             .transitions()
             .iter()
@@ -58,7 +58,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
     );
     assert_eq!(
         prefix
-            .transitions(2, direct_trace)
+            .transitions(2, direct_trace, None)
             .unwrap()
             .transitions()
             .iter()
@@ -67,7 +67,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         vec![QuotientLift, ReducedEvaluation]
     );
     let reduced_transition = reduced
-        .transitions(2, direct_trace)
+        .transitions(2, direct_trace, None)
         .unwrap()
         .transition_for(akita_types::RingRelationMode::ReducedEvaluation)
         .unwrap();
@@ -78,6 +78,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         .transitions(
             2,
             super::RelationCandidateTopology::SetupPrefixedEvaluationTrace,
+            None,
         )
         .is_err());
 
