@@ -64,12 +64,20 @@ fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
     let mut tampered =
         frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
     let artifact_start = CATALOG_FRAME_HEADER_BYTES;
-    let marker = b"\"policy_digest\":[";
-    let digest_start = tampered[artifact_start..]
+    let marker = b"\"policy_digest\"";
+    let mut digest_start = tampered[artifact_start..]
         .windows(marker.len())
         .position(|window| window == marker)
         .map(|offset| artifact_start + offset + marker.len())
-        .expect("policy digest marker");
+        .expect("policy digest key");
+    while tampered[digest_start].is_ascii_whitespace() {
+        digest_start += 1;
+    }
+    assert_eq!(tampered[digest_start], b':');
+    digest_start += 1;
+    while !tampered[digest_start].is_ascii_digit() {
+        digest_start += 1;
+    }
     let digit = tampered[digest_start];
     tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
     let tampered = split_schedule_catalog::<TestCfg>(&tampered)
