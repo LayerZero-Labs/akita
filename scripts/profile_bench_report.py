@@ -89,7 +89,8 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 8
+CASE_SCHEMA_VERSION = 9
+VALID_RELATION_MODES = frozenset(("quotient_lift", "reduced_evaluation"))
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -193,6 +194,29 @@ def case_metadata(mode: str) -> CaseMetadata:
 def quotient_digit_count(metadata: CaseMetadata, log_basis: int) -> int:
     field_bits = int(metadata.field_family.removeprefix("fp"))
     return (field_bits + log_basis - 1) // log_basis
+
+
+def parse_relation_mode(
+    kvs: dict[str, str], event: str, *, allow_legacy: bool
+) -> str:
+    relation_mode = kvs.get("relation_mode")
+    if relation_mode is None:
+        if allow_legacy:
+            return "quotient_lift"
+        raise ValueError(f"{event} is missing relation_mode")
+    if relation_mode not in VALID_RELATION_MODES:
+        raise ValueError(f"{event} has invalid relation_mode {relation_mode!r}")
+    return relation_mode
+
+
+def validate_relation_quotient_digits(
+    event: str, relation_mode: str, num_digits_quotient: int
+) -> None:
+    if relation_mode == "reduced_evaluation" and num_digits_quotient != 0:
+        raise ValueError(
+            f"{event} uses reduced_evaluation with "
+            f"num_digits_quotient={num_digits_quotient}"
+        )
 
 
 def workload_slug(metadata: CaseMetadata, num_polys: int) -> str:
@@ -800,7 +824,13 @@ def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
 
 
 def extract_summary(
-    log_text: str, mode: str, num_vars: int, num_polys: int, setup_mode: str = "direct"
+    log_text: str,
+    mode: str,
+    num_vars: int,
+    num_polys: int,
+    setup_mode: str = "direct",
+    *,
+    allow_legacy_relation_mode: bool = False,
 ) -> dict[str, object]:
     metadata = case_metadata(mode)
     setup_mode = normalize_setup_mode(setup_mode)
@@ -971,6 +1001,19 @@ def extract_summary(
                 )
         elif "planned fold group" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            event = f"planned fold group at L{level}"
+            relation_mode = parse_relation_mode(
+                kvs, event, allow_legacy=allow_legacy_relation_mode
+            )
+            num_digits_quotient = int(
+                kvs.get(
+                    "num_digits_quotient",
+                    str(quotient_digit_count(metadata, int(kvs["log_basis_open"]))),
+                )
+            )
+            validate_relation_quotient_digits(
+                event, relation_mode, num_digits_quotient
+            )
             challenge_operator_norm_threshold = parse_tracing_optional_int(
                 kvs.get("challenge_operator_norm_threshold")
             )
@@ -1046,17 +1089,8 @@ def extract_summary(
                     "num_digits_outer": int(kvs["num_digits_outer"]),
                     "num_digits_open": int(kvs["num_digits_open"]),
                     "num_digits_fold": int(kvs["num_digits_fold"]),
-                    "relation_mode": kvs.get("relation_mode", "quotient_lift"),
-                    "num_digits_quotient": int(
-                        kvs.get(
-                            "num_digits_quotient",
-                            str(
-                                quotient_digit_count(
-                                    metadata, int(kvs["log_basis_open"])
-                                )
-                            ),
-                        )
-                    ),
+                    "relation_mode": relation_mode,
+                    "num_digits_quotient": num_digits_quotient,
                     "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                     **{
                         key: int(kvs[key])
@@ -1086,6 +1120,10 @@ def extract_summary(
             )
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            event = f"planned fold level L{level}"
+            relation_mode = parse_relation_mode(
+                kvs, event, allow_legacy=allow_legacy_relation_mode
+            )
             # Benchmark runs parse both the PR binary and its merge-base binary.
             # Normalize the pre-cutover geometry names used by the merge base.
             position_index_bits = int(
@@ -1137,6 +1175,20 @@ def extract_summary(
             )
             challenge_operator_norm_threshold = parse_tracing_optional_int(
                 kvs.get("challenge_operator_norm_threshold")
+            )
+            num_digits_quotient = int(
+                kvs.get(
+                    "num_digits_quotient",
+                    str(
+                        quotient_digit_count(
+                            metadata,
+                            int(kvs.get("log_basis_open") or kvs["log_basis"]),
+                        )
+                    ),
+                )
+            )
+            validate_relation_quotient_digits(
+                event, relation_mode, num_digits_quotient
             )
             planned_levels[level] = {
                 "level": level,
@@ -1247,18 +1299,8 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
-                "relation_mode": kvs.get("relation_mode", "quotient_lift"),
-                "num_digits_quotient": int(
-                    kvs.get(
-                        "num_digits_quotient",
-                        str(
-                            quotient_digit_count(
-                                metadata,
-                                int(kvs.get("log_basis_open") or kvs["log_basis"]),
-                            )
-                        ),
-                    )
-                ),
+                "relation_mode": relation_mode,
+                "num_digits_quotient": num_digits_quotient,
                 "input_witness_len": input_witness_len,
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
@@ -1396,6 +1438,13 @@ def extract_summary(
 
     for level, groups in planned_groups.items():
         if level in planned_levels:
+            level_mode = planned_levels[level]["relation_mode"]
+            for group in groups:
+                if group["relation_mode"] != level_mode:
+                    raise ValueError(
+                        f"planned fold group at L{level} has relation_mode "
+                        f"{group['relation_mode']!r}, expected {level_mode!r}"
+                    )
             planned_levels[level]["groups"] = groups
         else:
             summary.setdefault("warnings", []).append(
@@ -1475,6 +1524,8 @@ def run_benchmark_case(
     binary: str,
     output_dir: pathlib.Path,
     case: BenchmarkCaseSpec,
+    *,
+    allow_legacy_relation_mode: bool = False,
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -1502,6 +1553,7 @@ def run_benchmark_case(
         num_vars=case.num_vars,
         num_polys=case.num_polys,
         setup_mode=case.setup_mode,
+        allow_legacy_relation_mode=allow_legacy_relation_mode,
     )
     return_code = completed.returncode
     summary["command"] = command
@@ -1862,6 +1914,7 @@ class ScheduledRun:
     case: BenchmarkCaseSpec
     kind: str  # "warmup" or "measured"
     run_index: int  # 0 for warm-ups, 1..runs for measured
+    allow_legacy_relation_mode: bool = False
 
 
 def plan_case_runs(
@@ -1870,6 +1923,7 @@ def plan_case_runs(
     case: BenchmarkCaseSpec,
     runs: int,
     warmups: int,
+    allow_legacy_relation_mode: bool = False,
 ) -> list[ScheduledRun]:
     """All executions of one case for one binary, in execution order."""
     case_dir = summary_dir / case.case_id
@@ -1881,6 +1935,7 @@ def plan_case_runs(
             case,
             "warmup",
             0,
+            allow_legacy_relation_mode,
         )
         for warmup_index in range(1, warmups + 1)
     ]
@@ -1894,6 +1949,7 @@ def plan_case_runs(
                 case,
                 "measured",
                 run_index,
+                allow_legacy_relation_mode,
             )
         )
     return schedule
@@ -1917,7 +1973,12 @@ def execute_schedule(
     for run in schedule:
         if run.case.case_id in failed_cases:
             continue
-        summary, return_code = run_benchmark_case(run.binary, run.run_dir, run.case)
+        summary, return_code = run_benchmark_case(
+            run.binary,
+            run.run_dir,
+            run.case,
+            allow_legacy_relation_mode=run.allow_legacy_relation_mode,
+        )
         summary["run_index"] = run.run_index
         if return_code != 0:
             failed_cases.add(run.case.case_id)
@@ -2006,11 +2067,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     if bool(args.baseline_binary) != bool(args.baseline_output_dir):
         raise ValueError("--baseline-binary and --baseline-output-dir must be set together")
-    binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
+    binaries: list[tuple[str, pathlib.Path, bool]] = [(args.binary, output_dir, False)]
     if args.baseline_binary:
         baseline_dir = pathlib.Path(args.baseline_output_dir)
         baseline_dir.mkdir(parents=True, exist_ok=True)
-        binaries.append((args.baseline_binary, baseline_dir))
+        binaries.append((args.baseline_binary, baseline_dir, True))
 
     cases = configured_cases(args)
     schedule: list[ScheduledRun] = []
@@ -2022,8 +2083,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 case,
                 args.runs,
                 args.warmups,
+                allow_legacy_relation_mode,
             )
-            for binary, summary_dir in binaries
+            for binary, summary_dir, allow_legacy_relation_mode in binaries
         ]
         plan_lengths = {len(plan) for plan in plans}
         if len(plan_lengths) != 1:
@@ -2036,7 +2098,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     results, overall_return_code = execute_schedule(schedule)
     write_aggregate_summaries(
-        [summary_dir for _, summary_dir in binaries],
+        [summary_dir for _, summary_dir, _ in binaries],
         cases,
         results,
         args.warmups,
@@ -2096,6 +2158,7 @@ def load_summary(path: pathlib.Path) -> dict[str, object]:
 
 def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     normalized = dict(summary)
+    allow_legacy_relation_mode = int(normalized.get("schema_version", 0)) < 9
     mode = str(normalized["mode"])
     num_vars = int(normalized["num_vars"])
     num_polys = int(normalized.get("num_polys", 1))
@@ -2135,12 +2198,60 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
                 level["current_w_len"] = level.get("current_w_groups", [])
             level.setdefault("setup_prefix_natural_field_elements", 0)
             level.setdefault("setup_prefix_padded_field_elements", 0)
-            level.setdefault("relation_mode", "quotient_lift")
+            relation_mode = level.get("relation_mode")
+            if relation_mode is None:
+                if not allow_legacy_relation_mode:
+                    raise ValueError("current profile artifact is missing relation_mode")
+                relation_mode = "quotient_lift"
+                level["relation_mode"] = relation_mode
+            if relation_mode not in VALID_RELATION_MODES:
+                raise ValueError(
+                    f"profile artifact has invalid relation_mode {relation_mode!r}"
+                )
+            if "num_digits_quotient" not in level:
+                if not allow_legacy_relation_mode:
+                    raise ValueError(
+                        "current profile artifact is missing num_digits_quotient"
+                    )
+            else:
+                validate_relation_quotient_digits(
+                    "profile artifact level",
+                    str(relation_mode),
+                    int(level["num_digits_quotient"]),
+                )
             groups = level.get("groups")
             if isinstance(groups, list):
                 for group in groups:
                     if isinstance(group, dict):
-                        group.setdefault("relation_mode", level["relation_mode"])
+                        group_mode = group.get("relation_mode")
+                        if group_mode is None:
+                            if not allow_legacy_relation_mode:
+                                raise ValueError(
+                                    "current profile artifact group is missing relation_mode"
+                                )
+                            group_mode = relation_mode
+                            group["relation_mode"] = group_mode
+                        if group_mode not in VALID_RELATION_MODES:
+                            raise ValueError(
+                                "profile artifact group has invalid relation_mode "
+                                f"{group_mode!r}"
+                            )
+                        if group_mode != relation_mode:
+                            raise ValueError(
+                                "profile artifact group relation_mode disagrees with its level"
+                            )
+                        if "num_digits_quotient" not in group:
+                            if not allow_legacy_relation_mode:
+                                raise ValueError(
+                                    "current profile artifact group is missing "
+                                    "num_digits_quotient"
+                                )
+                        else:
+                            validate_relation_quotient_digits(
+                                "profile artifact group",
+                                str(group_mode),
+                                int(group["num_digits_quotient"]),
+                            )
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
         warning = public_opening_groups_warning(normalized)
