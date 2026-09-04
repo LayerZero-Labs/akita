@@ -3,14 +3,11 @@
 
 mod common;
 
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningClaimsLayout;
 use common::*;
 use proptest::prelude::*;
-
-type Scheme = AkitaCommitmentScheme<DenseCfg>;
 
 fn batch_case(index: usize) -> (usize, usize) {
     // Keep fuzz inputs on exact generated rows so failures exercise transcript

@@ -5,7 +5,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
-use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
@@ -16,8 +15,6 @@ use akita_types::{
 };
 use common::*;
 use jolt_field::{One, Zero};
-
-type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
 /// Small singleton onehot instance that exercises a folded path ending in a
 /// terminal response.
