@@ -17,10 +17,10 @@ fn packed_proof_cost_alignment_order_matches_exhaustive_comparison() {
     let mut costs = Vec::new();
     for payload_bytes in 0..=3 {
         for nonce_bits in 0..=24 {
-            costs.push(PackedProofCost::new(payload_bytes, nonce_bits).unwrap());
+            costs.push(PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap());
         }
     }
-    costs.push(PackedProofCost::new(usize::MAX, 0).unwrap());
+    costs.push(PackedProofCost::new(usize::MAX, 0, 0).unwrap());
 
     for &left in &costs {
         for &right in &costs {
@@ -34,6 +34,59 @@ fn packed_proof_cost_alignment_order_matches_exhaustive_comparison() {
             );
         }
     }
+}
+
+#[test]
+fn packed_proof_cost_rejects_only_query_budget_exhaustion() {
+    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let empty = PackedProofCost::new(0, 0, 0).unwrap();
+    assert_eq!(empty.checked_prepend(0, 0, limit).unwrap(), None);
+
+    let individually_valid_suffix = PackedProofCost::new(0, 0, limit - 2).unwrap();
+    assert_eq!(
+        individually_valid_suffix.checked_prepend(0, 0, 2).unwrap(),
+        None,
+        "two individually valid edge totals can exhaust the complete budget"
+    );
+    assert!(matches!(
+        individually_valid_suffix.checked_prepend(0, 0, u64::MAX),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+    assert!(matches!(
+        PackedProofCost::new(usize::MAX, 0, 0)
+            .unwrap()
+            .checked_prepend(1, 0, limit),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
+    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let suffix = PackedProofCost::new(0, 0, 0).unwrap();
+    let selected = [(10, limit), (20, 1)]
+        .into_iter()
+        .filter_map(|(payload_bytes, queries)| {
+            suffix.checked_prepend(payload_bytes, 0, queries).unwrap()
+        })
+        .min_by_key(|cost| cost.proof_bytes());
+
+    assert_eq!(selected, Some(PackedProofCost::new(20, 0, 1).unwrap()));
+    assert!([limit, limit + 1]
+        .into_iter()
+        .all(|queries| suffix.checked_prepend(0, 0, queries).unwrap().is_none()));
+}
+
+#[test]
+fn packed_proof_cost_dominance_requires_no_more_queries() {
+    let smaller_proof_more_queries = PackedProofCost::new(9, 0, 11).unwrap();
+    let larger_proof_fewer_queries = PackedProofCost::new(10, 0, 10).unwrap();
+
+    assert!(!smaller_proof_more_queries.never_worse_for_every_parent(larger_proof_fewer_queries));
+    assert!(
+        !smaller_proof_more_queries.strictly_better_for_every_parent(larger_proof_fewer_queries)
+    );
+    assert!(!larger_proof_fewer_queries.never_worse_for_every_parent(smaller_proof_more_queries));
 }
 
 #[test]

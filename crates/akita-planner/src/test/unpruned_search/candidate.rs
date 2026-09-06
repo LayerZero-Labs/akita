@@ -209,7 +209,7 @@ pub(super) fn terminal(
             )?,
         ),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, 0)?,
+        cost: PackedProofCost::new(payload_bytes, 0, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
@@ -231,7 +231,7 @@ pub(super) fn prepend_fold(
     opening_reduction_bytes: usize,
     params: &CommittedGroupParams,
     child: &ScheduleCandidate,
-) -> Result<ScheduleCandidate, AkitaError> {
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
     let opening_layout = suffix_opening_layout(input_witness_len, None)?;
     let direct_bytes = reference_level_proof_bytes(
         policy.decomposition.field_bits(),
@@ -254,7 +254,7 @@ pub(super) fn prepend_fold(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let edge_nonce_bits = akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+    let edge_grinding_cost = akita_types::transcript_grinding_cost_for_planner_edge(
         params,
         relation_geometry,
         &opening_layout,
@@ -264,12 +264,20 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
-    Ok(ScheduleCandidate {
+    let Some(cost) = child.cost.checked_prepend(
+        direct_bytes,
+        edge_grinding_cost.total_nonce_bits,
+        edge_grinding_cost.expanded_query_count,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(
             akita_types::active_setup_field_len(params, &opening_layout)?,
         ),
         first_direct_output_witness_len: output_witness_len,
-        cost: child.cost.checked_prepend(direct_bytes, edge_nonce_bits)?,
+        cost,
         setup_field_elements: reference_setup_field_elements(params)?
             .max(child.setup_field_elements),
         folds: child.folds.prepend(CandidateFoldStep {
@@ -280,7 +288,7 @@ pub(super) fn prepend_fold(
             estimated_stage3_payload_bytes: 0,
         }),
         terminal: Arc::clone(&child.terminal),
-    })
+    }))
 }
 
 pub(super) fn prepend_root(
@@ -290,7 +298,7 @@ pub(super) fn prepend_root(
     root_params: &CommittedGroupParams,
     output_witness_len: usize,
     suffix: &ScheduleCandidate,
-) -> Result<ScheduleCandidate, AkitaError> {
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
     let opening_layout = schedule_key.opening_layout()?;
     let first_direct_setup_field_len =
         std::num::NonZeroUsize::new(active_setup_field_len(root_params, &opening_layout)?)
@@ -314,7 +322,7 @@ pub(super) fn prepend_root(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let root_nonce_bits = akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+    let root_grinding_cost = akita_types::transcript_grinding_cost_for_planner_edge(
         root_params,
         relation_geometry,
         &opening_layout,
@@ -323,10 +331,18 @@ pub(super) fn prepend_root(
         policy.claim_ext_degree,
         0,
     )?;
+    let Some(cost) = suffix.cost.checked_prepend(
+        root_bytes,
+        root_grinding_cost.total_nonce_bits,
+        root_grinding_cost.expanded_query_count,
+    )?
+    else {
+        return Ok(None);
+    };
     let candidate = ScheduleCandidate {
         first_direct_setup_field_len: Some(first_direct_setup_field_len),
         first_direct_output_witness_len: output_witness_len,
-        cost: suffix.cost.checked_prepend(root_bytes, root_nonce_bits)?,
+        cost,
         setup_field_elements: reference_setup_field_elements(root_params)?
             .max(suffix.setup_field_elements),
         folds: suffix.folds.prepend(CandidateFoldStep {
@@ -338,16 +354,18 @@ pub(super) fn prepend_root(
         }),
         terminal: Arc::clone(&suffix.terminal),
     };
-    let canonical_nonce_bits = akita_schedules::planner_support::candidate_grinding_nonce_bits(
+    let canonical_cost = akita_schedules::planner_support::candidate_grinding_cost(
         policy,
         &opening_layout,
         &candidate.folds.to_vec(),
         candidate.terminal.as_ref(),
     )?;
-    if candidate.cost.nonce_bits() != canonical_nonce_bits {
+    if candidate.cost.nonce_bits() != canonical_cost.total_nonce_bits
+        || candidate.cost.expanded_query_count() != canonical_cost.expanded_query_count
+    {
         return Err(AkitaError::InvalidSetup(
             "edge-wise oracle grinding cost disagrees with the canonical complete schedule".into(),
         ));
     }
-    Ok(candidate)
+    Ok(Some(candidate))
 }

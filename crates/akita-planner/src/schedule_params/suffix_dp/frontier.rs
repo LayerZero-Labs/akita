@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use akita_error::AkitaError;
 
-use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
+use crate::PlannerPolicy;
 
 use super::{
     child_choice, child_edge_price, ParentObservableKey, PendingScheduleCandidate,
@@ -56,7 +56,7 @@ impl ProjectionMask {
 #[derive(Clone, Copy)]
 pub(super) struct PricedChildEdge {
     edge_price: super::ChildEdgePrice,
-    edge_nonce_bits: usize,
+    edge_grinding_cost: akita_types::TranscriptGrindingCost,
 }
 
 pub(super) fn price_child_edge(
@@ -70,10 +70,10 @@ pub(super) fn price_child_edge(
         ));
     }
     let edge_price = child_edge_price(edge, representative)?;
-    let edge_nonce_bits = edge.grinding_nonce_bits(representative, edge_price.relation_geometry)?;
+    let edge_grinding_cost = edge.grinding_cost(representative, edge_price.relation_geometry)?;
     Ok(PricedChildEdge {
         edge_price,
-        edge_nonce_bits,
+        edge_grinding_cost,
     })
 }
 
@@ -93,7 +93,7 @@ pub(super) fn consider_child_suffixes<'a>(
         let Some(candidate) = child_choice(
             edge,
             priced_edge.edge_price,
-            priced_edge.edge_nonce_bits,
+            priced_edge.edge_grinding_cost,
             suffix,
         )?
         else {
@@ -357,22 +357,6 @@ impl ProjectedFrontier {
             .sum()
     }
 
-    pub(super) fn recursive_direct_bound_is_strictly_worse(
-        &self,
-        parent_cost: &ParentObservableKey,
-        first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
-        lower_bound: CompleteObjectiveBound,
-    ) -> bool {
-        let candidate_admission = ParentAdmissionClass {
-            fold_depth: 2,
-            first_direct_setup_capacity,
-        };
-        let Some(choices) = self.by_parent_cost.get(parent_cost) else {
-            return false;
-        };
-        recursive_direct_bound_is_dominated(candidate_admission, lower_bound, choices)
-    }
-
     fn consider(
         &mut self,
         policy: &PlannerPolicy,
@@ -566,41 +550,6 @@ impl ProjectedFrontier {
     }
 }
 
-fn recursive_direct_bound_is_dominated(
-    candidate_admission: ParentAdmissionClass,
-    lower_bound: CompleteObjectiveBound,
-    incumbents: &ProjectedObjectiveChoices,
-) -> bool {
-    Projection::ALL.into_iter().all(|projection| {
-        projection_bound_is_dominated(
-            projection,
-            candidate_admission,
-            lower_bound,
-            incumbents
-                .projected(projection)
-                .iter()
-                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
-        )
-    })
-}
-
-fn projection_bound_is_dominated(
-    projection: Projection,
-    candidate_admission: ParentAdmissionClass,
-    lower_bound: CompleteObjectiveBound,
-    incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
-) -> bool {
-    incumbents.into_iter().any(|(admission, metrics)| {
-        admission.admits_every_parent_of(candidate_admission)
-            && match projection {
-                Projection::FirstDirectSetup => {
-                    lower_bound.is_strictly_worse_for_recursive_parent(metrics)
-                }
-                Projection::Payload => lower_bound.is_strictly_worse_for_recursive_payload(metrics),
-            }
-    })
-}
-
 fn setup_dominates_for_policy(
     selection_policy: crate::SelectionPolicyId,
     left: &ProjectedCandidate,
@@ -632,7 +581,9 @@ fn setup_primary_strictly_dominates(
     right_score: SetupScore,
     right_admission: ParentAdmissionClass,
 ) -> bool {
-    if !left_admission.admits_every_parent_of(right_admission) {
+    if !left_admission.admits_every_parent_of(right_admission)
+        || !left_score.cost.queries_never_worse(right_score.cost)
+    {
         return false;
     }
     if matches!(
@@ -672,7 +623,9 @@ fn setup_projection_dominates(
     left: ProjectionOrder<'_, SetupScore>,
     right: ProjectionOrder<'_, SetupScore>,
 ) -> bool {
-    if !left.admission.admits_every_parent_of(right.admission) {
+    if !left.admission.admits_every_parent_of(right.admission)
+        || !left.score.cost.queries_never_worse(right.score.cost)
+    {
         return false;
     }
     let cost_never_worse = left

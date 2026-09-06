@@ -129,14 +129,17 @@ fn consider_complete_schedule(
         ));
     }
     complete_schedules.set(visited);
-    let candidate = prepend_root(
+    let Some(candidate) = prepend_root(
         policy,
         schedule_key,
         root.input_witness_len,
         root.params,
         root.output_witness_len,
         suffix,
-    )?;
+    )?
+    else {
+        return Ok(());
+    };
     if !policy.admits_setup_field_elements(candidate.setup_field_elements) {
         return Ok(());
     }
@@ -276,6 +279,8 @@ pub(super) fn find_schedule(
     let selected_descriptor = schedule_descriptor_bytes(&selected)?;
     let planned = materialize_candidate_schedule(
         selected.cost.proof_bytes(),
+        selected.cost.nonce_bits(),
+        selected.cost.expanded_query_count(),
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
         policy,

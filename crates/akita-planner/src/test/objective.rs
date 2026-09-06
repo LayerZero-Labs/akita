@@ -149,7 +149,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     let incumbent = super::super::CandidateMetrics {
         first_direct_setup_capacity: super::super::SetupPrefixCapacity::for_natural_len(10),
         first_direct_output_witness_len: 1_000,
-        cost: super::super::PackedProofCost::new(20, 0).unwrap(),
+        cost: super::super::PackedProofCost::new(20, 0, 0).unwrap(),
         setup_field_elements: 30,
     };
     assert!(CompleteObjectiveBound::SetupFirst {
@@ -164,31 +164,6 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_than(incumbent));
-    assert!(!CompleteObjectiveBound::SetupFirst {
-        first_direct_setup_capacity: 16,
-        proof_bytes: 20,
-        setup_field_elements: 31,
-    }
-    .is_strictly_worse_for_recursive_parent(incumbent));
-    assert!(CompleteObjectiveBound::SetupFirst {
-        first_direct_setup_capacity: 16,
-        proof_bytes: 21,
-        setup_field_elements: 0,
-    }
-    .is_strictly_worse_for_recursive_parent(incumbent));
-    assert!(!CompleteObjectiveBound::SetupFirst {
-        first_direct_setup_capacity: 16,
-        proof_bytes: 20,
-        setup_field_elements: usize::MAX,
-    }
-    .is_strictly_worse_for_recursive_payload(incumbent));
-    assert!(CompleteObjectiveBound::SetupFirst {
-        first_direct_setup_capacity: 0,
-        proof_bytes: 21,
-        setup_field_elements: 0,
-    }
-    .is_strictly_worse_for_recursive_payload(incumbent));
-
     let padded_envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
@@ -252,7 +227,7 @@ fn complete_candidate(
     super::ScheduleCandidate {
         first_direct_setup_field_len: NonZeroUsize::new(1),
         first_direct_output_witness_len: output_witness_len,
-        cost: super::super::PackedProofCost::new(proof_bytes, 0).unwrap(),
+        cost: super::super::PackedProofCost::new(proof_bytes, 0, 0).unwrap(),
         setup_field_elements,
         folds: CandidateFoldChain::default().prepend(
             akita_schedules::planner_support::CandidateFoldStep {

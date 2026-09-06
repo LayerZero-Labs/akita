@@ -196,7 +196,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         "successor details invisible to the parent must share one class"
     );
     let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
-    let grind_bits = |successor| {
+    let grinding_cost = |successor| {
         let successor = akita_types::FoldSuccessor::Recursive(successor);
         let relation_geometry = evaluation_trace
             .relation_address_geometry(
@@ -206,7 +206,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
                 512,
             )
             .unwrap();
-        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        akita_types::transcript_grinding_cost_for_planner_edge(
             &evaluation_trace,
             relation_geometry,
             &layout,
@@ -218,13 +218,13 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         .unwrap()
     };
     assert_eq!(
-        grind_bits(&evaluation_trace),
-        grind_bits(&descriptor_distinct),
+        grinding_cost(&evaluation_trace),
+        grinding_cost(&descriptor_distinct),
         "one parent-observable successor class must have one grinding price"
     );
     assert_eq!(
-        grind_bits(&evaluation_trace),
-        grind_bits(&reduced_successor),
+        grinding_cost(&evaluation_trace),
+        grinding_cost(&reduced_successor),
         "relation details invisible to the parent must not change grinding price"
     );
 
@@ -252,6 +252,15 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
     assert!(!super::state_allows_terminal_seed(true, false));
     assert!(!super::state_allows_terminal_seed(false, true));
     assert!(!super::state_allows_terminal_seed(true, true));
+}
+
+#[test]
+fn guided_early_pruning_is_limited_to_complete_roots() {
+    assert!(matches!(
+        super::GuideScope::for_state(true),
+        Some(super::GuideScope::CompleteRoot)
+    ));
+    assert!(super::GuideScope::for_state(false).is_none());
 }
 
 #[test]

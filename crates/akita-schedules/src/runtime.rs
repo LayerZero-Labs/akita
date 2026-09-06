@@ -552,14 +552,14 @@ fn fold_schedule_from_candidate_parts(
 
 /// Price the canonical grinding plan for one complete schedule candidate.
 #[doc(hidden)]
-pub fn candidate_grinding_nonce_bits(
+pub fn candidate_grinding_cost(
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     folds: &[CandidateFoldStep],
     terminal_response: &CandidateTerminalResponse,
-) -> Result<usize, AkitaError> {
+) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
     let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
-    akita_types::transcript_grinding_nonce_bits_for_planner_candidate(
+    akita_types::transcript_grinding_cost_for_planner_candidate(
         &schedule,
         root_layout,
         policy.decomposition.field_bits(),
@@ -733,8 +733,11 @@ pub fn expanded_schedule_proof_payload_bytes(
 /// Materialize and validate the schedule shared by offline search and generated replay.
 ///
 /// `cached_num_setup_field_elements` is the exact shared flat setup capacity.
+#[allow(clippy::too_many_arguments)]
 pub fn materialize_candidate_schedule(
     cached_total: usize,
+    cached_nonce_bits: usize,
+    cached_expanded_query_count: u64,
     cached_num_setup_field_elements: usize,
     cached_first_direct_setup_field_len: Option<usize>,
     policy: &PlannerPolicy,
@@ -775,6 +778,15 @@ pub fn materialize_candidate_schedule(
         policy.decomposition.field_bits(),
         policy.claim_ext_degree,
     )?;
+    if grinding_plan.total_nonce_bits() != cached_nonce_bits
+        || grinding_plan.expanded_query_count() != cached_expanded_query_count
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached grinding cost ({cached_nonce_bits} nonce bits, {cached_expanded_query_count} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            grinding_plan.total_nonce_bits(),
+            grinding_plan.expanded_query_count(),
+        )));
+    }
     estimate.nonce_stream_bytes =
         akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
             .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;

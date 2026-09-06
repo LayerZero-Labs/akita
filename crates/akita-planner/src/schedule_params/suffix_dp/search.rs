@@ -177,18 +177,9 @@ fn price_planned_fold_candidate(
     }
     let prune_direct_edge = if direct_edge_is_admissible {
         guide
-            .zip(search.guide_scope)
-            .map(|((lower_bound, _), guide_scope)| {
-                direct_edge_bound_is_strictly_worse(
-                    ctx.policy,
-                    guide_scope,
-                    &params,
-                    natural_len,
-                    lower_bound,
-                    &frontiers.projected,
-                )
+            .map(|(lower_bound, _)| {
+                direct_edge_bound_is_strictly_worse(ctx.policy, lower_bound, &frontiers.projected)
             })
-            .transpose()?
             .unwrap_or(false)
     } else {
         false
@@ -300,8 +291,9 @@ fn process_candidate_batch(
     if candidates.is_empty() {
         return Ok(());
     }
-    let incoming_setup_prefix = state.topology.incoming_setup_prefix();
-    let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
+    // Recursive-prefix objective bounds have no sound query-count lower
+    // bound, so guided early pruning is restricted to complete roots.
+    let guide_scope = GuideScope::for_state(is_root_level);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
     let search = OpeningSearch {
         state,

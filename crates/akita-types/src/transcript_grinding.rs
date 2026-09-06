@@ -27,6 +27,11 @@ pub const GRINDING_ENCODING_VERSION: u16 = 1;
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 1;
 /// Indexed fold-coordinate oracle revision.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
+/// Exclusive upper bound on expanded transcript queries in a complete plan.
+///
+/// This preserves the existing accepted set: a plan must contain fewer than
+/// `u32::MAX` expanded queries.
+pub const TRANSCRIPT_GRINDING_QUERY_LIMIT: u64 = u32::MAX as u64;
 
 const GRINDING_PLAN_DOMAIN: &[u8] = b"akita/grinding-plan/v1";
 const GRINDING_POLICY_BYTES: usize = 17;
@@ -480,6 +485,15 @@ pub struct GrindingPlan {
     expanded_query_count: u64,
 }
 
+/// Aggregate transcript-grinding cost used while pricing planner candidates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TranscriptGrindingCost {
+    /// Total packed nonce width before byte alignment.
+    pub total_nonce_bits: usize,
+    /// Number of logical transcript queries after expanding compact runs.
+    pub expanded_query_count: u64,
+}
+
 pub(crate) struct GrindingPlanAccumulator {
     nominal_capacity_bits: u32,
     run_count: u32,
@@ -528,16 +542,14 @@ impl GrindingPlanAccumulator {
             .expanded_query_count
             .checked_add(run.multiplicity)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding query count overflow".into()))?;
-        if self.expanded_query_count >= u64::from(u32::MAX) {
-            return Err(AkitaError::InvalidSetup(
-                "grinding plan query count must be less than 2^32".into(),
-            ));
-        }
         Ok(())
     }
 
-    pub(crate) const fn total_nonce_bits(&self) -> usize {
-        self.total_nonce_bits
+    pub(crate) const fn cost(&self) -> TranscriptGrindingCost {
+        TranscriptGrindingCost {
+            total_nonce_bits: self.total_nonce_bits,
+            expanded_query_count: self.expanded_query_count,
+        }
     }
 }
 
@@ -581,11 +593,17 @@ impl GrindingPlan {
         for &run in &runs {
             accumulator.push(run)?;
         }
+        let cost = accumulator.cost();
+        if cost.expanded_query_count >= TRANSCRIPT_GRINDING_QUERY_LIMIT {
+            return Err(AkitaError::InvalidSetup(
+                "grinding plan query count must be less than 2^32".into(),
+            ));
+        }
         Ok(Self {
             runs,
             nominal_capacity_bits,
-            total_nonce_bits: accumulator.total_nonce_bits,
-            expanded_query_count: accumulator.expanded_query_count,
+            total_nonce_bits: cost.total_nonce_bits,
+            expanded_query_count: cost.expanded_query_count,
         })
     }
 

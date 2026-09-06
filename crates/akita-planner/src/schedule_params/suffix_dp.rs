@@ -90,16 +90,16 @@ struct ChildEdge<'a> {
 }
 
 impl ChildEdge<'_> {
-    fn grinding_nonce_bits(
+    fn grinding_cost(
         &self,
         suffix: &ScheduleCandidate,
         relation_geometry: akita_types::RelationAddressGeometry,
-    ) -> Result<usize, AkitaError> {
+    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
             || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
             |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        akita_types::transcript_grinding_cost_for_planner_edge(
             self.candidate_params.as_ref(),
             relation_geometry,
             self.opening_layout,
@@ -177,28 +177,11 @@ enum CandidateTraversal {
 #[derive(Clone, Copy)]
 enum GuideScope {
     CompleteRoot,
-    RecursivePrefix,
 }
 
 impl GuideScope {
-    fn for_state(
-        policy: &PlannerPolicy,
-        is_complete_root: bool,
-        incoming_setup_prefix: Option<usize>,
-    ) -> Option<Self> {
-        if is_complete_root {
-            Some(Self::CompleteRoot)
-        } else if incoming_setup_prefix.is_some()
-            && matches!(
-                policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
-            )
-        {
-            Some(Self::RecursivePrefix)
-        } else {
-            None
-        }
+    fn for_state(is_complete_root: bool) -> Option<Self> {
+        is_complete_root.then_some(Self::CompleteRoot)
     }
 }
 
@@ -293,7 +276,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
-    edge_nonce_bits: usize,
+    edge_grinding_cost: akita_types::TranscriptGrindingCost,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -338,9 +321,14 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
-    let cost = suffix
-        .cost
-        .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
+    let Some(cost) = suffix.cost.checked_prepend(
+        edge_payload_bytes,
+        edge_grinding_cost.total_nonce_bits,
+        edge_grinding_cost.expanded_query_count,
+    )?
+    else {
+        return Ok(None);
+    };
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
         first_direct_output_witness_len,
@@ -421,27 +409,10 @@ fn complete_root_setup_bound_is_strictly_worse(
 
 fn direct_edge_bound_is_strictly_worse(
     policy: &PlannerPolicy,
-    guide_scope: GuideScope,
-    params: &CommittedGroupParams,
-    natural_setup_field_len: usize,
     lower_bound: CompleteObjectiveBound,
     frontier: &ProjectedFrontier,
-) -> Result<bool, AkitaError> {
-    match guide_scope {
-        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
-            policy,
-            lower_bound,
-            frontier,
-        )),
-        GuideScope::RecursivePrefix => {
-            let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
-            Ok(frontier.recursive_direct_bound_is_strictly_worse(
-                &parent_cost,
-                SetupPrefixCapacity::for_natural_len(natural_setup_field_len),
-                lower_bound,
-            ))
-        }
-    }
+) -> bool {
+    complete_root_bound_is_strictly_worse(policy, lower_bound, frontier)
 }
 
 fn candidate_traversal(
@@ -565,7 +536,7 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(total, 0)?,
+        cost: PackedProofCost::new(total, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),

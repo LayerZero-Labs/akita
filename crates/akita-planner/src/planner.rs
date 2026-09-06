@@ -906,6 +906,8 @@ pub(crate) fn find_schedule_in_relation_order(
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
         best.cost.proof_bytes(),
+        best.cost.nonce_bits(),
+        best.cost.expanded_query_count(),
         best.setup_field_elements,
         first_direct_setup_field_len,
         active_policy,
