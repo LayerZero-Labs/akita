@@ -1,17 +1,29 @@
 # Setup and commitment
 
-Akita uses one packed public setup for the commitment matrices at every fold
-level. A polynomial becomes an Ajtai commitment through an inner A matrix, an
-outer B matrix, and a compressed public payload.
+Akita commits to a polynomial by arranging its table entries into ring
+elements, decomposing those elements into small digits, and applying public
+matrices. The result binds the table that the prover will later open. This
+chapter follows one polynomial through that computation before describing
+matrix reuse and the dense and one-hot implementations.
 
 ## Setup
 
-The shared setup is one vector of field elements. Each level interprets a
-prefix of that vector as its A, B, and D matrices. Compression matrices use the
-same setup at their own smaller ring dimensions. The setup envelope is the
-largest physical matrix requirement across the selected schedule. Generated
-schedules and setup-prefix identifiers bind the exact geometry that uses this
-vector.
+The public setup starts from a seed. Akita deterministically expands the seed
+into a vector of base-field elements, then interprets checked ranges of this
+vector as matrices of ring elements. There is no secret trapdoor to retain or
+discard. Both parties must use the same seed and matrix geometry.
+
+Each fold reads a prefix large enough for its A, B, and D matrices.
+Compression matrices read the shared setup at their own smaller ring
+dimensions. The setup envelope is the largest physical matrix requirement
+across the selected schedule. Reusing storage does not make these matrices
+interchangeable. Their row counts, column counts, ring dimensions, and roles
+determine how the coefficients are read.
+
+The [instance descriptor](./transcript.md#akitainstancedescriptor) binds the
+setup seed identity and selected schedule before protocol replay. Expanded
+matrix files and prepared NTT views are caches derived from that public
+identity. Loading a cached coefficient matrix checks that it matches the seed.
 
 A recursive setup schedule may require commitments to selected power of two
 prefixes of this vector. Setup construction materializes exactly those prefix
@@ -19,20 +31,144 @@ slots and checks that no required slot is missing. The prover later opens a
 slot when a fold defers its setup contribution. See
 [Setup offloading](./setup-offloading.md) for the complete lifecycle.
 
-## Ajtai commitment mechanics
+## From a table to inner commitments
 
-The commitment path decomposes each witness block into commit digits `s_hat`.
-It computes the inner commitment `t = A * s_hat`, then uses `B` for the outer
-relation and `D` for the opening relation. Neither full image is public. Every
-B and D image is negative-binary decomposed through exactly two rank-one maps;
-the wire carries only the 128-byte terminal payload `p_F` or `p_H`. The source
-image is capped at 8 KiB. The binding argument reduces to Module-SIS for the
-base relation and for each compression map.
+Begin with one polynomial, one chunk, and a common ring
+$R=F[X]/(X^D+1)$, where $F$ is the base field and $D$ is the ring
+dimension. An element of $R$ stores $D$ field coefficients. Ring
+multiplication wraps powers with the rule $X^D=-1$.
 
-The compression ladder is profile-owned (`q128: 16/8`, `q64: 32/16`, `q32:
-64/32`) and is separate from A/B/D matrix dimensions. All A/B/D dimensions are
-at least 64; the smaller compression rows stay in the shared witness tail and
-cannot change ordinary relation alignment.
+The polynomial's table supplies coefficients $f[\ell,p,b]$. Here $\ell$
+selects a ring coefficient, $p$ a position within a block, and $b$ a block.
+Pack one ring element per position:
+
+$$
+F_{p,b}(X)=\sum_{\ell=0}^{D-1}f[\ell,p,b]X^\ell.
+\tag{1}
+$$
+
+This is a representation of the table. It does not evaluate the application
+polynomial at $X$. [Field to ring reduction](./proving/field-ring-reduction.md)
+explains how an evaluation of the table becomes a claim about these rings.
+
+The inner commitment needs short inputs. Let $G_a^{\mathrm{in}}$ be the
+public recomposition weight for inner digit $a$. Decompose each position
+coefficientwise into digit rings $s_{b,p,a}$:
+
+$$
+F_{p,b}=\sum_aG_a^{\mathrm{in}}s_{b,p,a}.
+\tag{2}
+$$
+
+The configured digit range bounds integer representatives of the
+coefficients. Small digits keep the subsequent commitment and folding
+relations within their certified norm bounds.
+
+Collect the digits of block $b$ into $\mathbf s_b$, in position order
+with digit index innermost. For $L$ positions and $k_{\mathrm{in}}$ digits
+per position, the public inner matrix has shape
+$\mathbf A\in R^{n_A\times Lk_{\mathrm{in}}}$. Its image is
+
+$$
+\mathbf t_b=\mathbf A\mathbf s_b\in R^{n_A}.
+\tag{3}
+$$
+
+For a small algebra example, take $R=\mathbb F_{17}[X]/(X^2+1)$, one
+A row $(2+X,\;1-X)$, and a digit block $\mathbf s_b=(1,-1)$.
+Equation (3) gives $t_b=(2+X)-(1-X)=1+2X$. A second block
+$(0,1)$ gives $1-X$ using the same A row. These tiny parameters only
+illustrate the computation; production schedules choose security-sized
+matrices.
+
+Every block now has a short vector of A outputs, but the number of such
+outputs still grows with the number of blocks. The outer matrix compresses
+that collection.
+
+## The outer commitment and public payload
+
+Let $\rho$ index an A output row. Decompose each $t_{b,\rho}$ using
+outer weights $G_h^{\mathrm{out}}$, then concatenate the resulting digits
+in the outer matrix's column order:
+
+$$
+t_{b,\rho}=\sum_hG_h^{\mathrm{out}}\hat t_{b,\rho,h},
+\qquad
+\mathbf u=\mathbf B\hat{\mathbf t}.
+\tag{4}
+$$
+
+The hat distinguishes the short digit representation $\hat{\mathbf t}$
+from the recomposed inner images $\mathbf t_b$. The two matrix applications
+in (3) and (4) form the two-tier Ajtai commitment.
+
+A standalone commitment transmits a compressed payload $p_F$ for
+$\mathbf u$. Two rank-one maps form the compression chain. Each map
+decomposes its input coefficients into digits in $\{-1,0\}$, packs those
+digits into its native ring, and applies its public matrix. The digit weights
+are positive powers of two, interpreted in the base field. The first map
+produces 256 bytes and the second produces the 128-byte payload $p_F$.
+The complete source image must fit within 8 KiB.
+
+The ring dimensions are profile-owned:
+
+| Modulus profile | First map | Second map |
+| --- | ---: | ---: |
+| q128 | 16 | 8 |
+| q64 | 32 | 16 |
+| q32 | 64 | 32 |
+
+These smaller rings belong to compression. A, B, and D retain their own
+dimensions, each at least 64. Repacking coefficients between these rings is
+a specified coefficient map, so it must not be treated as an arbitrary ring
+homomorphism. The [physical fold relations](./proving/akita-fold-realizations.md)
+explain how the proof checks recomposition and every compression map.
+
+Later recursive commitments can use a schedule-selected raw payload
+$\mathbf u$ instead. Standalone commitments and setup-prefix
+precommitments remain compressed. [Recursion](./recursion.md) describes where
+the raw suffix is admitted.
+
+## What the prover retains
+
+Commitment produces a public committed group and a prover-only hint. The
+group associates its payload with the frozen commitment profile. That profile
+fixes the geometry needed to interpret the commitment, including the inner
+and outer decompositions and B slicing.
+
+The hint retains the semantic inner images $\mathbf t_b$ for each
+polynomial. For compressed commitments it also retains the packed compression
+digits and, when quotient lifting is used, the compression quotient images.
+It does not store a second copy of the public commitment or the complete
+outer digit table $\hat{\mathbf t}$. The prover can reconstruct those
+digits from the retained inner images.
+
+The hint avoids repeating work during opening. It is not evidence that the
+verifier trusts, and it does not replace access to the committed polynomial.
+The verifier receives the public commitment and opening proof, then checks
+the corresponding relations.
+
+## Where the opening matrix enters
+
+D depends on the opening geometry and is used when proving an evaluation.
+For the evaluation-trace opening method, the prover computes a ring partial
+$E_b$ for each block, decomposes these partials into
+$\hat{\mathbf e}$, and forms
+
+$$
+\mathbf v_D=\mathbf D\hat{\mathbf e}.
+\tag{5}
+$$
+
+The opening proof carries the compressed payload $p_H$, or the raw
+$\mathbf v_D$ in an admitted raw fold. Equation (5) binds the opening
+digits. A separate scalar relation recovers the requested evaluation from
+them, as derived in [the Akita fold](./proving/akita-fold.md).
+
+This is why a standalone commitment profile freezes A and B without requiring
+D. The query is not needed to commit. Once the query is known, the opening
+schedule selects D and the proof connects its opening digits to the same
+source used by A and B.
 
 ## Dyadic B slicing
 
@@ -82,14 +218,32 @@ Relevant implementation sources:
 - `crates/akita-types/src/setup_contribution/plan/physical_b.rs`
 - `specs/archive/2026-Q3/commitment-slicing.md`
 
-## Polynomial backends: dense vs one-hot
+## Dense and one-hot backends
 
-When the dense (CRT+NTT digit) mat-vec is used versus the one-hot backend that
-iterates only nonzero monomial positions. One-hot at **fp128 D64** is the usual
-production choice; **D128** remains a comparison / legacy profile (see
-`usage/quickstart.md`).
+The dense backend decomposes the source coefficients and evaluates the inner
+matrix product with CRT and NTT arithmetic. The one-hot backend uses the
+source's sparse structure to visit only its nonzero monomial positions. A
+one-hot source has at most one nonzero entry, equal to one, in each consecutive
+chunk of `onehot_k` entries. An all-zero chunk is allowed.
 
 Both backends use the same checked commitment geometry and sliced B executor.
 They differ only in how they produce the inner A image. Prepared setup and NTT
 caches remain keyed by the physical matrix, so increasing the logical slice
 count does not create extra stored B matrices.
+
+## Code map
+
+- `crates/akita-setup/src/lib.rs` constructs setup and validates cached public
+  matrices against their seed. Its tests cover seed and cache mismatches.
+- `crates/akita-prover/src/api/commitment.rs` checks standalone commitment
+  profiles, computes inner images, and executes sliced outer commitments.
+- `crates/akita-types/src/proof/hints.rs` defines the retained prover state and
+  tests its canonical serialization and shape checks.
+- `crates/akita-prover/src/protocol/ring_switch/commit.rs` commits recursive
+  witnesses, selects raw or compressed output, and prepares the A-only terminal
+  handoff.
+
+The production layout can use different native ring dimensions and several
+polynomials per group. Equations (1) through (5) give the common-ring,
+single-polynomial meaning; the checked layout determines the coefficient
+conversions and concatenation in those larger cases.
