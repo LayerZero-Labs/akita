@@ -3,7 +3,6 @@ name = "akita-recursion-guest"
 version = "0.1.0"
 edition = "2021"
 description = "Jolt guest program: deserializes Akita verifier inputs and runs the Akita verifier."
-authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 

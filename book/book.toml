@@ -1,5 +1,12 @@
 [book]
-authors = []
+authors = [
+  "Freya Liu <freya@cmu.edu>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Omid Bodaghi <omid.bodaghi@layerzerolabs.org>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Taghi Badakhshan <taghi.badakhshan@layerzerolabs.org>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
 language = "en"
 src = "src"
 title = "Akita Book"

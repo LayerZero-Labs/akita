@@ -3,7 +3,6 @@ name = "akita-recursion-artifact"
 version = "0.1.0"
 edition = "2021"
 description = "Produce an Akita verifier-input blob for the Jolt recursion guest."
-authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 

@@ -3,7 +3,6 @@ name = "akita-recursion-host"
 version = "0.1.0"
 edition = "2021"
 description = "Run the Akita verifier inside a Jolt zkVM guest program."
-authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 
