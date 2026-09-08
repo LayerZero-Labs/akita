@@ -8,10 +8,11 @@ use akita_types::{
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
     SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
+use std::hint::black_box;
+
 use criterion::measurement::WallTime;
 use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
-    SamplingMode,
+    criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode,
 };
 use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
 use std::time::Duration;

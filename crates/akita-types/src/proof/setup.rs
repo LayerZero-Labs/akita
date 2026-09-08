@@ -10,8 +10,8 @@ use akita_serialization::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
 

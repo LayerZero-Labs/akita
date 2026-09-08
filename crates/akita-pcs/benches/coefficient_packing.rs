@@ -10,7 +10,9 @@ use akita_types::{
     BasisMode, FpExtEncoding, PreparedSubringCoefficientPackingPoint,
     SubringCoefficientPackingGeometry,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 use std::time::Duration;
 
