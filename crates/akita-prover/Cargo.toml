@@ -22,7 +22,7 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-featur
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 aes = "0.8.4"
-ctr = "0.9.2"
+ctr = "0.10.1"
 rand_core = "0.6"
 rayon = { version = "1.10", optional = true }
 sha3 = "0.10.8"
