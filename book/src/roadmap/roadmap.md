@@ -23,18 +23,14 @@ chapter](../how/proving/extension-opening-reduction.md) documents that path.
 
 The separable representation of the [transparent
 factor](../foundations/extension-opening-reduction.md#structure-of-the-transparent-factor)
-suggests a different prover organization. Partition an EOR domain of size `N`
-into `C` stages. At each stage, fold the small basis-coordinate prefix tables
+suggests a different prover organization. Partition an EOR domain of size $N$
+into $C$ stages. At each stage, fold the small basis-coordinate prefix tables
 and accumulate suffix contractions against the current witness source. A
 fully streamed form could read the original base-field coordinate tables
 directly instead of first retaining the packed extension-field table.
 
-For extension degree `K`, this organization targets
-
-```text
-working memory: O(C K N^(1/C))
-field work:     O(C K N).
-```
+For extension degree $K$, this organization targets $O(C K N^{1/C})$
+working memory and $O(C K N)$ field operations.
 
 It would change only how the prover supplies the existing degree-two sumcheck
 terms. The transcript and verifier need not change. No current protocol path

@@ -59,14 +59,14 @@ opening methods.
 
 ### One indexed stream per coordinate
 
-For coordinate index \(i\), the sampler initializes a fresh SHAKE256 reader
+For coordinate index $i$, the sampler initializes a fresh SHAKE256 reader
 from
 
 ```text
 group_root || little_endian_u64(i).
 ```
 
-Coordinate \(i\) is `claim * num_live_blocks + block`. Expanding one coordinate
+Coordinate $i$ is `claim * num_live_blocks + block`. Expanding one coordinate
 does not mutate either the live transcript or another coordinate's reader.
 This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
@@ -80,21 +80,21 @@ Fiat--Shamir squeezes and not additional proof data.
 
 ### Positions, magnitudes, and signs
 
-Suppose the challenge ring has dimension \(D\). A configured challenge has
+Suppose the challenge ring has dimension $D$. A configured challenge has
 `count_pm1` coefficients at magnitude 1 and `count_pm2` coefficients at
 magnitude 2. The sampler first chooses their distinct positions by a partial
 Fisher--Yates shuffle of `0..D`.
 
 When the challenge is very sparse, the implementation stores only the swaps
-touched by that partial shuffle, using \(O(w)\) scratch for Hamming weight
-\(w\). Denser cases use a fixed stack permutation for better locality. These
+touched by that partial shuffle, using $O(w)$ scratch for Hamming weight
+$w$. Denser cases use a fixed stack permutation for better locality. These
 are two implementations of the same ordered partial shuffle and consume the
 same random stream.
 
 Every bounded integer draw uses bitmask rejection rather than `% D`, so the
 position law has no modulo bias. After positions are fixed, fresh low bits
-choose independent signs. The first `count_pm1` positions receive \(\pm1\);
-the remainder receive \(\pm2\).
+choose independent signs. The first `count_pm1` positions receive $\pm1$;
+the remainder receive $\pm2$.
 
 ### Optional operator-norm rejection
 

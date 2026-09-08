@@ -26,7 +26,7 @@ method prevents a change to page size, domain separation, or field sampling
 from silently changing the setup identified by an existing seed.
 
 The derivation splits the infinite field stream into pages of 4096 elements.
-For page index \(i\), it initializes one SHAKE256 stream with the following
+For page index $i$, it initializes one SHAKE256 stream with the following
 length-prefixed fields, in order:
 
 | Label | Value |
@@ -36,7 +36,7 @@ length-prefixed fields, in order:
 | `page_field_elements` | 4096 as little-endian `u64` |
 | `seed` | the 32-byte public seed |
 | `field` | the protocol-field modulus as 32 big-endian bytes |
-| `page` | \(i\) as little-endian `u64` |
+| `page` | $i$ as little-endian `u64` |
 
 A length-prefixed field is encoded as the little-endian `u64` length of its
 label, the label, the little-endian `u64` length of its value, and the value.
@@ -45,28 +45,25 @@ coefficient stream in two different fields.
 
 The page then calls `Field::random` repeatedly on that SHAKE256 reader. The
 production fields use exact rejection sampling, so this is a uniform field
-stream rather than a fixed-width integer stream reduced modulo \(q\). Pages
+stream rather than a fixed-width integer stream reduced modulo the field
+modulus. Pages
 may be generated in parallel; concatenating them by page index gives the same
 prefix as sequential generation.
 
 ### One stream, several matrix views
 
-Ring dimensions do not enter the derivation. A request for \(L\) field
-elements therefore returns the same prefix under every schedule that uses the
-same setup seed and field. A schedule gives a finite prefix a matrix meaning
-only when it constructs a view.
+Ring dimensions do not enter the derivation. Requests for the same number of
+field elements return the same prefix whenever the setup seed and field agree.
+The schedule determines how to read that prefix as a matrix.
 
-A view with \(r\) rows, \(c\) columns, and ring dimension \(D\) reads exactly
+A matrix view with `r` rows and `c` columns contains `r × c` ring elements.
+Each ring element holds `D` field coefficients, so the view reads
+`r × c × D` coefficients from the start of the stream. It groups every `D`
+coefficients into one ring element, then fills the matrix one row at a time.
 
-\[
-r c D
-\]
-
-field elements. It groups each consecutive \(D\) coefficients into one ring
-element and stores ring elements in row-major order. A, B, and D are
-role-local views beginning at field index zero. They overlap rather than
-occupying disjoint regions, so the materialized setup capacity is the maximum
-role footprint required by the schedule, not the sum of all role footprints.
+The matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$ each read from field
+index zero. Their prefixes overlap. The setup therefore needs enough storage
+for the largest matrix view required by the schedule, not the sum of all views.
 
 This prefix sharing does not require the three roles to use the same ring
 dimension. For example, two views that each use 4096 field coefficients read
