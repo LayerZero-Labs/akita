@@ -58,7 +58,7 @@ dependencies = [
  "jolt-field",
  "keccak 0.1.6",
  "serde",
- "sha3 0.10.9",
+ "sha3",
  "smallvec",
  "tracing",
 ]
@@ -153,7 +153,7 @@ dependencies = [
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rayon",
- "sha3 0.10.9",
+ "sha3",
  "tracing",
 ]
 
@@ -203,7 +203,7 @@ dependencies = [
  "num-traits",
  "rayon",
  "sha2",
- "sha3 0.10.9",
+ "sha3",
  "thiserror",
 ]
 
@@ -248,7 +248,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "sha3 0.10.9",
+ "sha3",
  "tracing",
 ]
 
@@ -1645,16 +1645,6 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
-dependencies = [
- "digest 0.10.7",
- "keccak 0.1.6",
-]
-
-[[package]]
-name = "sha3"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
@@ -1710,7 +1700,7 @@ dependencies = [
  "p3-koala-bear",
  "rand 0.8.8",
  "sha2",
- "sha3 0.11.0",
+ "sha3",
 ]
 
 [[package]]
