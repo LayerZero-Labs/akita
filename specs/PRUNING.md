@@ -50,10 +50,11 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
-The current set temporarily contains 19. The active external-catalog record,
+The current set temporarily contains 20. The active external-catalog record,
 the paired quotient-free tail-ring design and implementation records, and the
-Jolt field-unification record account for the four-record overage. Each record
-returns to the archive after its durable contract is folded into the Book.
+Jolt field-unification and guided-adaptation records account for the five-record
+overage. Each record returns to the archive after its durable contract is folded
+into the Book.
 
 ## Status transitions (required actions)
 
@@ -101,8 +102,9 @@ The root live set is deliberately small and is synchronized with
 17. `structured-e-term.md`
 18. `subring-coefficient-packing.md`
 19. `transcript-grinding.md`
+20. `guided-schedule-adaptation.md`
 
-All 19 current live specifications must pass the default dead-symbol scan. A record
+All 20 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

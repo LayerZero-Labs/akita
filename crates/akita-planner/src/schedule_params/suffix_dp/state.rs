@@ -265,6 +265,15 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    /// Optional exact main-group root selected by an earlier scalar plan.
+    ///
+    /// Adapted grouped planning keeps this root's own A/B geometry and opening
+    /// plan, while allowing the fold-owned shared D matrix and every successor
+    /// level to be rebuilt for the added groups.
+    pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
+    /// Approved scalar schedule whose structural suffix choices guide adapted
+    /// planning. All length-, rank-, and security-derived values are rebuilt.
+    pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
     pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
     pub(crate) level_zero_is_root: bool,

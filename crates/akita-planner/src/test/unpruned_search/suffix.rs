@@ -54,6 +54,7 @@ fn retain_terminal_candidates(
             fold_level: state.level,
             source_moment: state.source_moment,
             relation_traversal_order: RelationTraversalOrder::Canonical,
+            guide: None,
         };
         for params in derive_unpruned_terminal_candidates_for_oracle(request)? {
             work.record_candidate_route(&params)?;
@@ -117,6 +118,7 @@ fn visit_fold_opening(
                 fold_level: state.level,
                 source_moment: state.source_moment,
                 relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
             };
             let fold_candidates = derive_unpruned_fold_candidates_for_oracle(
                 request,

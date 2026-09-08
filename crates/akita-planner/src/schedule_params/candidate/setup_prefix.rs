@@ -12,6 +12,7 @@ struct SetupPrefixSearchKey {
     num_chunks: usize,
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
+    guide: Option<SetupPrefixLayoutGuide>,
 }
 
 #[derive(Default)]
@@ -35,6 +36,7 @@ pub(crate) struct SetupPrefixSearchRequest<'a> {
     pub(crate) num_chunks: usize,
     pub(crate) inner_ring_dimension: usize,
     pub(crate) outer_ring_dimension: usize,
+    pub(crate) guide: Option<SetupPrefixLayoutGuide>,
 }
 
 type SetupPrefixFrontierEntry = (
@@ -215,6 +217,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         inner_ring_dimension,
         outer_ring_dimension,
+        guide,
     } = request;
     let cache_key = SetupPrefixSearchKey {
         opening_method: opening.method(),
@@ -224,6 +227,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         inner_ring_dimension,
         outer_ring_dimension,
+        guide,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
         cache.hits = cache.hits.saturating_add(1);
@@ -285,6 +289,9 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     }
     .search_range(policy)?;
     for log_basis_inner in inner_basis_min..=inner_basis_max {
+        if guide.is_some_and(|guide| log_basis_inner != guide.log_basis_inner) {
+            continue;
+        }
         let inner_decomp = DecompositionParams {
             log_basis: log_basis_inner,
             ..policy.decomposition
@@ -296,6 +303,9 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 continue;
             };
             let position_index_bits = reduced_vars - block_index_bits;
+            if guide.is_some_and(|guide| position_index_bits != guide.position_index_bits) {
+                continue;
+            }
             let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32)
             else {
                 continue;
@@ -319,6 +329,9 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 continue;
             };
             for outer_slice_count in setup_prefix_slice_counts(num_live_blocks) {
+                if guide.is_some_and(|guide| outer_slice_count != guide.outer_slice_count) {
+                    continue;
+                }
                 let Some(entry) = candidate_context.derive_for_slice(
                     split,
                     &inner_candidate,
@@ -381,5 +394,78 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
+    }
+
+    #[test]
+    fn guided_setup_prefix_survives_pareto_pruning() {
+        use akita_config::{
+            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        };
+
+        type Recursive = RecursiveCommitmentConfig<OneHot>;
+        let policy = policy_of::<Recursive>();
+        let n_prefix = 1usize << 14;
+        let opening = PlannerOpeningCandidate::evaluation_trace(
+            Recursive::ring_challenge_config(64).expect("challenge config"),
+        );
+        let mut cache = SetupPrefixSearchCache::default();
+        let request = |guide| SetupPrefixSearchRequest {
+            policy: &policy,
+            opening,
+            log_basis_open: 3,
+            n_prefix,
+            num_chunks: 1,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
+            guide,
+        };
+        let unguided = derive_setup_prefix_groups(&mut cache, request(None))
+            .expect("unguided setup-prefix frontier");
+        let unguided_layouts = unguided
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.profile.inner.digits.log_basis,
+                    candidate.profile.blocks.position_index_bits(),
+                    candidate.profile.outer_slice_count,
+                )
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let reduced_vars = (n_prefix / 64).trailing_zeros() as usize;
+        let (min_basis, max_basis) = crate::InnerBasisSource::RawCoefficients {
+            log_bound: policy.decomposition.field_bits(),
+        }
+        .search_range(&policy)
+        .expect("setup-prefix basis range");
+
+        for log_basis_inner in min_basis..=max_basis {
+            for position_index_bits in 0..=reduced_vars {
+                for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+                    let guide = SetupPrefixLayoutGuide {
+                        log_basis_inner,
+                        position_index_bits,
+                        outer_slice_count,
+                    };
+                    let guided = derive_setup_prefix_groups(&mut cache, request(Some(guide)))
+                        .expect("guided setup-prefix candidate");
+                    if !guided.is_empty()
+                        && !unguided_layouts.contains(&(
+                            log_basis_inner,
+                            position_index_bits,
+                            outer_slice_count,
+                        ))
+                    {
+                        assert!(guided.iter().all(|candidate| {
+                            candidate.profile.inner.digits.log_basis == log_basis_inner
+                                && candidate.profile.blocks.position_index_bits()
+                                    == position_index_bits
+                                && candidate.profile.outer_slice_count == outer_slice_count
+                        }));
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("fixture must contain a feasible setup-prefix layout outside the Pareto frontier");
     }
 }

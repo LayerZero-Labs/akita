@@ -43,8 +43,9 @@ pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
-    SetupPrefixSearchCache, SplitBoundPolicy,
+    CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy, PlannerOpeningCandidate,
+    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache,
+    SplitBoundPolicy,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use candidate::{

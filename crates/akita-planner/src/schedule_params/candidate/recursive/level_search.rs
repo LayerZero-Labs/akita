@@ -66,6 +66,7 @@ pub(super) fn prepare_recursive_level_search(
                     num_chunks,
                     inner_ring_dimension: d_a,
                     outer_ring_dimension: dimensions.d_b(),
+                    guide: request.guide.and_then(|guide| guide.setup_prefix),
                 },
             )?;
             if groups.is_empty() {
