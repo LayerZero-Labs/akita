@@ -146,10 +146,14 @@ proof is entirely sumcheck-free.
 ## Response bounds and canonical decoding
 
 Equations (4) and (5) are linear. Their binding argument also needs the
-response to be short. The schedule supplies a coefficient cap $B_z$, and
-the verifier checks integer representatives with
-$\lVert\mathbf z\rVert_\infty\le B_z$. If the selected security route
-requires an L2 bound, it also checks the exact integer square sum
+response to be short. The schedule selects one of two mutually exclusive
+admission routes:
+
+- A Linf route carries a coefficient cap $B_z$. The verifier checks integer
+  representatives with $\lVert\mathbf z\rVert_\infty\le B_z$.
+- An L2 route carries no independent Linf cap. After checking the signed
+  16 bit representation, canonical Golomb Rice encoding, and scheduled
+  payload budget, the verifier checks the exact integer square sum
 
 $$
 \sum_{p,a,\ell}z_{p,a,\ell}^2\le B_{2,z}^2.
@@ -160,11 +164,13 @@ The right side is the schedule's squared-norm cap. This sum is not computed
 modulo the base field.
 
 Response coefficients use the schedule-selected Golomb Rice encoding. The
-decoder checks the exact coordinate count, the maximum quotient allowed by
-the coefficient cap, canonical zero padding in the final byte, and the
-absence of trailing bytes. It converts only to the required signed 16 bit
-coefficient class. Values outside `[-32768,32767]` are rejected before ring
-arithmetic; a schedule can impose a tighter cap.
+decoder checks the exact coordinate count, a bounded maximum quotient,
+canonical zero padding in the final byte, and the absence of trailing bytes.
+The maximum quotient is derived from $B_z$ on a Linf route and from the
+signed 16 bit wire bound on an L2 route. Both routes enforce the scheduled
+payload budget and reject values outside `[-32768,32767]` before ring
+arithmetic. The signed 16 bit representation is not an independent
+schedule-selected Linf security cap on an L2 route.
 
 The prover may search over the bounded fold-response nonces to find a
 response that satisfies these bounds. The verifier reconstructs the selected
