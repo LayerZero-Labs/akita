@@ -60,6 +60,7 @@
 
 - [Foundations](./foundations/foundations.md)
   - [Cyclotomic rings and extension fields](./foundations/rings-and-fields.md)
+  - [Field arithmetic](./foundations/field-arithmetic.md)
   - [NTT, CRT, and fast ring arithmetic](./foundations/ntt-crt.md)
   - [Gadget decomposition](./foundations/gadget-decomposition.md)
   - [Lattices and Module-SIS](./foundations/lattices-sis.md)
