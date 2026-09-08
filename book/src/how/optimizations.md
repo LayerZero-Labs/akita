@@ -81,6 +81,24 @@ current polynomial and its current block tile. Suffix tensor projection
 consumes the recursive witness source directly. Cloning a one hot polynomial
 does not share mutable derived state.
 
+## Streaming suffix tensor inputs
+
+When a recursive evaluation-trace fold needs extension-opening reduction,
+column partials consume the compact witness digits through a row iterator.
+Each digit is converted to a base-field value when read, and missing padded
+entries yield zero. This avoids allocating a complete padded base-field table.
+Packing also reads the compact source directly, but produces a full
+extension-field table. The reduction retains that packed table and its
+sumcheck state, so this input streaming does not give the whole prover constant
+memory usage.
+
+The [small-space EOR roadmap](../roadmap/roadmap.md#small-space-extension-opening-prover)
+describes a separate, not-yet-implemented approach to reducing those retained
+tables.
+
+The implementation and its comparison with a padded-table reference are in
+`crates/akita-prover/src/backend/recursive/witness/tensor.rs`.
+
 ## Tiling and sweep selection
 
 Tile size and arithmetic traversal solve different problems.
@@ -320,6 +338,6 @@ It must preserve source order, checked geometry, arithmetic limits, and the
 protocol output type. It must not absorb transcript state or expose a CPU row
 plan as public API.
 
-See [Compute Backends](../../../docs/compute-backends.md) for backend ownership
+See [Compute Backends](https://github.com/LayerZero-Labs/akita/blob/main/docs/compute-backends.md) for backend ownership
 and NTT lifecycle details. The full PR 375 design record is
-[`specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).
+[`specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`](https://github.com/LayerZero-Labs/akita/blob/main/specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md).

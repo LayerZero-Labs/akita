@@ -1,16 +1,17 @@
 # Roadmap
 
-> **Status:** current status index. Detailed reader guidance belongs in the
-> reader-path follow-up.
+> **Status:** index of remaining implementation and integration work.
 
 This section tracks capabilities that are not part of the current production
 implementation. [Compute backends](./compute-backends.md) tracks the active
 Metal work. [Zero knowledge](./zero-knowledge.md) states the current privacy
 boundary and the requirements for any future implementation.
 
-Implemented work belongs under [How it works](../how/how-it-works.md). See
-[Setup offloading](../how/setup-offloading.md) for the recursive setup path that
-has moved out of this roadmap.
+Implemented work belongs under [How it works](../how/how-it-works.md).
+[Setup offloading](../how/setup-offloading.md) explains the recursive setup
+path. [Prover optimizations](../how/optimizations.md) covers the current
+commitment tiling, matrix streaming, and
+[streaming suffix tensor inputs](../how/optimizations.md#streaming-suffix-tensor-inputs).
 
 ## Small-space extension-opening prover
 
@@ -22,18 +23,14 @@ chapter](../how/proving/extension-opening-reduction.md) documents that path.
 
 The separable representation of the [transparent
 factor](../foundations/extension-opening-reduction.md#structure-of-the-transparent-factor)
-suggests a different prover organization. Partition an EOR domain of size `N`
-into `C` stages. At each stage, fold the small basis-coordinate prefix tables
+suggests a different prover organization. Partition an EOR domain of size $N$
+into $C$ stages. At each stage, fold the small basis-coordinate prefix tables
 and accumulate suffix contractions against the current witness source. A
 fully streamed form could read the original base-field coordinate tables
 directly instead of first retaining the packed extension-field table.
 
-For extension degree `K`, this organization targets
-
-```text
-working memory: O(C K N^(1/C))
-field work:     O(C K N).
-```
+For extension degree $K$, this organization targets $O(C K N^{1/C})$
+working memory and $O(C K N)$ field operations.
 
 It would change only how the prover supplies the existing degree-two sumcheck
 terms. The transcript and verifier need not change. No current protocol path

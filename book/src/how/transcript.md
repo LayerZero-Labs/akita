@@ -1,49 +1,36 @@
 # Transcript and instance binding
 
-The Fiat-Shamir layer and the canonical preamble that binds the instance before
-any protocol replay, so prover and verifier squeeze identical challenges.
+Akita replaces interactive verifier randomness with Fiat-Shamir challenges.
+Prover and verifier derive each challenge from the same public parameters and
+the same preceding messages. The transcript records that order.
+
+For example, suppose two claimed values $v_0,v_1$ will be checked through
+$v_0+\gamma v_1$. Both values must be fixed before the transcript produces
+$\gamma$. If a prover could choose $v_0$ afterward, it could cancel a
+chosen error in $v_1$. This is why a transcript contract specifies both
+which bytes are absorbed and when each challenge is drawn.
 
 ## The transcript layer
 
-Production code uses spongefish-backed `AkitaTranscript` with production-ZST
-labels (labels are diagnostics and must **not** enter production sponge bytes).
+Production uses the spongefish-backed `AkitaTranscript`. Its domain
+separator includes a backend-specific protocol tag, the caller's session
+label, and canonical instance bytes. The selected backend is BLAKE2b or
+Keccak; each has its own protocol tag.
 
-Active hardening pillars:
+An absorb adds a public message to the transcript. A squeeze draws challenge
+bytes and advances its state. Byte messages use length framing, and field
+values use canonical encodings. Message boundaries matter: absorbing two
+messages is not equivalent to absorbing their concatenation as one message.
 
-| Pillar | Requirement |
-|--------|-------------|
-| **P0** | Bind canonical `AkitaInstanceDescriptor` bytes through spongefish `DomainSeparator.instance(...)` before protocol replay |
-| **P2** | Use `AkitaTranscript` plus production-ZST labels only as diagnostics |
-| **P3** | `LoggingTranscript` tests enforce prover/verifier event-stream equality and wire-before-squeeze discipline |
+Production absorbs and squeezes are positional. Their callsite labels are
+diagnostics and do not enter sponge bytes. The session label and explicitly
+encoded protocol context do enter the cryptographic state. Renaming a
+diagnostic label therefore differs from changing a session label, an encoded
+domain string, or replay order.
 
-## Grinding plan and nonce stream
-
-Each proof has one public `GrindingPlan`, derived from the selected schedule,
-normalized opening layout, field tower, and descriptor-bound policy before the
-proof shape is constructed. The plan fixes the order and bit width of every
-transcript proof-of-work query and every bounded fold-response search. Its
-digest is part of the instance descriptor, and its total bit count fixes the
-leading headerless `TranscriptNonceStream` in the proof.
-
-Proof-of-work and fold-response search use the same packed stream but have
-different security meanings. A protected Fiat-Shamir query first checks its
-scheduled nonce against a separate 32-byte predicate, then draws the protocol
-challenge from the advanced transcript. A fold-response nonce is instead a
-12-bit honest-prover retry value, shared by all commitment groups in that fold;
-the verifier still checks the resulting response representation and norm
-bound. Zero-bit sites consume no proof bits and do not change the transcript.
-
-Prover and verifier must consume the complete plan in order. Truncation,
-reordering, nonzero tail padding, or leftover nonce bits is an error.
-
-Implementation: `crates/akita-types/src/transcript_grinding_plan.rs` and
-`crates/akita-transcript/src/grinding.rs`.
-Normative design: [`specs/transcript-grinding.md`](../../specs/transcript-grinding.md).
-
-Deferred work: prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration.
-
-Implementation: `crates/akita-transcript/`.
-Tests: `crates/akita-pcs/tests/transcript_hardening.rs`.
+Prover and verifier must execute the same sequence, including challenge
+lengths and canonical ordering within a batch. Equal proof objects alone do
+not establish that agreement.
 
 ## Sparse fold challenges
 
@@ -72,38 +59,42 @@ opening methods.
 
 ### One indexed stream per coordinate
 
-For coordinate index \(i\), the sampler initializes a fresh SHAKE256 reader
+For coordinate index $i$, the sampler initializes a fresh SHAKE256 reader
 from
 
 ```text
 group_root || little_endian_u64(i).
 ```
 
-Coordinate \(i\) is `claim * num_live_blocks + block`. Expanding one coordinate
+Coordinate $i$ is `claim * num_live_blocks + block`. Expanding one coordinate
 does not mutate either the live transcript or another coordinate's reader.
 This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
+
+Expanding the whole challenge vector from one shared cursor would give a
+different oracle dependency. The challenge context encodes the numeric nonce
+separately from its compact 12-bit proof representation.
 
 The indexed readers are an expansion of one transcript root, not additional
 Fiat--Shamir squeezes and not additional proof data.
 
 ### Positions, magnitudes, and signs
 
-Suppose the challenge ring has dimension \(D\). A configured challenge has
+Suppose the challenge ring has dimension $D$. A configured challenge has
 `count_pm1` coefficients at magnitude 1 and `count_pm2` coefficients at
 magnitude 2. The sampler first chooses their distinct positions by a partial
 Fisher--Yates shuffle of `0..D`.
 
 When the challenge is very sparse, the implementation stores only the swaps
-touched by that partial shuffle, using \(O(w)\) scratch for Hamming weight
-\(w\). Denser cases use a fixed stack permutation for better locality. These
+touched by that partial shuffle, using $O(w)$ scratch for Hamming weight
+$w$. Denser cases use a fixed stack permutation for better locality. These
 are two implementations of the same ordered partial shuffle and consume the
 same random stream.
 
 Every bounded integer draw uses bitmask rejection rather than `% D`, so the
 position law has no modulo bias. After positions are fixed, fresh low bits
-choose independent signs. The first `count_pm1` positions receive \(\pm1\);
-the remainder receive \(\pm2\).
+choose independent signs. The first `count_pm1` positions receive $\pm1$;
+the remainder receive $\pm2$.
 
 ### Optional operator-norm rejection
 
@@ -133,30 +124,178 @@ Implementation:
 
 ## AkitaInstanceDescriptor
 
-The canonical descriptor binds algebra, setup, plan, and call shape.
-Prover and verifier share one helper:
+Before replay, both parties construct an `AkitaInstanceDescriptor` from the
+validated public configuration. The shared
+`bind_transcript_instance_descriptor` helper binds its canonical bytes
+through spongefish's `DomainSeparator.instance(...)`.
 
-- `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
-- `crates/akita-types/src/instance_descriptor/mod.rs` — descriptor shape and serialization
+The descriptor records the following identities:
 
-The descriptor is absorbed before any protocol message or challenge. This
-binds the transcript to the selected algebra, setup, schedule, and public call
-shape rather than trusting those choices from later proof bytes.
+| Section | What it fixes |
+| --- | --- |
+| Algebra | Base modulus and field extension degrees |
+| Setup | Decomposition, SIS modulus profile, compression policy, setup seed digest, protocol feature flags |
+| Plan | Schedule selection and the effective schedule digest |
+| Grinding | The ordered grinding plan and its wire contract |
+| Call | Commitment-group counts, polynomial counts, variable counts, opening-layout digest, and basis |
 
-### Integrator note (Jolt / recursion hosts)
+The effective schedule includes the level geometry, payload modes, and each
+nonterminal `RingRelationMode`. Switching between quotient lifting and
+reduced evaluation changes the preamble before the ring-switch challenge
+$\alpha$. The verifier uses the selected mode and rejects a mismatch.
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently **`4`**. Validation rejects
-any other version. Pin an exact Akita git revision and rerun prove and verify
-integration tests when upgrading. The repository does not promise
+The descriptor fixes the interpretation of the call. Actual commitment
+payloads, opening-point coordinates, and claimed values are absorbed during
+the protocol. Binding only the call's shape would not bind those values.
+
+For example, two calls with identical shapes but different opening values
+have the same shape metadata. Their transcripts diverge when the claimed
+values are absorbed. Two calls that interpret identical payload bytes under
+different schedules diverge at the descriptor.
+
+## Root and fold replay
+
+At the root, replay begins with the batch shape, the group commitments in
+canonical group order, each group's complete opening point, and the
+per-polynomial claimed values. The verifier checks commitment geometry before
+absorbing the payloads.
+
+A nonterminal fold then follows these dependencies:
+
+1. Prepare the opening claim. If evaluation trace over a proper extension
+   requires extension-opening reduction, replay that reduction first.
+2. Absorb the complete opening payload, either compressed $p_H$ or raw
+   $\mathbf v_D$, then draw the application claim-batching coefficients.
+3. Consume the fold-response nonce and draw the sparse fold challenges for
+   each group.
+4. Absorb the next-witness binding. It is a recursive commitment payload or,
+   on the last edge, the terminal inner-image state.
+5. Draw the ring-switch challenge $\alpha$, followed by the range and row
+   points $\tau_0,\tau_1$.
+6. Replay Stage 1 and Stage 2. Absorb each sumcheck round message before
+   drawing its round challenge. Carry the resulting witness-opening claim
+   to the successor.
+7. If the schedule offloads setup, replay Stage 3 and carry its separate
+   setup-prefix opening alongside the witness opening.
+
+This order makes the next witness binding independent of the random points
+that check its relations. The witness itself can remain prover-only until
+the terminal. [Recursion](./recursion.md) explains what each binding commits
+to, and [the sumcheck stages](./proving/sumcheck-stages.md) derive the carried
+claims.
+
+A recursive successor uses the commitment and opening claim supplied by the
+previous fold. If a setup prefix is present, its group precedes the witness
+group. Neither party may reorder groups based on their payload contents.
+
+## Extension-opening reduction and terminal replay
+
+Extension-opening reduction has an earlier batching step of its own. The
+prover first binds the incoming claimed values and reduction partials. The
+transcript then produces the tensor-mixing challenge and the early
+coefficients that batch the reduction claims. Every reduction sumcheck
+message precedes its round challenge.
+
+The reduction's final claims are absorbed before the fold's complete opening
+payload. Only after that payload is bound does the application batching in
+step 2 occur. These two batching steps have different inputs and different
+challenge positions; they cannot reuse a challenge merely because both form
+linear combinations. The
+[reduction chapter](./proving/extension-opening-reduction.md) gives the full
+sequence.
+
+At the terminal, the verifier checks that the response's inner images match
+the predecessor's binding. After any required extension-opening reduction,
+it absorbs the ring opening partials, consumes the fold-response nonce, and
+draws the sparse challenges. It then absorbs the remaining response and
+performs the direct checks. There is no outgoing commitment or replay of
+Stages 1 through 3.
+
+## Grinding plan and nonce stream
+
+Each proof has one public `GrindingPlan`, derived from the selected
+schedule, normalized opening layout, field tower, and policy. The plan fixes
+the order and bit width of every proof-of-work query and bounded
+fold-response search. Its digest is part of the descriptor.
+
+The plan's total bit count fixes the leading `TranscriptNonceStream` in the
+headerless proof. A decoder does not obtain a new nonce count or policy from
+untrusted proof bytes. Reading the stream checks the expected sites in order,
+with no truncation, leftover bits, or nonzero tail padding.
+
+Proof-of-work and fold-response search share this packed storage, but they
+serve different purposes.
+
+### Protected challenge queries
+
+At a protected query with grinding target $g>0$, the prover searches a
+nonce of width $g+7$ bits. Each attempt binds the canonical grinding
+context and nonce, then produces a separate 32-byte predicate. The predicate
+passes when its first $g$ low-order bits are zero.
+
+The verifier repeats that predicate check. Only after it passes does replay
+draw the protocol challenge from the advanced transcript. The predicate is
+not reused as the challenge. A zero-bit target consumes no proof bits and
+leaves the transcript unchanged at that site.
+
+The additional seven nonce bits provide room for honest search beyond the
+expected $2^g$ attempts.
+
+### Fold-response search
+
+A fold-response entry contains a 12-bit nonce, shared by all commitment
+groups in that fold. The prover previews candidates until the resulting
+response satisfies the scheduled representation and norm bounds. It commits
+the winning nonce to replay, or returns an error if the bounded search is
+exhausted.
+
+The verifier reconstructs the challenges for that nonce and enforces the
+response bounds. This is separate from the proof-of-work predicate. The
+[PCS binding chapter](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces)
+explains why adversarial nonce trials must be included in random-oracle query
+accounting.
+
+## Integration and regression checks
+
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `4`. Validation rejects
+other versions. Pin an exact Akita revision and rerun prove and verify
+integration tests when upgrading; the repository does not promise
 compatibility across revisions.
 
-Each nonterminal plan entry binds its `RingRelationMode`. Changing a fold from
-quotient lifting to reduced evaluation therefore changes both the canonical
-plan bytes and the transcript preamble before the shared ring-switch challenge
-`alpha` is sampled. The mode is schedule-owned rather than serialized in the
-proof, and verification never retries the other mode after a mismatch.
+Binding an instance initializes the transcript state for that instance.
+Application code should use the intended session label and let the scheme's
+shared binding path construct the descriptor before replay. Prepending
+application messages to a transcript that will then be rebound does not
+preserve those messages in the new state.
 
-After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
-`false` on the wire. Ongoing wire regression is covered by serde roundtrips and
-end-to-end prove→serialize→deserialize→verify tests in `akita-pcs` (for example
-`akita_e2e.rs`, `fold_linf.rs`), not by pinned proof-byte digests.
+The current descriptor's `SetupSection.protocol_features.zk` is
+`false`. Transcript binding does not add hiding or zero knowledge.
+
+`LoggingTranscript` records semantic events for tests. Its checks compare
+prover and verifier event streams and detect a proof value used before its
+required absorption. Production labels remain outside sponge bytes. Tests
+also cover tampering and serialization roundtrips; they do not freeze one
+proof-byte digest for all future schedules.
+
+## Code map
+
+- `crates/akita-config/src/transcript_binding.rs` constructs and binds the
+  shared descriptor and grinding plan.
+- `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
+  canonical serialization, and version validation.
+- `crates/akita-transcript/src/sponge.rs` owns domain separation, framing,
+  and positional production replay.
+- `crates/akita-types/src/transcript_grinding_plan.rs` defines the ordered
+  plan; `crates/akita-transcript/src/grinding.rs` defines nonce search and
+  the proof-of-work predicate.
+- `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse
+  challenge streams.
+- `crates/akita-verifier/src/protocol/core/fold/mod.rs` and
+  `crates/akita-verifier/src/protocol/core/suffix.rs` enforce fold and
+  terminal replay order.
+- `crates/akita-pcs/tests/transcript_hardening.rs` tests ordering and
+  prover/verifier agreement; `crates/akita-pcs/tests/fold_linf.rs` covers
+  fold-response nonce behavior and proof roundtrips.
+
+The detailed grinding contract is recorded in
+[the transcript grinding specification](https://github.com/LayerZero-Labs/akita/blob/main/specs/transcript-grinding.md).
