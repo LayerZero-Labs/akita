@@ -6,7 +6,6 @@
 //! for local views (orphan-rule-safe: the backend type is local to this test
 //! crate).
 
-#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
@@ -206,9 +205,17 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
+    let key = akita_types::AkitaScheduleLookupKey::single(
+        opening_batch
+            .root_final_group_layout()
+            .expect("root group layout"),
+    );
+    let params = schedules
+        .resolve_key(&key)
         .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     assert_eq!(
@@ -217,7 +224,10 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         "the selected packing root must exercise the canonical commit capability"
     );
 
-    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup_envelope =
+        akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
+            .map(|requirements| requirements.matrix_capacity)
+            .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
     let contract_backend = ContractCommitBackend;
@@ -229,6 +239,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let contract_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
+        &schedules,
         &contract_stack,
         GroupContext::explicit(&params.own_group().profile),
     )
@@ -242,6 +253,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let dense_output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
+        &schedules,
         &cpu_stack,
         GroupContext::explicit(&params.own_group().profile),
     )
@@ -259,6 +271,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
+        &schedules,
         &contract_stack,
         GroupContext::explicit(&malformed_profile),
     )

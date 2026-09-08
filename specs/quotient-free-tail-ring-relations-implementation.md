@@ -37,7 +37,7 @@ Planner decision
     v
 CommittedGroupParams.ring_relation_mode
     |----> canonical level/schedule descriptor
-    |----> generated catalog row and identity
+    |----> external catalog row and identity
     |----> FoldSchedule eligibility validation
     |
     v
@@ -76,9 +76,10 @@ Required type-layer changes include:
    this canonical parameter encoding; they MUST NOT append a second copy.
 4. Bump the effective schedule descriptor epoch because the previous byte
    language did not contain this field.
-5. Include the mode in `GeneratedFoldCore` or another one-per-fold generated
-   owner. Do not repeat it in `GeneratedGroup` and `GeneratedRecursiveFold`.
-6. Include the tag in generated catalog identity and policy reports.
+5. Serialize the mode once in each fold's `CommittedGroupParams` inside the
+   full `FoldSchedule` stored by the external artifact. Do not introduce a
+   second generated row schema.
+6. Include the tag in external catalog row identity and policy reports.
 7. Keep the mode out of proof serialization. The verifier obtains it from the
    already authenticated schedule.
 
@@ -381,12 +382,12 @@ relation mode outside low-level split loops when both modes share the same
 geometry domain, so it does not duplicate expensive matrix derivation before
 the witness length differs.
 
-### Generated schedules and reports
+### External schedule artifacts and reports
 
-Generated row types and emitted Rust MUST store the exact relation mode for
-every root and recursive fold. For readability, the emitter MAY omit the
-`QuotientLift` token only if the generated type supplies that default in an
-unambiguous versioned schema. It MUST emit `ReducedEvaluation` explicitly.
+Each external artifact row MUST store the exact relation mode for every root
+and recursive fold as part of its complete `FoldSchedule`. Artifact encoding
+MUST represent both `QuotientLift` and `ReducedEvaluation` explicitly; no
+ambient config or compiled default may supply either mode.
 
 `catalog_policy_report` SHOULD add `rel=quotient` or `rel=reduced-evaluation` to
 each nonterminal level. It SHOULD report:
@@ -401,8 +402,8 @@ each nonterminal level. It SHOULD report:
 - incoming setup-prefix presence;
 - setup-direct and Stage-3 proof bytes.
 
-Dense fp32, fp64, and fp128 evidence MUST compare the generated baseline and
-head schedules row by row. An aggregate proof-size delta without per-level
+Dense fp32, fp64, and fp128 evidence MUST compare the baseline and regenerated
+external artifacts row by row. An aggregate proof-size delta without per-level
 witness geometry is insufficient.
 
 ## Transcript and serialization contract
@@ -421,7 +422,7 @@ Changing only the mode MUST change:
 - the level canonical descriptor;
 - the complete schedule descriptor;
 - the effective schedule digest;
-- generated catalog identity and row digest;
+- external catalog row identity and digest;
 - the derived witness length and proof shape when quotient rows are nonempty.
 
 It MUST NOT change a commitment to an already frozen source group whose
@@ -557,7 +558,7 @@ smaller witness can change:
 - fold count and terminal response;
 - grinding nonce pricing, if enabled.
 
-Therefore only the complete generated schedule estimate and serialized proof
+Therefore only the complete planner schedule estimate and serialized proof
 benchmark count as proof-size evidence.
 
 ### Planner complexity
@@ -659,7 +660,7 @@ feature is accepted.
       memo state and compares exact proof bytes and canonical descriptors.
 - [x] Reduced-evaluation suffix states cannot invoke setup-prefix candidate search.
 - [x] Existing suffix-cache quotas remain unchanged.
-- [x] Generated row replay recomputes the exact reduced-evaluation witness lengths and
+- [x] Artifact row replay recomputes the exact reduced-evaluation witness lengths and
       proof estimate.
 - [x] Catalog identity and policy reports include relation mode and cutover.
 
@@ -707,8 +708,8 @@ feature is accepted.
 For quotient-free-tail acceptance, exact generated rows, cutovers, witness
 lengths, and proof byte counts MUST NOT be checked in as golden evidence. They
 are planner outputs and may change when the protocol, objective, security
-model, or search implementation improves. The generated catalogs and their
-normal validation remain the source of truth.
+model, or search implementation improves. The checked-in external catalog
+artifacts and their normal admission validation remain the source of truth.
 
 ### Testing strategy
 

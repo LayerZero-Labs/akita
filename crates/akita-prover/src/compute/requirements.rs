@@ -510,11 +510,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "schedules-default")]
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    #[cfg(feature = "schedules-default")]
-    use akita_config::CommitmentConfig;
-    #[cfg(feature = "schedules-default")]
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
     #[test]
@@ -741,13 +737,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
-        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(32, 1),
-        ))
-        .expect("generated schedule")
-        .into_schedule();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("workspace schedule catalog");
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                32, 1,
+            )))
+            .expect("generated schedule")
+            .schedule()
+            .clone();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let mut expected_root_level_commits = NttExecutionRequirements::default();
@@ -795,13 +794,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn complete_execution_includes_the_root_commitment() {
-        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(32, 1),
-        ))
-        .expect("generated schedule")
-        .into_schedule();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("workspace schedule catalog");
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                32, 1,
+            )))
+            .expect("generated schedule")
+            .schedule()
+            .clone();
         let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
         let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
         let root = &schedule.root.params;
@@ -814,13 +816,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn reduced_relation_requirements_have_no_quotient_only_transforms() {
-        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(32, 1),
-        ))
-        .expect("generated schedule")
-        .into_schedule();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("workspace schedule catalog");
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                32, 1,
+            )))
+            .expect("workspace schedule")
+            .schedule()
+            .clone();
         let mut params = schedule.root.params.clone();
         params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
         let mut requirements = NttExecutionRequirements::default();
@@ -843,13 +848,16 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn fp128_dense_prewarms_the_selected_centered_quotient_profile() {
-        let schedule = fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(26),
-        ))
-        .expect("generated dense schedule")
-        .into_schedule();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
+            .expect("workspace schedule catalog");
+        let schedule = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(26),
+            ))
+            .expect("generated dense schedule")
+            .schedule()
+            .clone();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let root = &schedule.root.params;
@@ -880,14 +888,17 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn fp128_dense_root_commit_prewarms_selected_i8_accumulation() {
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
+            .expect("workspace schedule catalog");
         for num_vars in [26, 28, 30] {
-            let schedule = fp128::Dense::resolve_catalog_row_for_key(
-                &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars)),
-            )
-            .expect("generated dense schedule")
-            .into_schedule();
+            let schedule = catalog
+                .resolve_key(&AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(num_vars),
+                ))
+                .expect("generated dense schedule")
+                .schedule()
+                .clone();
             let root = &schedule.root.params;
             let width = root.inner().matrix.input_width();
             let domain = signed_commit_domain(
@@ -917,19 +928,26 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn dense_small_field_nv26_cache_plan_matches_selected_geometry() {
+        let fp32_catalog = akita_config::test_support::workspace_schedule_catalog::<fp32::Dense>()
+            .expect("fp32 workspace schedule catalog");
+        let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
+            .expect("fp64 workspace schedule catalog");
         for schedule in [
-            fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(26),
-            ))
-            .expect("generated fp32 dense schedule")
-            .into_schedule(),
-            fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(26),
-            ))
-            .expect("generated fp64 dense schedule")
-            .into_schedule(),
+            fp32_catalog
+                .resolve_key(&AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp32 dense schedule")
+                .schedule()
+                .clone(),
+            fp64_catalog
+                .resolve_key(&AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp64 dense schedule")
+                .schedule()
+                .clone(),
         ] {
             let root = &schedule.root.params;
             assert!(matches!(

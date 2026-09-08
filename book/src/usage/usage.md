@@ -38,7 +38,7 @@ decode and verify
 ```
 
 The [first proof](./quickstart.md) chapter runs this full path with one dense
-polynomial. It uses a real generated schedule and the same public API used by
+polynomial. It uses a real external schedule artifact and the same public API used by
 larger integrations.
 
 ## What Akita commits to
@@ -83,7 +83,8 @@ The repository separates proving from verification on purpose.
 | Crate | Role |
 | --- | --- |
 | `akita-pcs` | Complete setup, commitment, proving, and verification interface |
-| `akita-config` | Production configurations and generated schedule selection |
+| `akita-config` | Production configurations and trusted artifact validation |
+| `akita-schedules` | External artifact decoding, row audit, and owned catalog lookup |
 | `akita-prover` | Polynomial representations, prepared compute state, and prover kernels |
 | `akita-verifier` | Verification without prover polynomial backends or planner search |
 | `akita-types` | Proofs, commitments, claims, schedules, and setup types shared across the boundary |
@@ -97,12 +98,12 @@ its verifier must use the same protocol format.
 ## Akita chooses the proof plan
 
 The application chooses the field, data shape, and group layout. Akita then
-resolves an approved row from a generated schedule catalog. That row fixes the
+resolves an approved row from the catalog supplied by the application. That row fixes the
 ring dimensions and all later fold parameters.
 
 This division keeps the application interface small. It also keeps parameter
-search out of the verifier. The verifier checks the exact catalog identity
-carried by the statement and replays the approved schedule.
+search out of the verifier. The verifier uses the exact catalog bound to its
+preprocessing or setup package and replays the statement-selected approved row.
 
 The [configuration guide](./configuration.md) explains the choices an
 application should make and the choices Akita deliberately makes for it.

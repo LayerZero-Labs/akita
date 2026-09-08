@@ -7,10 +7,15 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
         .spawn(|| {
             const NUM_VARS: usize = 16;
 
-            let selection = Cfg::resolve_catalog_row_for_opening(
-                &OpeningClaimsLayout::new(NUM_VARS, 1).expect("singleton opening layout"),
-            )
-            .expect("shipped reduced-relation schedule");
+            let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
+                make_verify_fixture(NUM_VARS);
+            let key = akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NUM_VARS, 1),
+            );
+            let selection = scheme
+                .schedules()
+                .resolve_key(&key)
+                .expect("shipped reduced-relation schedule");
             let schedule = selection.schedule();
             let first_reduced_index = schedule
                 .recursive_folds
@@ -35,19 +40,18 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                 .skip_while(|fold| !fold.params.ring_relation_mode.is_reduced_evaluation())
                 .all(|fold| fold.params.ring_relation_mode.is_reduced_evaluation()));
 
-            let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
-                make_verify_fixture(NUM_VARS);
             let commitments = [commitment];
             let openings = [opening];
             let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-            Scheme::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verifier_claims(&opening_point, &openings, &commitments[0]),
-                BasisMode::Lagrange,
-            )
-            .expect("production verifier must replay the reduced-relation suffix");
+            scheme
+                .batched_verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut verifier_transcript,
+                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                    BasisMode::Lagrange,
+                )
+                .expect("production verifier must replay the reduced-relation suffix");
 
             let first_round = proof.recursive_folds[first_reduced_index]
                 .stage2
@@ -61,14 +65,15 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                 .expect("reduced stage2 sumcheck coefficient");
             *coefficient += F::one();
             let mut tampered_transcript = AkitaTranscript::<F>::new(b"test/prove");
-            Scheme::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut tampered_transcript,
-                verifier_claims(&opening_point, &openings, &commitments[0]),
-                BasisMode::Lagrange,
-            )
-            .expect_err("production verifier must reject a tampered reduced stage2 proof");
+            scheme
+                .batched_verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut tampered_transcript,
+                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                    BasisMode::Lagrange,
+                )
+                .expect_err("production verifier must reject a tampered reduced stage2 proof");
         })
         .expect("reduced-relation test thread")
         .join()
@@ -77,13 +82,14 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
 #[test]
 fn verify_rejects_wrong_opening() {
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
+    let layout = singleton_layout(&scheme, 16);
     let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+    let setup = scheme.setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -91,18 +97,19 @@ fn verify_rejects_wrong_opening() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .unwrap();
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -115,23 +122,35 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
+    let proof = scheme
+        .batched_prove::<_, _, _>(
+            &setup,
+            prover_claims(
+                &scheme,
+                &opening_point[..],
+                &poly_refs[..],
+                &commitments[0],
+                hint,
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
 
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = Scheme::batched_verify(
+    let result = scheme.batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
+        verifier_claims(
+            &scheme,
+            &opening_point[..],
+            &wrong_openings[..],
+            &commitments[0],
+        ),
         BasisMode::Lagrange,
     );
 
@@ -143,7 +162,7 @@ fn verify_rejects_wrong_opening() {
 
 #[test]
 fn verify_rejects_malformed_v_dimension_without_panicking() {
-    let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
+    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
     let root_fold = &mut proof.root;
     let mut coeffs = root_fold.opening_payload.coeffs().to_vec();
@@ -155,11 +174,11 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        Scheme::batched_verify(
+        scheme.batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
+            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
         )
     }));
@@ -175,7 +194,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
     fn assert_base_direct_witness(_: &akita_types::TerminalResponse<F>) {}
 
-    let (_, _, proof, _, _, _) = make_verify_fixture(16);
+    let (_, _, _, proof, _, _, _) = make_verify_fixture(16);
     let root = &proof.root;
     assert_base_flat_ring_vec(&root.opening_payload);
     if let Some(commitment) = root.stage2.next_witness_binding.outer_payload() {
@@ -193,7 +212,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 
 #[test]
 fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
-    let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
+    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
         make_verify_fixture(16);
     let dummy_sumcheck = akita_sumcheck::SumcheckProof {
         round_polys: proof.root.stage2.sumcheck_proof.round_polys.to_vec(),
@@ -207,12 +226,13 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    )
-    .expect_err("unchecked extension-opening payload must be rejected");
+    scheme
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect_err("unchecked extension-opening payload must be rejected");
 }

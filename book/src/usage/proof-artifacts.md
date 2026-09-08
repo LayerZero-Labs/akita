@@ -2,7 +2,7 @@
 
 An Akita verification request combines proof bytes with a complete public
 statement. That statement contains the setup identity, commitments, opening
-points, claimed values, configuration, and selected generated schedule.
+points, claimed values, configuration, and selected trusted schedule row.
 
 Akita binds all of these values before deriving proof challenges. This makes
 the public integration boundary part of the cryptographic statement.
@@ -14,7 +14,8 @@ A host should define one versioned container with these fields:
 | Field | Purpose |
 | --- | --- |
 | Protocol revision | Pins the Akita proof format and transcript schedule |
-| Configuration identity | Selects the field policy and generated catalog |
+| Configuration identity | Selects the field policy and expected catalog family |
+| Catalog identity or storage reference | Authenticates the external schedule artifact supplied to the verifier |
 | Verifier setup identity or package | Supplies the public matrix data needed for replay |
 | Schedule selection | Names one exact approved catalog row |
 | Ordered commitments | Fixes every polynomial group |
@@ -54,14 +55,14 @@ instance.
 The [transcript chapter](../how/transcript.md) lists the exact binding order and
 explains the wire checks used by transcript tests.
 
-## Carry the generated row selection
+## Carry the trusted row selection
 
 `SelectedProverOpeningData::selection()` returns an
-`OpeningScheduleSelection`. It names the generated catalog and exact row digest
+`OpeningScheduleSelection`. It names the exact row digest in the trusted catalog
 used for the complete batch.
 
 The verifier does not reconstruct a planner request from proof contents. It
-resolves this explicit identity in the enabled catalog, checks the row digest,
+resolves this explicit identity in the supplied catalog, checks the row digest,
 and replays that schedule. This keeps planner search outside the verifier and
 prevents a proof from supplying its own unchecked parameters.
 
@@ -85,9 +86,9 @@ let proof = AkitaBatchedProof::<F, E>::deserialize_compressed(
 ```
 
 The expected shape controls list lengths and nested proof structure before the
-verifier reads large payloads. A host can derive it from an approved
-configuration and schedule, or authenticate it as part of a versioned artifact
-format.
+verifier reads large payloads. A host can derive it from the selected row in an
+approved catalog, or authenticate it as part of a versioned application
+artifact format.
 
 Canonical encoding means that one accepted object has one encoding within a
 protocol revision. Pinning the producer and verifier to the same commit or

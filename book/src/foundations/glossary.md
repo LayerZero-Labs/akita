@@ -38,7 +38,7 @@ Book. Individual chapters introduce each idea in more detail.
 
 ## Scalar and grouped catalog rows
 
-A generated catalog ships one row for each supported request shape.
+A trusted external catalog ships one row for each supported request shape.
 
 - A **scalar row** describes a polynomial group opened without precommitted
   groups. An independent commitment always uses this row, including a
@@ -49,7 +49,7 @@ A generated catalog ships one row for each supported request shape.
 
 Each precommitted descriptor in a grouped row must equal the scalar-row profile
 under which that commitment was produced. The generated-catalog audit test
-`every_grouped_precommitted_descriptor_has_a_generated_producer` enforces this
+`every_grouped_artifact_precommit_has_a_shipped_scalar_producer` enforces this
 invariant.
 
 ## Notation

@@ -1002,12 +1002,20 @@ not rerun the response model or lattice estimator.
 
 The offline planner and the runtime resolver have separate jobs.
 
-The planner searches candidate folds and writes compact generated rows. Runtime
-code accepts only those rows. `CommitmentConfig::resolve_catalog_row_for_key`
-and `resolve_catalog_row_for_profiles` perform a strict catalog lookup and
-expand the selected row. They do not call the planner. The verifier uses
-`resolve_schedule_selection` with the public `OpeningScheduleSelection` digest.
-It performs a bounded digest lookup and does not reconstruct a planner key.
+The planner searches candidate folds and writes fully expanded schedules to an
+external family artifact. Runtime code does not link generated catalog rows or
+run planner search. `ValidatedScheduleCatalog` parses and semantically audits the
+artifact, derives each row's committed profiles from its root groups, and indexes
+the expanded rows. `TrustedScheduleCatalog<Cfg>` binds that validated catalog to
+one configuration's family, planner policy, and challenge hooks. Setup, proving,
+and verification receive this same config-bound catalog.
+
+`ValidatedScheduleCatalog::resolve_key` and `resolve_profiles` perform exact
+honest-prover lookup by runtime key or committed profiles. The verifier calls
+`resolve_selection` with the public `OpeningScheduleSelection` row digest. This
+is a bounded digest lookup and does not reconstruct a planner key. The methods
+are also available through the read-only dereference from the config-bound
+catalog; no consumer revalidates or copies the row bodies.
 
 `GroupCommitPhaseParams::try_from_params` is the checked construction boundary
 for frozen commitment metadata. It validates the root geometry, digit bases,
@@ -1015,17 +1023,19 @@ digit depths, slice count, A and B widths, modulus profiles, matrix identities,
 and audited SIS bounds. Prover, verifier, planner emission, schedule expansion,
 and schedule audit use this checked constructor when they assemble a profile.
 
-`GeneratedFrozenGroup` stores the frozen profile and the consuming opening
-data. In particular, it stores:
+`GroupOpenPhaseParams` combines the frozen profile with the consuming fold's
+opening data. In particular, it stores:
 
 * the checked `GroupCommitPhaseParams` descriptor;
 * the fold digit depth used when the grouped root opens that commitment.
 
-The generated row does not store a second copy of the commitment geometry.
-Catalog dimension collection and identity hashing read the descriptor directly.
-`GroupOpenPhaseParams::admit` derives the shared opening parameters for
-the current grouped root, but it cannot replace the descriptor's frozen A or B
-matrix, decomposition, or slice count. Precommitted A matrices remain Linf.
+The artifact row does not store a second copy of the committed profiles.
+Catalog admission derives them from the expanded schedule's root groups, and
+catalog dimension collection and identity hashing read each
+`GroupCommitPhaseParams` descriptor directly. `GroupOpenPhaseParams::admit`
+derives the opening parameters for the current grouped root, but it cannot
+replace the descriptor's frozen A or B matrix, decomposition, or slice count.
+Precommitted A matrices remain Linf.
 
 This boundary gives runtime one source of truth. The catalog row selects the
 fold protocol, the committed profile fixes prior commitment geometry, and the

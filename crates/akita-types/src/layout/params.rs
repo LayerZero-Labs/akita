@@ -89,7 +89,7 @@ pub fn shared_d_digit_log_basis(
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
 /// single authoritative struct.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommittedGroupParams {
     /// Every group this fold consumes or commits, in canonical order: an
     /// incoming setup prefix, then the frozen precommitted groups, then this

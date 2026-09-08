@@ -16,10 +16,6 @@ akita-error = { path = "../../../crates/akita-error" }
 akita-recursion-glue = { path = "../glue" }
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
-  "schedules-fp32-onehot",
-  "schedules-fp64-onehot",
-  "schedules-fp128-onehot",
-  "schedules-fp128-onehot-recursive",
 ] }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
   "asm",

@@ -232,7 +232,7 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    #[cfg(all(test, feature = "catalog-gen"))]
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         akita_schedules::planner_support::validate_policy(policy)
     }
@@ -317,7 +317,7 @@ impl CandidateFoldChain {
         self.head.as_deref().map(|node| &node.step)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
         CandidateFoldIter {
             next: self.head.as_deref(),

@@ -4,7 +4,19 @@
 ///
 /// The mode is part of the authenticated schedule descriptor. It is not a
 /// proof field: prover and verifier obtain it from the same effective schedule.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum RingRelationMode {
     /// Lift negacyclic equalities to ordinary polynomial identities with
     /// explicit polynomial-modulus quotient rows.
@@ -25,7 +37,7 @@ impl RingRelationMode {
         }
     }
 
-    /// Stable tag bound by level, schedule, and generated-catalog identities.
+    /// Stable tag bound by level, schedule-row, and catalog identities.
     pub const fn tag(self) -> u8 {
         match self {
             Self::QuotientLift => 1,

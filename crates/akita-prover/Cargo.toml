@@ -45,7 +45,7 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 ] }
 
 [features]
-default = ["schedules-default", "transcript-blake2b"]
+default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -60,7 +60,6 @@ transcript-keccak = [
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
 ]
-schedules-default = ["akita-config/schedules-default"]
 logging-transcript = [
   "akita-challenges/logging-transcript",
   "akita-transcript/logging-transcript",

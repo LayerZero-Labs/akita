@@ -23,7 +23,7 @@ pub(crate) enum RelationSearchDomain {
 pub(crate) enum RelationTraversalOrder {
     #[default]
     Canonical,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     Reversed,
 }
 
@@ -85,7 +85,7 @@ impl RelationSearchDomain {
         self,
         _order: RelationTraversalOrder,
     ) -> &'static [RingRelationMode] {
-        #[cfg(test)]
+        #[cfg(all(test, feature = "catalog-gen"))]
         if matches!(
             (self, _order),
             (Self::QuotientAndReduced, RelationTraversalOrder::Reversed)

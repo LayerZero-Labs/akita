@@ -1,12 +1,7 @@
 import pathlib
 import unittest
 
-from scripts.profile_ci_features import (
-    all_schedule_features,
-    load_feature_graph,
-    schedule_features,
-    schedule_symbol,
-)
+from scripts.profile_ci_features import all_schedule_features, load_feature_graph, schedule_features
 
 
 class ProfileCiFeatureTests(unittest.TestCase):
@@ -15,33 +10,26 @@ class ProfileCiFeatureTests(unittest.TestCase):
         cls.repo = pathlib.Path(__file__).resolve().parents[2]
         cls.graph = load_feature_graph(cls.repo)
 
-    def test_recursive_profile_expands_direct_base_catalog(self) -> None:
+    def test_recursive_profile_enables_no_schedule_features(self) -> None:
         self.assertEqual(
             schedule_features(
                 self.graph, "akita-pcs", "profile-ci-multi-group-recursive"
             ),
-            {"fp128-onehot", "fp128-onehot-recursive"},
+            set(),
         )
 
-    def test_recursive_multichunk_profile_expands_direct_base_catalog(self) -> None:
+    def test_recursive_multichunk_profile_enables_no_schedule_features(self) -> None:
         self.assertEqual(
             schedule_features(
                 self.graph,
                 "akita-pcs",
                 "profile-ci-multi-group-recursive-w8r2",
             ),
-            {
-                "fp128-onehot-multi-chunk",
-                "fp128-onehot-recursive-multi-chunk-w8r2",
-            },
+            set(),
         )
 
-    def test_every_schedule_feature_has_a_linkage_symbol(self) -> None:
-        symbols = {
-            schedule_symbol(feature) for feature in all_schedule_features(self.graph)
-        }
-        self.assertIn("FP128_ONEHOT_RECURSIVE_SCHEDULES", symbols)
-        self.assertIn("FP64_ONEHOT_SCHEDULES", symbols)
+    def test_schedule_feature_surface_is_empty(self) -> None:
+        self.assertEqual(all_schedule_features(self.graph), set())
 
 
 if __name__ == "__main__":

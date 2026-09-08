@@ -6,9 +6,9 @@ in advance. During the proof, the prover shows that a claimed setup contribution
 comes from one of those prefixes. A later fold authenticates the resulting
 opening against the prepared commitment.
 
-This feature is part of the current recursive setup path. It is selected by a
-generated schedule. Once that schedule is resolved, a caller cannot add or
-remove an offloaded edge.
+This feature is part of the current recursive setup path. It is selected by an
+expanded schedule row loaded from a trusted external `.aks` artifact. Once that
+row is resolved, a caller cannot add or remove an offloaded edge.
 
 ## The setup work inside a fold
 
@@ -47,7 +47,7 @@ zero outside `natural_len`, so those extra coefficients do not change the
 claimed setup contribution.
 
 The commitment block geometry covers exactly `n_prefix / d_A` setup rings.
-Schedules, generated replay, serialized slot registries, and prover setup all
+Artifact admission, serialized slot registries, and prover setup all
 reject a prefix profile that covers only the natural support or leaves a
 partial final block.
 
@@ -55,7 +55,7 @@ A `SetupPrefixSlotId` binds the active length and the commitment profile. That
 profile fixes the commitment domain, inner and outer matrices, ring dimensions,
 and decomposition parameters. The scheduled incoming prefix also fixes how its
 opening will be proved. Prover and verifier registries must contain the exact
-set of slots required by the generated schedules.
+set of slots required by the admitted schedule rows.
 
 ## The recursive handoff
 
@@ -122,7 +122,7 @@ The exact mixed dimension evaluation rules are in
 ## How the planner chooses offloading
 
 The ordinary configuration catalogs use direct setup evaluation. A supported
-`RecursiveCommitmentConfig<Cfg>` selects a separate generated catalog in which
+`RecursiveCommitmentConfig<Cfg>` expects a separate external catalog in which
 the planner may use setup offloading.
 
 For each nonterminal edge, the planner retains a direct successor. At producer
@@ -156,7 +156,7 @@ not force the choice. The successor's `incoming_setup_prefix` field records the
 selected edge. There is no second producer-side mode bit that can disagree
 with it.
 
-Planner search happens offline. The generated row records the exact choices,
+Planner search happens offline. The artifact row records the exact choices,
 and the verifier resolves and audits that row. It never searches for a cheaper
 schedule while checking a proof.
 
@@ -172,7 +172,7 @@ catalogs. The current build can expose recursive setup schedules for:
 Setup offloading currently uses the supported uniform $D = 64$ shape. Other
 setup ring dimensions do not expose a recursive offloading catalog.
 
-Support depends on the matching schedule features being enabled. Other base
+Support depends on supplying the matching recursive family artifact. Other base
 configurations have no recursive catalog and are rejected rather than silently
 falling back to a direct schedule under the recursive adapter.
 
@@ -197,7 +197,7 @@ rejects the proof when any of the following occurs:
   geometry; or
 - any checked size or offset overflows.
 
-The transcript binds the generated schedule, setup identity, prefix slot, group
+The transcript binds the admitted schedule, setup identity, prefix slot, group
 layout, and claims before the challenges that depend on them. Malformed input
 must return `AkitaError` or `SerializationError`. It must not cause a verifier
 panic.
@@ -218,5 +218,5 @@ panic.
 
 The live planner contract is
 [`specs/setup-offloading-planner.md`](../../specs/setup-offloading-planner.md).
-It records the exact feasibility rules and generated schedule invariants. This
+It records the exact feasibility rules and external-artifact invariants. This
 chapter owns the reader explanation of the implemented feature.

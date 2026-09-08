@@ -10,6 +10,7 @@
 //! and how its opening is computed from an independent oracle — stays at the
 //! call site, which is the only part worth reading per cell.
 
+use crate::common::load_workspace_scheme;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, UniformProverStack};
@@ -28,6 +29,7 @@ use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 /// Artifacts retained from a successful single-group roundtrip so focused
 /// protocol tests can mutate the exact proof that was already produced.
 pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
+    pub(super) scheme: AkitaCommitmentScheme<Cfg>,
     pub(super) proof: AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     pub(super) verifier_setup: akita_types::AkitaVerifierSetup<Cfg::Field>,
     pub(super) selection: akita_types::OpeningScheduleSelection,
@@ -72,24 +74,25 @@ where
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).expect("setup");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+    let setup = scheme.setup_prover(nv, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =
         UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit");
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
     let poly_refs = [poly];
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -103,19 +106,15 @@ where
         prover_claims,
         vec![hint],
         vec![&poly_refs[..]],
+        scheme.schedules(),
     )
     .expect("prover data");
     let selection = prover_data.selection();
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-        &setup,
-        prover_data,
-        &stack,
-        &mut pt,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
+    let proof = scheme
+        .batched_prove::<_, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .expect("prove");
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -134,16 +133,18 @@ where
     .expect("verifier group")])
     .expect("verifier claims");
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut vt,
-        GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-        BasisMode::Lagrange,
-    )
-    .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
+    scheme
+        .batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut vt,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
 
     SingleGroupRoundtrip {
+        scheme,
         proof: decoded,
         verifier_setup,
         selection,
@@ -164,6 +165,7 @@ where
 /// genuinely shared part shared without inventing that indirection.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn two_group_verify_roundtrip<Cfg>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     verifier_setup: &akita_types::AkitaVerifierSetup<Cfg::Field>,
     selection: akita_types::OpeningScheduleSelection,
@@ -225,12 +227,13 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     .expect("verifier claims");
 
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &decoded,
-        verifier_setup,
-        &mut vt,
-        GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-        BasisMode::Lagrange,
-    )
-    .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    scheme
+        .batched_verify(
+            &decoded,
+            verifier_setup,
+            &mut vt,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .unwrap_or_else(|e| panic!("{what}: {e:?}"));
 }

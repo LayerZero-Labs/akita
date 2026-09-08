@@ -369,9 +369,7 @@ cargo test -p akita-sis-estimator --lib width_table
 Regenerate all dependent schedule catalogs after the SIS table:
 
 ```bash
-scripts/generate-schedule-tables.sh
-cargo run --release -p akita-planner --features catalog-gen \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated --wiring-only
+scripts/generate-schedule-artifacts.sh
 ```
 
 The production `rust-split` mode requires the complete production keyspace.
