@@ -1,10 +1,9 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::GeneratedOutput;
+use super::ArtifactOutput;
 
 static PUBLISH_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -20,7 +19,7 @@ fn transaction_sibling_path(destination: &Path, label: &str, nonce: u64, index: 
     let file_name = destination
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("generated-output");
+        .unwrap_or("schedule-artifact");
     destination.with_file_name(format!(
         ".{file_name}.akita-{label}-{}-{nonce}-{index}",
         std::process::id()
@@ -71,11 +70,11 @@ fn rollback_published_outputs(staged: &mut [StagedOutput]) -> Result<(), String>
     }
 }
 
-/// Stage, format, and publish one complete generated-output batch.
+/// Stage and publish one complete schedule-artifact batch.
 ///
 /// All stage files are written before any destination is replaced. A publish
 /// failure restores every destination already replaced by this batch.
-pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<PathBuf>, String> {
+pub fn publish_artifact_outputs(outputs: Vec<ArtifactOutput>) -> Result<Vec<PathBuf>, String> {
     let nonce = PUBLISH_NONCE.fetch_add(1, Ordering::Relaxed);
     let mut destinations = std::collections::BTreeSet::new();
     let mut staged = Vec::with_capacity(outputs.len());
@@ -83,14 +82,14 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
         if !destinations.insert(output.destination.clone()) {
             cleanup_staged_outputs(&staged);
             return Err(format!(
-                "generated output batch contains duplicate destination {}",
+                "artifact batch contains duplicate destination {}",
                 output.destination.display()
             ));
         }
         if output.destination.is_dir() {
             cleanup_staged_outputs(&staged);
             return Err(format!(
-                "generated output destination is a directory: {}",
+                "artifact destination is a directory: {}",
                 output.destination.display()
             ));
         }
@@ -99,7 +98,7 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
             None => {
                 cleanup_staged_outputs(&staged);
                 return Err(format!(
-                    "generated output has no parent directory: {}",
+                    "artifact has no parent directory: {}",
                     output.destination.display()
                 ));
             }
@@ -135,22 +134,6 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
         return Ok(Vec::new());
     }
 
-    let mut rustfmt = Command::new("rustfmt");
-    rustfmt.args(["--edition", "2021"]);
-    rustfmt.args(staged.iter().map(|output| &output.staged));
-    let status = match rustfmt.status() {
-        Ok(status) => status,
-        Err(error) => {
-            cleanup_staged_outputs(&staged);
-            return Err(format!("format staged generated outputs: {error}"));
-        }
-    };
-    if !status.success() {
-        cleanup_staged_outputs(&staged);
-        return Err(format!(
-            "format staged generated outputs failed with {status}"
-        ));
-    }
     for output in &staged {
         let sync_result = fs::OpenOptions::new()
             .write(true)
@@ -177,10 +160,7 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
         .collect::<Vec<_>>();
     if let Some(stale) = backup_paths.iter().flatten().find(|path| path.exists()) {
         cleanup_staged_outputs(&staged);
-        return Err(format!(
-            "stale generated-output backup: {}",
-            stale.display()
-        ));
+        return Err(format!("stale artifact backup: {}", stale.display()));
     }
 
     for index in 0..staged.len() {
@@ -224,8 +204,8 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
 
 #[cfg(test)]
 mod tests {
-    use super::{publish_generated_outputs, rollback_published_outputs, StagedOutput};
-    use crate::emit::GeneratedOutput;
+    use super::{publish_artifact_outputs, rollback_published_outputs, StagedOutput};
+    use crate::emit::ArtifactOutput;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -234,7 +214,7 @@ mod tests {
 
     fn test_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "akita-generated-publish-{label}-{}-{}",
+            "akita-artifact-publish-{label}-{}-{}",
             std::process::id(),
             TEST_NONCE.fetch_add(1, Ordering::Relaxed)
         ))
@@ -244,26 +224,26 @@ mod tests {
     fn staging_failure_leaves_every_existing_output_untouched() {
         let dir = test_dir("stage-failure");
         fs::create_dir_all(&dir).expect("create test directory");
-        let first = dir.join("first.rs");
-        fs::write(&first, "pub const FIRST: usize = 1;\n").expect("write first fixture");
+        let first = dir.join("first.aks");
+        fs::write(&first, "old-first\n").expect("write first fixture");
         let blocked_parent = dir.join("not-a-directory");
         fs::write(&blocked_parent, "blocking file\n").expect("write blocking fixture");
 
-        let error = publish_generated_outputs(vec![
-            GeneratedOutput {
+        let error = publish_artifact_outputs(vec![
+            ArtifactOutput {
                 destination: first.clone(),
-                body: "pub const FIRST: usize = 2;\n".to_string(),
+                body: "new-first\n".to_string(),
             },
-            GeneratedOutput {
-                destination: blocked_parent.join("second.rs"),
-                body: "pub const SECOND: usize = 2;\n".to_string(),
+            ArtifactOutput {
+                destination: blocked_parent.join("second.aks"),
+                body: "new-second\n".to_string(),
             },
         ])
         .expect_err("second stage must fail");
         assert!(error.contains("stage in"));
         assert_eq!(
             fs::read_to_string(&first).expect("read first fixture"),
-            "pub const FIRST: usize = 1;\n"
+            "old-first\n"
         );
         assert!(
             fs::read_dir(&dir)
@@ -284,15 +264,13 @@ mod tests {
         fs::create_dir_all(&dir).expect("create test directory");
         let mut staged = Vec::new();
         for index in 0..3 {
-            let destination = dir.join(format!("output-{index}.rs"));
-            let backup = dir.join(format!("backup-{index}.rs"));
-            fs::write(&destination, format!("pub const NEW_{index}: usize = 2;\n"))
-                .expect("write replacement fixture");
-            fs::write(&backup, format!("pub const OLD_{index}: usize = 1;\n"))
-                .expect("write backup fixture");
+            let destination = dir.join(format!("output-{index}.aks"));
+            let backup = dir.join(format!("backup-{index}.aks"));
+            fs::write(&destination, format!("new-{index}\n")).expect("write replacement fixture");
+            fs::write(&backup, format!("old-{index}\n")).expect("write backup fixture");
             staged.push(StagedOutput {
                 destination,
-                staged: dir.join(format!("absent-stage-{index}.rs")),
+                staged: dir.join(format!("absent-stage-{index}.aks")),
                 backup: Some(backup),
                 published: true,
             });
@@ -303,7 +281,7 @@ mod tests {
             assert!(
                 fs::read_to_string(&output.destination)
                     .expect("read restored output")
-                    .contains(&format!("OLD_{index}")),
+                    .contains(&format!("old-{index}")),
                 "rollback must restore output {index}"
             );
         }
@@ -315,12 +293,12 @@ mod tests {
         let dir = test_dir("rollback-preserves-backup");
         fs::create_dir_all(&dir).expect("create test directory");
         let destination = dir.join("published-directory");
-        let backup = dir.join("original.rs");
+        let backup = dir.join("original.aks");
         fs::create_dir(&destination).expect("create removal-resistant destination");
-        fs::write(&backup, "pub const ORIGINAL: usize = 1;\n").expect("write backup");
+        fs::write(&backup, "original\n").expect("write backup");
         let mut staged = vec![StagedOutput {
             destination,
-            staged: dir.join("absent-stage.rs"),
+            staged: dir.join("absent-stage.aks"),
             backup: Some(backup.clone()),
             published: true,
         }];
@@ -329,7 +307,7 @@ mod tests {
         assert!(error.contains(&backup.display().to_string()));
         assert_eq!(
             fs::read_to_string(&backup).expect("read preserved backup"),
-            "pub const ORIGINAL: usize = 1;\n"
+            "original\n"
         );
         assert_eq!(staged[0].backup.as_ref(), Some(&backup));
         fs::remove_dir_all(dir).expect("remove test directory");
@@ -339,25 +317,25 @@ mod tests {
     fn complete_batch_publishes_every_output_together() {
         let dir = test_dir("success");
         fs::create_dir_all(&dir).expect("create test directory");
-        let family = dir.join("family.rs");
-        let registry = dir.join("family_multi_chunk.rs");
-        let wiring = dir.join("mod.rs");
+        let family = dir.join("family.aks");
+        let registry = dir.join("family_multi_chunk.aks");
+        let wiring = dir.join("recursive.aks");
         for path in [&family, &registry, &wiring] {
-            fs::write(path, "pub const OLD: usize = 1;\n").expect("write old fixture");
+            fs::write(path, "old\n").expect("write old fixture");
         }
 
-        let published = publish_generated_outputs(vec![
-            GeneratedOutput {
+        let published = publish_artifact_outputs(vec![
+            ArtifactOutput {
                 destination: family.clone(),
-                body: "pub const FAMILY: usize = 2;\n".to_string(),
+                body: "family\n".to_string(),
             },
-            GeneratedOutput {
+            ArtifactOutput {
                 destination: registry.clone(),
-                body: "pub const REGISTRY: usize = 3;\n".to_string(),
+                body: "registry\n".to_string(),
             },
-            GeneratedOutput {
+            ArtifactOutput {
                 destination: wiring.clone(),
-                body: "pub const WIRING: usize = 4;\n".to_string(),
+                body: "recursive\n".to_string(),
             },
         ])
         .expect("publish complete batch");
@@ -368,13 +346,13 @@ mod tests {
         );
         assert!(fs::read_to_string(family)
             .expect("read family")
-            .contains("FAMILY"));
+            .contains("family"));
         assert!(fs::read_to_string(registry)
             .expect("read registry")
-            .contains("REGISTRY"));
+            .contains("registry"));
         assert!(fs::read_to_string(wiring)
             .expect("read wiring")
-            .contains("WIRING"));
+            .contains("recursive"));
         assert!(
             fs::read_dir(&dir)
                 .expect("read test directory")

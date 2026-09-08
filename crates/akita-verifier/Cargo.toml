@@ -37,7 +37,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-default = ["schedules-default", "transcript-blake2b"]
+default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -53,7 +53,6 @@ transcript-keccak = [
   "akita-types/transcript-keccak",
 ]
 benchmark-support = []
-schedules-default = ["akita-config/schedules-default"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -67,8 +66,6 @@ workspace = true
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
-  "schedules-fp128-dense",
-  "schedules-fp128-onehot",
 ] }
 criterion = "0.5"
 

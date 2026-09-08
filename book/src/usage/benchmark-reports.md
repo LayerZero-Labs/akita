@@ -26,7 +26,8 @@ full downloadable artifact.
 | `onehot_fp128_multi_chunk_w8r2` | 1 at nv32 | Direct |
 
 The workflow splits these cases into narrow feature groups so each runner
-compiles only the schedule catalogs and profile modes it measures.
+compiles only the profile modes it measures. Each runner loads the matching
+checked-in `.aks` schedule artifact at runtime.
 
 ## What each statement means
 

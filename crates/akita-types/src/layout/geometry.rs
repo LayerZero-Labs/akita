@@ -21,7 +21,9 @@ use crate::sis::compute_num_digits_field_width;
 /// use one vocabulary. In protocol notation: `N` live source ring elements per
 /// claim, split into blocks of `M` positions, giving `B = ceil(N / M)` live
 /// blocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct BlockGeometry {
     /// Live source ring elements per claim (`N`).
     pub live_ring_elements_per_claim: usize,
@@ -34,7 +36,7 @@ pub struct BlockGeometry {
 impl BlockGeometry {
     /// Assemble a block triple without checking it.
     ///
-    /// `const` because the generated schedule tables construct these in `static`
+    /// `const` so offline generators and fixed test fixtures can construct it
     /// position. Call [`Self::validate`] on any triple that did not come from a
     /// checked-in table.
     #[must_use]
@@ -142,7 +144,9 @@ impl BlockGeometry {
 }
 
 /// One gadget decomposition: a basis and an exact depth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct GadgetDigits {
     /// Log2 of the decomposition basis.
     pub log_basis: u32,
@@ -225,7 +229,7 @@ pub trait MatrixDescriptorBytes: sealed_matrix::Sealed {
 /// role's matrix is `InnerCommitMatrixParams` and carries a security route,
 /// while B and D share `LinfCommitMatrix<R>`. Parameterising by the matrix keeps
 /// all three expressible without an `Option`-shaped tag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RoleParams<M> {
     /// Basis and exact depth for this role.
     pub digits: GadgetDigits,

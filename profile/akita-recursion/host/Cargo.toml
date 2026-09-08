@@ -31,10 +31,6 @@ guest = { package = "akita-recursion-guest", path = "../guest", features = [
 ] }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
-  "schedules-fp32-onehot",
-  "schedules-fp64-onehot",
-  "schedules-fp128-onehot",
-  "schedules-fp128-onehot-recursive",
 ] }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }

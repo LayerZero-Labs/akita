@@ -26,7 +26,7 @@ and end-to-end host integration complete the deployment system.
 
 Production readiness comes from agreement across that complete system.
 
-## Generated schedules are fixed before proving
+## External schedule artifacts are fixed before proving
 
 An Akita fold uses concrete ring dimensions, digit decompositions, challenge
 spaces, and response bounds. Those choices determine security, proof shape, and
@@ -34,8 +34,9 @@ the checks performed by the verifier. A proof must not be allowed to define
 them.
 
 The planner searches this space offline. It prices complete proof schedules,
-checks their security requirements, and emits reviewed Rust tables. The
-configured prover and verifier both contain the resulting catalog. Neither
+checks their security requirements, and emits reviewed `.aks` artifacts. The
+host loads the selected artifact into one validated catalog shared by the
+configured prover and verifier. Neither
 runs the planner during normal proving or verification.
 
 The public opening statement carries a 32-byte digest that names one row in
@@ -149,7 +150,7 @@ profile records the exact statement and configuration behind each result. This
 keeps a proof size attached to the workload that produced it.
 
 Continuous integration compares a pull request with its merge base on the same
-runner. It also checks generated schedule drift, portable and optimized
+runner. It also checks external schedule artifact drift, portable and optimized
 arithmetic, feature combinations, verifier dependencies, documentation links,
 and malformed input rejection.
 

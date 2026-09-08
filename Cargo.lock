@@ -57,6 +57,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "keccak 0.1.6",
+ "serde",
  "sha3 0.10.9",
  "smallvec",
  "tracing",
@@ -68,13 +69,11 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-error",
- "akita-planner",
  "akita-schedules",
  "akita-serialization",
  "akita-transcript",
  "akita-types",
  "jolt-field",
- "tracing",
 ]
 
 [[package]]
@@ -165,6 +164,8 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -246,6 +247,7 @@ dependencies = [
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]

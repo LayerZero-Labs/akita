@@ -1130,7 +1130,7 @@ impl MultiChunkProfileId {
 /// `num_chunks = 1` is the single-chunk (standard) case; `num_chunks` must be a
 /// power of two. `num_activated_levels` is how many leading protocol levels the
 /// multi-chunk layout is active; it is ignored when `num_chunks = 1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ChunkedWitnessCfg {
     /// Number of witness chunks / replicated ẑ segments while the multi-chunk
     /// layout is active. `1` means single-chunk (default).

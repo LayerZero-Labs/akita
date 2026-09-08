@@ -36,7 +36,7 @@ impl_proof_optimized_preset!(
     32,
     32,
     source = balanced_digits,
-    schedules = ("schedules-fp32-dense", "fp32_dense", fp32_dense_table),
+    schedule_family = "fp32_dense",
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
 impl_proof_optimized_preset!(
@@ -47,6 +47,6 @@ impl_proof_optimized_preset!(
     32,
     1,
     source = unit_one_hot,
-    schedules = ("schedules-fp32-onehot", "fp32_onehot", fp32_onehot_table),
+    schedule_family = "fp32_onehot",
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );

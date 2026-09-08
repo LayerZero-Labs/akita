@@ -20,6 +20,7 @@ type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 const FOLD_LINF_E2E_NV: usize = 20;
 
 struct FoldLinfGrindFixture {
+    scheme: Scheme,
     proof: AkitaBatchedProof<F, F>,
     verifier_setup: AkitaVerifierSetup<F>,
     commitment: CommittedGroup<F>,
@@ -29,14 +30,22 @@ struct FoldLinfGrindFixture {
 }
 
 fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
+    let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    let row = OneHotCfg::resolve_catalog_row_for_opening(&opening_layout).expect("layout");
+    let row = scheme
+        .schedules()
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            opening_layout
+                .root_final_group_layout()
+                .expect("singleton group layout"),
+        ))
+        .expect("layout");
     let grinding_plan =
         akita_config::derive_transcript_grinding_plan::<OneHotCfg>(row.schedule(), &opening_layout)
             .expect("grinding plan");
     let layout = row.schedule().root.params.clone();
-    let poly = make_onehot_poly(num_vars, seed);
+    let poly = make_onehot_poly::<OneHotCfg>(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
     let opening = opening_from_poly_for_layout(
         &poly,
@@ -45,7 +54,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
 
-    let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+    let setup = scheme.setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepare setup");
@@ -55,39 +64,43 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit");
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
+    let proof = scheme
+        .batched_prove::<_, _, _>(
+            &setup,
+            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_input::<OneHotCfg>(&point, &[opening], &commitment),
-        BasisMode::Lagrange,
-    )
-    .expect("verify");
+    scheme
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+            BasisMode::Lagrange,
+        )
+        .expect("verify");
 
     FoldLinfGrindFixture {
+        scheme,
         proof,
         verifier_setup,
         commitment,
@@ -128,14 +141,21 @@ fn packed_fold_response_nonce_tampering_rejects() {
             AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        Scheme::batched_verify(
-            &roundtrip,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("deserialized proof must verify");
+        fixture
+            .scheme
+            .batched_verify(
+                &roundtrip,
+                &fixture.verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(
+                    &fixture.point,
+                    &[fixture.opening],
+                    &fixture.commitment,
+                    fixture.scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+            .expect("deserialized proof must verify");
 
         let mut nonce_bytes = roundtrip.nonce_stream.as_bytes().to_vec();
         nonce_bytes[0] ^= 1;
@@ -146,14 +166,21 @@ fn packed_fold_response_nonce_tampering_rejects() {
         .expect("used-bit mutation preserves canonical padding");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let err = Scheme::batched_verify(
-            &roundtrip,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        )
-        .expect_err("mutated packed nonce stream must be rejected");
+        let err = fixture
+            .scheme
+            .batched_verify(
+                &roundtrip,
+                &fixture.verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(
+                    &fixture.point,
+                    &[fixture.opening],
+                    &fixture.commitment,
+                    fixture.scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+            .expect_err("mutated packed nonce stream must be rejected");
         assert!(
             matches!(err, AkitaError::InvalidProof)
                 || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
@@ -228,11 +255,16 @@ fn packed_proof_of_work_nonce_matches_public_predicate() {
 
             let mut transcript =
                 LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/onehot"));
-            let result = Scheme::batched_verify(
+            let result = fixture.scheme.batched_verify(
                 &mutated,
                 &fixture.verifier_setup,
                 &mut transcript,
-                verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
+                verify_input::<OneHotCfg>(
+                    &fixture.point,
+                    &[fixture.opening],
+                    &fixture.commitment,
+                    fixture.scheme.schedules(),
+                ),
                 BasisMode::Lagrange,
             );
             let predicate = transcript.events().iter().find_map(|event| match event {
@@ -272,21 +304,29 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let num_vars = FOLD_LINF_E2E_NV;
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-        let row = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch).expect("layout");
+        let row = scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                opening_batch
+                    .root_final_group_layout()
+                    .expect("singleton group layout"),
+            ))
+            .expect("layout");
         let grinding_plan = akita_config::derive_transcript_grinding_plan::<OneHotCfg>(
             row.schedule(),
             &opening_batch,
         )
         .expect("grinding plan");
         let layout = row.schedule().root.params.final_group();
-        let poly = make_onehot_poly(num_vars, 0x61_61);
+        let poly = make_onehot_poly::<OneHotCfg>(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = scheme.setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepare setup");
@@ -296,41 +336,50 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = scheme
+            .commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
-        let proof = Scheme::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = scheme
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<OneHotCfg, _>(
+                    &point,
+                    &[&poly],
+                    &commitment,
+                    hint,
+                    scheme.schedules(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("verify");
+        scheme
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
 
         let prover_public = public_transcript_events(prover_transcript.events());
         let verifier_public = public_transcript_events(verifier_transcript.events());

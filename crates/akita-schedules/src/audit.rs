@@ -6,14 +6,17 @@ use akita_types::sis::{
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
     OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
+#[cfg(test)]
+use akita_types::TerminalResponseShape;
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    GroupOpenPhaseParams, TerminalFoldParams, TerminalResponseShape,
+    GroupOpenPhaseParams, TerminalFoldParams,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::runtime::validate_policy;
+use crate::traversal::{visit_schedule_groups, ScheduleGroup, ScheduleGroupPosition};
 use crate::PlannerPolicy;
 
 fn invalid(label: &str, detail: &str) -> AkitaError {
@@ -93,7 +96,7 @@ fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<()
     Ok(())
 }
 
-fn audit_precommitted_group(
+fn audit_frozen_group(
     label: &str,
     params: &GroupOpenPhaseParams,
     num_response_chunks: usize,
@@ -119,12 +122,7 @@ fn audit_precommitted_group(
         .inner
         .matrix
         .coeff_linf_bound()
-        .ok_or_else(|| {
-            invalid(
-                label,
-                "precommitted groups cannot use an L2 A security route",
-            )
-        })?;
+        .ok_or_else(|| invalid(label, "frozen groups cannot use an L2 A security route"))?;
     audit_bound(
         label,
         declared_a_bound,
@@ -212,8 +210,8 @@ fn audit_committed_params(
         log_basis: params.open().digits.log_basis,
         ..policy.decomposition
     });
-    // A generated row stores its own `num_digits_inner` and expansion replays it
-    // verbatim, so pin it to the depth the declared committed-source bound
+    // An artifact stores its own `num_digits_inner` verbatim, so pin it to the
+    // depth the declared committed-source bound
     // demands at this level's selected A basis. At the root that bound is
     // `log_commit_bound` — the one place a bounded source differs from a
     // full-field one — and at a recursive level it collapses to the level's own
@@ -342,12 +340,12 @@ struct TerminalL2ModelState {
 
 fn audit_terminal(
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
-    response_shape: &TerminalResponseShape,
     model_state: TerminalL2ModelState,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
+    let sparse = &params.fold_challenge_config;
+    let response_shape = &params.response_shape;
     audit_inner_matrix(label, &params.inner.matrix, policy)?;
     sparse
         .validate_for_ring_dim(params.d_a())
@@ -486,17 +484,7 @@ pub(crate) fn audit_resolved_schedule(
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
 
-    let root = &schedule.root.params;
-    let final_params = &root;
-    if !matches!(
-        final_params.inner().matrix.security_route(),
-        InnerCommitSecurityRoute::Linf(_)
-    ) {
-        return Err(invalid(
-            "root final group",
-            "root cannot use an L2 A security route",
-        ));
-    }
+    let final_params = &schedule.root.params;
     // Four of the five comparisons that used to live here compared a field with
     // a copy of itself and are deleted with the merge: the shared D matrix, the
     // precommitted-group count (twice over), and each group's `descriptor`
@@ -524,54 +512,51 @@ pub(crate) fn audit_resolved_schedule(
                 "profile and consuming parameters disagree",
             ));
         }
-        audit_precommitted_group(
-            &format!("root precommitted group {index}"),
-            group,
-            final_params.witness_chunk.num_chunks,
-            policy,
-        )?;
     }
 
-    audit_committed_params(
-        "root final group",
-        final_params,
-        profiles.final_group.group.num_polynomials(),
-        0,
-        policy,
-    )?;
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        audit_committed_params(
-            &format!("recursive fold {index}"),
-            &step.params,
-            1,
-            index + 1,
-            policy,
-        )?;
-    }
-    audit_terminal(
-        &schedule.terminal,
-        &schedule.terminal.fold_challenge_config,
-        &schedule.terminal.response_shape,
-        TerminalL2ModelState {
-            fold_level: schedule.recursive_folds.len() + 1,
-        },
-        policy,
-    )
+    visit_schedule_groups(schedule, |group| {
+        let label = group.position().to_string();
+        match group {
+            ScheduleGroup::Frozen {
+                params,
+                num_response_chunks,
+                ..
+            } => audit_frozen_group(&label, params, num_response_chunks, policy),
+            ScheduleGroup::Final {
+                position,
+                params,
+                num_claims,
+                fold_level,
+            } => {
+                if position == ScheduleGroupPosition::RootFinal
+                    && !matches!(
+                        params.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::Linf(_)
+                    )
+                {
+                    return Err(invalid(&label, "root cannot use an L2 A security route"));
+                }
+                audit_committed_params(&label, params, num_claims, fold_level, policy)
+            }
+            ScheduleGroup::Terminal {
+                params, fold_level, ..
+            } => audit_terminal(params, TerminalL2ModelState { fold_level }, policy),
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{GeneratedMatrix, GeneratedTerminalFold};
     use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
-        ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
-        SisTableDigest,
+        ChunkedWitnessCfg, GadgetDigits, InnerRoleParams, SisL2TableDigest, SisModulusProfileId,
+        SisSecurityPolicyId, SisTableDigest, TailSegmentLayout,
     };
 
-    const INPUT_WITNESS_LEN: usize = 1_024;
     const INNER_WIDTH: usize = 16;
     const RESPONSE_CAP: u128 = 500_000_000;
+
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
@@ -603,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_l2_expansion_and_audit_bind_stored_fold_geometry() {
+    fn terminal_audit_rejects_a_stale_l2_bucket() {
         let policy = policy();
         let sparse = akita_challenges::selective_l2_challenge_config(64)
             .expect("certified D64 L2 challenge");
@@ -626,66 +611,24 @@ mod tests {
         )
         .expect("candidate construction")
         .expect("exact terminal calibration");
-        let generated = GeneratedTerminalFold {
-            geometry: akita_types::BlockGeometry::new(16, 16, 1),
-            inner_commit_matrix: GeneratedMatrix {
-                ring_dimension: 64,
-                log_basis: 4,
+        let mut terminal = TerminalFoldParams {
+            blocks: akita_types::BlockGeometry::new(16, 16, 1),
+            inner: InnerRoleParams::new(GadgetDigits::new(4, 1), expected),
+            fold: GadgetDigits::new(4, 3),
+            fold_challenge_config: sparse,
+            response_shape: TerminalResponseShape {
+                layout: TailSegmentLayout {
+                    ring_dimension: 64,
+                    groups: Vec::new(),
+                    logical_num_elems: 0,
+                },
             },
-            num_digits_inner: 1,
-            fold_log_basis: 4,
-            fold_digit_count: 3,
-            inner_output_rank: expected.output_rank() as u32,
-            inner_coeff_linf_bound: 0,
-            response_l2_sq_cap: Some(RESPONSE_CAP),
-            z_linf_cap: None,
-            z_rice_low_bits: 1,
-            z_payload_bytes: 1,
+            input_witness_len: 1_024,
         };
-        let mut terminal = generated
-            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
-            .expect("terminal must use its stored fold geometry");
-        let wrong_fold_digits = GeneratedTerminalFold {
-            fold_digit_count: num_digits_open(DecompositionParams {
-                log_basis: 4,
-                ..policy.decomposition
-            }) as u32,
-            ..generated
-        };
-        let expanded_wrong_fold_digits = wrong_fold_digits
-            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
-            .expect("frozen cap expansion must preserve stored fold digits");
-        assert_eq!(
-            expanded_wrong_fold_digits.fold.num_digits,
-            wrong_fold_digits.fold_digit_count as usize
-        );
-        assert_ne!(
-            expanded_wrong_fold_digits.fold.num_digits,
-            terminal.fold.num_digits
-        );
-        let alternate_fold_basis = GeneratedTerminalFold {
-            fold_log_basis: 3,
-            ..generated
-        };
-        let expanded_alternate_fold_basis = alternate_fold_basis
-            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
-            .expect("basis-eight L2 geometry must remain eligible");
-        assert_eq!(expanded_alternate_fold_basis.fold.log_basis, 3);
-        assert_ne!(
-            expanded_alternate_fold_basis.fold.log_basis,
-            terminal.fold.log_basis
-        );
-
-        let response_shape =
+        terminal.response_shape =
             TerminalResponseShape::derive(&terminal, 10).expect("valid terminal response shape");
-        audit_terminal(
-            &terminal,
-            &sparse,
-            &response_shape,
-            TerminalL2ModelState { fold_level: 3 },
-            &policy,
-        )
-        .expect("canonical terminal matrix");
+        audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy)
+            .expect("canonical terminal matrix");
 
         let (table_key, norm_proof_shape) = match terminal.inner.matrix.security_route() {
             InnerCommitSecurityRoute::L2 {
@@ -702,13 +645,8 @@ mod tests {
             norm_proof_shape,
         )
         .expect("locally well-formed matrix with a stale table bucket");
-        assert!(audit_terminal(
-            &terminal,
-            &sparse,
-            &response_shape,
-            TerminalL2ModelState { fold_level: 3 },
-            &policy,
-        )
-        .is_err());
+        assert!(
+            audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy,).is_err()
+        );
     }
 }

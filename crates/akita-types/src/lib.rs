@@ -165,11 +165,11 @@ pub use proof_size::level_proof_bytes;
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
-    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, FoldSuccessor,
-    GroupCommitPhaseParams, NextWitnessBindingPolicy, PlannedFoldSchedule,
-    PrecommittedGroupProfiles, ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole,
-    TerminalFoldParams, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile,
+    CommittedSourceEncoding, FoldParams, FoldSchedule, FoldScheduleDescriptorStep,
+    FoldScheduleEstimate, FoldSuccessor, GroupCommitPhaseParams, NextWitnessBindingPolicy,
+    PlannedFoldSchedule, PrecommittedGroupProfiles, ScheduleSisBound, ScheduleSisOccurrence,
+    ScheduleSisRole, TerminalFoldParams, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};

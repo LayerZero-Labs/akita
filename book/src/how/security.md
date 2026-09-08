@@ -269,8 +269,8 @@ A smaller bound is a smaller accepted witness space, not a weaker commitment. Th
 A-role collision bounds above are computed from the same digit envelope the
 verifier admits, so a bounded family is priced for exactly what it accepts. The
 unit one-hot class has a separate structural admission check. The declared bound
-is inside `DecompositionParams`, which is hashed into the generated catalog
-identity and serialized into the instance descriptor, so a proof cannot be
+is inside `DecompositionParams`, which is hashed into the external artifact's
+policy identity and serialized into the instance descriptor, so a proof cannot be
 replayed against a family with a different bound.
 
 The obligation the smaller space creates is on the *producer*, and it has two

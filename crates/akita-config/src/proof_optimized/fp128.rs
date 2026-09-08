@@ -115,7 +115,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     source = balanced_digits,
-    schedules = ("schedules-fp128-dense", "fp128_dense", fp128_dense_table),
+    schedule_family = "fp128_dense",
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
@@ -135,11 +135,7 @@ impl_proof_optimized_preset!(
     // `[-2^64, 2^64 - 1]`, the smallest declaration containing every `u64`.
     DenseBounded::LOG_COMMIT_BOUND,
     source = balanced_digits,
-    schedules = (
-        "schedules-fp128-dense-bounded",
-        "fp128_dense_bounded",
-        fp128_dense_bounded_table
-    ),
+    schedule_family = "fp128_dense_bounded",
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
@@ -156,7 +152,7 @@ impl_proof_optimized_preset!(
     128,
     1,
     source = unit_one_hot,
-    schedules = ("schedules-fp128-onehot", "fp128_onehot", fp128_onehot_table),
+    schedule_family = "fp128_onehot",
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
@@ -169,27 +165,31 @@ impl_multi_chunk_companion!(
     OneHotMultiChunk,
     OneHot,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-onehot-multi-chunk",
-    fp128_onehot_multi_chunk_table
+    "fp128_onehot_multi_chunk"
 );
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHot {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive";
+}
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r2";
+}
 impl_multi_chunk_companion!(
     OneHotMultiChunkW2R2,
     OneHot,
     akita_types::MultiChunkProfileId::W2R2,
-    "schedules-fp128-onehot-multi-chunk-w2r2",
-    fp128_onehot_multi_chunk_w2r2_table
+    "fp128_onehot_multi_chunk_w2r2"
 );
 impl_multi_chunk_companion!(
     OneHotMultiChunkW4R2,
     OneHot,
     akita_types::MultiChunkProfileId::W4R2,
-    "schedules-fp128-onehot-multi-chunk-w4r2",
-    fp128_onehot_multi_chunk_w4r2_table
+    "fp128_onehot_multi_chunk_w4r2"
 );
 impl_multi_chunk_companion!(
     DenseMultiChunk,
     Dense,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-dense-multi-chunk",
-    fp128_dense_multi_chunk_table
+    "fp128_dense_multi_chunk"
 );

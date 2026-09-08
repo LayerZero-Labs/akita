@@ -231,28 +231,148 @@ group rules for its folded witness and an incoming setup prefix.
 
 ## Ring switching
 
-Every physical cyclotomic-ring row is lifted through its own unique quotient
-before evaluation at $\alpha$. An ordinary row in
-$F[X]/(X^{d_i}+1)$ uses denominator $X^{d_i}+1$ and evaluates it as
-$\alpha^{d_i}+1$. A packing consistency relation instead uses $k$ coordinate
-planes with denominator $U^s+1$, producing the factor $\alpha^s+1$ in
-Equation (2).
+The schedule selects how each fold turns its native-ring relations into field
+relations for Stage 2. In `QuotientLift` mode, the prover supplies a unique
+polynomial-modulus quotient for every physical relation row. The derivation
+below describes this mode.
 
-This ring switch is distinct from EOR. EOR changes an extension-valued opening
-claim before the lattice relation. Ring switching proves the polynomial
-quotients of the physical lattice relations themselves.
+`ReducedEvaluation` instead moves negacyclic reduction into public coefficient
+weights and creates no polynomial-modulus quotient rows or quotient digits.
+Production schedules admit it only as a monotone, setup-direct
+`EvaluationTrace` suffix beginning at absolute level 2. Coefficient packing
+remains quotient-lift-only. The [ring-relation realization
+chapter](./akita-fold-realizations.md#reduced-evaluation) gives the reduced
+weights and complete schedule restrictions.
+
+This operation is distinct from EOR. EOR changes an extension-valued opening
+claim before the lattice relation is formed. In `QuotientLift` mode, ring
+switching lifts the resulting lattice relation out of its quotient ring so
+that sumcheck can prove it over a field.
+
+### Recover the quotient from two convolutions
+
+Let `a(X)` and `s(X)` have degree less than `D`, and write their ordinary
+product as
+
+$$
+a(X)s(X)=L(X)+X^D H(X),
+$$
+
+where both `L` and `H` have degree less than `D`. Reducing this product modulo
+the cyclic and negacyclic moduli gives
+
+$$
+\begin{aligned}
+[as]_{X^D-1} &= L+H,\\
+[as]_{X^D+1} &= L-H.
+\end{aligned}
+$$
+
+The field has odd characteristic, so division by two is defined. The high half
+of the ordinary convolution is therefore
+
+$$
+H=\frac{[as]_{X^D-1}-[as]_{X^D+1}}{2}.
+\tag{4}
+$$
+
+Equation (4) is exactly the quotient in
+
+$$
+a(X)s(X)-[as]_{X^D+1}=(X^D+1)H(X).
+$$
+
+For a complete row of the relation, let
+
+$$
+P_i(X)=\sum_j M_{i,j}(X)w_j(X).
+$$
+
+The quotient-ring equation says that `[P_i]_(X^D+1) = h_i`. Consequently, the
+ordinary-polynomial identity used by Stage 2 is
+
+$$
+P_i(X)-h_i(X)=(X^D+1)r_i(X),
+$$
+
+with
+
+$$
+r_i=\frac{[P_i]_{X^D-1}-[P_i]_{X^D+1}}{2}
+   =\frac{[P_i]_{X^D-1}-h_i}{2}.
+\tag{5}
+$$
+
+The prover digit-decomposes each `r_i` and appends those digits to the recursive
+witness. After the verifier substitutes `X = alpha`, the factor `X^D + 1`
+becomes the public scalar `alpha^D + 1`. This turns every lifted row into a
+field relation suitable for the fused Stage-2 sumcheck.
+
+### Preserve each row's native ring
+
+Akita does not enlarge every relation to one common ring dimension before
+computing Equation (5). Consistency and A rows use `d_A`, B rows use `d_B`, and
+D rows use `d_D`. Their quotients retain those same native dimensions. This is
+both the mathematical layout and the physical recursive-witness layout; the
+row geometry records the native dimension and the number of coordinate planes.
+
+The coefficient-packing consistency row is the one nonstandard geometry. It is
+an equation over `E[Y]/(Y^s + 1)`, represented as `k` base-field coordinate
+planes of length `s`. Its quotient therefore has `k s` physical coordinates.
+It is not reinterpreted as one ring of dimension `k s`. Its modulus evaluates
+to `alpha^s + 1`, as in the packing identity in Equation (2).
+
+### Compute only the coefficients that survive
+
+The matrix rows use paired cyclic and negacyclic transforms to obtain Equation
+(5). Akita performs both convolutions through the same CRT profiles used for
+ring multiplication, then converts their difference back to the base field and
+multiplies by `1/2`.
+
+Sparse challenge products need less work. If a nonzero challenge coefficient
+is at position `p`, only source coefficients `D-p` through `D-1` can reach the
+high half of the ordinary convolution. The quotient kernel visits only those
+coefficients and accumulates directly into `r`; it does not form the low half
+that negacyclic reduction would discard. The same rule applies when the
+consistency row combines folded opening material with sparse challenges.
+
+Compressed commitments introduce additional F and H relation rows. Their
+quotients use the same cyclic-versus-negacyclic identity and remain attached to
+the compression layer that owns them. Compression changes the row layout, not
+the algebra of Equation (5).
+
+### Cached and streamed execution are equivalent
+
+The CPU backend chooses between two execution plans after the complete row
+geometry has been validated:
+
+- A retained operation reuses the exact transformed setup prefix held by the
+  prepared setup.
+- A large operation transforms CRT-safe chunks of the same logical prefix as
+  it proceeds and releases each chunk afterward.
+
+Both plans cover the same rows, columns, transform domains, and quotient
+coordinates. The CRT capacity bound limits how many products may be accumulated
+before reconstruction in either plan. This choice affects time and memory only;
+it does not change setup identity, proof bytes, transcript order, or the
+quotient checked by the verifier.
 
 ## Implementation map
 
 - `crates/akita-prover/src/protocol/ring_relation.rs` assembles ordinary
   relation terms.
-- `crates/akita-prover/src/protocol/ring_switch.rs` computes native-ring
-  quotients and their evaluations.
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` computes
+  the role-native ordinary quotients and sparse high-half contributions.
+- `crates/akita-prover/src/compute/cpu/ring_switch.rs` selects the retained or
+  streamed CPU kernels.
+- `crates/akita-prover/src/protocol/ring_switch.rs` assembles the ring-switch
+  witness and proof state.
 - `crates/akita-prover/src/protocol/coefficient_packing.rs` forms packed
   partials and the packing quotient.
 - `crates/akita-types/src/subring_coefficient_packing.rs` defines and validates
   the packing geometry.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs` supplies the
   factorized Stage-2 packing relation.
-- `crates/akita-verifier/src/protocol/core/fold/` reconstructs the scheduled
-  relations and rejects inconsistent dimensions or quotient structure.
+- `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
+  rejects a proof whose dimensions or quotient structure do not match the
+  selected schedule.

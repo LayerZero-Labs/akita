@@ -64,7 +64,7 @@ jobs:
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
       - name: Clippy (response model diagnostics)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -139,7 +139,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-blake2b \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -159,8 +159,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  test-all-schedules-drift:
-    name: Schedule table drift (all-schedules)
+  test-schedule-artifact-drift:
+    name: Schedule artifact drift
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -171,58 +171,42 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          shared-key: ci-test-all-schedules-drift
+          shared-key: ci-test-schedule-artifact-drift
           add-job-id-key: false
           cache-on-failure: true
-      # Every other job consumes the tracked tables. This is the sole CI
-      # regeneration owner and the merge gate for planner/table drift.
-      - name: Committed catalog guards
-        # Runs the whole file rather than named filters, so a new guard is
-        # covered the moment it is written. `every_grouped_prior_descriptor_has
-        # _a_generated_producer` is the only check that a grouped row's frozen
-        # prior descriptor is reachable through `profile_without_prior_groups`.
+      # Every other job consumes tracked artifacts. This is the sole CI
+      # regeneration owner and the merge gate for planner/artifact drift.
+      - name: Trusted artifact guards
         run: |
-          cargo test --release -p akita-config --features all-schedules --test generated_tables
-      - name: Generate schedule tables
+          scripts/check-external-schedule-artifacts.sh
+          cargo test --release -p akita-config --test trusted_schedule_artifact
+      - name: Regenerate schedule artifacts in temporary storage
         env:
-          # The suffix memo is bounded per row; keep two rows in flight on the
-          # standard hosted runner while retaining a conservative memory cap.
           AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
-          scripts/generate-schedule-tables.sh \
-            --check-catalog \
-            --row-progress \
-            --catalog-snapshot specs/evidence/subring-coefficient-packing/head.tsv \
-            --catalog-baseline specs/evidence/subring-coefficient-packing/base.tsv \
-            --catalog-report specs/evidence/subring-coefficient-packing/comparison.tsv
-      - name: Committed schedule tables and evidence match the generator
-        run: |
-          git diff --exit-code -- \
-            crates/akita-schedules/src/generated \
-            specs/evidence/subring-coefficient-packing/head.tsv \
-            specs/evidence/subring-coefficient-packing/comparison.tsv
+          artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts"
+          mkdir -p "$artifact_dir"
+          cargo run --release -p akita-planner --features catalog-gen \
+            --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
+            --catalog-baseline specs/evidence/subring-coefficient-packing/head.tsv \
+            --require-catalog-baseline-match \
+            --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
+          diff -ru artifacts/schedules "$artifact_dir"
       - name: Direct modeled SIS cost for every schedule
         run: |
           cargo run --release -p akita-planner \
             --features catalog-security \
             --example catalog_security -- --check
-      - name: Recursive setup-prefix slots
-        run: |
-          cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk,transcript-blake2b -- --exact fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_dense_mc
       - name: One-hot multi-chunk catalog wiring
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
       - name: Bounded dense source PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-bounded,transcript-blake2b -- heterogeneous::bounded_
-          cargo test --release -p akita-config --features all-schedules --test bounded_dense_source
-      - name: Schedule catalog wiring
-        run: |
-          cargo test --release -p akita-config --no-default-features --features transcript-blake2b --test schedule_catalog_feature_off
-          cargo test --release -p akita-config --features schedules-fp128-onehot,schedules-fp128-dense --test schedule_catalog_miswire
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- heterogeneous::bounded_
+          cargo test --release -p akita-config --test bounded_dense_source
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
@@ -240,7 +224,7 @@ jobs:
           --test transcript_hardening
           --test transcript_hardening_proptest
           --no-default-features
-          --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
       # The structural challenge audit only runs under `logging-transcript`, so
@@ -256,7 +240,7 @@ jobs:
           --test transcript
           --test label_schedule
           --no-default-features
-          --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
       - name: Audit the grinding plan across akita-types shapes

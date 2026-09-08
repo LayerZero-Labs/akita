@@ -61,7 +61,7 @@ impl PlannerCostModelId {
     }
 }
 
-/// Deterministic schedule-selection policy bound into generated catalogs.
+/// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
     /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
@@ -100,7 +100,7 @@ impl SelectionPolicyId {
             Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Never reuse
-            // an objective tag: generated catalog admission depends on it.
+            // an objective tag: trusted catalog admission depends on it.
         }
     }
 
@@ -224,7 +224,7 @@ impl RingDimensionScheduleMode {
 /// Runtime schedule validation policy.
 ///
 /// The compatibility name stays `PlannerPolicy` during the migration because
-/// generated catalog identities already embed these fields. Runtime code must
+/// trusted catalog identities already embed these fields. Runtime code must
 /// only use this as validation policy; search remains in `akita-planner`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
@@ -651,9 +651,9 @@ pub fn nonterminal_level_payload_bytes(
 
 /// Recompute the exact serialized proof payload for one expanded schedule.
 ///
-/// This is the non-leaking reporting counterpart to generated-row replay. It
+/// This is the non-leaking reporting counterpart to artifact validation. It
 /// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact generated row or planner candidate is constructed.
+/// no compact intermediate row or planner candidate is constructed.
 pub fn expanded_schedule_proof_payload_bytes(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,

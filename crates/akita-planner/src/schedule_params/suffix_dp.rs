@@ -16,11 +16,11 @@ use crate::PlannerPolicy;
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
-    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
-    CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
-    RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter, RelationSearchDomain,
-    RelationTraversalOrder, RingRelationPhase, ScheduleCandidate, SetupPrefixCapacity,
-    SetupPrefixSearchCache, SplitBoundPolicy,
+    terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost,
+    RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
+    RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
+    SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -525,10 +525,36 @@ fn price_terminal_candidate(
         state.level,
         None,
         state.source_moment,
+        ctx.adaptation_guide.map(|schedule| {
+            CandidateInnerRoute::of(schedule.terminal.inner.matrix.security_route())
+        }),
     )?
     else {
         return Ok(());
     };
+    if let Some(guide) = ctx.adaptation_guide.map(|schedule| &schedule.terminal) {
+        let candidate_route = direct_step.params.inner.matrix.security_route();
+        let guide_route = guide.inner.matrix.security_route();
+        let route_kind_matches = matches!(
+            (candidate_route, guide_route),
+            (
+                akita_types::InnerCommitSecurityRoute::Linf(_),
+                akita_types::InnerCommitSecurityRoute::Linf(_)
+            ) | (
+                akita_types::InnerCommitSecurityRoute::L2 { .. },
+                akita_types::InnerCommitSecurityRoute::L2 { .. }
+            )
+        );
+        if direct_step.params.d_a() != guide.d_a()
+            || direct_step.params.blocks.positions_per_block != guide.blocks.positions_per_block
+            || direct_step.params.inner.digits.log_basis != guide.inner.digits.log_basis
+            || direct_step.params.fold.log_basis != guide.fold.log_basis
+            || direct_step.sparse_challenge_config != guide.fold_challenge_config
+            || !route_kind_matches
+        {
+            return Ok(());
+        }
+    }
     let level_proof_size = opening_reduction_bytes;
     let total = level_proof_size
         .checked_add(suffix_cost)

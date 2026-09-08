@@ -8,7 +8,7 @@
 //! macro.
 //!
 //! Legend:
-//!   ✓   — runs in default `cargo test` (schedules-default feature)
+//!   ✓   — runs in default `cargo test` using checked-in external artifacts
 //!   ign — supported, but production-sized nv; run with `-- --ignored`
 //!   NA  — no production schedule row exists; cell is intentionally absent
 //!
@@ -44,7 +44,6 @@
 //! multi-group code path with a small field.
 
 #![allow(missing_docs)]
-#![cfg(feature = "schedules-default")]
 
 mod common;
 #[path = "small_field_drivers/reduced_eor.rs"]
@@ -52,8 +51,6 @@ mod reduced_eor;
 mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_config::CommitmentConfig;
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -92,7 +89,6 @@ use small_field_drivers::*;
 //   pre_nv     — pre-group num_vars (precommitted arms); per config, because the
 //                smallest usable pre size differs between families
 //   final_nvs  — list of final-group num_vars (precommitted arms)
-//   k          — one-hot group size K (onehot arms)
 // ============================================================================
 
 macro_rules! small_field_test {
@@ -157,7 +153,9 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
+                    let scheme = load_workspace_scheme::<$cfg>()
+                        .expect("workspace schedule catalog");
+                    let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
                         2,
                     )
@@ -170,9 +168,7 @@ macro_rules! small_field_test {
                         setup.expanded.as_ref(),
                     )
                     .expect("stack");
-                    let verifier_setup =
-                        AkitaCommitmentScheme::<$cfg>::setup_verifier(&setup)
-                            .expect("verifier setup");
+                    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
                     let pre_poly = akita_prover::DensePoly::<$sf>::from_field_evals(
                         PRE_NV,
@@ -182,7 +178,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
                         hint: pre_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                    } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
                         &stack,
@@ -204,7 +200,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                    } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
                         &stack,
@@ -248,11 +244,12 @@ macro_rules! small_field_test {
                         .expect("prover claims"),
                         vec![pre_hint, final_hint],
                         vec![&pre_refs[..], &final_refs[..]],
+                        scheme.schedules(),
                     );
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = AkitaCommitmentScheme::<$cfg>::batched_prove::<_, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -262,6 +259,7 @@ macro_rules! small_field_test {
                     .expect("prove");
 
                     two_group_verify_roundtrip::<$cfg>(
+                        &scheme,
                         &proof,
                         &verifier_setup,
                         selection,
@@ -281,14 +279,15 @@ macro_rules! small_field_test {
     // ------------------------------------------------------------------
     // onehot — single-group, non-precommitted, one-hot polynomial
     // ------------------------------------------------------------------
-    ($(#[$attr:meta])* onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]) => {
         $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
             run_on_large_stack(|| {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
-                let onehot_k: usize = $k;
+                let onehot_k = akita_config::unit_onehot_source_chunk_size::<$cfg>()
+                    .expect("one-hot test requires a unit-one-hot config");
                 for &nv in &[$($nv),+] {
                     let num_chunks = (1usize << nv) / onehot_k;
                     let indices: Vec<Option<u8>> = (0..num_chunks)
@@ -322,7 +321,7 @@ macro_rules! small_field_test {
     // onehot_pre — two-group precommitted, one-hot polynomial
     // pre-group: nv=pre_nv  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
-    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]) => {
         $(#[$attr])*
         #[test]
         fn $name() {
@@ -330,7 +329,8 @@ macro_rules! small_field_test {
             run_on_large_stack(|| {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
                 const PRE_NV: usize = $pnv;
-                let onehot_k: usize = $k;
+                let onehot_k = akita_config::unit_onehot_source_chunk_size::<$cfg>()
+                    .expect("one-hot test requires a unit-one-hot config");
 
                 let pre_chunks = (1usize << PRE_NV) / onehot_k;
                 let pre_indices: Vec<Option<u8>> = (0..pre_chunks)
@@ -338,7 +338,9 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
+                    let scheme = load_workspace_scheme::<$cfg>()
+                        .expect("workspace schedule catalog");
+                    let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
                         2,
                     )
@@ -351,9 +353,7 @@ macro_rules! small_field_test {
                         setup.expanded.as_ref(),
                     )
                     .expect("stack");
-                    let verifier_setup =
-                        AkitaCommitmentScheme::<$cfg>::setup_verifier(&setup)
-                            .expect("verifier setup");
+                    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
                     let pre_poly = akita_prover::OneHotPoly::<$sf, u8>::new(
                         onehot_k,
@@ -363,7 +363,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
                         hint: pre_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                    } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
                         &stack,
@@ -385,7 +385,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                    } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
                         &stack,
@@ -439,11 +439,12 @@ macro_rules! small_field_test {
                         .expect("prover claims"),
                         vec![pre_hint, final_hint],
                         vec![&pre_refs[..], &final_refs[..]],
+                        scheme.schedules(),
                     );
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = AkitaCommitmentScheme::<$cfg>::batched_prove::<_, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -453,6 +454,7 @@ macro_rules! small_field_test {
                     .expect("prove");
 
                     two_group_verify_roundtrip::<$cfg>(
+                        &scheme,
                         &proof,
                         &verifier_setup,
                         selection,
@@ -490,13 +492,13 @@ small_field_test!(dense; fp32_dense; fp32::Dense; fp32::Field; fp32::ExtensionFi
 // folds below 20, so no such row exists at 14.
 small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::ExtensionField; pre_nv=20; final_nvs=[20]);
 // fp32 × OneHot × direct             catalog: single(14,1), single(16,1)
-small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
+small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]);
 // fp32 × OneHot × precommitted       catalog: final=(20,1) <- pre=[(14,1)]
-small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]; k=256);
+small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]);
 
 // ----------------------------------------------------------------------------
 // fp64  (Field = Prime64Offset59, ExtField = Ext2)
-// Also covered by schedules-default; no extra feature gate needed.
+// The checked-in fp64 artifact covers this row without a feature gate.
 // ----------------------------------------------------------------------------
 
 // fp64 × Dense × direct              catalog: single(20,1)
@@ -514,7 +516,7 @@ small_field_test!(dense_pre; fp64_dense_pre; fp64::Dense; fp64::Field; fp64::Ext
 // production-sized and skipped by default; run it with `-- --ignored`. It is
 // runnable: the independent oracle no longer materializes a 2^28 weight table,
 // which is what previously made it infeasible.
-small_field_test!(#[ignore = "production-sized: fp64::OneHot starts at nv=28; run with --ignored --release"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
+small_field_test!(#[ignore = "production-sized: fp64::OneHot starts at nv=28; run with --ignored --release"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]);
 //
 // fp64 × OneHot × precommitted — NA. The fp64::OneHot catalog ships no combined
 // precommit+final row, and its smallest final size is nv=28. Adding one purely
@@ -534,14 +536,15 @@ fn fp32_onehot_multi_group() {
     type SmallCfg = fp32::OneHot;
     type SmallF = fp32::Field;
     type SmallE = fp32::ExtensionField;
-    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;
 
     init_rayon_pool();
     run_on_large_stack(|| {
+        let scheme = load_workspace_scheme::<SmallCfg>().expect("workspace schedule catalog");
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
-            let onehot_k = 256usize;
+            let onehot_k =
+                akita_config::unit_onehot_source_chunk_size::<SmallCfg>().expect("one-hot config");
             let total =
                 params.blocks().live_blocks * params.blocks().positions_per_block * params.d_a();
             let indices = (0..total / onehot_k)
@@ -551,15 +554,18 @@ fn fp32_onehot_multi_group() {
                 .expect("grouped fp32 poly")
         };
 
-        let pre_group_schedule = SmallCfg::resolve_catalog_row_for_key(
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
-        )
-        .expect("pre schedule")
-        .into_schedule();
+        let pre_group_schedule = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                PRE_NV, 1,
+            )))
+            .expect("pre schedule")
+            .schedule()
+            .clone();
         let pre_params = &pre_group_schedule.root.params;
         let pre_poly = grouped_poly(pre_params, 1);
 
-        let pre_setup = SmallScheme::setup_prover(PRE_NV, 1).expect("pre setup");
+        let pre_setup = scheme.setup_prover(PRE_NV, 1).expect("pre setup");
         let pre_prepared = CpuBackend::DEFAULT
             .prepare_setup(&pre_setup)
             .expect("prepared");
@@ -572,42 +578,47 @@ fn fp32_onehot_multi_group() {
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
-        } = SmallScheme::commit(
-            &pre_setup,
-            std::slice::from_ref(&pre_poly),
-            &pre_stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("precommit");
+        } = scheme
+            .commit(
+                &pre_setup,
+                std::slice::from_ref(&pre_poly),
+                &pre_stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("precommit");
 
-        let multi_schedule = SmallCfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
-            precommitteds: vec![pre_commitment.profile],
-        })
-        .expect("multi-group schedule")
-        .into_schedule();
+        let multi_schedule = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey {
+                final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
+                precommitteds: vec![pre_commitment.profile],
+            })
+            .expect("multi-group schedule")
+            .schedule()
+            .clone();
         let final_params = &multi_schedule.root.params;
         let final_poly = grouped_poly(final_params, 2);
 
-        let setup = SmallScheme::setup_prover(FINAL_NV, 2).expect("setup");
+        let setup = scheme.setup_prover(FINAL_NV, 2).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = SmallScheme::commit(
-            &setup,
-            std::slice::from_ref(&final_poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-        )
-        .expect("final commit");
+        } = scheme
+            .commit(
+                &setup,
+                std::slice::from_ref(&final_poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+            )
+            .expect("final commit");
 
         let mut pre_point = (0..PRE_NV)
             .map(|i| SmallE::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
@@ -639,19 +650,21 @@ fn fp32_onehot_multi_group() {
             .expect("prover claims"),
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
+            scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
-        let proof = SmallScheme::batched_prove(
-            &setup,
-            prover_data,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("fp32 multi-group prove");
+        let proof = scheme
+            .batched_prove(
+                &setup,
+                prover_data,
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("fp32 multi-group prove");
 
         let shape = proof.shape();
         let mut bytes = Vec::new();
@@ -669,14 +682,15 @@ fn fp32_onehot_multi_group() {
         .expect("verifier claims");
         let mut verifier_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
-        SmallScheme::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .expect("fp32 multi-group verify");
+        scheme
+            .batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
+            .expect("fp32 multi-group verify");
     });
 }
 

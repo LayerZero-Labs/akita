@@ -40,7 +40,7 @@
 #![warn(unreachable_pub)]
 
 mod scheme;
-#[cfg(all(test, any(feature = "schedules-default", feature = "profile-ci")))]
+#[cfg(test)]
 #[path = "../tests/support/mod.rs"]
 mod test_support;
 

@@ -1,8 +1,11 @@
 #![allow(missing_docs)]
 
+#[path = "../examples/support/workspace_schedules.rs"]
+mod workspace_schedules;
+use workspace_schedules::load_workspace_scheme;
+
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
@@ -36,17 +39,20 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
 }
 
 fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
-    let layout = Cfg::resolve_catalog_row_for_opening(
-        &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-    )
-    .expect("layout")
-    .schedule()
-    .root
-    .params
-    .clone();
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+    let layout = scheme
+        .schedules()
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            akita_types::PolynomialGroupLayout::new(NV, 1),
+        ))
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .clone();
+    let setup = scheme.setup_prover(NV, 1).unwrap();
     let total = setup.expanded.shared_matrix.num_field_elements() / D;
     let ntt_shared = prepare_ntt_cache(
         setup

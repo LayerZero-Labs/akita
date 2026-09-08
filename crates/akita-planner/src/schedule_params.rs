@@ -43,8 +43,9 @@ pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
-    SetupPrefixSearchCache, SplitBoundPolicy,
+    CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy, PlannerOpeningCandidate,
+    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SetupPrefixSearchCache,
+    SplitBoundPolicy,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use candidate::{
@@ -232,7 +233,7 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    #[cfg(all(test, feature = "catalog-gen"))]
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         akita_schedules::planner_support::validate_policy(policy)
     }
@@ -317,7 +318,7 @@ impl CandidateFoldChain {
         self.head.as_deref().map(|node| &node.step)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
         CandidateFoldIter {
             next: self.head.as_deref(),

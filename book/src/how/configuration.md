@@ -35,12 +35,23 @@ dimension selected by the fold that consumes the prefix.
 The `fp128::DenseBounded` preset is for dense polynomials whose centered
 coefficients fit within a declared signed width of 65 bits. This range is
 `[-2^64, 2^64 - 1]`, so it contains every `u64`. The narrower declaration lets
-the generated schedule use the actual source range instead of charging every
+the artifact schedule use the actual source range instead of charging every
 coefficient for the full 128-bit field width. Commitment rejects a source that
 does not fit the declared interval.
 
-This preset uses the `schedules-fp128-dense-bounded` catalog. That catalog is
-not part of `schedules-default`; applications must enable it explicitly.
+This preset expects the `fp128_dense_bounded` family artifact. Applications
+load and approve those bytes through the same trusted parameter channel as
+their other preprocessing data.
+
+External catalog rows serialize one expanded schedule. The root groups determine
+the committed profiles, which the validated catalog retains for lookup. Resolving
+a key, profile, or selection borrows the catalog's row.
+
+`SetupRequirements::from_catalog` computes the matrix capacity and recursive
+prefix slots together. Setup construction reuses those requirements when loading,
+repairing, or generating a setup. Independently supported precommitted groups still
+contribute to matrix capacity when their larger grouped schedule exceeds the
+requested bounds.
 
 ## Schedule and fold parameters
 
@@ -71,29 +82,28 @@ witness lengths before it uses the schedule.
   `GroupOpenPhaseParams` and `GroupOpeningPlan`.
 - `crates/akita-types/src/schedule.rs` defines `FoldParams`,
   `TerminalFoldParams`, and `FoldSchedule`.
-- `crates/akita-schedules/src/resolve.rs` validates generated rows before the
+- `crates/akita-schedules/src/resolve.rs` validates artifact rows before the
   prover or verifier uses them.
 
 ## The planner and proof size
 
 Normal planner search is `Cfg`-free. The optional `catalog-gen` feature enables
 `akita-config`, so table-emission binaries can name concrete
-`CommitmentConfig` presets. The feature-gated `akita-schedules` crate owns
-shipped table data and runtime expansion into `FoldSchedule` and its committed
-group parameters. Runtime proving and verification resolve an enabled
-generated row and never run planner search. Shared proof-size formulas remain
-verifier-reachable and reject malformed input with an error rather than
-panicking.
+`CommitmentConfig` presets. The emitter writes fully expanded external family
+artifacts. Runtime proving and verification resolve rows from the explicitly
+supplied `TrustedScheduleCatalog<Cfg>` and never run planner search. Shared
+proof-size formulas remain verifier-reachable and reject malformed input with
+an error rather than panicking.
 
 **Implementation map**
 
-- [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, generated tables, and supported features.
+- [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, and artifact generation.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
 - `crates/akita-planner/src/generated_families.rs`,
-  `crates/akita-schedules/src/generated/`, and
-  `crates/akita-schedules/src/resolve.rs` (`resolve_generated_catalog_row_for_key`).
+  `crates/akita-planner/src/emit/`, and
+  `crates/akita-schedules/src/artifact.rs`.
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
 ### Recursive setup catalogs
@@ -105,8 +115,8 @@ separate prevents an ordinary verifier from accepting a recursive setup shape
 under a direct configuration.
 
 The planner prices the Stage 3 proof and the later prefix opening as part of the
-complete suffix. Generated rows record every selected prefix edge. Runtime
-expansion checks those edges and never reruns the search. See
+complete suffix. Artifact rows record every selected prefix edge. Catalog
+admission checks those edges and never reruns the search. See
 [Setup offloading](./setup-offloading.md) for the selection rules, setup
 artifacts, and recursive claim flow.
 
@@ -130,10 +140,45 @@ impossible. Runtime schedule validation checks them before proving or
 transcript replay.
 
 The suffix search prices both realizations using their exact witness layouts,
-proof sizes, setup requirements, response models, and successor states. A
-generated row records the selected mode at every nonterminal level. The mode
+proof sizes, setup requirements, response models, and successor states. An
+external artifact row records the selected mode at every nonterminal level. The mode
 is part of the canonical plan descriptor and transcript preamble; it is not a
 proof-supplied negotiation field and there is no verifier fallback.
+
+### Guided grouped schedule adaptation
+
+Applications sometimes select a schedule for one large final polynomial group
+before they know the exact small groups that will already be committed when the
+final group opens. `akita_planner::find_adapted_schedule` handles this offline
+case without rerunning the exhaustive planner.
+
+The application supplies a validated scalar `ResolvedScheduleRow` and a
+`GroupedGenerationRequest` containing exact frozen producer descriptors. The
+adapter retains the scalar row's structure: recursive depth, dimensions, block
+splits, slices, digit bases, opening choices, relation modes, witness chunking,
+terminal shape, and setup-prefix topology. It then rebuilds every value that
+depends on the combined groups, including D widths and ranks, witness lengths,
+relation rows, setup-prefix lengths, response bounds, grinding parameters, and
+proof accounting.
+
+This is a conditional search, not a second global optimizer. It returns
+`AkitaError::UnsupportedSchedule` if the scalar structure cannot support the
+grouped request. Adaptation rejects more than 256 precommitted producers before
+copying request data. Coefficient-packing adaptation also rejects more than 256
+canonical precommit opening products before allocating them. Callers that need
+a different structure can run the exhaustive offline `find_schedule` path
+explicitly.
+
+An adapted row is not trusted merely because planning succeeded. The
+application merges its selected rows, validates them with
+`ValidatedScheduleCatalog::try_new`, binds the result as
+`TrustedScheduleCatalog<Cfg>`, and regenerates setup for that catalog. Runtime
+setup restoration, commitment, proving, proof decoding, and verification continue to
+resolve immutable catalog rows and never invoke the planner. Adaptation changes
+no proof field, transcript event, or `.aks` schema.
+
+The normative constraints and failure behavior are recorded in
+[Guided schedule adaptation](../../../specs/guided-schedule-adaptation.md).
 
 ### Selective L2 candidates
 
@@ -201,7 +246,7 @@ enough to remove a fold, but the planner keeps `L∞` when the extra norm proof
 costs more than the suffix saves.
 
 This model affects completeness and schedule selection only. Once the planner
-selects a route, its concrete cap is frozen into the generated schedule. The
+selects a route, its concrete cap is frozen into the artifact schedule. The
 prover rejection samples against that cap and the verifier enforces the same
 value. The SIS calculation therefore still uses the public accepted cap and
 does not trust the statistical model.
@@ -236,13 +281,13 @@ the decoded response norm directly. The planner may use the certified energy
 to estimate a smaller Golomb payload for candidate comparison. The scheduled
 Golomb byte cap and the payload grind remain unchanged.
 
-Generated schedule identity includes the cap policy and the separate L2 table
-digest. Runtime expansion derives the route, cap, proof shape, and A rank from
-that identity. A mismatch between the preset policy and generated catalog is
-an error.
+External schedule identity includes the cap policy and the separate L2 table
+digest. Artifact decoding audits the route, cap, proof shape, and A rank against
+that identity. A mismatch between the preset policy and supplied catalog is an
+error.
 
 Source type is not part of runtime schedule identity. Dense and one-hot
-presets own different offline policies and generated catalogs, but equivalent
+presets own different offline policies and external catalogs, but equivalent
 polynomial groups have the same runtime geometry. In particular, one-hot chunk
 size is an input to `UnitOneHotFoldPolicy`; it is not serialized in a
 commitment, proof, opening layout, or transcript.

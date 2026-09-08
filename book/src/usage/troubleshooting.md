@@ -21,18 +21,18 @@ An unknown `AKITA_MODE` also stops the process. The error lists the modes that
 were compiled into the current binary. A build with a narrow feature set can
 contain only one profile family, so use the matching mode and feature. See
 [Profiling](./profiling.md) for the canonical command and [Feature
-flags](./feature-flags.md) for the available catalog features.
+flags](./feature-flags.md) for the available profile modes.
 
 ## The requested schedule is unsupported
 
-`AkitaError::UnsupportedSchedule` means the enabled generated catalogs do not
-contain a row for the exact request. Runtime code does not invoke the planner
-to fill a missing row.
+`AkitaError::UnsupportedSchedule` means the catalog supplied to the scheme does
+not contain a row for the exact request. Runtime code does not invoke the
+planner to fill a missing row.
 
 Check these causes in order:
 
-1. If the build uses `--no-default-features`, enable the schedule catalog and
-   one transcript backend explicitly.
+1. Confirm that the application loaded the intended family artifact and that
+   its catalog identity matches the setup or preprocessing package.
 2. Confirm that the chosen preset supports the requested polynomial arity,
    group shape, and opening method.
 3. For a recursive grouped opening, commit each precommitted group with the

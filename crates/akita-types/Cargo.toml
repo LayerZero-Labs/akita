@@ -26,6 +26,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+serde = { version = "1", features = ["derive"] }
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
 num-traits = "0.2"

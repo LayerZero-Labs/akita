@@ -11,19 +11,21 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 
 - `akita-verifier`
 - Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` paths
-- `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-schedules` generated-catalog identity, row resolution, and canonical
-  resolved-row audit paths
+- `akita-config` policy validation and trusted artifact binding used by `batched_verify`
+- `akita-schedules` trusted artifact decoding, row identity, row resolution,
+  and canonical resolved-row audit paths
 
 The verifier never invokes planner search. It accepts only an explicit
-`OpeningScheduleSelection` that resolves in the enabled generated catalog.
-Before setup access or transcript replay, it validates catalog identity and
-runtime hooks, resolves the public row digest, compares every ordered public
+`OpeningScheduleSelection` that resolves in a caller supplied trusted catalog.
+The catalog is setup or preprocessing input, never proof input. Before setup
+access or transcript replay, Akita validates artifact identity and runtime
+hooks, resolves the public row digest, compares every ordered public
 `GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix,
 prices each shared A row for the schedule's response-chunk count, checks
 challenge and full terminal L infinity or L2 cap geometry, and confirms the
-schedule fits the setup field capacity. Private polynomial representations and honest-prover
-witness models are not verifier inputs.
+schedule fits the setup field capacity. Private polynomial representations and
+honest-prover witness models are not verifier inputs. A proof cannot supply
+schedule bytes.
 
 The accepted proof topology is structural: a root fold, zero or more recursive
 folds, and one terminal cleartext witness. The verifier rejects proof-shape

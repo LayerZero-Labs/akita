@@ -45,14 +45,19 @@ let evaluation = evaluate_multilinear(&evaluations, &point);
 The helper that computes `evaluation` is independent of the Akita prover. It
 exists to give the verifier a concrete public value to check.
 
-## Build reusable setup
+## Load schedules and build reusable setup
 
-The configuration determines which generated schedules the application may
-use. `setup_prover` allocates enough public matrix data for the declared maximum
-number of variables and polynomials in one group.
+The configuration determines the expected schedule family and policy. The
+application loads approved artifact bytes from its own storage; Akita validates
+them before setup or proof work begins. `setup_prover` then sizes public matrix
+data from the exact rows in that catalog.
 
 ```rust
-let setup = AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1)?;
+let artifact_bytes = std::fs::read("parameters/fp128_dense.aks")?;
+let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
+    &artifact_bytes,
+)?;
+let setup = scheme.setup_prover(NUM_VARS, 1)?;
 let backend = CpuBackend::DEFAULT;
 let prepared = backend.prepare_setup(&setup)?;
 let stack = UniformProverStack::uniform(
@@ -73,7 +78,7 @@ One call commits to one group of polynomials. This example has one polynomial
 and no earlier groups.
 
 ```rust
-let commit_output = AkitaCommitmentScheme::<Config>::commit(
+let commit_output = scheme.commit(
     &setup,
     std::slice::from_ref(&polynomial),
     &stack,
@@ -108,13 +113,14 @@ let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
     prover_claims,
     vec![commit_output.hint],
     vec![&polynomial_group],
+    scheme.schedules(),
 )?;
 let selection = prover_data.selection();
 ```
 
 `SelectedProverOpeningData` checks that the public claims, commitment profiles,
 private hints, and polynomial groups have the same order and shape. It also
-selects the exact generated proof schedule for the complete batch.
+selects the exact trusted catalog row for the complete batch.
 
 ## Produce the proof
 
@@ -126,7 +132,7 @@ construction.
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 
 let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
-let proof = AkitaCommitmentScheme::<Config>::batched_prove(
+let proof = scheme.batched_prove(
     &setup,
     prover_data,
     &stack,
@@ -166,7 +172,7 @@ and the selected schedule row. It does not receive the polynomial or commitment
 hint.
 
 ```rust
-let verifier_setup = AkitaCommitmentScheme::<Config>::setup_verifier(&setup)?;
+let verifier_setup = scheme.setup_verifier(&setup)?;
 let verifier_claims = OpeningClaims::from_groups(vec![
     PolynomialGroupClaims::new(
         point,
@@ -178,7 +184,7 @@ let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
 let mut verifier_transcript =
     AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-akita_verifier::batched_verify::<Config, _>(
+scheme.batched_verify(
     &decoded_proof,
     &verifier_setup,
     &mut verifier_transcript,

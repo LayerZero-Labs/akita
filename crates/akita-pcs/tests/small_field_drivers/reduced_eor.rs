@@ -1,8 +1,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use akita_config::{proof_optimized::fp32, CommitmentConfig};
+use akita_config::proof_optimized::fp32;
 use akita_error::AkitaError;
-use akita_pcs::AkitaCommitmentScheme;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningMethod,
@@ -26,7 +25,7 @@ fn verify(
         &roundtrip.commitment,
     )?])?;
     let mut transcript = AkitaTranscript::<fp32::Field>::new(label);
-    AkitaCommitmentScheme::<Config>::batched_verify(
+    roundtrip.scheme.batched_verify(
         proof,
         &roundtrip.verifier_setup,
         &mut transcript,
@@ -40,7 +39,10 @@ pub(super) fn assert_fp32_dense(
     label: &[u8],
     what: &str,
 ) {
-    let row = Config::resolve_schedule_selection(roundtrip.selection)
+    let row = roundtrip
+        .scheme
+        .schedules()
+        .resolve_selection(roundtrip.selection)
         .expect("the selected fp32 dense schedule must resolve");
     let (reduced_index, _) = row
         .schedule()

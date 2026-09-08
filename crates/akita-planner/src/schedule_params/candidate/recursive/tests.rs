@@ -28,6 +28,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
             fold_level: 3,
             source_moment,
             relation_traversal_order: RelationTraversalOrder::Canonical,
+            guide: None,
         };
         let fold_policy = if retain_split_frontier {
             FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled)
@@ -58,6 +59,171 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
 }
 
 #[test]
+fn guided_search_forces_a_split_outside_the_bounded_domain() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    let base_request = RecursiveCandidateRequest {
+        policy: &policy,
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        opening: PlannerOpeningCandidate::evaluation_trace(
+            Recursive::ring_challenge_config(64).expect("challenge config"),
+        ),
+        dimensions: CommitmentRingDims::uniform(64),
+        current_witness_len: 948_672,
+        source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        log_basis_inner: 4,
+        log_basis_open: 4,
+        fold_level: 3,
+        source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
+        relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
+    };
+    let search = prepare_recursive_level_search(&base_request, RecursiveSetupPrefix::None)
+        .expect("recursive search")
+        .expect("eligible recursive level");
+    let delta_commit = base_request
+        .source
+        .num_digits_inner(policy.decomposition, base_request.log_basis_inner)
+        .expect("inner digit count");
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: base_request.log_basis_open,
+        ..policy.decomposition
+    });
+    let bounded = recursive_split_search_domain(
+        policy.recursive_split_search_policy,
+        search.num_ring_elems,
+        search.reduced_vars,
+        delta_commit,
+        delta_open,
+        search.num_chunks,
+    );
+    let guided_split = (1..search.reduced_vars)
+        .find(|split| !bounded.contains(split))
+        .expect("bounded domain must omit a split");
+    let request = RecursiveCandidateRequest {
+        guide: Some(CandidateLayoutGuide {
+            position_index_bits: search.reduced_vars - guided_split,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
+            inner_route: CandidateInnerRoute::Linf,
+            setup_prefix: None,
+        }),
+        ..base_request
+    };
+    let context = RecursiveCandidateContext {
+        request: &request,
+        search: &search,
+        source_moment: request.source_moment,
+        successor_policy: SuccessorPolicy::RequireContraction,
+    };
+    let mut admitted = Vec::new();
+    context
+        .walk_splits(
+            RelationSearchDomain::QuotientOnly,
+            |split, _| {
+                admitted.push(split);
+                false
+            },
+            |_, _, _, _| unreachable!("rejected split must not materialize"),
+        )
+        .expect("guided split walk");
+    assert_eq!(admitted, vec![guided_split]);
+}
+
+#[test]
+fn guided_recursive_l2_survives_the_profitability_filter() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::InnerCommitSecurityRoute;
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    for source_bound in [
+        1_000,
+        10_000,
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+        1_000_000_000,
+        10_000_000_000,
+        100_000_000_000,
+        1_000_000_000_000,
+    ] {
+        for log_basis in 2..=8 {
+            let request = RecursiveCandidateRequest {
+                policy: &policy,
+                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                opening: PlannerOpeningCandidate::evaluation_trace(
+                    Recursive::ring_challenge_config(64).expect("challenge config"),
+                ),
+                dimensions: CommitmentRingDims::uniform(64),
+                current_witness_len: 948_672,
+                source: crate::InnerBasisSource::BalancedDigits { log_basis },
+                log_basis_inner: log_basis,
+                log_basis_open: log_basis,
+                fold_level: 3,
+                source_moment: crate::response_model::SourceMomentEstimate::new(source_bound),
+                relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
+            };
+            let linf_candidates = derive_fold_candidates(
+                request,
+                RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
+                FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled),
+            )
+            .expect("unguided recursive candidates");
+            for (linf, _) in linf_candidates.iter().filter(|(candidate, _)| {
+                matches!(
+                    candidate.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::Linf(_)
+                )
+            }) {
+                let guided_request = RecursiveCandidateRequest {
+                    guide: Some(CandidateLayoutGuide {
+                        position_index_bits: linf.blocks().position_index_bits(),
+                        outer_slice_count: linf.outer_slice_count(),
+                        inner_route: CandidateInnerRoute::L2,
+                        setup_prefix: None,
+                    }),
+                    ..request
+                };
+                let guided = derive_fold_candidates(
+                    guided_request,
+                    RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
+                    FoldCandidatePolicy::Best,
+                )
+                .expect("guided recursive candidates");
+                let guided_linf_rank = guided.iter().find_map(|(candidate, _)| {
+                    matches!(
+                        candidate.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::Linf(_)
+                    )
+                    .then_some(candidate.inner().matrix.output_rank())
+                });
+                let guided_l2_rank = guided.iter().find_map(|(candidate, _)| {
+                    matches!(
+                        candidate.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::L2 { .. }
+                    )
+                    .then_some(candidate.inner().matrix.output_rank())
+                });
+                if let (Some(linf_rank), Some(l2_rank)) = (guided_linf_rank, guided_l2_rank) {
+                    if l2_rank >= linf_rank {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    panic!("fixture must contain a feasible L2 route that is not the greedy rank winner");
+}
+
+#[test]
 fn combined_relation_views_match_mode_specific_searches() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
@@ -80,6 +246,7 @@ fn combined_relation_views_match_mode_specific_searches() {
         fold_level: 3,
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let relation_domain = RelationSearchDomain::for_topology(
         RingRelationPhase::QuotientPrefix,
@@ -139,6 +306,7 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
         fold_level: 3,
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let relation_domain = RelationSearchDomain::ReducedOnly;
     for fold_policy in [
@@ -187,6 +355,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
                 fold_level: 2,
                 source_moment: None,
                 relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
             },
             FoldCandidatePolicy::Best,
             RelationSearchDomain::QuotientOnly,
@@ -225,6 +394,7 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         fold_level: 2,
         source_moment: None,
         relation_traversal_order: RelationTraversalOrder::Canonical,
+        guide: None,
     };
     let search = prepare_recursive_level_search(
         &request,

@@ -17,10 +17,10 @@ construction, prover/verifier plumbing, relation-phase evidence checks, and
 documentation guards. The mode is bound, layouts omit both ordinary and
 compression quotients, shared residue algebra drives the prover and verifier,
 production proofs exercise eligible reduced suffixes, and the exact planner
-emits reduced generated rows. Cross-mode replay, small-field reduced EOR,
+emits reduced external artifact rows. Cross-mode replay, small-field reduced EOR,
 reversed traversal, production-profile verifier phase timing, the bounded
 malformed-input matrix, serialized-proof agreement, and final-head planner
-telemetry are complete. The generated catalogs and durable Book explanations
+telemetry are complete. The external catalogs and durable Book explanations
 are present. Aggregate base/head evidence belongs in the PR rather than a
 checked compatibility snapshot.
 
@@ -41,12 +41,12 @@ closed.
 Exit condition: the specification branch has the intended first parent and no
 known code/spec mismatch remains before implementation.
 
-### Slice 1: protocol type, binding, and generated schema
+### Slice 1: protocol type, binding, and external artifact schema
 
 - Add `RingRelationMode` and the one-per-fold `CommittedGroupParams` field.
 - Bind its stable tag into level and schedule descriptors.
 - Bump the instance descriptor epoch.
-- Carry the field through generated rows, expansion, emission, and catalog
+- Carry the field through external rows, expansion, emission, and catalog
   identity without changing the existing schedule choices.
 
 Exit condition: descriptors and all shipped catalog identities distinguish the
@@ -126,7 +126,7 @@ relations and the declared feature matrix passes end to end.
 Exit condition: traversal order does not change selection, cache quotas remain
 unchanged, and generated replay matches planner estimates.
 
-### Slice 9: generated schedules, evidence, and documentation
+### Slice 9: external schedule artifacts, evidence, and documentation
 
 - Regenerate affected catalogs only after the planner and proof shapes settle.
 - Produce dense fp32/fp64/fp128 proof-size and verifier-phase evidence.
@@ -164,28 +164,29 @@ feature onto current main. The older exact heads remain recoverable from Git
 history and the closed PR; repeating them here would make a stale stack look
 normative.
 
-Concurrent work such as trusted schedule artifacts, certified planner
-documentation, and grouped planner changes remains an integration surface only.
-If any of it lands before #466, refresh from main and re-run the affected
-descriptor, planner, generated-catalog, and verifier gates.
+Concurrent work such as certified planner documentation and grouped planner
+changes remains an integration surface only. Refresh from main and re-run the
+affected descriptor, planner, external-catalog, and verifier gates before those
+changes land.
 
 ### Current branch shape
 
 ```text
-main @ f9f7de87b
-  -> #466 protocol/type, algebra, prover, verifier, and exact planner
-  -> generated catalogs and Book harmonization
-  -> relation-aware profile and planner evidence @ 04111dedf
-  -> main documentation merge @ 5fd356d0c
-  -> planner/state and protocol-plumbing cleanup @ e7dde5b4c
-  -> rejection/doc-guard alignment @ bb68275e9
-  -> final review cleanup and phase-evidence regression @ a890d7bfb
-  `-> final #466 audit record
+main @ d1b224d80 (squash merge of #466)
+  `-> codex/trusted-schedule-artifacts (PR #428)
+      `-> external artifact ownership and regenerated `.aks` catalogs
 ```
 
-Keep later implementation changes as reviewable commits on #466 and merge
-current main normally. Do not reconstruct the obsolete #448 -> #444 -> #445
-stack.
+### Trusted schedule artifacts PR 428
+
+PR [#428](https://github.com/LayerZero-Labs/akita/pull/428) removes compiled
+schedule rows in favor of explicitly supplied trusted artifacts. It is stacked
+on the merged PR #466 result `d1b224d80`, serializes the full relation-aware
+`FoldSchedule` in each external row, validates rows at admission, and uses one
+scheme-owned catalog for setup, proving, and verification. No generated Rust
+row schema or ambient resolver remains.
+
+Do not reconstruct the obsolete #448 -> #444 -> #445 stack.
 
 ## Documentation plan
 
@@ -223,6 +224,6 @@ Archive it after the durable content is fully folded, following
 | Fused direct setup scan | `crates/akita-types/src/setup_contribution/plan/` |
 | Compression reduced transpose | `crates/akita-types/src/proof/compression_relation_weights.rs`, prover/verifier ring-switch compression paths |
 | Planner state and cutover | `crates/akita-planner/src/schedule_params/suffix_dp/`, recursive candidate materialization, response model |
-| Generated rows and identity | `crates/akita-schedules/src/generated/`, `catalog_identity.rs`, planner emitter and reports |
+| External rows and identity | `crates/akita-schedules/src/artifact.rs`, planner emitter and reports |
 | Transcript grinding interaction | PR #448 ring-switch query sites, packed proof cost, and grinding plan |
 | End-to-end protocol tests | `crates/akita-pcs/src/scheme/tests/`, `crates/akita-pcs/tests/protocol_soundness.rs` |

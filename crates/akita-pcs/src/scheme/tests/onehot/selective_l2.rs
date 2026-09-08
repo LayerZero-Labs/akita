@@ -6,9 +6,9 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     const BATCH_SIZE: usize = 4;
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
     type L2Cfg = OneHotCfg;
-    type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
 
-    let layout = akita_batched_root_layout::<L2Cfg>(NV, BATCH_SIZE).expect("L2 root layout");
+    let scheme = workspace_scheme::<L2Cfg>().expect("workspace schedule artifact");
+    let layout = catalog_root_layout(&scheme, NV, BATCH_SIZE);
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))
         .collect();
@@ -27,7 +27,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         })
         .collect();
 
-    let setup = L2Scheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
+    let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared L2 setup");
@@ -37,17 +37,18 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         setup.expanded.as_ref(),
     )
     .expect("L2 stack");
-    let verifier_setup = L2Scheme::setup_verifier(&setup).expect("L2 verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = L2Scheme::commit::<_, _>(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("L2 commitment");
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("L2 commitment");
     let commitments = [commitment];
     let prover_group = PolynomialGroupClaims::new(
         point.clone(),
@@ -56,19 +57,21 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     )
     .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-    let proof = L2Scheme::batched_prove::<_, _, _>(
-        &setup,
-        selected_prover_data::<L2Cfg, _>(
-            OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
-            vec![hint],
-            vec![&poly_refs],
+    let proof = scheme
+        .batched_prove::<_, _, _>(
+            &setup,
+            selected_prover_data::<L2Cfg, _>(
+                &scheme,
+                OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
+                vec![hint],
+                vec![&poly_refs],
+            )
+            .expect("L2 opening data"),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
         )
-        .expect("L2 opening data"),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("L2 proof");
+        .expect("L2 proof");
 
     let verify = |candidate: &AkitaBatchedProof<OneHotF, OneHotF>| {
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -79,11 +82,11 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
         let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        L2Scheme::batched_verify(
+        scheme.batched_verify(
             candidate,
             &verifier_setup,
             &mut transcript,
-            selected_statement::<L2Cfg>(claims).expect("L2 verifier statement"),
+            selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
             BasisMode::Lagrange,
         )
     };

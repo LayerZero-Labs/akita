@@ -91,8 +91,12 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
         &[],
         &policy,
         OneHot::ring_challenge_config,
-        RelationTraversalOrder::Canonical,
-        RelationModeFilter::All,
+        crate::planner::ScheduleSearchOptions {
+            relation_traversal_order: RelationTraversalOrder::Canonical,
+            relation_mode_filter: RelationModeFilter::All,
+            root_main_constraint: None,
+            adaptation_guide: None,
+        },
     )
     .unwrap();
     let reversed = crate::planner::find_schedule_in_relation_order(
@@ -101,8 +105,12 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
         &[],
         &policy,
         OneHot::ring_challenge_config,
-        RelationTraversalOrder::Reversed,
-        RelationModeFilter::All,
+        crate::planner::ScheduleSearchOptions {
+            relation_traversal_order: RelationTraversalOrder::Reversed,
+            relation_mode_filter: RelationModeFilter::All,
+            root_main_constraint: None,
+            adaptation_guide: None,
+        },
     )
     .unwrap();
 

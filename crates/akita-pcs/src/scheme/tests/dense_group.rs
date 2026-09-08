@@ -1,13 +1,13 @@
 use super::*;
 
 type DenseGroupCfg = Cfg;
-type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
 
 #[test]
 fn dense_group_commit_freezes_scalar_s_profile() {
     const NUM_VARS: usize = 16;
 
-    let setup = DenseGroupScheme::setup_prover(NUM_VARS, 1).expect("dense group setup");
+    let scheme = workspace_scheme::<DenseGroupCfg>().expect("workspace schedule artifact");
+    let setup = scheme.setup_prover(NUM_VARS, 1).expect("dense group setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared dense group setup");
@@ -26,13 +26,14 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = DenseGroupScheme::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("dense group commit");
+    } = scheme
+        .commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("dense group commit");
 
     assert_eq!(
         commitment.profile.group,
@@ -40,10 +41,10 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     );
     assert_eq!(
         commitment.profile,
-        DenseGroupCfg::profile_without_precommitted_groups(
+        catalog_profile(
+            &scheme,
             akita_types::PolynomialGroupLayout::new(NUM_VARS, 1)
         )
-        .expect("independent profile")
     );
     assert_eq!(
         commitment.rows().count(),

@@ -137,7 +137,9 @@ impl LimbGramLayout {
 ///
 /// The proof serializes no block or limb-pair identifiers. This shape and
 /// [`LimbGramLayout`] derive their complete canonical order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum PhysicalL2NormProofShape {
     /// One direct square-sum claim over every physical response coefficient.
     Direct { physical_response_len: usize },
@@ -151,7 +153,9 @@ pub enum PhysicalL2NormProofShape {
 }
 
 /// The single selected security route for an A commitment matrix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum InnerCommitSecurityRoute {
     /// Existing coefficient-L-infinity sizing and digit-range proof.
     Linf(SisTableKey),

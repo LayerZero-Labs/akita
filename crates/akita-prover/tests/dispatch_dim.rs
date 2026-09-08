@@ -1,6 +1,5 @@
 //! Runtime ring-dimension dispatch against real typed schedules.
 
-#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -10,6 +9,8 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)
@@ -18,9 +19,11 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
             PolynomialGroupLayout::new(num_vars, 1)
         }
     };
-    Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+    catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("runtime schedule")
-        .into_schedule()
+        .schedule()
+        .clone()
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {

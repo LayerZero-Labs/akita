@@ -13,17 +13,71 @@ into a vector of base-field elements, then interprets checked ranges of this
 vector as matrices of ring elements. There is no secret trapdoor to retain or
 discard. Both parties must use the same seed and matrix geometry.
 
-Each fold reads a prefix large enough for its A, B, and D matrices.
-Compression matrices read the shared setup at their own smaller ring
-dimensions. The setup envelope is the largest physical matrix requirement
-across the selected schedule. Reusing storage does not make these matrices
-interchangeable. Their row counts, column counts, ring dimensions, and roles
-determine how the coefficients are read.
-
 The [instance descriptor](./transcript.md#akitainstancedescriptor) binds the
 setup seed identity and selected schedule before protocol replay. Expanded
 matrix files and prepared NTT views are caches derived from that public
 identity. Loading a cached coefficient matrix checks that it matches the seed.
+
+### Exact public-stream derivation
+
+`AkitaSetupSeed` contains two values: a 32-byte public seed and a versioned
+derivation method. The current method is `Shake256PagedV1`. Versioning the
+method prevents a change to page size, domain separation, or field sampling
+from silently changing the setup identified by an existing seed.
+
+The derivation splits the infinite field stream into pages of 4096 elements.
+For page index \(i\), it initializes one SHAKE256 stream with the following
+length-prefixed fields, in order:
+
+| Label | Value |
+| --- | --- |
+| `domain` | `akita/commitment/public-field-stream` |
+| `derivation` | `shake256-paged-v1` |
+| `page_field_elements` | 4096 as little-endian `u64` |
+| `seed` | the 32-byte public seed |
+| `field` | the protocol-field modulus as 32 big-endian bytes |
+| `page` | \(i\) as little-endian `u64` |
+
+A length-prefixed field is encoded as the little-endian `u64` length of its
+label, the label, the little-endian `u64` length of its value, and the value.
+The explicit field modulus prevents equal seed bytes from identifying the same
+coefficient stream in two different fields.
+
+The page then calls `Field::random` repeatedly on that SHAKE256 reader. The
+production fields use exact rejection sampling, so this is a uniform field
+stream rather than a fixed-width integer stream reduced modulo \(q\). Pages
+may be generated in parallel; concatenating them by page index gives the same
+prefix as sequential generation.
+
+### One stream, several matrix views
+
+Ring dimensions do not enter the derivation. A request for \(L\) field
+elements therefore returns the same prefix under every schedule that uses the
+same setup seed and field. A schedule gives a finite prefix a matrix meaning
+only when it constructs a view.
+
+A view with \(r\) rows, \(c\) columns, and ring dimension \(D\) reads exactly
+
+\[
+r c D
+\]
+
+field elements. It groups each consecutive \(D\) coefficients into one ring
+element and stores ring elements in row-major order. A, B, and D are
+role-local views beginning at field index zero. They overlap rather than
+occupying disjoint regions, so the materialized setup capacity is the maximum
+role footprint required by the schedule, not the sum of all role footprints.
+
+This prefix sharing does not require the three roles to use the same ring
+dimension. For example, two views that each use 4096 field coefficients read
+the same random prefix even if one groups it into 64-coefficient rings and the
+other into 128-coefficient rings.
+
+The witness column order is defined by the relation layout, not by setup
+generation. Akita keeps digits consecutive within each logical value. Exact A,
+B, and D column orders, including coefficient packing and sliced B layouts,
+are documented in [Advanced relation layouts](./proving/advanced-relation-layouts.md)
+and [Opening points and digit-innermost layout](./proving/opening-points-layout.md).
 
 A recursive setup schedule may require commitments to selected power of two
 prefixes of this vector. Setup construction materializes exactly those prefix
@@ -209,14 +263,19 @@ The planner checks every admitted slice count. Proof-focused selection keeps
 the counts through complete schedule scoring. Setup-focused selection keeps
 the smallest count at the exact local setup floor. The selected count belongs
 to the commitment group and is frozen in standalone profiles, setup-prefix
-metadata, descriptors, and generated catalog identity.
+metadata, descriptors, and trusted external catalog identity.
 
 Relevant implementation sources:
 
 - `crates/akita-types/src/commitment_slicing.rs`
 - `crates/akita-prover/src/api/commitment.rs`
 - `crates/akita-types/src/setup_contribution/plan/physical_b.rs`
-- `specs/archive/2026-Q3/commitment-slicing.md`
+
+Public-stream and view sources:
+
+- `crates/akita-types/src/proof/setup.rs`
+- `crates/akita-types/src/layout/flat_matrix.rs`
+- `crates/akita-types/src/dispatch/mod.rs`
 
 ## Dense and one-hot backends
 

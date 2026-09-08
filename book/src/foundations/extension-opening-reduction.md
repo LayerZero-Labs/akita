@@ -449,6 +449,50 @@ Groups retain their own public points and native tail lengths.
 The [multi-group description](../how/proving/extension-opening-reduction.md#multi-group-openings)
 explains those two batching steps and the common sumcheck domain.
 
+## Structure of the transparent factor
+
+The transparent factor has more structure than an arbitrary dense table. Use
+the coordinate maps $\operatorname{coord}_u$ from Equation (7) and the weights
+$\lambda_u=\operatorname{eq}(\eta,u)$ from Equation (10). Define the
+base-field-linear batching map $\tau_\eta:\mathbb E\rightarrow\mathbb E$ by
+
+$$
+\tau_\eta\!\left(\sum_u a_u\beta_u\right)=\sum_u\lambda_u a_u.
+$$
+
+Split the remaining Boolean variables into a prefix and suffix. The equality
+product splits as
+
+$$
+\operatorname{eq}(r_{\mathrm{tail}},x)
+=E_{\mathrm{pre}}(x_{\mathrm{pre}})
+ E_{\mathrm{suf}}(x_{\mathrm{suf}}).
+$$
+
+On Boolean inputs, the EOR factor can then be written as only `[E:F]`
+separable terms:
+
+$$
+A_\eta(x_{\mathrm{pre}},x_{\mathrm{suf}})
+=\sum_u
+\operatorname{coord}_u\!\left(E_{\mathrm{pre}}(x_{\mathrm{pre}})\right)
+\tau_\eta\!\left(\beta_u E_{\mathrm{suf}}(x_{\mathrm{suf}})\right).
+\tag{15}
+$$
+
+A direct multiplication-table expansion would expose `[E:F]^2` terms. Expanding
+only the prefix factor in the fixed basis gives Equation (15).
+
+Equation (15) is first an identity between Boolean tables. During sumcheck, the
+coordinate tables on its right must be folded as multilinear polynomials. It
+would be incorrect to evaluate the extension-valued prefix at a non-Boolean
+challenge and then apply `coord_u`: the coordinate map is base-field linear,
+not extension-field linear.
+
+The production prover currently materializes the dense factor. The separable
+form instead identifies a future small-space execution strategy; see the
+[roadmap](../roadmap/roadmap.md#small-space-extension-opening-prover).
+
 ## Code reference
 
 - [Shared tensor algebra](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/extension_opening_reduction.rs)

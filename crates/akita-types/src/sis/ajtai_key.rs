@@ -123,7 +123,9 @@ fn min_rank_commit_matrix_fields(
 }
 
 /// Parameters for the inner commitment matrix (A).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct InnerCommitMatrixParams {
     pub(crate) output_rank: usize,
     pub(crate) input_width: usize,
@@ -464,11 +466,15 @@ pub trait LinfMatrixRole: sealed::Sealed {
 }
 
 /// Marker for the outer commitment matrix (B).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Outer;
 
 /// Marker for the opening commitment matrix (D).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Open;
 
 impl sealed::Sealed for Outer {}
@@ -494,7 +500,9 @@ impl LinfMatrixRole for Open {
 /// distinct. What changes is that the shared behaviour has one definition, and
 /// that [`LinfMatrixRole`] is sealed, so the set of table-keyed roles cannot grow
 /// outside this module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct LinfCommitMatrix<R: LinfMatrixRole> {
     pub(crate) output_rank: usize,
     pub(crate) input_width: usize,
@@ -595,7 +603,7 @@ impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
 
     /// Assemble a matrix identity without auditing it.
     ///
-    /// `const` because the generated schedule tables construct these in `static`
+    /// `const` so offline generators and fixed test fixtures can construct it
     /// position. `PhantomData` is zero-sized and `const`-constructible, so the
     /// emitted literals keep the shape the emitter already writes.
     #[allow(clippy::too_many_arguments)]

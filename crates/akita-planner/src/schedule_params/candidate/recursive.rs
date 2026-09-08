@@ -36,6 +36,39 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) fold_level: usize,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
+    /// Optional structural replay constraint. Current lengths and security
+    /// ranks are still derived; only the approved split and slicing remain.
+    pub(crate) guide: Option<CandidateLayoutGuide>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CandidateLayoutGuide {
+    pub(crate) position_index_bits: usize,
+    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
+    pub(crate) inner_route: CandidateInnerRoute,
+    pub(crate) setup_prefix: Option<SetupPrefixLayoutGuide>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CandidateInnerRoute {
+    Linf,
+    L2,
+}
+
+impl CandidateInnerRoute {
+    pub(crate) const fn of(route: akita_types::InnerCommitSecurityRoute) -> Self {
+        match route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => Self::Linf,
+            akita_types::InnerCommitSecurityRoute::L2 { .. } => Self::L2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SetupPrefixLayoutGuide {
+    pub(crate) log_basis_inner: u32,
+    pub(crate) position_index_bits: usize,
+    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
 }
 
 enum RecursiveSetupPrefix<'a> {
@@ -255,6 +288,12 @@ impl RecursiveCandidateContext<'_, '_> {
         }
         let mut candidates = Vec::new();
         for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if request
+                .guide
+                .is_some_and(|guide| outer_slice_count != guide.outer_slice_count)
+            {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     request.fold_level,
@@ -366,14 +405,23 @@ impl RecursiveCandidateContext<'_, '_> {
             .opening
             .method()
             .physical_coefficient_width(policy.claim_ext_degree, request.dimensions.d_a())?;
-        let splits = recursive_split_search_domain(
-            policy.recursive_split_search_policy,
-            search.num_ring_elems,
-            search.reduced_vars,
-            delta_commit,
-            delta_open,
-            search.num_chunks,
-        );
+        let splits = if let Some(guide) = request.guide {
+            search
+                .reduced_vars
+                .checked_sub(guide.position_index_bits)
+                .filter(|&split| split > 0 && split < search.reduced_vars)
+                .into_iter()
+                .collect()
+        } else {
+            recursive_split_search_domain(
+                policy.recursive_split_search_policy,
+                search.num_ring_elems,
+                search.reduced_vars,
+                delta_commit,
+                delta_open,
+                search.num_chunks,
+            )
+        };
         for r in splits {
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
@@ -533,6 +581,12 @@ fn append_selective_l2_candidates(
     if !policy.selective_l2_response_model_enabled() {
         return Ok(());
     }
+    if request
+        .guide
+        .is_some_and(|guide| guide.inner_route == CandidateInnerRoute::Linf)
+    {
+        return Ok(());
+    }
     let (Some((block_index_bits, _, _)), Some(source_moment)) = (best_modeled, source_moment)
     else {
         return Ok(());
@@ -599,7 +653,7 @@ fn append_selective_l2_candidates(
     else {
         return Ok(());
     };
-    if inner_commit_matrix.output_rank() >= linf_rank {
+    if request.guide.is_none() && inner_commit_matrix.output_rank() >= linf_rank {
         return Ok(());
     }
     l2_core.inner_commit_matrix = inner_commit_matrix;

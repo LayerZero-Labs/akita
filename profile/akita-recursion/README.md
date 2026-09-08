@@ -153,10 +153,13 @@ overrides for those values.
 
 ## How it works
 
-1. **`artifact`** resolves the selected catalog row, runs setup, commit, and
+1. **`artifact`** loads the selected external family catalog, resolves its row, runs setup, commit, and
    `batched_prove` over a deterministic synthetic OneHot polynomial, verifies
    it on the host, and serializes its case identity, verifier setup, proof
    shape, and proof with [`AkitaJoltInputs::write_to_bytes`](glue/src/wire/mod.rs).
+   It then wraps that inner blob with the complete `.aks` artifact. This full-
+   catalog frame is an unauthenticated benchmark bring-up format, not the final
+   Jolt preprocessing or authenticated-subset format.
    The older grouped case uses the same envelope with three ordered groups.
 2. **`host`** strictly decodes and verifies every blob before benchmark
    replay. For fp128 it also derives and self-checks the terminal scalar Q128
@@ -165,10 +168,12 @@ overrides for those values.
    `riscv64imac-zero-linux-musl`, runs Jolt, and forwards each cycle count
    through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) declares one function
-   per case. Its private `integration` module decodes the blob, installs any
+   per case. Its private `integration` module validates the external catalog,
+   decodes the inner blob, installs any
    program-bound cache, constructs the statement and transcript, invokes
    `akita_verifier::batched_verify`, and maps the result to the documented
-   status code. The integration calls the verifier directly,
+   status code. No schedule row or artifact payload is compiled into the guest.
+   The integration calls the verifier directly,
    bypassing `AkitaCommitmentScheme::batched_verify`, which would otherwise
    call `Instant::now()` (the Jolt runtime doesn't implement
    `clock_gettime`, and the guest aborts there). Four

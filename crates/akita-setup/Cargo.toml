@@ -16,7 +16,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["schedules-default", "transcript-blake2b"]
+default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-prover/transcript-blake2b",
@@ -33,7 +33,6 @@ parallel = [
   "akita-prover/parallel",
 ]
 disk-persistence = []
-schedules-default = ["akita-config/schedules-default"]
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
@@ -50,6 +49,9 @@ tracing = "0.1"
 
 [dev-dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+] }
 
 [lints]
 workspace = true

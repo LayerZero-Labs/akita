@@ -119,7 +119,7 @@ pub(crate) fn materialized_entries_for_specs(
                 "planning schedule row {}/{}: {} {label}",
                 indexed.request_index + 1,
                 requests.len(),
-                spec.module_name,
+                spec.family_name,
             );
             (Instant::now(), label)
         });
@@ -136,7 +136,7 @@ pub(crate) fn materialized_entries_for_specs(
                         "planned schedule row {}/{}: {} {label} levels={} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
-                        spec.module_name,
+                        spec.family_name,
                         entry.schedule().num_fold_levels(),
                         started.elapsed(),
                     );
@@ -147,7 +147,7 @@ pub(crate) fn materialized_entries_for_specs(
                         "reused schedule row {}/{}: {} {label} levels={} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
-                        spec.module_name,
+                        spec.family_name,
                         entry.schedule().num_fold_levels(),
                         started.elapsed(),
                     );
@@ -158,7 +158,7 @@ pub(crate) fn materialized_entries_for_specs(
                         "unsupported schedule row {}/{}: {} {label} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
-                        spec.module_name,
+                        spec.family_name,
                         started.elapsed(),
                     );
                 }
@@ -167,7 +167,7 @@ pub(crate) fn materialized_entries_for_specs(
                         "failed schedule row {}/{}: {} {label} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
-                        spec.module_name,
+                        spec.family_name,
                         started.elapsed(),
                     );
                 }
@@ -178,7 +178,7 @@ pub(crate) fn materialized_entries_for_specs(
             {
                 eprintln!(
                     "planner diagnostics {} {label}: {planner_diagnostics}",
-                    spec.module_name,
+                    spec.family_name,
                 );
             }
         }
@@ -192,7 +192,7 @@ pub(crate) fn materialized_entries_for_specs(
         for (spec, counters) in specs.iter().zip(counters) {
             eprintln!(
                 "schedule row summary {}: requested={} reused={} planned={} unsupported={}",
-                spec.module_name,
+                spec.family_name,
                 spec.keys.len() + spec.grouped_requests.len(),
                 counters.reused_preplans.load(Ordering::Relaxed),
                 counters.planned.load(Ordering::Relaxed),
@@ -207,9 +207,7 @@ pub(crate) fn materialized_entries_for_specs(
         entries_by_spec[spec_index].push(entry);
     }
     for entries in &mut entries_by_spec {
-        entries.sort_by(|left, right| {
-            akita_schedules::runtime_schedule_key_cmp(&left.key(), &right.key())
-        });
+        entries.sort_by_cached_key(|entry| entry.key().canonical_order_key());
     }
     Ok(entries_by_spec)
 }
@@ -252,7 +250,7 @@ fn materialized_entry(
             } else {
                 "regen multi-group"
             };
-            Err(format!("{}: {kind} {key:?}: {error}", spec.module_name))
+            Err(format!("{}: {kind} {key:?}: {error}", spec.family_name))
         }
     }
 }

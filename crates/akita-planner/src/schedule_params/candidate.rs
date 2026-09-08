@@ -278,8 +278,8 @@ mod setup_prefix;
 pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    recursive_split_search_domain, FoldCandidatePolicy, RecursiveCandidateRequest,
-    RecursiveFoldWork, SplitBoundPolicy,
+    recursive_split_search_domain, CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy,
+    RecursiveCandidateRequest, RecursiveFoldWork, SetupPrefixLayoutGuide, SplitBoundPolicy,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use recursive::{

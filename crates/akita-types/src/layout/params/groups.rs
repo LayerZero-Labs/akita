@@ -7,7 +7,7 @@ use super::GroupOpenPhaseParams;
 /// The last entry is always the fold's own group. An optional setup prefix may
 /// appear only at index zero. The boxed slice prevents callers from changing
 /// the collection length after construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FoldGroups {
     entries: Box<[GroupOpenPhaseParams]>,
 }

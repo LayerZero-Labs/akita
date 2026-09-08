@@ -21,6 +21,7 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "keccak 0.1.6",
+ "serde",
  "smallvec",
  "tracing",
 ]
@@ -87,6 +88,7 @@ dependencies = [
  "jolt-field",
  "num-traits",
  "rand_core 0.6.4",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]

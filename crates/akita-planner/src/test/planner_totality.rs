@@ -42,6 +42,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
                         &[],
                         inner_basis,
                         opening_basis,
+                        None,
                     )? {
                         let contracts = output_witness_len
                             * (params.open().digits.log_basis as usize)
@@ -190,6 +191,7 @@ fn valid_small_grouped_root_has_a_schedule() {
         &[],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
+        None,
     )
     .expect("scalar producer candidates")
     .into_iter()
