@@ -224,8 +224,8 @@ mod tests {
     use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
     use akita_transcript::AkitaTranscript;
     use jolt_field::{Fp64, Ring};
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::Shake256;
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+    use shake::Shake256;
 
     type TestField = Fp64<4294967197>;
 

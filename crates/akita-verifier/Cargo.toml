@@ -60,7 +60,7 @@ workspace = true
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "relation_evaluator"

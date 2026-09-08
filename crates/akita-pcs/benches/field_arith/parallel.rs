@@ -4,7 +4,10 @@ use std::env;
 use std::thread;
 
 #[cfg(feature = "parallel")]
-use criterion::{black_box, Criterion, Throughput};
+use std::hint::black_box;
+
+#[cfg(feature = "parallel")]
+use criterion::{Criterion, Throughput};
 #[cfg(feature = "parallel")]
 use jolt_field::{
     CanonicalEncoding, Field, Packed, Prime128Offset275, Prime31Offset19, Prime64Offset59, Zero,

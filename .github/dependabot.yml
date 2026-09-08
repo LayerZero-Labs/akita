@@ -10,6 +10,12 @@ updates:
     directory: /
     patterns:
       - "*"
+    ignore:
+      # Akita's field APIs and pinned Jolt revision use rand_core 0.6.
+      # rand 0.9+ uses a newer, incompatible rand_core trait generation.
+      - dependency-name: rand
+        versions:
+          - ">=0.9"
     multi-ecosystem-group: dependencies
 
   - package-ecosystem: github-actions

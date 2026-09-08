@@ -10,7 +10,9 @@ use akita_algebra::{
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, MontCoeff, NttKernelPlan,
 };
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_field::{CanonicalEncoding, Fp64, One, Prime128OffsetA7F7, Prime32Offset99, Ring};
 
 type F = Fp64<{ Q32_MODULUS }>;

@@ -5,8 +5,8 @@
 use aes::Aes128;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 
 const MATRIX_PRG_DOMAIN: &[u8] = b"akita/matrix-prg";
 const MATRIX_PRG_SHAKE_DOMAIN: &[u8] = b"akita/matrix-prg/shake256";

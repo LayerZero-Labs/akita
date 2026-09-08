@@ -4,7 +4,9 @@ use akita_types::{CommitmentRingDims, RingRelationMode};
 use akita_verifier::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
 };
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{One, Prime128OffsetA7F7};
 use std::time::Duration;
 
