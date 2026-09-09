@@ -83,7 +83,8 @@ pub struct BatchedSumcheckRoundResult<E: Field> {
 ///
 /// # Errors
 ///
-/// Returns an error if the field inverse of 2 does not exist.
+/// Returns an error if no instances are supplied, or a nonzero-round batch has
+/// no positive degree bound for its compressed messages.
 #[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
 pub fn prove_batched_sumcheck<F, T, E, S>(
     mut instances: Vec<&mut (dyn SumcheckInstanceProver<E> + Send)>,
@@ -107,6 +108,12 @@ where
         .map(|inst| inst.num_rounds())
         .max()
         .unwrap(); // safe: non-empty checked above
+
+    if max_num_rounds != 0 && instances.iter().all(|inst| inst.degree_bound() == 0) {
+        return Err(AkitaError::InvalidInput(
+            "batched sumcheck rounds require a positive degree bound".into(),
+        ));
+    }
 
     // Absorb individual input claims.
     for inst in instances.iter() {

@@ -501,15 +501,18 @@ fn compressed_constant_and_linear_rounds_require_degree_bound_one() {
     }
 }
 
-struct ZeroSumcheckInstance;
+struct ZeroSumcheckInstance {
+    num_rounds: usize,
+    degree_bound: usize,
+}
 
 impl SumcheckInstanceProver<F> for ZeroSumcheckInstance {
     fn num_rounds(&self) -> usize {
-        4
+        self.num_rounds
     }
 
     fn degree_bound(&self) -> usize {
-        1
+        self.degree_bound
     }
 
     fn input_claim(&self) -> F {
@@ -542,33 +545,61 @@ impl SumcheckInstanceVerifier<F> for ZeroSumcheckInstance {
 }
 
 #[test]
-fn empty_zero_polynomial_round_trips_through_standard_and_batched_sumcheck() {
-    let (proof, challenges, final_claim) = ZeroSumcheckInstance
-        .prove::<F, _, _>(&mut new_transcript(), sample_round)
-        .unwrap();
-    assert_eq!(final_claim, F::zero());
-    assert!(proof
-        .round_polys
-        .iter()
-        .all(|poly| poly.coeffs_except_linear_term == [F::zero()]));
-    assert_eq!(
-        ZeroSumcheckInstance.verify::<F, _, _>(&proof, &mut new_transcript(), sample_round),
-        Ok(challenges)
-    );
+fn standard_and_batched_provers_reject_zero_degree_rounds() {
+    let mut instance = ZeroSumcheckInstance {
+        num_rounds: 4,
+        degree_bound: 0,
+    };
+    assert!(matches!(
+        instance.prove::<F, _, _>(&mut new_transcript(), |_| panic!(
+            "invalid degree must reject before sampling"
+        )),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
+            vec![&mut instance],
+            &mut new_transcript(),
+            |_| panic!("invalid degree must reject before sampling"),
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
 
-    let (proof, challenges) = akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
-        vec![&mut ZeroSumcheckInstance],
-        &mut new_transcript(),
-        |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
-    )
-    .unwrap();
-    assert_eq!(
-        akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
-            &proof,
-            vec![&ZeroSumcheckInstance],
+#[test]
+fn empty_zero_polynomial_round_trips_through_standard_and_batched_sumcheck() {
+    for (num_rounds, degree_bound) in [(0, 0), (4, 1)] {
+        let mut instance = ZeroSumcheckInstance {
+            num_rounds,
+            degree_bound,
+        };
+        let (proof, challenges, final_claim) = instance
+            .prove::<F, _, _>(&mut new_transcript(), sample_round)
+            .unwrap();
+        assert_eq!(final_claim, F::zero());
+        assert!(proof
+            .round_polys
+            .iter()
+            .all(|poly| poly.coeffs_except_linear_term == [F::zero()]));
+        assert_eq!(
+            instance.verify::<F, _, _>(&proof, &mut new_transcript(), sample_round),
+            Ok(challenges)
+        );
+
+        let (proof, challenges) = akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
+            vec![&mut instance],
             &mut new_transcript(),
             |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
-        ),
-        Ok(challenges)
-    );
+        )
+        .unwrap();
+        assert_eq!(
+            akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
+                &proof,
+                vec![&instance],
+                &mut new_transcript(),
+                |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+            ),
+            Ok(challenges)
+        );
+    }
 }
