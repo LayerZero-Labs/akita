@@ -99,6 +99,9 @@ where
 }
 
 /// Prover opening input: public claims plus ordered group-local prover material.
+///
+/// Constructors validate point arities, evaluation counts, and source geometry
+/// against the stored layout. Private fields preserve this alignment during proving.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: Field> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
@@ -127,7 +130,7 @@ where
             opening_layout,
             group_inputs,
         };
-        data.check_alignment()?;
+        data.validate_claims()?;
         Ok(data)
     }
 
@@ -170,13 +173,11 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let group_inputs = bind_group_inputs(hints, groups)?;
-        let data = Self {
+        Ok(Self {
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
             opening_layout,
             group_inputs,
-        };
-        data.check_alignment()?;
-        Ok(data)
+        })
     }
 }
 
@@ -217,21 +218,25 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
 where
     G: RootProverGroupMeta<CommitF>,
 {
-    fn check_alignment(&self) -> Result<(), AkitaError> {
+    fn validate_claims(&self) -> Result<(), AkitaError> {
         if self.opening_claims.num_groups() != self.group_inputs.len() {
             return Err(AkitaError::InvalidInput(
                 "prover opening data group counts are misaligned".to_string(),
             ));
         }
-        for group_index in 0..self.opening_claims.num_groups() {
-            let expected = self.opening_claims.group_evaluations(group_index)?.len();
-            let actual = self
-                .group_inputs
-                .get(group_index)
-                .ok_or_else(|| AkitaError::InvalidInput("missing polynomial group".to_string()))?
-                .group
-                .num_polynomials();
-            if actual != expected {
+        for (claims, layout) in self
+            .opening_claims
+            .groups()
+            .iter()
+            .zip(self.opening_layout.groups())
+        {
+            if claims.point().len() != layout.num_vars() {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: layout.num_vars(),
+                    actual: claims.point().len(),
+                });
+            }
+            if claims.evaluations().len() != layout.num_polynomials() {
                 return Err(AkitaError::InvalidInput(
                     "prover opening data polynomial/evaluation counts are misaligned".to_string(),
                 ));
@@ -260,28 +265,9 @@ where
         &self.opening_claims
     }
 
-    /// Layout-only opening geometry derived from prover polynomials.
-    pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        for (group_index, input) in self.group_inputs.iter().enumerate() {
-            let group = &input.group;
-            let group_num_vars = group.num_vars()?;
-            let group_point = self.opening_claims.group_point(group_index)?;
-            if group_point.len() != group_num_vars {
-                return Err(AkitaError::InvalidPointDimension {
-                    expected: group_num_vars,
-                    actual: group_point.len(),
-                });
-            }
-            let declared = self.opening_layout.group_layout(group_index)?;
-            if declared.num_vars() != group_num_vars
-                || declared.num_polynomials() != group.num_polynomials()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "prover polynomial shape does not match the declared opening layout".into(),
-                ));
-            }
-        }
-        Ok(self.opening_layout.clone())
+    /// Opening geometry checked against claims and polynomial groups at construction.
+    pub fn opening_layout(&self) -> &OpeningClaimsLayout {
+        &self.opening_layout
     }
 
     /// Borrow one prover hint.
@@ -320,16 +306,18 @@ where
         PointF: ExtField<CommitF>,
         T: Transcript<CommitF>,
     {
-        // `opening_layout` validates that each public point matches its
-        // polynomial group's shape, keeping this byte-identical to verifier
-        // replay for well-formed inputs.
-        let layout = self.opening_layout()?;
+        let layout = self.opening_layout();
         let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_level(root_params, &layout, PointF::DEGREE)?;
+            akita_types::RelationWitnessGeometry::for_level(root_params, layout, PointF::DEGREE)?;
         let relation_layout = relation_geometry.rhs_layout();
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
             let compression = relation_layout.compression_plan_for_group(group_index)?;
+            if commitment.rows().coeff_len() != compression.terminal_coefficients() {
+                return Err(AkitaError::InvalidInput(
+                    "root compressed commitment does not match scheduled root params".into(),
+                ));
+            }
             let ring_dim = compression
                 .maps()
                 .last()
@@ -547,14 +535,36 @@ mod tests {
     fn multi_group_data<'a>(
         pre_refs: &'a [&'a MockPoly],
         final_refs: &'a [&'a MockPoly],
-    ) -> ProverOpeningData<'a, F, PreparedProverGroup<'a, MockPoly>, F> {
+    ) -> Result<ProverOpeningData<'a, F, PreparedProverGroup<'a, MockPoly>, F>, AkitaError> {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(4, 2),
+        ])
+        .expect("fixture layout");
+        let geometry =
+            akita_types::RelationWitnessGeometry::for_level(&multi_group_params(), &layout, 1)
+                .expect("fixture geometry");
+        let commitment_for_group = |index| {
+            let plan = geometry
+                .rhs_layout()
+                .compression_plan_for_group(index)
+                .expect("fixture compression");
+            Commitment::new(RingVec::from_coeffs(vec![
+                F::zero();
+                plan.terminal_coefficients()
+            ]))
+        };
         let claims = OpeningClaims::from_groups(vec![
-            PolynomialGroupClaims::new(vec![F::zero(); 2], vec![F::zero()], commitment())
-                .expect("pre group"),
+            PolynomialGroupClaims::new(
+                vec![F::zero(); 2],
+                vec![F::zero()],
+                commitment_for_group(0),
+            )
+            .expect("pre group"),
             PolynomialGroupClaims::new(
                 vec![F::zero(); 4],
                 vec![F::zero(), F::zero()],
-                commitment(),
+                commitment_for_group(1),
             )
             .expect("final group"),
         ])
@@ -564,7 +574,6 @@ mod tests {
             vec![empty_hint(), empty_hint()],
             vec![pre_refs, final_refs],
         )
-        .expect("prover data")
     }
 
     #[test]
@@ -574,9 +583,9 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = multi_group_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs).expect("prover data");
 
-        let layout = data.opening_layout().expect("precise layout");
+        let layout = data.opening_layout();
 
         assert_eq!(
             layout.groups(),
@@ -588,17 +597,15 @@ mod tests {
     }
 
     #[test]
-    fn opening_layout_rejects_group_arity_mismatch() {
+    fn construction_rejects_group_arity_mismatch() {
         let pre_poly = MockPoly { num_vars: 3 };
         let final_a = MockPoly { num_vars: 4 };
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = multi_group_data(&pre_refs, &final_refs);
-
-        let err = data
-            .opening_layout()
-            .expect_err("pre group point vars claim two variables");
+        let err = multi_group_data(&pre_refs, &final_refs)
+            .err()
+            .expect("pre group point vars claim two variables");
 
         assert!(matches!(
             err,
@@ -610,13 +617,71 @@ mod tests {
     }
 
     #[test]
+    fn construction_rejects_misaligned_claim_material() {
+        let poly = MockPoly { num_vars: 2 };
+        let refs = [&poly];
+        for (evaluations, hints, sources) in [
+            (2, 1, 1), // Extra evaluation without a polynomial.
+            (1, 0, 1), // Missing hint.
+            (1, 1, 0), // Missing polynomial group.
+        ] {
+            let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                vec![F::zero(); 2],
+                vec![F::zero(); evaluations],
+                commitment(),
+            )
+            .expect("claims group")])
+            .expect("claims");
+            assert!(ProverOpeningData::new_internal(
+                claims,
+                vec![empty_hint(); hints],
+                vec![&refs[..]; sources],
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn transcript_binding_rejects_malformed_commitment_rows() {
+        let pre = MockPoly { num_vars: 2 };
+        let final_poly = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre];
+        let final_refs = [&final_poly, &final_poly];
+        let data = multi_group_data(&pre_refs, &final_refs).expect("prover data");
+        let claims = data
+            .opening_claims()
+            .groups()
+            .iter()
+            .map(|group| {
+                PolynomialGroupClaims::new(
+                    group.point().to_vec(),
+                    group.evaluations().to_vec(),
+                    Commitment::new(RingVec::from_coeffs(vec![F::zero()])),
+                )
+                .expect("claims group")
+            })
+            .collect();
+        let malformed = ProverOpeningData::new_internal(
+            OpeningClaims::from_groups(claims).expect("claims"),
+            vec![empty_hint(), empty_hint()],
+            vec![&pre_refs[..], &final_refs[..]],
+        )
+        .expect("claim shape is valid");
+        let mut transcript = AkitaTranscript::<F>::new(b"test/malformed-commitment");
+        assert!(matches!(
+            malformed.append_to_transcript(&multi_group_params(), &mut transcript),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
     fn append_to_transcript_binds_precise_group_shape_not_padded_max() {
         let pre_poly = MockPoly { num_vars: 2 };
         let final_a = MockPoly { num_vars: 4 };
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = multi_group_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs).expect("prover data");
         let root_params = multi_group_params();
 
         let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
@@ -630,9 +695,20 @@ mod tests {
         padded_layout
             .append_batch_shape_to_transcript::<F, _>(&mut padded)
             .expect("padded shape absorb");
-        for commitment in data.commitments() {
+        let geometry =
+            akita_types::RelationWitnessGeometry::for_level(&root_params, data.opening_layout(), 1)
+                .expect("fixture geometry");
+        for (index, commitment) in data.commitments().into_iter().enumerate() {
+            let ring_dimension = geometry
+                .rhs_layout()
+                .compression_plan_for_group(index)
+                .expect("fixture compression")
+                .maps()
+                .last()
+                .expect("terminal map")
+                .ring_dimension();
             commitment
-                .append_to_transcript(ABSORB_COMMITMENT, 64, &mut padded)
+                .append_to_transcript(ABSORB_COMMITMENT, ring_dimension, &mut padded)
                 .expect("commitment absorb");
         }
         for group in data.opening_claims().groups() {

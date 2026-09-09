@@ -1,5 +1,5 @@
 use super::super::*;
-use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
+use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
@@ -12,7 +12,7 @@ pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
 
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V, C, O, TS, R>(
+pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
@@ -20,7 +20,6 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
-    validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -43,15 +42,12 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
-    V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
-    let opening_batch = block_claims
-        .opening_layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
+    let opening_batch = block_claims.opening_layout().clone();
     let tensor = stack.tensor();
     let (protocol_points, reduction) = if run_eor {
         let ExtensionOpeningSource::Logical(groups) = eor_source;
@@ -93,8 +89,12 @@ where
         })?;
         (proved.protocol_points, Some(proved.reduction))
     } else {
-        let protocol_points =
-            prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
+        let protocol_points: Vec<Vec<E>> = block_claims
+            .opening_claims()
+            .groups()
+            .iter()
+            .map(|group| group.point().to_vec())
+            .collect();
         (protocol_points, None)
     };
 

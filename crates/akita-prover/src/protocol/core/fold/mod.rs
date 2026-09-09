@@ -39,36 +39,6 @@ pub(in crate::protocol::core) use extension_claim::{
 };
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
-pub(super) fn uniform_opening_method(
-    level_params: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<akita_types::OpeningMethod, AkitaError> {
-    let method = level_params
-        .group_params_geometry(opening_batch, 0)?
-        .opening_method();
-    for group_index in 1..opening_batch.num_groups() {
-        let group_method = level_params
-            .group_params_geometry(opening_batch, group_index)?
-            .opening_method();
-        let same_family = matches!(
-            (method, group_method),
-            (
-                akita_types::OpeningMethod::EvaluationTrace,
-                akita_types::OpeningMethod::EvaluationTrace
-            ) | (
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. },
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-            )
-        );
-        if !same_family {
-            return Err(AkitaError::InvalidSetup(
-                "one fold cannot mix EvaluationTrace and coefficient-packing groups".into(),
-            ));
-        }
-    }
-    Ok(method)
-}
-
 pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
@@ -81,28 +51,6 @@ pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) evaluation_trace_claim_coefficients: Vec<E>,
     pub(in crate::protocol::core) evaluation_trace_basis: BasisMode,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
-}
-
-pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
-    block_claims: &ProverOpeningData<'a, E, P, F>,
-    opening_batch: &OpeningClaimsLayout,
-    validate_non_eor: V,
-) -> Result<Vec<Vec<E>>, AkitaError>
-where
-    F: Field,
-    E: ExtField<F>,
-    P: RootProverGroupMeta<F>,
-    V: FnOnce() -> Result<(), AkitaError>,
-{
-    validate_non_eor()?;
-    (0..opening_batch.num_groups())
-        .map(|group_index| {
-            block_claims
-                .opening_claims()
-                .group_point(group_index)
-                .map(<[E]>::to_vec)
-        })
-        .collect()
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
@@ -175,54 +123,45 @@ where
     // leaving the typed dispatch arm. Typed fold outputs cross the boundary
     // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
     let opening_batch = trace_opening_batch.clone();
-    let opening_method = uniform_opening_method(level_params, &opening_batch)?;
+    let opening_method = level_params.opening_method();
     if !matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace) && reduction.is_some()
     {
         return Err(AkitaError::InvalidSetup(
             "coefficient packing cannot consume an extension-opening reduction".into(),
         ));
     }
-    let final_group_index = opening_batch.root_final_group_index()?;
+    let final_group_index = level_params.validate_opening_batch(&opening_batch)?;
     let mut prepared_group_openings = Vec::with_capacity(opening_batch.num_groups());
     let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
-    for group_index in 0..opening_batch.num_groups() {
-        let group_lp = level_params
-            .group_params_geometry(&opening_batch, group_index)
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("root group params {group_index} failed: {err:?}"))
-            })?;
-        let group_dims = level_params.group_role_dims_geometry(&opening_batch, group_index)?;
-        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
-        let target_len = group_alpha_bits
-            .checked_add(group_lp.position_index_bits())
-            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("group opening point length overflow".to_string())
-            })?;
+    for (group_index, group_lp) in level_params.groups().iter().enumerate() {
+        let ring_dimension = group_lp.inner_commit_matrix_params().ring_dimension();
+        let group_alpha_bits = ring_dimension.trailing_zeros() as usize;
         let group_protocol_point = protocol_points
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let point_width_is_valid = match group_lp.opening_method() {
-            akita_types::OpeningMethod::SubringCoefficientPacking { .. } => {
-                group_protocol_point.len() == opening_batch.group_layout(group_index)?.num_vars()
-            }
+        // Packing validates the natural point in PreparedSubringCoefficientPackingPoint.
+        // EvaluationTrace uses a scheduled domain, with a short final suffix point allowed.
+        if matches!(
+            group_lp.opening_method(),
             akita_types::OpeningMethod::EvaluationTrace
-                if pad_base_evals && group_index == final_group_index =>
+        ) {
+            let target_len = akita_error::checked::sum([
+                group_alpha_bits,
+                group_lp.position_index_bits(),
+                group_lp.block_index_bits(),
+            ])
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".into())
+            })?;
+            let allow_short_point = pad_base_evals && group_index == final_group_index;
+            if group_protocol_point.len() > target_len
+                || (!allow_short_point && group_protocol_point.len() != target_len)
             {
-                group_protocol_point.len() <= target_len
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: target_len,
+                    actual: group_protocol_point.len(),
+                });
             }
-            akita_types::OpeningMethod::EvaluationTrace => group_protocol_point.len() == target_len,
-        };
-        if !point_width_is_valid {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: match group_lp.opening_method() {
-                    akita_types::OpeningMethod::SubringCoefficientPacking { .. } => {
-                        opening_batch.group_layout(group_index)?.num_vars()
-                    }
-                    akita_types::OpeningMethod::EvaluationTrace => target_len,
-                },
-                actual: group_protocol_point.len(),
-            });
         }
         if pad_base_evals {
             for coordinate in group_protocol_point {
@@ -233,7 +172,7 @@ where
             .group(group_index)?
             .prepare_opening(
                 opening,
-                group_dims.d_a(),
+                ring_dimension,
                 group_protocol_point,
                 basis,
                 group_lp.num_positions_per_block(),

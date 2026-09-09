@@ -51,7 +51,7 @@ impl<F: Field, E: Field> SuffixProverState<F, E> {
 /// Returns an error if level proving fails or the required recursive suffix is
 /// absent.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
+pub(super) fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
@@ -112,7 +112,6 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
-    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
@@ -520,8 +519,7 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
-    let opening_batch = block_claims.opening_layout()?;
-    let opening_method = level_params.uniform_opening_method(&opening_batch)?;
+    let opening_method = level_params.opening_method();
     let needs_extension_reduction = opening_method.requires_extension_opening_reduction(E::DEGREE);
     let logical_polys = setup_source_storage
         .as_ref()
@@ -533,19 +531,18 @@ where
         .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
         .collect::<Result<Vec<_>, _>>()?;
     if const { <E as ExtField<F>>::DEGREE == 1 } {
-        prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
+        prepare_single_field_fold::<F, E, T, _, C, O, TS, R>(
             stack,
             block_claims,
             true,
             transcript,
             u32::try_from(level)
                 .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-            || Ok(()),
             level_params,
             BasisMode::Lagrange,
         )
     } else {
-        prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
+        prepare_extension_claim_fold::<F, E, T, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             block_claims,
@@ -554,7 +551,6 @@ where
             transcript,
             u32::try_from(level)
                 .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-            || Ok(()),
             level_params,
             BasisMode::Lagrange,
         )
