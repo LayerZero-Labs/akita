@@ -84,12 +84,12 @@ where
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -113,7 +113,7 @@ where
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = scheme
-        .batched_prove::<_, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .batched_prove::<_, _, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
         .expect("prove");
 
     let shape = proof.shape();

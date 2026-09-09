@@ -1,12 +1,9 @@
-use super::{MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView};
-use crate::backend::OneHotView;
+use super::{MultilinearPolynomial, MultilinearPolynomialBatchView};
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
-    DecomposeFoldBatchPlan, OpeningBatchKernel, RootCommitKernel, RootCommitSource,
+    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel,
     RootOpeningSource, RootPolyShape,
 };
-use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
-use akita_types::SetupMatrixCapacity;
+use crate::{DensePoly, OneHotPoly};
 use jolt_field::{CanonicalEncoding, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
@@ -53,61 +50,6 @@ fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
         >::dense(dense)),
         None
     );
-}
-
-#[test]
-fn multilinear_onehot_group_commit_matches_inner_kernel() {
-    type F = Prime24Offset3;
-    const D: usize = 16;
-
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(
-        8,
-        1,
-        SetupMatrixCapacity {
-            num_field_elements: 4096,
-        },
-    )
-    .unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let plan = CommitInnerPlan {
-        n_a: 2,
-        num_positions_per_block: 2,
-        num_digits_inner: 1,
-        log_basis_inner: 2,
-    };
-
-    let inner = [sample_onehot::<D>(), sample_onehot::<D>()];
-    let inner_views = inner
-        .iter()
-        .map(RootCommitSource::<F, D>::commit_view)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let expected = RootCommitKernel::<OneHotView<'_, F, D>, F, D>::commit_inner_group(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        inner_views,
-        plan,
-    )
-    .unwrap();
-
-    let wrapped = inner.map(MultilinearPolynomial::onehot);
-    let wrapped_views = wrapped
-        .iter()
-        .map(RootCommitSource::<F, D>::commit_view)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let got = RootCommitKernel::<MultilinearPolynomialView<'_, F, D>, F, D>::commit_inner_group(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        wrapped_views,
-        plan,
-    )
-    .unwrap();
-    assert_eq!(got.len(), expected.len());
-    for (got, expected) in got.iter().zip(&expected) {
-        assert_eq!(got.inner_rows.ring_dim(), expected.inner_rows.ring_dim());
-        assert_eq!(got.inner_rows.coeffs(), expected.inner_rows.coeffs());
-    }
 }
 
 #[test]

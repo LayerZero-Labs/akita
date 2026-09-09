@@ -61,12 +61,12 @@ fn heterogeneous_group_types() {
         // OneHot pre-group committed with OneHotCfg (matches catalog descriptor[0]).
         let akita_prover::CommitOutput {
             committed_group: onehot_pre_commitment,
-            hint: onehot_pre_hint,
+            prover_state: onehot_pre_hint,
         } = onehot_scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&onehot_pre),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("K=256 precommit");
@@ -87,12 +87,12 @@ fn heterogeneous_group_types() {
         .expect("dense stack");
         let akita_prover::CommitOutput {
             committed_group: dense_commitment,
-            hint: dense_hint,
+            prover_state: dense_hint,
         } = dense_scheme
             .commit(
                 &dense_setup,
                 &dense_polys,
-                &dense_stack,
+                dense_stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("dense precommit");
@@ -104,12 +104,12 @@ fn heterogeneous_group_types() {
         .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = onehot_scheme
             .commit(
                 &setup,
                 &final_polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");
@@ -281,12 +281,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         .expect("bounded dense stack");
         let akita_prover::CommitOutput {
             committed_group: bounded_commitment,
-            hint: bounded_hint,
+            prover_state: bounded_hint,
         } = bounded_scheme
             .commit(
                 &bounded_setup,
                 std::slice::from_ref(&bounded_dense),
-                &bounded_stack,
+                bounded_stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("bounded dense precommit");
@@ -317,12 +317,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = onehot_scheme
             .commit(
                 &setup,
                 &final_polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("one-hot final commit against a bounded precommit");
@@ -525,7 +525,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
             .commit(
                 &setup,
                 std::slice::from_ref(&dense),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .map(|_| ())
@@ -562,7 +562,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
             .commit(
                 &setup,
                 std::slice::from_ref(&onehot),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("the declared one-hot representation must still commit");
@@ -651,7 +651,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
                 .commit(
                     &setup,
                     std::slice::from_ref(&poly),
-                    &stack,
+                    stack.commitment(),
                     akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .map(|_| ())
@@ -730,7 +730,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
             .commit(
                 &full_setup,
                 std::slice::from_ref(&poly),
-                &full_stack,
+                full_stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("full-width dense accepts every field element");
@@ -753,12 +753,26 @@ fn heterogeneous_compute_backends() {
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
 
-        let commit_backend = CommitCluster;
         let opening_backend = OpeningCluster;
         let tensor = TensorCluster;
         let ring = RingSwitchCluster;
-        let stack = ProverComputeStack::new(
-            (&commit_backend, &prepared),
+        let commitment_executor = CommitmentExecutor::cpu(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            setup.expanded.as_ref(),
+            Vec::new(),
+            PortableStatePolicy,
+        )
+        .expect("commitment executor");
+        let stack: ProverComputeStack<
+            '_,
+            F,
+            CommitCluster,
+            OpeningCluster,
+            TensorCluster,
+            RingSwitchCluster,
+        > = ProverComputeStack::new(
+            commitment_executor,
             (&opening_backend, &prepared),
             (&tensor, &prepared),
             (&ring, &prepared),
@@ -767,20 +781,17 @@ fn heterogeneous_compute_backends() {
         .expect("heterogeneous stack");
 
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let commit_stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-                .expect("commit stack");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
-        } = akita_prover::commit::<Cfg, akita_prover::DensePoly<F>, CpuBackend>(
-            std::slice::from_ref(&poly),
-            setup.expanded.as_ref(),
-            scheme.schedules(),
-            &commit_stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+            prover_state: hint,
+        } = scheme
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                stack.commitment(),
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let pt: Vec<F> = (0..NV).map(|i| F::from_u64((i + 2) as u64)).collect();
         let expected_opening = dense_opening_lagrange(&evals, &pt);
@@ -803,7 +814,7 @@ fn heterogeneous_compute_backends() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
+        let proof = batched_prove::<Cfg, _, _, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
             scheme.schedules(),

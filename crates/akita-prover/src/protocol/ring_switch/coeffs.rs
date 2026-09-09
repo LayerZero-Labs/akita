@@ -377,16 +377,16 @@ where
             z_folded_coefficients,
             e_hat,
             folded_opening,
-            hint,
+            inner_relation,
             ..
         } = group;
-        if hint.ring_dim() != group_dims.d_a() {
+        if inner_relation.ring_dimension() != group_dims.d_a() {
             return Err(AkitaError::InvalidSize {
                 expected: group_dims.d_a(),
-                actual: hint.ring_dim(),
+                actual: inner_relation.ring_dimension(),
             });
         }
-        let inner_rows_by_polynomial = hint.into_rows();
+        let inner_rows_by_polynomial = inner_relation.into_rows();
         let polynomial_count = opening_batch.group_layout(group_index)?.num_polynomials();
         if inner_rows_by_polynomial.len() != polynomial_count {
             return Err(AkitaError::InvalidSize {

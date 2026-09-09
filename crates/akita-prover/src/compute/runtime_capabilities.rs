@@ -1,10 +1,10 @@
 //! D-free prover capability bundles generated from the runtime ring-dimension ladder.
 
-use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
-use super::kernels::{RootCommitKernel, SubringCoefficientPackingBatchKernel};
+use super::backend::ComputeBackendSetup;
+use super::kernels::SubringCoefficientPackingBatchKernel;
 use super::poly::{
-    OpeningProveBackendFor, ProveFlowBackendFor, RingSwitchProveBackend, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootTensorSource, TensorBackendFor,
+    OpeningProveBackendFor, ProveFlowBackendFor, RingSwitchProveBackend, RootOpeningSource,
+    RootPolyMeta, RootTensorSource, TensorBackendFor,
 };
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use jolt_field::Unreduced;
@@ -104,21 +104,6 @@ macro_rules! runtime_capabilities {
         {
         }
 
-        /// Root polynomial commit sources at every runtime dimension.
-        pub trait RuntimeCommitSource<F>:
-            RootPolyMeta<F> + RootCommitSource<F, $first> $(+ RootCommitSource<F, $rest>)*
-        where
-            F: Field,
-        {
-        }
-
-        impl<F, P> RuntimeCommitSource<F> for P
-        where
-            F: Field,
-            P: RootPolyMeta<F> + RootCommitSource<F, $first> $(+ RootCommitSource<F, $rest>)*,
-        {
-        }
-
         /// Root polynomial usable for proving at every runtime dimension.
         pub trait RuntimeRootProvePoly<F>:
             RootPolyMeta<F> + RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*
@@ -202,35 +187,6 @@ macro_rules! runtime_capabilities {
             E: ExtField<F>,
             P: RuntimeTensorSource<F>,
             B: TensorBackendFor<F, P, E, $first> $(+ TensorBackendFor<F, P, E, $rest>)*,
-        {
-        }
-
-        /// Commit backend for `P` at every runtime dimension.
-        pub trait RuntimeCommitBackendFor<F, P>:
-            DigitRowsComputeBackend<F>
-            + for<'a> RootCommitKernel<
-                <P as RootCommitSource<F, $first>>::CommitView<'a>, F, $first
-            >
-            $(+ for<'a> RootCommitKernel<
-                <P as RootCommitSource<F, $rest>>::CommitView<'a>, F, $rest
-            >)*
-        where
-            F: Field + CanonicalEncoding,
-            P: RuntimeCommitSource<F>,
-        {
-        }
-
-        impl<F, P, B> RuntimeCommitBackendFor<F, P> for B
-        where
-            F: Field + CanonicalEncoding,
-            P: RuntimeCommitSource<F>,
-            B: DigitRowsComputeBackend<F>
-                + for<'a> RootCommitKernel<
-                    <P as RootCommitSource<F, $first>>::CommitView<'a>, F, $first
-                >
-                $(+ for<'a> RootCommitKernel<
-                    <P as RootCommitSource<F, $rest>>::CommitView<'a>, F, $rest
-                >)*,
         {
         }
 

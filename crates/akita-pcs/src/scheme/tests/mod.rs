@@ -96,11 +96,17 @@ fn scheme_rejects_a_catalog_bound_to_another_config() {
     assert!(error.to_string().contains("family"));
 }
 
-type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
+type HomogeneousSelectedProverData<
+    'a,
+    C,
+    P,
+    S = AkitaCommitmentHint<<C as CommitmentConfig>::Field>,
+> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
     PreparedProverGroup<'a, P>,
     <C as CommitmentConfig>::Field,
+    S,
 >;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
@@ -115,19 +121,19 @@ mod layout;
 mod onehot;
 mod single;
 
-fn selected_prover_data<'a, C, P>(
+fn selected_prover_data<'a, C, P, S>(
     scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
-    hints: Vec<AkitaCommitmentHint<C::Field>>,
+    prover_states: Vec<S>,
     polynomials: Vec<&'a [&'a P]>,
-) -> Result<HomogeneousSelectedProverData<'a, C, P>, AkitaError>
+) -> Result<HomogeneousSelectedProverData<'a, C, P, S>, AkitaError>
 where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
     SelectedProverOpeningData::from_committed_claims::<C>(
         claims,
-        hints,
+        prover_states,
         polynomials,
         &scheme.schedules,
     )
@@ -162,13 +168,13 @@ fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
     witness_len <= MIN_W_LEN_FOR_FOLDING || witness_len >= prev_w_len
 }
 
-fn prover_claims<'a, P>(
+fn prover_claims<'a, P, S>(
     scheme: &Scheme,
     point: &'a [F],
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<F>,
-    hint: AkitaCommitmentHint<F>,
-) -> SelectedProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F>
+    prover_state: S,
+) -> SelectedProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F, S>
 where
     P: akita_prover::RootPolyMeta<F>,
 {
@@ -179,8 +185,13 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _>(scheme, opening_claims, vec![hint], vec![polynomials])
-        .expect("valid prover opening data")
+    selected_prover_data::<Cfg, _, _>(
+        scheme,
+        opening_claims,
+        vec![prover_state],
+        vec![polynomials],
+    )
+    .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(
@@ -263,21 +274,22 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
+    let stack = akita_prover::UniformProverStack::uniform_with_state_policy(
         &CpuBackend::DEFAULT,
         &prepared,
         setup.expanded.as_ref(),
+        akita_prover::ResidentStatePolicy,
     )
     .expect("stack");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -296,14 +308,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prover_claims(
                 &scheme,
                 &opening_point[..],
                 &poly_refs[..],
                 &commitments[0],
-                hint,
+                prover_state,
             ),
             &stack,
             &mut prover_transcript,

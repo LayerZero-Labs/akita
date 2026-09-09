@@ -12,13 +12,13 @@ use crate::report::{
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
-    RuntimeCommitBackendFor,
+    commit_setup_prefix, AkitaProverSetup, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
+    CpuPreparedSetup, DenseType, PolynomialType, PortableStatePolicy,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
@@ -27,44 +27,33 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-fn materialize_schedule_setup_prefix_slots<F, B>(
+fn materialize_schedule_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup,
+    backend: &CpuBackend,
+    prepared: &CpuPreparedSetup<F>,
     schedule: &FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    F: Field + CanonicalEncoding + Valid + 'static,
-    B: RuntimeCommitBackendFor<F, DensePoly<F>>,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
     for slot_id in schedule
         .recursive_folds
         .iter()
         .filter_map(|fold| fold.params.setup_prefix())
     {
-        if setup
-            .prefix_slots
-            .get(&slot_id.slot_id().expect("setup prefix group"))
-            .is_some()
-        {
+        let id = slot_id.slot_id().expect("setup prefix group");
+        if setup.prefix_slots.get(&id).is_some() {
             continue;
         }
-        let n_prefix = slot_id.n_prefix()?;
-        let slot = dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-            F,
-            slot_id.d_setup(),
-            |D_SETUP| {
-                commit_setup_prefix::<F, D_SETUP, B>(
-                    &setup.expanded,
-                    backend,
-                    prepared,
-                    &slot_id.profile,
-                    n_prefix,
-                    slot_id.setup_natural_len.expect("setup prefix group"),
-                )
-            }
+        let executor = CommitmentExecutor::cpu(
+            backend,
+            prepared,
+            &setup.expanded,
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+            PortableStatePolicy,
         )?;
+        let slot = commit_setup_prefix(&setup.expanded, &executor, &id)?;
+        drop(executor);
         setup.prefix_slots.insert(slot)?;
     }
     Ok(())
@@ -270,12 +259,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .collect::<Vec<_>>();
             let akita_prover::CommitOutput {
                 committed_group: commitment,
-                hint,
+                prover_state: hint,
             } = base_scheme
                 .commit(
                     &setup,
                     &polys,
-                    &stack,
+                    stack.commitment(),
                     akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("precommit");
@@ -303,12 +292,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = proof_scheme
             .commit(
                 &setup,
                 &final_polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final multi-group commitment");
@@ -364,7 +353,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .expect("multi-group prover data");
         let selection = prover_data.selection();
         let proof = proof_scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,
@@ -377,6 +366,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .shared_ntt_cache_metrics()
             .expect("post-execution setup NTT cache metrics");
         assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
+        drop(stack);
         (
             proof,
             schedule,

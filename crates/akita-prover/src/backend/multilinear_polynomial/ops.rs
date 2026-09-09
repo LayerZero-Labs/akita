@@ -5,20 +5,20 @@
 
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
+use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use jolt_field::{Unreduced, WithCommitAccumulator};
 
 use crate::backend::coefficient_packing::FusedPackingWeights;
 use crate::backend::dense::dense_coefficient_packing_partials;
 use crate::backend::onehot::onehot_coefficient_packing_partials;
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, RootCommitSource, RootOpeningSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan,
 };
-use crate::{CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly};
+use crate::{DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly};
 
 use super::poly::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
@@ -70,80 +70,6 @@ where
             }
         }
         Ok(outputs)
-    }
-}
-
-impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
-    for CpuBackend
-where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
-    I: OneHotIndex,
-{
-    fn commit_inner_group(
-        &self,
-        prepared: &Self::PreparedSetup,
-        sources: Vec<MultilinearPolynomialView<'_, F, D, I>>,
-        plan: CommitInnerPlan,
-    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-        if sources
-            .iter()
-            .all(|source| matches!(source.poly(), MultilinearPolynomial::Dense(_)))
-        {
-            let views = sources
-                .into_iter()
-                .map(|source| match source.poly() {
-                    MultilinearPolynomial::Dense(poly) => poly.commit_view(),
-                    MultilinearPolynomial::OneHot(_) => unreachable!("checked dense group"),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
-                self, prepared, views, plan,
-            );
-        }
-        if sources
-            .iter()
-            .all(|source| matches!(source.poly(), MultilinearPolynomial::OneHot(_)))
-        {
-            let views = sources
-                .into_iter()
-                .map(|source| match source.poly() {
-                    MultilinearPolynomial::OneHot(poly) => poly.commit_view(),
-                    MultilinearPolynomial::Dense(_) => unreachable!("checked one-hot group"),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
-                self, prepared, views, plan,
-            );
-        }
-        let mut witnesses = Vec::with_capacity(sources.len());
-        for source in sources {
-            let committed = match source.poly() {
-                MultilinearPolynomial::Dense(poly) => {
-                    RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
-                        self,
-                        prepared,
-                        vec![poly.commit_view()?],
-                        plan,
-                    )?
-                }
-                MultilinearPolynomial::OneHot(poly) => {
-                    RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
-                        self,
-                        prepared,
-                        vec![poly.commit_view()?],
-                        plan,
-                    )?
-                }
-            };
-            let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
-                AkitaError::InvalidSetup(format!(
-                    "child kernel returned {} mixed-group sources, expected one",
-                    committed.len()
-                ))
-            })?;
-            witnesses.push(witness);
-        }
-        Ok(witnesses)
     }
 }
 

@@ -1,5 +1,5 @@
 use super::poly::DensePoly;
-use crate::compute::{RootCommitSource, RootPolyMeta};
+use crate::compute::{CommitmentSource, RootPolyMeta};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_field::Prime128OffsetA7F7 as F;
@@ -104,9 +104,11 @@ fn dense_ring_constructor_preserves_the_entire_commitment_source_and_bound_scan(
             assert_eq!(1usize << RootPolyMeta::num_vars(&poly), evals.len());
             assert_eq!(&poly.field_coeffs()[..evals.len()], evals);
             assert_eq!(poly.ring_coeffs::<D>().unwrap(), rings);
-            <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&poly).unwrap();
+            let descriptor = <DensePoly<F> as CommitmentSource<F>>::descriptor(&poly).unwrap();
+            assert_eq!(descriptor.num_vars(), RootPolyMeta::num_vars(&poly));
+            assert_eq!(descriptor.live_coefficient_len(), evals.len());
             assert_eq!(
-                <DensePoly<F> as RootCommitSource<F, D>>::committed_centered_reach(
+                <DensePoly<F> as CommitmentSource<F>>::committed_centered_reach(
                     &poly,
                     modulus,
                     modulus / 2,

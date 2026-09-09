@@ -3,19 +3,18 @@
 
 use akita_error::AkitaError;
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::Field;
 
-use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
+use crate::compute::{RootOpeningSource, RootPolyMeta, RootPolyShape};
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
 
 /// Owned multilinear-polynomial wrapper for dense and one-hot batches.
 ///
 /// This is an Akita-owned private sum type (allowed by the polyops cutover
 /// spec): it erases `DensePoly` vs `OneHotPoly` for heterogeneous batches while
-/// exposing the source-typed view/kernel boundary (`RootCommitSource`,
-/// `RootOpeningSource`, and matching `CpuBackend` kernels).
+/// exposing the source-typed opening view/kernel boundary.
 /// Wrappers take ownership of the inner polynomial by move so `P` has no lifetime
-/// parameter and participates in generic `commit<P, B>` like `DensePoly`.
+/// parameter and participates in generic source groups like `DensePoly`.
 #[derive(Debug, Clone)]
 pub enum MultilinearPolynomial<F: Field, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
@@ -55,10 +54,6 @@ where
     F: Field,
     I: OneHotIndex,
 {
-    pub(super) fn poly(self) -> &'a MultilinearPolynomial<F, I> {
-        self.poly
-    }
-
     pub(super) fn dispatch<T>(
         self,
         dense: impl FnOnce(&DensePoly<F>) -> Result<T, AkitaError>,
@@ -146,43 +141,6 @@ where
         match self {
             Self::Dense(_) => None,
             Self::OneHot(poly) => RootPolyShape::<F, D>::onehot_chunk_size(poly),
-        }
-    }
-}
-
-impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, I>
-where
-    F: Field,
-    I: OneHotIndex,
-{
-    type CommitView<'view>
-        = MultilinearPolynomialView<'view, F, D, I>
-    where
-        Self: 'view;
-
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(MultilinearPolynomialView { poly: self })
-    }
-
-    fn committed_centered_reach(
-        &self,
-        modulus: u128,
-        centering_threshold: u128,
-    ) -> Result<(u128, u128), AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-    {
-        match self {
-            Self::Dense(poly) => RootCommitSource::<F, D>::committed_centered_reach(
-                poly,
-                modulus,
-                centering_threshold,
-            ),
-            Self::OneHot(poly) => RootCommitSource::<F, D>::committed_centered_reach(
-                poly,
-                modulus,
-                centering_threshold,
-            ),
         }
     }
 }

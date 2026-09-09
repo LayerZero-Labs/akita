@@ -11,8 +11,12 @@ use std::sync::Arc;
 pub struct NttCacheOwnerId(usize);
 
 impl NttCacheOwnerId {
-    fn from_prepared<T>(prepared: &T) -> Self {
-        Self((prepared as *const T).cast::<()>() as usize)
+    /// Derive an opaque process-local identity from a stable resource owner.
+    ///
+    /// Direct resource adapters use this when their physical cache owner is
+    /// not itself a `ComputeBackendSetup::PreparedSetup` value.
+    pub fn from_owner<T: ?Sized>(owner: &T) -> Self {
+        Self(owner as *const T as *const () as usize)
     }
 }
 
@@ -73,7 +77,7 @@ where
     /// backend whose distinct prepared values share interior cache storage must
     /// override this method with that storage's identity.
     fn ntt_cache_owner_id(&self, prepared: &Self::PreparedSetup) -> NttCacheOwnerId {
-        NttCacheOwnerId::from_prepared(prepared)
+        NttCacheOwnerId::from_owner(prepared)
     }
 
     /// Planned resident bytes for one independently stored exact cache entry.

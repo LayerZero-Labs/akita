@@ -3,14 +3,13 @@ mod single_field;
 
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeCommitBackendFor,
-    RuntimeRingSwitchProveBackend,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
+    RuntimeRingSwitchProveBackend, TerminalBindingState,
 };
 use crate::protocol::sumcheck::relation_range_image::{
     prepare_coefficient_packing_linear_terms, PreparedProverLinearTerms,
 };
 use crate::protocol::sumcheck::DigitRangeProver;
-use crate::RecursiveWitnessFlat;
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
 use jolt_field::AdditiveGroup;
 
@@ -83,8 +82,8 @@ pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
-pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
-    block_claims: &ProverOpeningData<'a, E, P, F>,
+pub(super) fn prepare_non_eor_opening<'a, F, E, P, S, V>(
+    block_claims: &ProverOpeningData<'a, E, P, F, S>,
     opening_batch: &OpeningClaimsLayout,
     validate_non_eor: V,
 ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -106,7 +105,7 @@ where
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
-pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
+pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: Field,
@@ -114,9 +113,10 @@ where
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: crate::compute::CommitmentStatePolicy<F>,
 {
-    stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
-    block_claims: ProverOpeningData<'a, E, Q, F>,
+    stack: &'a ProverComputeStack<'a, F, C, O, TS, R, SP>,
+    block_claims: ProverOpeningData<'a, E, Q, F, S>,
     protocol_points: &'a [Vec<E>],
     reduction: Option<ExtensionOpeningReduction<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
@@ -130,8 +130,8 @@ where
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
 /// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
 #[allow(clippy::needless_lifetimes)]
-pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
-    args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
+pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>(
+    args: FinishFoldArgs<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: Field
@@ -152,10 +152,12 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     Q: RootProverGroupOpening<F, E, O>,
+    S: crate::compute::InnerRelationState<F> + crate::compute::OuterCompressionState<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     C: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
+    SP: crate::compute::CommitmentStatePolicy<F>,
 {
     let FinishFoldArgs {
         stack,
@@ -383,10 +385,10 @@ impl<'a> FoldSuccessorParams<'a> {
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, SP, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R>,
+    stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R, SP>,
     transcript: &mut T,
     level: usize,
     lp: &CommittedGroupParams,
@@ -394,7 +396,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     expected_output_witness_len: Option<usize>,
     next_witness_binding: Option<akita_types::NextWitnessBindingPolicy>,
     prepared_fold: PreparedFold<F, E>,
-) -> Result<ProveLevelOutput<F, E>, AkitaError>
+) -> Result<ProveLevelOutput<F, E, SP::State>, AkitaError>
 where
     F: Field
         + CanonicalEncoding
@@ -412,12 +414,14 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
-    C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
+    C: ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    SP: crate::compute::CommitmentStatePolicy<F>,
+    SP::State: crate::compute::TerminalBindingState<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let opening_batch = prepared_fold.instance.opening_batch();
@@ -453,13 +457,12 @@ where
                     "recursive successor requires outer-payload binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, C>(
+            crate::commit_w::<Cfg, _>(
                 &params.params,
                 level
                     .checked_add(1)
                     .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
-                expanded,
-                stack.commit(),
+                stack.commitment(),
                 &logical_w,
             )?
         }
@@ -471,7 +474,7 @@ where
                     "terminal successor requires canonical inner-state binding".into(),
                 ));
             }
-            crate::commit_terminal_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
+            crate::commit_terminal_w::<Cfg, _>(params, stack.commitment(), &logical_w)?
         }
     };
     drop(_span);
@@ -480,13 +483,9 @@ where
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
         NextWitnessState::TerminalInnerState => {
-            let rows = next_commitment.hint.inner_rows();
-            let t_state = match rows {
-                [t_state] => t_state,
-                _ => return Err(AkitaError::InvalidProof),
-            };
-            let bytes = akita_types::raw_field_segment_bytes(t_state)?;
-            transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &bytes);
+            let message = next_commitment.prover_state.terminal_t_fields_message()?;
+            transcript
+                .absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, message.as_bytes());
         }
     }
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
@@ -742,7 +741,7 @@ where
     let NextWitnessStateOutput {
         witness: packed_witness,
         binding,
-        hint: committed_hint,
+        prover_state: committed_state,
     } = next_commitment;
     let (proof_binding, next_binding) = match binding {
         NextWitnessState::OuterPayload(commitment) => (
@@ -777,7 +776,7 @@ where
             w: committed_witness,
             logical_w,
             binding: next_binding,
-            hint: committed_hint,
+            prover_state: committed_state,
             log_basis: next_params.log_basis_inner(),
             sumcheck_challenges,
             opening: w_eval,

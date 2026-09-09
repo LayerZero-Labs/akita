@@ -4,11 +4,11 @@ use crate::compute::compression::{
     execute_compression_chains, CompressionExecutionInput, CompressionExecutionOutput,
     CompressionExecutionReport, CompressionRelationOutput,
 };
-use crate::compute::{CompressionComputeBackend, OperationCtx};
+use crate::compute::{CompressionComputeBackend, OperationCtx, PortableCompressionState};
 use akita_error::AkitaError;
 use akita_types::{
-    AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload,
-    RelationRhsLayout, RingRelationMode, RingVec,
+    CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload, RelationRhsLayout,
+    RingRelationMode, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -47,25 +47,36 @@ impl<F: Field> CompressionWitnessMaterialization<F> {
 impl<F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize>
     CompressionSourceWitness<F>
 {
-    pub(crate) fn from_outer_hint(
+    pub(crate) fn from_outer_state(
         group_index: usize,
         plan: &CompressionChainPlan,
-        hint: &AkitaCommitmentHint<F>,
+        material: PortableCompressionState<F>,
         terminal_coefficients: Vec<F>,
         relation_mode: RingRelationMode,
     ) -> Result<Self, AkitaError> {
-        let (witness, relation) = match relation_mode {
-            RingRelationMode::QuotientLift => (
-                hint.outer_compression_witness(plan)?,
-                CompressionRelationOutput::QuotientLift {
-                    quotients: hint.outer_compression_quotients(plan)?,
-                },
+        let (witness, relation) = match (relation_mode, material) {
+            (
+                RingRelationMode::QuotientLift,
+                PortableCompressionState::QuotientLift { witness, quotients },
+            ) => (
+                witness,
+                CompressionRelationOutput::QuotientLift { quotients },
             ),
-            RingRelationMode::ReducedEvaluation => (
-                hint.reduced_outer_compression_witness(plan)?,
-                CompressionRelationOutput::ReducedEvaluation,
-            ),
+            (
+                RingRelationMode::ReducedEvaluation,
+                PortableCompressionState::ReducedEvaluation { witness },
+            ) => (witness, CompressionRelationOutput::ReducedEvaluation),
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "outer compression state disagrees with the relation mode".into(),
+                ));
+            }
         };
+        if witness.plan() != plan {
+            return Err(AkitaError::InvalidInput(
+                "outer compression state disagrees with the relation plan".into(),
+            ));
+        }
         Ok(Self {
             id: CompressionSourceId::Outer { group_index },
             witness,

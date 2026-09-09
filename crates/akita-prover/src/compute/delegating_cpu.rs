@@ -10,15 +10,15 @@ use super::backend::{
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
     SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::operation_plans::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use super::plans::RingSwitchRelationRows;
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
@@ -261,25 +261,6 @@ macro_rules! delegate_coefficient_packing {
     };
 }
 
-macro_rules! delegate_root_commit_kernel {
-    ($ty:ty) => {
-        impl<S, F, const D: usize> RootCommitKernel<S, F, D> for $ty
-        where
-            F: Field + CanonicalEncoding,
-            CpuBackend: RootCommitKernel<S, F, D>,
-        {
-            fn commit_inner_group(
-                &self,
-                prepared: &Self::PreparedSetup,
-                sources: Vec<S>,
-                plan: CommitInnerPlan,
-            ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-                CpuBackend::DEFAULT.commit_inner_group(prepared, sources, plan)
-            }
-        }
-    };
-}
-
 macro_rules! delegate_ring_switch_kernels {
     ($ty:ty) => {
         impl<S, F, const D: usize> RingSwitchRelationKernel<S, F, D> for $ty
@@ -310,7 +291,6 @@ delegate_compute_backend_setup!(CommitCluster);
 delegate_compression!(CommitCluster);
 delegate_digit_rows!(CommitCluster);
 delegate_cyclic_rows!(CommitCluster);
-delegate_root_commit_kernel!(CommitCluster);
 
 /// Delegating opening-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]

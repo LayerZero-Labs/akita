@@ -1,51 +1,10 @@
-use crate::compute::{
-    CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
-    RootCommitSource, RuntimeCommitBackendFor, RuntimeCommitSource,
-};
+use crate::compute::{CommitInnerPlan, DigitRowsComputeBackend, OuterCommitPlan};
 use crate::kernels::linear::decompose_commit_blocks_into;
-use crate::CommitInnerWitness;
 use akita_algebra::ring::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{
-    dispatch_for_field, CommitmentRingDims, CommitmentSliceGeometry, DigitBlocks,
-    GroupCommitPhaseParams, RingVec,
-};
+use akita_types::{DigitBlocks, RingVec};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
-
-#[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
-pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
-    inner: &CommitInnerWitness<F>,
-    num_live_blocks: usize,
-    n_a: usize,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-{
-    inner.ensure_ring_dim::<D>()?;
-
-    let expected_rows = num_live_blocks
-        .checked_mul(n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner commitment row count overflow".into()))?;
-    let actual_rows = inner.inner_rows.count();
-    if actual_rows != expected_rows {
-        return Err(AkitaError::InvalidSetup(format!(
-            "backend returned {actual_rows} inner commitment rows, expected {expected_rows}"
-        )));
-    }
-    for block_idx in 0..num_live_blocks {
-        let block_rows = inner.block_rows::<D>(block_idx, n_a)?;
-        if block_rows.len() != n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {} A rows for inner commitment block {}, expected {}",
-                block_rows.len(),
-                block_idx,
-                n_a
-            )));
-        }
-    }
-    Ok(())
-}
 
 fn validate_commit_inner_group_len(expected: usize, actual: usize) -> Result<(), AkitaError> {
     if actual != expected {
@@ -56,116 +15,69 @@ fn validate_commit_inner_group_len(expected: usize, actual: usize) -> Result<(),
     Ok(())
 }
 
-/// Compute one same-shape group of inner commitments `t_i`.
-pub(super) fn compute_inner_commitment<F, P, B, const D_A: usize>(
+/// Apply the canonical outer decomposition and B slicing path to borrowed
+/// source-ordered inner rows.
+pub(crate) fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
-    polys: &[P],
-    plan: CommitInnerPlan,
-) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    P: RootCommitSource<F, D_A>,
-    B: ComputeBackendSetup<F> + for<'a> RootCommitKernel<P::CommitView<'a>, F, D_A>,
-{
-    let views = polys
-        .iter()
-        .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
-        .collect::<Result<Vec<_>, _>>()?;
-    backend.commit_inner_group(prepared, views, plan)
-}
-
-/// Validate and decompose `t_i`, apply the outer matrix, and erase its ring
-/// dimension for compression.
-pub(super) fn compute_outer_commitment<F, B, const D_A: usize, const D_B: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    inners: Vec<CommitInnerWitness<F>>,
-    profile: &GroupCommitPhaseParams,
-    slice_geometry: &CommitmentSliceGeometry,
-) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
+    inner_rows: &[&RingVec<F>],
+    inner_plan: &CommitInnerPlan,
+    outer_plan: &OuterCommitPlan,
+) -> Result<RingVec<F>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F>,
 {
-    let n_a = profile.inner.matrix.output_rank();
-    let num_live_blocks = profile.blocks.live_blocks;
-    let num_digits_open = profile.outer.digits.num_digits;
-    let log_basis = profile.outer.digits.log_basis;
-    let n_b = profile.outer.matrix.output_rank();
-
-    validate_commit_inner_group_len(profile.group.num_polynomials(), inners.len())?;
-    let prepared_polynomials = cfg_into_iter!(inners)
-        .map(|inner| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
-            validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
-            let blocks = (0..num_live_blocks)
-                .map(|block| inner.block_rows::<D_A>(block, n_a))
-                .collect::<Result<Vec<_>, _>>()?;
-            let digits =
-                decompose_commit_blocks_into::<F, D_A, D_B>(&blocks, num_digits_open, log_basis)?;
-            Ok((inner.into_inner_rows(), digits))
+    if inner_plan.ring_dimension != D_A || outer_plan.ring_dimension() != D_B {
+        return Err(AkitaError::InvalidSetup(
+            "commitment stage plan ring dimensions disagree with dispatch".into(),
+        ));
+    }
+    validate_commit_inner_group_len(outer_plan.geometry().num_polynomials(), inner_rows.len())?;
+    let expected_rows = inner_plan
+        .num_live_blocks
+        .checked_mul(inner_plan.n_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("inner commitment row count overflow".into()))?;
+    let prepared_polynomials = cfg_into_iter!(inner_rows)
+        .map(|rows| -> Result<DigitBlocks, AkitaError> {
+            if rows.ring_dim() != D_A || rows.count() != expected_rows {
+                return Err(AkitaError::InvalidSetup(
+                    "resident inner commitment row shape is invalid".into(),
+                ));
+            }
+            let typed = rows.as_ring_slice::<D_A>().map_err(|_| {
+                AkitaError::InvalidSetup("resident inner commitment ring storage is invalid".into())
+            })?;
+            let blocks = typed.chunks_exact(inner_plan.n_a).collect::<Vec<_>>();
+            if blocks.len() != inner_plan.num_live_blocks {
+                return Err(AkitaError::InvalidSetup(
+                    "resident inner commitment block geometry is invalid".into(),
+                ));
+            }
+            decompose_commit_blocks_into::<F, D_A, D_B>(
+                &blocks,
+                outer_plan.num_digits_outer(),
+                outer_plan.log_basis_outer(),
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let u = commit_outer_slices::<F, _, D_B>(
+    let typed_u = commit_outer_slices::<F, _, D_B>(
         backend,
         prepared,
-        n_b,
-        prepared_polynomials.iter().map(|(_, digits)| digits),
-        slice_geometry,
-        log_basis,
+        outer_plan.n_b(),
+        prepared_polynomials.iter(),
+        outer_plan.geometry(),
+        outer_plan.log_basis_outer(),
     )?;
-    let inner_rows = prepared_polynomials
-        .into_iter()
-        .map(|(rows, _)| rows)
-        .collect();
-    Ok((inner_rows, RingVec::from_ring_elems(&u)))
-}
-
-/// Compute the inner and outer commitment stages behind runtime role dispatch.
-pub(super) fn compute_inner_outer_commitment<F, P, B>(
-    polys: &[P],
-    ctx: &OperationCtx<'_, F, B>,
-    profile: GroupCommitPhaseParams,
-) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    P: RuntimeCommitSource<F>,
-    B: RuntimeCommitBackendFor<F, P>,
-{
-    let backend = ctx.backend();
-    let prepared = ctx.prepared();
-    let slice_geometry = profile.derive_slice_geometry()?;
-    let dims = CommitmentRingDims {
-        inner: profile.inner.matrix.ring_dimension(),
-        outer: profile.outer.matrix.ring_dimension(),
-        opening: profile.outer.matrix.ring_dimension(),
-    };
-    let plan = CommitInnerPlan {
-        n_a: profile.inner.matrix.output_rank(),
-        num_positions_per_block: profile.blocks.positions_per_block,
-        num_digits_inner: profile.inner.digits.num_digits,
-        log_basis_inner: profile.inner.digits.log_basis,
-    };
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        F,
-        dims.d_a(),
-        |D_A| {
-            let inners = compute_inner_commitment::<F, _, _, D_A>(backend, prepared, polys, plan)?;
-            dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
-                F,
-                dims.d_b(),
-                |D_B| compute_outer_commitment::<F, _, D_A, D_B>(
-                    backend,
-                    prepared,
-                    inners,
-                    &profile,
-                    &slice_geometry,
-                )
-            )
-        }
-    )
+    let u = RingVec::from_ring_elems(&typed_u);
+    let expected_coefficients = outer_plan.output_coefficient_len()?;
+    if u.coeff_len() != expected_coefficients {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} outer commitment coefficients, expected {expected_coefficients}",
+            u.coeff_len()
+        )));
+    }
+    Ok(u)
 }
 
 /// Apply one physical B matrix to every canonical slice and stack the images.
@@ -203,7 +115,7 @@ where
 
 /// Validate one committed group's per-polynomial plane counts, then stream its
 /// canonical B slices through one reusable physical-width buffer.
-pub(crate) fn for_each_outer_slice_input<'a, const D_B: usize>(
+pub fn for_each_outer_slice_input<'a, const D_B: usize>(
     polynomial_planes: impl IntoIterator<Item = &'a [[i8; D_B]]>,
     geometry: &akita_types::CommitmentSliceGeometry,
     mut consume: impl FnMut(&[[i8; D_B]]) -> Result<(), AkitaError>,
@@ -297,7 +209,7 @@ fn validate_outer_slice_digits<'a, const D_B: usize>(
 }
 
 #[cfg(test)]
-pub(crate) fn outer_slice_inputs<const D_B: usize>(
+fn outer_slice_inputs<const D_B: usize>(
     polynomial_digits: &[&DigitBlocks],
     geometry: &akita_types::CommitmentSliceGeometry,
 ) -> Result<Vec<Vec<[i8; D_B]>>, AkitaError> {
@@ -314,42 +226,7 @@ pub(crate) fn outer_slice_inputs<const D_B: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fp64;
-
-    type F = Fp64<4294967197>;
-    const D: usize = 64;
-
-    fn inner_witness(recomposed_blocks: usize, rows_per_block: usize) -> CommitInnerWitness<F> {
-        CommitInnerWitness::from_rows(vec![
-            vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
-            recomposed_blocks
-        ])
-    }
-
-    #[test]
-    fn commit_inner_shape_accepts_expected_layout() {
-        let inner = inner_witness(2, 3);
-        validate_commit_inner_shape::<F, D>(&inner, 2, 3).expect("shape should match");
-    }
-
-    #[test]
-    fn commit_inner_shape_rejects_bad_block_count() {
-        let inner = inner_witness(1, 3);
-        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-    }
-
-    #[test]
-    fn commit_inner_shape_rejects_bad_row_count() {
-        let inner = inner_witness(2, 2);
-        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-    }
-
-    #[test]
-    fn commit_inner_shape_accepts_many_all_zero_blocks() {
-        let num_live_blocks = 1024;
-        let inner = inner_witness(num_live_blocks, 3);
-        validate_commit_inner_shape::<F, D>(&inner, num_live_blocks, 3).expect("all-zero blocks");
-    }
+    use akita_types::CommitmentSliceGeometry;
 
     #[test]
     fn outer_slice_inputs_are_polynomial_major_and_zero_padded() {

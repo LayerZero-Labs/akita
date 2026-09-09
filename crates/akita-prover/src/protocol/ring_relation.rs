@@ -4,10 +4,11 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RootOpeningSource, RuntimeRingSwitchProveBackend,
+    OpeningFoldKernel, OperationCtx, OuterCompressionState, PortableCompressionState,
+    RootOpeningSource, RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
+use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, InnerRelationState, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
@@ -391,11 +392,11 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub(crate) fn new<'a, F, PointF, T, P, OB, RB, BindClaims, BoundClaims>(
+    pub(crate) fn new<'a, F, PointF, T, P, S, OB, RB, BindClaims, BoundClaims>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
-        block_claims: ProverOpeningData<'a, PointF, P, F>,
+        block_claims: ProverOpeningData<'a, PointF, P, F, S>,
         lp: CommittedGroupParams,
         transcript: &mut T,
         level: u32,
@@ -416,6 +417,7 @@ impl RingRelationProver {
             + jolt_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
         P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
+        S: InnerRelationState<F> + OuterCompressionState<F>,
         OB: DigitRowsComputeBackend<F>,
         RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
         BindClaims: FnOnce(&mut T) -> Result<(RingVec<F>, BoundClaims), AkitaError>,
@@ -434,9 +436,13 @@ impl RingRelationProver {
                 "ring relation prover prepared group count mismatch".to_string(),
             ));
         }
-        let mut hints = Vec::with_capacity(num_groups);
+        let mut inner_relation_material = Vec::with_capacity(num_groups);
         for group_index in 0..num_groups {
-            hints.push(block_claims.group_hint(group_index)?.clone());
+            inner_relation_material.push(
+                block_claims
+                    .group_state(group_index)?
+                    .inner_relation_material()?,
+            );
         }
         let relation_geometry =
             akita_types::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
@@ -446,6 +452,9 @@ impl RingRelationProver {
         // suffix commitments already contain those B images directly.
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         let mut group_payloads = Vec::with_capacity(num_groups);
+        let mut outer_compression_material = (0..num_groups)
+            .map(|_| None::<PortableCompressionState<F>>)
+            .collect::<Vec<_>>();
         let commit_group_order = if lp.has_preceding_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -465,14 +474,21 @@ impl RingRelationProver {
                         "batched prover received a malformed compressed commitment".to_string(),
                     ));
                 }
-                let retained = hints[group_index].outer_compression_witness(plan)?;
-                let source = retained
+                let retained = block_claims
+                    .group_state(group_index)?
+                    .outer_compression_material(plan, lp.ring_relation_mode)?;
+                let witness = match &retained {
+                    PortableCompressionState::QuotientLift { witness, .. }
+                    | PortableCompressionState::ReducedEvaluation { witness } => witness,
+                };
+                let source = witness
                     .stages()
                     .first()
                     .ok_or(AkitaError::InvalidProof)?
                     .recompose::<F>()?;
                 commitment_row_coeffs.extend(source);
                 group_payloads.push(group_commitment.rows().coeffs().to_vec());
+                outer_compression_material[group_index] = Some(retained);
             } else {
                 let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
                 let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
@@ -706,10 +722,13 @@ impl RingRelationProver {
                             "compression group order disagrees with the relation layout".into(),
                         ));
                     }
-                    CompressionSourceWitness::from_outer_hint(
+                    let material = outer_compression_material[group_index]
+                        .take()
+                        .ok_or(AkitaError::InvalidProof)?;
+                    CompressionSourceWitness::from_outer_state(
                         group_index,
                         plan,
-                        &hints[group_index],
+                        material,
                         group_payloads[relation_group_index].clone(),
                         lp.ring_relation_mode,
                     )
@@ -811,22 +830,24 @@ impl RingRelationProver {
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
         drop(_grind_span);
-        if grind_outputs.len() != num_groups || hints.len() != num_groups {
+        if grind_outputs.len() != num_groups || inner_relation_material.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }
         let mut relation_group_openings = Vec::with_capacity(num_groups);
         let mut group_witnesses = Vec::with_capacity(num_groups);
-        for (group_index, ((output, opening), hint)) in grind_outputs
+        for (group_index, ((output, opening), inner_relation)) in grind_outputs
             .into_iter()
             .zip(group_openings)
-            .zip(hints)
+            .zip(inner_relation_material)
             .enumerate()
         {
             let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-            if hint.ring_dim() != group_dims.d_a() || hint.inner_rows().len() != k_g {
+            if inner_relation.ring_dimension() != group_dims.d_a()
+                || inner_relation.rows().len() != k_g
+            {
                 return Err(AkitaError::InvalidInput(
-                    "prover hint shape does not match its commitment group".into(),
+                    "inner-relation state shape does not match its commitment group".into(),
                 ));
             }
             let GroupOpeningMaterial { e_hat, kind } = opening;
@@ -844,7 +865,7 @@ impl RingRelationProver {
                         output.coefficients,
                         e_hat,
                         material.e_folded,
-                        hint,
+                        inner_relation,
                         group_dims,
                     ));
                 }
@@ -865,7 +886,7 @@ impl RingRelationProver {
                         output.coefficients,
                         e_hat,
                         product,
-                        hint,
+                        inner_relation,
                         group_dims,
                     ));
                 }

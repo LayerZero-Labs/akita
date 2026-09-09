@@ -19,10 +19,11 @@
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
-//! | `poly` | Root polynomial capability traits (`RootPolyShape`, `RootCommitSource`, …) |
+//! | `poly` | Root polynomial opening, tensor, and shape capability traits |
 //! | `stack` | Per-fold [`LevelProveStacks`] + per-cluster [`OperationCtx`] / [`ProverComputeStack`] |
 
 mod backend;
+pub mod commitment;
 pub(crate) mod compression;
 mod cpu;
 pub mod delegating_cpu;
@@ -38,32 +39,57 @@ pub use backend::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
     CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
 };
-pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
+pub use commitment::{
+    compile_commitment_request, cpu_external_inner_commitment_capability,
+    cpu_external_inner_prepared_setup, AvailablePolynomialTypes, BackendInstanceId, BackendKindId,
+    BackendStateRef, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionMode,
+    CommitmentExecutionOutput, CommitmentExecutionPlan, CommitmentExecutionSchedule,
+    CommitmentExecutionScheduleBuilder, CommitmentExecutor, CommitmentExecutorBuilder,
+    CommitmentNttRequirement, CommitmentNttStage, CommitmentOperationContext,
+    CommitmentOperationId, CommitmentRequestCapabilities, CommitmentResourceControl,
+    CommitmentRoundStep, CommitmentSource, CommitmentStateBinding, CommitmentStateComponents,
+    CommitmentStateOutput, CommitmentStatePolicy, CompiledCommitmentRequest, CompressionOperation,
+    CompressionOperationCapabilities, CompressionStageOutput, CompressionState,
+    DenseCoefficientSource, DenseRepresentation, DenseType, ExternalFusedInnerCommitmentEncoder,
+    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+    ExternalInnerCommitmentOperation, ExternalOperationIdentity, FullCommitmentOutput,
+    FusedInnerOuterOperation, InnerCommitOperation, InnerCommitOutput, InnerImage,
+    InnerImageExportOperation, InnerImageInput, InnerOuterRouteKind, InnerRelationState,
+    InnerRelationStateMaterial, IntoPortableCommitmentState, NoRetainedStatePolicy,
+    OneHotIndexWidth, OneHotRepresentation, OneHotType, OuterCommitOperation, OuterCommitPlan,
+    OuterCompressionState, PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
+    PortableCommitmentState, PortableCompressionState, PortableCompressionStateExport,
+    PortableStatePolicy, PredecomposedDigitPlanes, PreparedCommitmentResources,
+    PreparedExternalInnerCommitment, ResidentCommitmentState, ResidentStatePolicy,
+    ResolvedCommitSource, ShortNormRepresentation, ShortNormType, StageDimensionCapabilities,
+    StageResources, StateOwnerCapability, TerminalBindingState, TerminalTFieldsMessage,
+    UncompressedCommitPlan, UncompressedCommitmentOutput, UnitPositionSlice,
+};
+pub use cpu::{
+    CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,
+    CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric,
+};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
-    RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-pub(crate) use plans::DenseCommitInput;
 pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
-    centered_reach_of_field_coeffs, CommitBackendFor, OpeningProveBackendFor, ProveFlowBackendFor,
-    ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
-    RootTensorSource, TensorBackendFor,
+    centered_reach_of_field_coeffs, OpeningProveBackendFor, ProveFlowBackendFor, ProveStackFor,
+    RecursiveProveBackend, RingSwitchProveBackend, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootProveBackend, RootProvePoly, RootTensorSource, TensorBackendFor,
 };
 pub use runtime_capabilities::{
-    RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
-    RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeOpeningSource,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
-    RuntimeTensorBackendFor, RuntimeTensorSource, SuffixOpeningProveBackend,
+    RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeOpeningSource, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
+    RuntimeRootProvePoly, RuntimeTensorBackendFor, RuntimeTensorSource, SuffixOpeningProveBackend,
     SuffixTensorProveBackend,
 };
 pub use stack::{

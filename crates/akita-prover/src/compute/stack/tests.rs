@@ -37,7 +37,7 @@ fn operation_ctx_accepts_matching_expanded_setup() {
         .expect("matching expanded metadata should validate");
 }
 
-use crate::compute::{CommitCluster, RingSwitchCluster};
+use crate::compute::{CommitCluster, CommitmentNttStage, RingSwitchCluster};
 
 fn assert_distinct_backend_types<C: 'static, R: 'static>() {
     fn type_id<T: 'static>() -> std::any::TypeId {
@@ -49,6 +49,20 @@ fn assert_distinct_backend_types<C: 'static, R: 'static>() {
 type TestUniformStack<'a> = UniformProverStack<'a, F, CpuBackend>;
 type TestHeterogeneousStack<'a> =
     ProverComputeStack<'a, F, CommitCluster, CpuBackend, CpuBackend, RingSwitchCluster>;
+
+fn commitment_executor<'a>(
+    setup: &'a AkitaProverSetup<F>,
+    prepared: &'a <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+) -> CommitmentExecutor<'a, F, PortableStatePolicy> {
+    CommitmentExecutor::cpu(
+        &CpuBackend::DEFAULT,
+        prepared,
+        setup.expanded.as_ref(),
+        Vec::new(),
+        PortableStatePolicy,
+    )
+    .expect("commitment executor")
+}
 
 fn all_cluster_requirements() -> NttExecutionRequirements {
     let mut requirements = NttExecutionRequirements::default();
@@ -74,14 +88,14 @@ fn all_cluster_requirements() -> NttExecutionRequirements {
             6,
         ),
     ] {
-        requirements
-            .add_matrix(
-                0,
-                cluster,
-                akita_types::NttCacheKey::from_matrix_shape(64, 1, width, domain).unwrap(),
-                width,
-            )
-            .unwrap();
+        let key = akita_types::NttCacheKey::from_matrix_shape(64, 1, width, domain).unwrap();
+        if cluster == NttOperationCluster::Commit {
+            requirements
+                .add_commitment_matrix(0, CommitmentNttStage::Inner, key, width)
+                .unwrap();
+        } else {
+            requirements.add_matrix(0, cluster, key, width).unwrap();
+        }
     }
     requirements
 }
@@ -91,10 +105,9 @@ fn heterogeneous_stack_accepts_distinct_operation_clusters() {
     let setup =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-    let commit_backend = CommitCluster;
     let ring_backend = RingSwitchCluster;
     let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-        (&commit_backend, &prepared),
+        commitment_executor(&setup, &prepared),
         (&CpuBackend::DEFAULT, &prepared),
         (&CpuBackend::DEFAULT, &prepared),
         (&ring_backend, &prepared),
@@ -102,10 +115,6 @@ fn heterogeneous_stack_accepts_distinct_operation_clusters() {
     )
     .expect("heterogeneous stack");
     assert_distinct_backend_types::<CommitCluster, RingSwitchCluster>();
-    assert_eq!(
-        stack.commit().backend() as *const _,
-        &commit_backend as *const _
-    );
     assert_eq!(
         stack.ring_switch().backend() as *const _,
         &ring_backend as *const _
@@ -117,10 +126,9 @@ fn heterogeneous_stack_implements_level_prove_stacks() {
     let setup =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-    let commit_backend = CommitCluster;
     let ring_backend = RingSwitchCluster;
     let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-        (&commit_backend, &prepared),
+        commitment_executor(&setup, &prepared),
         (&CpuBackend::DEFAULT, &prepared),
         (&CpuBackend::DEFAULT, &prepared),
         (&ring_backend, &prepared),
@@ -129,8 +137,8 @@ fn heterogeneous_stack_implements_level_prove_stacks() {
     .expect("heterogeneous stack");
     let selected: &TestHeterogeneousStack<'_> = LevelProveStacks::prove_stack_at_level(&stack, 0);
     assert_eq!(
-        selected.commit().backend() as *const _,
-        stack.commit().backend() as *const _
+        selected.commitment() as *const _,
+        stack.commitment() as *const _
     );
 }
 
@@ -144,10 +152,9 @@ fn prewarm_routes_only_to_declared_physical_cluster_owner() {
     let ring_prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("ring prepared");
-    let commit_backend = CommitCluster;
     let ring_backend = RingSwitchCluster;
     let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
-        (&commit_backend, &commit_prepared),
+        commitment_executor(&setup, &commit_prepared),
         (&CpuBackend::DEFAULT, &commit_prepared),
         (&CpuBackend::DEFAULT, &commit_prepared),
         (&ring_backend, &ring_prepared),
@@ -156,9 +163,9 @@ fn prewarm_routes_only_to_declared_physical_cluster_owner() {
     .expect("heterogeneous stack");
     let mut requirements = NttExecutionRequirements::default();
     requirements
-        .add_matrix(
+        .add_commitment_matrix(
             0,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             akita_types::NttCacheKey::from_matrix_shape(
                 64,
                 2,
@@ -343,9 +350,9 @@ fn prewarm_max_joins_retained_requests_by_physical_owner_before_building() {
         .expect("uniform stack");
     let mut requirements = NttExecutionRequirements::default();
     requirements
-        .add_matrix(
+        .add_commitment_matrix(
             0,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             akita_types::NttCacheKey::from_matrix_shape(
                 64,
                 1,
@@ -475,14 +482,15 @@ fn planned_metrics_keep_four_independent_clusters_separate() {
     let ring = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("ring prepared");
-    let stack = ProverComputeStack::new(
-        (&CpuBackend::DEFAULT, &commit),
-        (&CpuBackend::DEFAULT, &opening),
-        (&CpuBackend::DEFAULT, &tensor),
-        (&CpuBackend::DEFAULT, &ring),
-        setup.expanded.as_ref(),
-    )
-    .expect("independent stack");
+    let stack: ProverComputeStack<'_, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend> =
+        ProverComputeStack::new(
+            commitment_executor(&setup, &commit),
+            (&CpuBackend::DEFAULT, &opening),
+            (&CpuBackend::DEFAULT, &tensor),
+            (&CpuBackend::DEFAULT, &ring),
+            setup.expanded.as_ref(),
+        )
+        .expect("independent stack");
     let requirements = all_cluster_requirements();
 
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();

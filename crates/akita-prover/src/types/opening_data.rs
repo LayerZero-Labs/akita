@@ -1,6 +1,8 @@
-use crate::api::CommitmentWithHint;
 use crate::backend::RecursiveFoldSource;
-use crate::compute::RootPolyMeta;
+use crate::compute::{
+    InnerRelationState, InnerRelationStateMaterial, OuterCompressionState,
+    PortableCompressionState, RootPolyMeta,
+};
 use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
@@ -9,19 +11,26 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
-    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, SetupPrefixSlot,
+    CommittedGroupParams, CompressionChainPlan, OpeningClaims, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingRelationMode,
+    SetupPrefixSlot,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Exact top-level row selection paired with its prover opening material.
 #[derive(Debug, Clone)]
-pub struct SelectedProverOpeningData<'a, PointF: Clone, G, CommitF: Field> {
+pub struct SelectedProverOpeningData<
+    'a,
+    PointF: Clone,
+    G,
+    CommitF: Field,
+    S = AkitaCommitmentHint<CommitF>,
+> {
     selection: OpeningScheduleSelection,
-    opening_data: ProverOpeningData<'a, PointF, G, CommitF>,
+    opening_data: ProverOpeningData<'a, PointF, G, CommitF, S>,
 }
 
-impl<'a, PointF: Clone, G, CommitF: Field> SelectedProverOpeningData<'a, PointF, G, CommitF> {
+impl<'a, PointF: Clone, G, CommitF: Field, S> SelectedProverOpeningData<'a, PointF, G, CommitF, S> {
     /// Exact catalog row identity selected for this complete opening batch.
     pub const fn selection(&self) -> OpeningScheduleSelection {
         self.selection
@@ -31,25 +40,25 @@ impl<'a, PointF: Clone, G, CommitF: Field> SelectedProverOpeningData<'a, PointF,
         self,
     ) -> (
         OpeningScheduleSelection,
-        ProverOpeningData<'a, PointF, G, CommitF>,
+        ProverOpeningData<'a, PointF, G, CommitF, S>,
     ) {
         (self.selection, self.opening_data)
     }
 }
 
 #[derive(Debug, Clone)]
-struct ProverGroupInput<G, CommitF: Field> {
-    hint: AkitaCommitmentHint<CommitF>,
+struct ProverGroupInput<G, S> {
+    state: S,
     group: G,
 }
 
-impl<G, CommitF: Field> ProverGroupInput<G, CommitF> {
-    fn new(hint: AkitaCommitmentHint<CommitF>, group: G) -> Self {
-        Self { hint, group }
+impl<G, S> ProverGroupInput<G, S> {
+    fn new(state: S, group: G) -> Self {
+        Self { state, group }
     }
 
-    fn hint(&self) -> &AkitaCommitmentHint<CommitF> {
-        &self.hint
+    fn state(&self) -> &S {
+        &self.state
     }
 
     fn group(&self) -> &G {
@@ -57,19 +66,19 @@ impl<G, CommitF: Field> ProverGroupInput<G, CommitF> {
     }
 }
 
-fn bind_group_inputs<G, CommitF: Field>(
-    hints: Vec<AkitaCommitmentHint<CommitF>>,
+fn bind_group_inputs<G, S>(
+    states: Vec<S>,
     groups: Vec<G>,
-) -> Result<Vec<ProverGroupInput<G, CommitF>>, AkitaError> {
-    if hints.len() != groups.len() {
+) -> Result<Vec<ProverGroupInput<G, S>>, AkitaError> {
+    if states.len() != groups.len() {
         return Err(AkitaError::InvalidInput(
-            "prover hint and prepared-source counts are misaligned".to_string(),
+            "prover state and prepared-source counts are misaligned".to_string(),
         ));
     }
-    Ok(hints
+    Ok(states
         .into_iter()
         .zip(groups)
-        .map(|(hint, group)| ProverGroupInput::new(hint, group))
+        .map(|(state, group)| ProverGroupInput::new(state, group))
         .collect())
 }
 
@@ -100,20 +109,60 @@ where
 
 /// Prover opening input: public claims plus ordered group-local prover material.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: Field> {
+pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: Field, S = AkitaCommitmentHint<CommitF>>
+{
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
     opening_layout: OpeningClaimsLayout,
-    group_inputs: Vec<ProverGroupInput<G, CommitF>>,
+    group_inputs: Vec<ProverGroupInput<G, S>>,
 }
 
-impl<'a, PointF: Clone, P, CommitF: Field>
-    ProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF>
+/// Private state bound to one recursive opening group.
+///
+/// Setup-prefix persistence remains portable until its Stage 6 cutover, while
+/// the recursively committed witness may remain in its selected resident form.
+pub(crate) enum ProverOpeningState<F: Field, S> {
+    Portable(AkitaCommitmentHint<F>),
+    Selected(S),
+}
+
+impl<F, S> InnerRelationState<F> for ProverOpeningState<F, S>
+where
+    F: Field,
+    S: InnerRelationState<F>,
+{
+    fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+        match self {
+            Self::Portable(hint) => hint.inner_relation_material(),
+            Self::Selected(state) => state.inner_relation_material(),
+        }
+    }
+}
+
+impl<F, S> OuterCompressionState<F> for ProverOpeningState<F, S>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    S: OuterCompressionState<F>,
+{
+    fn outer_compression_material(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<PortableCompressionState<F>, AkitaError> {
+        match self {
+            Self::Portable(hint) => hint.outer_compression_material(plan, relation_mode),
+            Self::Selected(state) => state.outer_compression_material(plan, relation_mode),
+        }
+    }
+}
+
+impl<'a, PointF: Clone, P, CommitF: Field, S>
+    ProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF, S>
 where
     P: RootPolyMeta<CommitF>,
 {
     fn new_internal(
         opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
-        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        states: Vec<S>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
         let groups = polynomials
@@ -121,7 +170,7 @@ where
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
         let opening_layout = opening_layout_for_groups(&opening_claims, &groups)?;
-        let group_inputs = bind_group_inputs(hints, groups)?;
+        let group_inputs = bind_group_inputs(states, groups)?;
         let data = Self {
             opening_claims,
             opening_layout,
@@ -134,7 +183,7 @@ where
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
-        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        states: Vec<S>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
         let opening_layout = opening_claims.committed_layout()?;
@@ -169,7 +218,7 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let group_inputs = bind_group_inputs(hints, groups)?;
+        let group_inputs = bind_group_inputs(states, groups)?;
         let data = Self {
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
             opening_layout,
@@ -180,8 +229,8 @@ where
     }
 }
 
-impl<'a, PointF, P, CommitF>
-    SelectedProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF>
+impl<'a, PointF, P, CommitF, S>
+    SelectedProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF, S>
 where
     PointF: Clone,
     CommitF: Field,
@@ -190,7 +239,7 @@ where
     /// Atomically select the exact batch row before stripping commitment profiles.
     pub fn from_committed_claims<Cfg>(
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
-        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        states: Vec<S>,
         polynomial_groups: Vec<&'a [&'a P]>,
         schedules: &TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError>
@@ -204,7 +253,7 @@ where
                 .map(PolynomialGroupClaims::commitment),
         )?;
         let selection = schedules.resolve_profiles(&batch_profile)?.selection();
-        let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;
+        let opening_data = ProverOpeningData::new(opening_claims, states, polynomial_groups)?;
         Ok(Self {
             selection,
             opening_data,
@@ -213,7 +262,7 @@ where
 }
 
 #[allow(private_bounds)]
-impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, CommitF>
+impl<'a, PointF: Clone, G, CommitF: Field, S> ProverOpeningData<'a, PointF, G, CommitF, S>
 where
     G: RootProverGroupMeta<CommitF>,
 {
@@ -285,10 +334,10 @@ where
     }
 
     /// Borrow one prover hint.
-    pub fn group_hint(&self, index: usize) -> Result<&AkitaCommitmentHint<CommitF>, AkitaError> {
+    pub fn group_state(&self, index: usize) -> Result<&S, AkitaError> {
         self.group_inputs
             .get(index)
-            .map(ProverGroupInput::hint)
+            .map(ProverGroupInput::state)
             .ok_or(AkitaError::InvalidProof)
     }
 
@@ -354,8 +403,14 @@ where
     }
 }
 
-impl<'a, PointF, CommitF>
-    ProverOpeningData<'a, PointF, PreparedProverGroup<'a, RecursiveFoldSource<CommitF>>, CommitF>
+impl<'a, PointF, CommitF, S>
+    ProverOpeningData<
+        'a,
+        PointF,
+        PreparedProverGroup<'a, RecursiveFoldSource<CommitF>>,
+        CommitF,
+        ProverOpeningState<CommitF, S>,
+    >
 where
     PointF: Field,
     CommitF: Field,
@@ -370,7 +425,7 @@ where
         setup_polys: Option<&'a [&'a RecursiveFoldSource<CommitF>]>,
         witness_eval: PointF,
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        witness_commitment: CommitmentWithHint<CommitF>,
+        witness_commitment: (Commitment<CommitF>, S),
     ) -> Result<Self, AkitaError> {
         if opening_point.len() > recursive_num_vars {
             return Err(AkitaError::InvalidPointDimension {
@@ -401,13 +456,16 @@ where
                 )?;
                 ProverOpeningData::new_internal(
                     OpeningClaims::from_groups(vec![setup_group, witness_group])?,
-                    vec![setup_slot.hint.clone(), witness_commitment.1],
+                    vec![
+                        ProverOpeningState::Portable(setup_slot.hint.clone()),
+                        ProverOpeningState::Selected(witness_commitment.1),
+                    ],
                     vec![setup_polys, witness_polys],
                 )
             }
             (None, None, None) => ProverOpeningData::new_internal(
                 OpeningClaims::from_groups(vec![witness_group])?,
-                vec![witness_commitment.1],
+                vec![ProverOpeningState::Selected(witness_commitment.1)],
                 vec![witness_polys],
             ),
             _ => Err(AkitaError::InvalidInput(

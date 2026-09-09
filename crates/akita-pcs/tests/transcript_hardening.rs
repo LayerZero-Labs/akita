@@ -79,12 +79,12 @@ fn event_stream_equality_small() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -344,12 +344,12 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -434,12 +434,12 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         .expect("stack");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");

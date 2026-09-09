@@ -1,12 +1,13 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
+use crate::compute::InnerRelationStateMaterial;
 use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{
-    AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks,
-    OpeningFamily, RingRole, RingVec,
+    CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks, OpeningFamily, RingRole,
+    RingVec,
 };
 use jolt_field::Field;
 
@@ -196,7 +197,7 @@ pub struct RingRelationGroupWitness<F: Field> {
     pub(crate) z_folded_coefficients: FoldChunkCoefficients,
     pub e_hat: DigitBlocks,
     pub(crate) folded_opening: GroupFoldedOpening<F>,
-    pub hint: AkitaCommitmentHint<F>,
+    pub inner_relation: InnerRelationStateMaterial<F>,
     role_dims: CommitmentRingDims,
 }
 
@@ -207,7 +208,7 @@ impl<F: Field> RingRelationGroupWitness<F> {
         z_folded_coefficients: FoldChunkCoefficients,
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
-        hint: AkitaCommitmentHint<F>,
+        inner_relation: InnerRelationStateMaterial<F>,
         role_dims: CommitmentRingDims,
     ) -> Self {
         Self {
@@ -215,7 +216,7 @@ impl<F: Field> RingRelationGroupWitness<F> {
             z_folded_coefficients,
             e_hat,
             folded_opening: OpeningFamily::EvaluationTrace(e_folded),
-            hint,
+            inner_relation,
             role_dims,
         }
     }
@@ -226,7 +227,7 @@ impl<F: Field> RingRelationGroupWitness<F> {
         z_folded_coefficients: FoldChunkCoefficients,
         e_hat: DigitBlocks,
         product: CoefficientPackingFoldProduct<F>,
-        hint: AkitaCommitmentHint<F>,
+        inner_relation: InnerRelationStateMaterial<F>,
         role_dims: CommitmentRingDims,
     ) -> Self {
         Self {
@@ -234,7 +235,7 @@ impl<F: Field> RingRelationGroupWitness<F> {
             z_folded_coefficients,
             e_hat,
             folded_opening: OpeningFamily::SubringCoefficientPacking(product),
-            hint,
+            inner_relation,
             role_dims,
         }
     }

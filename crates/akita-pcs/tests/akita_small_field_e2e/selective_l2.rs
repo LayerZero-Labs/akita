@@ -118,12 +118,12 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("L2 commitment");
@@ -288,12 +288,12 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .expect("terminal L2 verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("terminal L2 commitment");

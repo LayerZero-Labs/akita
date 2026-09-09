@@ -19,7 +19,8 @@ pub use field_reduction::tensor_pack_recursive_witness;
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
 };
-pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView};
+pub(crate) use onehot::commit_onehot_sources;
+pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotSource, OneHotView};
 pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };

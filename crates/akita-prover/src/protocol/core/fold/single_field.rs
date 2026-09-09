@@ -2,7 +2,8 @@
 // no extension-opening-reduction or tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
+    CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend, InnerRelationState,
+    OuterCompressionState, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::core::RootProverGroupOpening;
 use crate::ProverOpeningData;
@@ -16,9 +17,9 @@ use jolt_field::{Fold, Unreduced};
 ///
 /// This path never runs extension-opening reduction or tensor projection.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
-    block_claims: ProverOpeningData<'a, E, P, F>,
+pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, V, C, O, TS, R, SP>(
+    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
+    block_claims: ProverOpeningData<'a, E, P, F, S>,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
@@ -45,17 +46,19 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
+    S: InnerRelationState<F> + OuterCompressionState<F>,
     V: FnOnce() -> Result<(), AkitaError>,
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     let opening_batch = block_claims
         .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let protocol_points = prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
-    finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
+    finish_prepared_fold::<F, E, T, P, S, C, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,
         protocol_points: &protocol_points,

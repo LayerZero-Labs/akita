@@ -93,12 +93,12 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 .expect("cross-mode verifier setup");
             let akita_prover::CommitOutput {
                 committed_group: commitment,
-                hint,
+                prover_state: hint,
             } = quotient_scheme
                 .commit::<_, _>(
                     &setup,
                     std::slice::from_ref(&poly),
-                    &stack,
+                    stack.commitment(),
                     akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("cross-mode commitment");
@@ -124,7 +124,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
                 let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_prove::<_, _, _>(
+                    .batched_prove::<_, _, _, _>(
                         &setup,
                         selected_prover_data(scheme, claims, vec![hint.clone()], vec![&poly_refs])
                             .expect("cross-mode prover data"),

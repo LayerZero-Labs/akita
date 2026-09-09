@@ -85,11 +85,11 @@ pub(crate) use root_group::{
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: Field, E: Field> {
+pub struct ProveLevelOutput<F: Field, E: Field, S> {
     /// Fold proof produced at this level.
     pub level_proof: FoldLevelProof<F, E>,
     /// Suffix prover state for the next level.
-    pub next_state: SuffixProverState<F, E>,
+    pub next_state: SuffixProverState<F, E, S>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.

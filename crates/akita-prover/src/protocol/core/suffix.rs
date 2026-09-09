@@ -1,17 +1,18 @@
 use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend, InnerRelationState,
+    LevelProveStacks, OuterCompressionState, ProverComputeStack,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend,
+    SuffixTensorProveBackend, TerminalBindingState,
 };
 use akita_types::AkitaCommitmentHint;
 use jolt_field::AdditiveGroup;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
-pub struct SuffixProverState<F: Field, E: Field> {
+pub struct SuffixProverState<F: Field, E: Field, S = AkitaCommitmentHint<F>> {
     /// Current committed suffix witness representation.
     pub w: RecursiveWitnessFlat,
     /// Logical suffix witness when it differs from the committed representation.
@@ -19,7 +20,7 @@ pub struct SuffixProverState<F: Field, E: Field> {
     /// Transcript-bound public state for the current suffix witness.
     pub binding: NextWitnessState<F>,
     /// Persistent semantic A-ring rows for the current suffix commitment.
-    pub hint: AkitaCommitmentHint<F>,
+    pub prover_state: S,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -30,7 +31,7 @@ pub struct SuffixProverState<F: Field, E: Field> {
     pub setup_prefix_opening: Option<(Vec<E>, E)>,
 }
 
-impl<F: Field, E: Field> SuffixProverState<F, E> {
+impl<F: Field, E: Field, S> SuffixProverState<F, E, S> {
     /// Logical witness represented by the carried opening claim.
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
@@ -51,7 +52,7 @@ impl<F: Field, E: Field> SuffixProverState<F, E> {
 /// Returns an error if level proving fails or the required recursive suffix is
 /// absent.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
+pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
@@ -61,9 +62,10 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
+        CommitmentStatePolicy = SP,
     >,
     transcript: &mut T,
-    starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
+    starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField, SP::State>,
     schedule: &FoldSchedule,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
@@ -87,9 +89,11 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: akita_types::ProverTranscriptGrinding<Cfg::Field>,
-    C: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
-        + ComputeBackendSetup<Cfg::Field>
-        + 'stack,
+    C: ComputeBackendSetup<Cfg::Field> + 'stack,
+    SP: CommitmentStatePolicy<Cfg::Field> + 'stack,
+    SP::State: InnerRelationState<Cfg::Field>
+        + OuterCompressionState<Cfg::Field>
+        + TerminalBindingState<Cfg::Field>,
     O: SuffixOpeningProveBackend<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -149,7 +153,7 @@ where
         let role_dims = level_params.role_dims();
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
-            prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
+            prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, _>(
                 stack,
                 expanded,
                 prefix_slots,
@@ -165,7 +169,7 @@ where
                 ))
             })?
         };
-        let out = super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg>(
+        let out = super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, Cfg>(
             expanded,
             prefix_slots,
             stacks.prove_stack_at_level(level),
@@ -195,7 +199,7 @@ where
             current_witness_len,
         )));
     }
-    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
+    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, _>(
         stacks.prove_stack_at_level(level),
         transcript,
         level,
@@ -211,11 +215,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_terminal_suffix<F, E, T, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
+fn prove_terminal_suffix<F, E, T, C, O, TS, R, SP, S>(
+    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
     transcript: &mut T,
     level: usize,
-    current_state: SuffixProverState<F, E>,
+    current_state: SuffixProverState<F, E, S>,
     scheduled: &TerminalFoldParams,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
@@ -244,12 +248,14 @@ where
         + ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
+    S: InnerRelationState<F> + TerminalBindingState<F>,
 {
     let SuffixProverState {
         w,
         logical_w,
         binding,
-        hint,
+        prover_state,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -264,15 +270,13 @@ where
         NextWitnessState::TerminalInnerState => {}
         NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
-    let mut terminal_rows = hint.into_rows();
+    let terminal_message = prover_state.terminal_t_fields_message()?;
+    transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, terminal_message.as_bytes());
+    let mut terminal_rows = prover_state.inner_relation_material()?.into_rows();
     if terminal_rows.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
     let t_state = terminal_rows.pop().ok_or(AkitaError::InvalidProof)?;
-    transcript.absorb_and_record_bytes(
-        ABSORB_COMMITMENT,
-        &akita_types::raw_field_segment_bytes(&t_state)?,
-    );
 
     let witness = Arc::new(w);
     let logical_witness = logical_w
@@ -415,12 +419,12 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
+pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R, SP, S>(
+    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     transcript: &mut T,
-    current_state: SuffixProverState<F, E>,
+    current_state: SuffixProverState<F, E, S>,
     level: usize,
     level_params: &CommittedGroupParams,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -452,12 +456,14 @@ where
         + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    SP: CommitmentStatePolicy<F>,
+    S: InnerRelationState<F> + OuterCompressionState<F>,
 {
     let SuffixProverState {
         w,
         logical_w: optional_logical_w,
         binding,
-        hint,
+        prover_state,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -486,7 +492,6 @@ where
         }
         NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),
     };
-    let suffix_hint = hint;
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
@@ -518,7 +523,7 @@ where
         setup_polys_storage.as_ref().map(|polys| &polys[..]),
         opening,
         &witness_polys[..],
-        (Commitment::new(witness_commitment), suffix_hint),
+        (Commitment::new(witness_commitment), prover_state),
     )?;
     let opening_batch = block_claims.opening_layout()?;
     let opening_method = level_params.uniform_opening_method(&opening_batch)?;
@@ -533,7 +538,7 @@ where
         .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
         .collect::<Result<Vec<_>, _>>()?;
     if const { <E as ExtField<F>>::DEGREE == 1 } {
-        prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
+        prepare_single_field_fold::<F, E, T, _, _, _, C, O, TS, R, SP>(
             stack,
             block_claims,
             true,
@@ -545,7 +550,7 @@ where
             BasisMode::Lagrange,
         )
     } else {
-        prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
+        prepare_extension_claim_fold::<F, E, T, _, _, _, C, O, TS, R, SP>(
             stack,
             needs_extension_reduction,
             block_claims,

@@ -200,23 +200,25 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     .ring_dimension(),
                 "the prefix dispatcher must use its frozen A-ring dimension"
             );
-            let prefix_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-            let prefix_slot = akita_types::dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                PackingField,
-                setup_prefix.d_setup(),
-                |D_SETUP| {
-                    akita_prover::commit_setup_prefix::<PackingField, D_SETUP, _>(
-                        setup.expanded.as_ref(),
-                        &CpuBackend::DEFAULT,
-                        &prefix_prepared,
-                        &setup_prefix.commitment_profile,
-                        setup_prefix.n_prefix().unwrap(),
-                        setup_prefix.natural_len,
-                    )
-                }
+            let prefix_backend = CpuBackend::DEFAULT;
+            let prefix_prepared = prefix_backend.prepare_setup(&setup).unwrap();
+            let prefix_executor = akita_prover::CommitmentExecutor::cpu(
+                &prefix_backend,
+                &prefix_prepared,
+                &setup.expanded,
+                vec![akita_prover::PolynomialType::Dense(
+                    akita_prover::DenseType::Coefficients,
+                )],
+                akita_prover::PortableStatePolicy,
             )
             .unwrap();
+            let prefix_slot = akita_prover::commit_setup_prefix(
+                setup.expanded.as_ref(),
+                &prefix_executor,
+                &setup_prefix,
+            )
+            .unwrap();
+            drop(prefix_executor);
             setup.prefix_slots.insert(prefix_slot).unwrap();
             let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
@@ -228,12 +230,12 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_prover::CommitOutput {
                 committed_group,
-                hint,
+                prover_state: hint,
             } = scheme
                 .commit::<_, _>(
                     &setup,
                     std::slice::from_ref(&polynomial),
-                    &stack,
+                    stack.commitment(),
                     akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap();
@@ -319,7 +321,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 };
                 let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
                 let proof = scheme
-                    .batched_prove::<_, _, _>(
+                    .batched_prove::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,

@@ -7,22 +7,25 @@
 //!    passing `&stack` is the degenerate case (same stack at every level).
 //!    Tiered hardware provers use [`TieredProveStacks`] or a custom impl.
 //!
-//! 2. **Per-cluster context** (inside one stack): commit, opening, tensor, and
-//!    ring-switch each hold a validated [`OperationCtx`]. Protocol internals route
-//!    kernels to the matching cluster (for example `commit_w` uses
-//!    `stack.commit()`, `ring_switch_build_w` uses `stack.ring_switch()`).
+//! 2. **Per-cluster context** (inside one stack): commitment uses a checked
+//!    [`CommitmentExecutor`], while opening, tensor, and ring-switch each hold a
+//!    validated [`OperationCtx`]. Protocol internals route kernels to the
+//!    matching cluster.
 //!
-//! Commit entry points call `stack.commit()` and `stack.tensor()` directly.
+//! Recursive commitment calls `stack.commitment()` directly.
 //! Prove entry points call `stacks.prove_stack_at_level(level)` once per fold,
 //! then dispatch through the cluster accessors on that stack.
 
 use crate::compute::backend::{ComputeBackendSetup, NttCacheOwnerId};
+use crate::compute::commitment::{CommitmentExecutor, CommitmentStatePolicy, PortableStatePolicy};
 use crate::compute::requirements::{
     NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
 };
+use crate::compute::CpuBackend;
 use akita_error::AkitaError;
 use akita_types::AkitaExpandedSetup;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{Unreduced, WithCommitAccumulator};
 use std::marker::PhantomData;
 
 /// A single operation context: a backend plus its validated prepared setup.
@@ -131,27 +134,30 @@ where
 /// tensor / ring-switch) may still use a different backend and prepared setup.
 /// [`UniformProverStack`] is the degenerate case where all four clusters share
 /// one backend ([`ProverComputeStack::uniform`]).
-pub struct ProverComputeStack<'a, F, C, O, T, R>
+pub struct ProverComputeStack<'a, F, C, O, T, R, SP = PortableStatePolicy>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
-    commit: OperationCtx<'a, F, C>,
+    commitment: CommitmentExecutor<'a, F, SP>,
     opening: OperationCtx<'a, F, O>,
     tensor: OperationCtx<'a, F, T>,
     ring_switch: OperationCtx<'a, F, R>,
+    _commit_backend: PhantomData<fn() -> C>,
 }
 
-impl<'a, F, C, O, T, R> ProverComputeStack<'a, F, C, O, T, R>
+impl<'a, F, C, O, T, R, SP> ProverComputeStack<'a, F, C, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     /// Drop releasable NTT slots across all four clusters and return the total
     /// number of bytes freed. Physically shared cache owners are released once.
@@ -170,7 +176,8 @@ where
         let mut released_owners = Vec::with_capacity(4);
         let mut freed = 0usize;
         for released in [
-            self.commit.release_ntt_if_new(&mut released_owners)?,
+            self.commitment
+                .release_built_ntt_slots_deduplicated(&mut released_owners)?,
             self.opening.release_ntt_if_new(&mut released_owners)?,
             self.tensor.release_ntt_if_new(&mut released_owners)?,
             self.ring_switch.release_ntt_if_new(&mut released_owners)?,
@@ -189,23 +196,24 @@ where
     ///
     /// Returns an error if any cluster's prepared setup fails validation.
     pub fn new(
-        commit: (&'a C, &'a C::PreparedSetup),
+        commitment: CommitmentExecutor<'a, F, SP>,
         opening: (&'a O, &'a O::PreparedSetup),
         tensor: (&'a T, &'a T::PreparedSetup),
         ring_switch: (&'a R, &'a R::PreparedSetup),
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
-            commit: OperationCtx::new(commit.0, commit.1, expanded)?,
+            commitment,
             opening: OperationCtx::new(opening.0, opening.1, expanded)?,
             tensor: OperationCtx::new(tensor.0, tensor.1, expanded)?,
             ring_switch: OperationCtx::new(ring_switch.0, ring_switch.1, expanded)?,
+            _commit_backend: PhantomData,
         })
     }
 
-    /// Commit operation context.
-    pub fn commit(&self) -> &OperationCtx<'a, F, C> {
-        &self.commit
+    /// Checked commitment executor for this fold level.
+    pub fn commitment(&self) -> &CommitmentExecutor<'a, F, SP> {
+        &self.commitment
     }
 
     /// Opening / decompose-fold operation context.
@@ -225,7 +233,7 @@ where
 
     fn prewarm_requirement(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self.commit.ensure_ntt(requirement),
+            NttOperationCluster::Commit => self.commitment.prewarm_routed_requirement(requirement),
             NttOperationCluster::Opening => self.opening.ensure_ntt(requirement),
             NttOperationCluster::Tensor => self.tensor.ensure_ntt(requirement),
             NttOperationCluster::RingSwitch => self.ring_switch.ensure_ntt(requirement),
@@ -237,7 +245,7 @@ where
         requirement: RoutedNttRequirement,
     ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self.commit.retained_ntt_owner(requirement),
+            NttOperationCluster::Commit => self.commitment.retained_routed_requirement(requirement),
             NttOperationCluster::Opening => self.opening.retained_ntt_owner(requirement),
             NttOperationCluster::Tensor => self.tensor.retained_ntt_owner(requirement),
             NttOperationCluster::RingSwitch => self.ring_switch.retained_ntt_owner(requirement),
@@ -249,7 +257,7 @@ where
         requirement: RoutedNttRequirement,
     ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
         match requirement.cluster {
-            NttOperationCluster::Commit => self.commit.planned_ntt(requirement),
+            NttOperationCluster::Commit => self.commitment.planned_routed_requirement(requirement),
             NttOperationCluster::Opening => self.opening.planned_ntt(requirement),
             NttOperationCluster::Tensor => self.tensor.planned_ntt(requirement),
             NttOperationCluster::RingSwitch => self.ring_switch.planned_ntt(requirement),
@@ -258,7 +266,8 @@ where
 }
 
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
-pub type UniformProverStack<'a, F, B> = ProverComputeStack<'a, F, B, B, B, B>;
+pub type UniformProverStack<'a, F, B, SP = PortableStatePolicy> =
+    ProverComputeStack<'a, F, B, B, B, B, SP>;
 
 /// Per-fold selection of a [`ProverComputeStack`] during proving.
 ///
@@ -286,6 +295,8 @@ where
 {
     /// Commit cluster backend for stacks returned by this selector.
     type Commit: ComputeBackendSetup<F>;
+    /// Commitment state policy shared by every selected fold stack.
+    type CommitmentStatePolicy: CommitmentStatePolicy<F>;
     /// Opening cluster backend for stacks returned by this selector.
     type Opening: ComputeBackendSetup<F>;
     /// Tensor cluster backend for stacks returned by this selector.
@@ -294,10 +305,19 @@ where
     type RingSwitch: ComputeBackendSetup<F>;
 
     /// Stack whose operation clusters should execute fold `level`.
+    #[allow(clippy::type_complexity)]
     fn prove_stack_at_level(
         &self,
         level: usize,
-    ) -> &ProverComputeStack<'a, F, Self::Commit, Self::Opening, Self::Tensor, Self::RingSwitch>;
+    ) -> &ProverComputeStack<
+        'a,
+        F,
+        Self::Commit,
+        Self::Opening,
+        Self::Tensor,
+        Self::RingSwitch,
+        Self::CommitmentStatePolicy,
+    >;
 
     /// Optional lifecycle hook after the root fold and before the recursive
     /// suffix. The default retains every prepared NTT cache.
@@ -337,25 +357,35 @@ impl<S> ReleaseRootNttAfterFold<S> {
     }
 }
 
-impl<'a, F, C, O, T, R, S> LevelProveStacks<'a, F> for ReleaseRootNttAfterFold<S>
+impl<'a, F, C, O, T, R, SP, S> LevelProveStacks<'a, F> for ReleaseRootNttAfterFold<S>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F> + 'a,
     O: ComputeBackendSetup<F> + 'a,
     T: ComputeBackendSetup<F> + 'a,
     R: ComputeBackendSetup<F> + 'a,
-    S: LevelProveStacks<'a, F, Commit = C, Opening = O, Tensor = T, RingSwitch = R>,
+    SP: CommitmentStatePolicy<F>,
+    S: LevelProveStacks<
+        'a,
+        F,
+        Commit = C,
+        Opening = O,
+        Tensor = T,
+        RingSwitch = R,
+        CommitmentStatePolicy = SP,
+    >,
     C::PreparedSetup: 'a,
     O::PreparedSetup: 'a,
     T::PreparedSetup: 'a,
     R::PreparedSetup: 'a,
 {
     type Commit = C;
+    type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
         self.stacks.prove_stack_at_level(level)
     }
 
@@ -488,15 +518,17 @@ where
     Ok(owners)
 }
 
-impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R>
+impl<'a, F, C, O, T, R, SP> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     type Commit = C;
+    type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
@@ -506,21 +538,31 @@ where
     }
 }
 
-impl<'a, F, C, O, T, R, S> LevelProveStacks<'a, F> for &S
+impl<'a, F, C, O, T, R, SP, S> LevelProveStacks<'a, F> for &S
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
-    S: LevelProveStacks<'a, F, Commit = C, Opening = O, Tensor = T, RingSwitch = R> + ?Sized,
+    SP: CommitmentStatePolicy<F>,
+    S: LevelProveStacks<
+            'a,
+            F,
+            Commit = C,
+            Opening = O,
+            Tensor = T,
+            RingSwitch = R,
+            CommitmentStatePolicy = SP,
+        > + ?Sized,
 {
     type Commit = C;
+    type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
         (*self).prove_stack_at_level(level)
     }
 
@@ -543,25 +585,27 @@ where
 /// let tiered = TieredProveStacks::new(&stacks, &[1, 3, usize::MAX])?;
 /// batched_prove(..., &tiered, ...)?;
 /// ```
-pub struct TieredProveStacks<'a, F, C, O, T, R>
+pub struct TieredProveStacks<'a, F, C, O, T, R, SP = PortableStatePolicy>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
-    stacks: &'a [ProverComputeStack<'a, F, C, O, T, R>],
+    stacks: &'a [ProverComputeStack<'a, F, C, O, T, R, SP>],
     tier_max_level: &'a [usize],
 }
 
-impl<'a, F, C, O, T, R> TieredProveStacks<'a, F, C, O, T, R>
+impl<'a, F, C, O, T, R, SP> TieredProveStacks<'a, F, C, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     /// Build a tier table. `stacks.len()` must equal `tier_max_level.len()`.
     ///
@@ -570,7 +614,7 @@ where
     /// Returns an error if the tier table is empty or `tier_max_level` is not
     /// strictly increasing.
     pub fn new(
-        stacks: &'a [ProverComputeStack<'a, F, C, O, T, R>],
+        stacks: &'a [ProverComputeStack<'a, F, C, O, T, R, SP>],
         tier_max_level: &'a [usize],
     ) -> Result<Self, AkitaError> {
         if stacks.is_empty() {
@@ -604,28 +648,30 @@ where
     }
 }
 
-impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for TieredProveStacks<'a, F, C, O, T, R>
+impl<'a, F, C, O, T, R, SP> LevelProveStacks<'a, F> for TieredProveStacks<'a, F, C, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     type Commit = C;
+    type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
         &self.stacks[self.tier_index_for_level(level)]
     }
 }
 
-impl<'a, F, B> ProverComputeStack<'a, F, B, B, B, B>
+impl<'a, F, SP> ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend, SP>
 where
-    F: Field + CanonicalEncoding,
-    B: ComputeBackendSetup<F>,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+    SP: CommitmentStatePolicy<F>,
 {
     /// Build a CPU-only / single-backend stack where every operation cluster
     /// shares one backend and prepared setup. Validates the prepared setup once
@@ -634,18 +680,36 @@ where
     /// # Errors
     ///
     /// Returns an error if the prepared setup fails validation.
-    pub fn uniform(
-        backend: &'a B,
-        prepared: &'a B::PreparedSetup,
-        expanded: &AkitaExpandedSetup<F>,
+    pub fn uniform_with_state_policy(
+        backend: &'a CpuBackend,
+        prepared: &'a <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+        expanded: &'a AkitaExpandedSetup<F>,
+        state_policy: SP,
     ) -> Result<Self, AkitaError> {
+        let commitment =
+            CommitmentExecutor::cpu(backend, prepared, expanded, Vec::new(), state_policy)?;
         Self::new(
-            (backend, prepared),
+            commitment,
             (backend, prepared),
             (backend, prepared),
             (backend, prepared),
             expanded,
         )
+    }
+}
+
+impl<'a, F>
+    ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend, PortableStatePolicy>
+where
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+{
+    /// Build the standard portable-state CPU stack.
+    pub fn uniform(
+        backend: &'a CpuBackend,
+        prepared: &'a <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+        expanded: &'a AkitaExpandedSetup<F>,
+    ) -> Result<Self, AkitaError> {
+        Self::uniform_with_state_policy(backend, prepared, expanded, PortableStatePolicy)
     }
 }
 

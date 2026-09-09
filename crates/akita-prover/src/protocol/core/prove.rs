@@ -1,10 +1,11 @@
 use super::*;
-use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
+use crate::backend::RecursiveFoldSource;
 use crate::compute::{
-    prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    prewarm_ntt_requirements, CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend,
+    InnerRelationState, LevelProveStacks, NttExecutionRequirements, OuterCompressionState,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, TerminalBindingState,
 };
 use crate::SelectedProverOpeningData;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
@@ -21,7 +22,7 @@ use jolt_field::{AdditiveGroup, CanonicalEncoding};
 /// Returns an error if claim preparation, schedule selection, transcript
 /// binding, or folded proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
+pub fn batched_prove<'a, Cfg, T, P, S, C, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -32,8 +33,9 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
+        CommitmentStatePolicy = SP,
     >,
-    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, S>,
     transcript: &mut T,
     basis: BasisMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -57,9 +59,12 @@ where
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
-    C: ComputeBackendSetup<Cfg::Field>
-        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
-        + 'a,
+    S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    C: ComputeBackendSetup<Cfg::Field> + 'a,
+    SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+    SP::State: InnerRelationState<Cfg::Field>
+        + OuterCompressionState<Cfg::Field>
+        + TerminalBindingState<Cfg::Field>,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -100,7 +105,7 @@ where
         transcript,
     )?;
 
-    prove::<Cfg, T, P, C, O, TS, R>(
+    prove::<Cfg, T, P, S, C, O, TS, R, SP>(
         expanded,
         prefix_slots,
         stacks,
@@ -127,7 +132,7 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
+pub fn prove<'a, Cfg, T, P, S, C, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
@@ -137,9 +142,10 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
+        CommitmentStatePolicy = SP,
     >,
     transcript: &mut T,
-    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, S>,
     schedule: &FoldSchedule,
     basis: BasisMode,
     grinding_plan: &akita_types::GrindingPlan,
@@ -164,9 +170,12 @@ where
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
-    C: ComputeBackendSetup<Cfg::Field>
-        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
-        + 'a,
+    S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    C: ComputeBackendSetup<Cfg::Field> + 'a,
+    SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+    SP::State: InnerRelationState<Cfg::Field>
+        + OuterCompressionState<Cfg::Field>
+        + TerminalBindingState<Cfg::Field>,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -236,7 +245,7 @@ where
 
     let mut grinding_transcript =
         akita_types::ProverGrindingTranscript::<T>::new(transcript, grinding_plan)?;
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, S, C, O, TS, R, _, Cfg>(
         expanded,
         prefix_slots,
         stacks,
@@ -256,7 +265,7 @@ where
     // at this exact root/suffix boundary through the lifecycle hook.
     stacks.after_root_fold()?;
 
-    let suffix = crate::prove_suffix::<Cfg, _, C, O, TS, R>(
+    let suffix = crate::prove_suffix::<Cfg, _, C, O, TS, R, _>(
         expanded,
         prefix_slots,
         stacks,

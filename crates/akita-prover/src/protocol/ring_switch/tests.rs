@@ -19,7 +19,7 @@ use crate::{AkitaProverSetup, DecomposeFoldWitness};
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget, AkitaCommitmentHint,
+    active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
     DigitRangePlan, OpeningClaimsLayout, PreparedCoefficientFunctional, PreparedRelationAddress,
     RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint,
@@ -103,10 +103,7 @@ fn reduced_instance(
     (instance, rhs_layout)
 }
 
-fn reduced_group_witness(
-    params: &CommittedGroupParams,
-    hint: AkitaCommitmentHint<ReducedF>,
-) -> RingRelationGroupWitness<ReducedF> {
+fn reduced_group_witness(params: &CommittedGroupParams) -> RingRelationGroupWitness<ReducedF> {
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
     let group_params = params
         .group_params(&opening_batch, 0)
@@ -133,7 +130,8 @@ fn reduced_group_witness(
         .expect("E digits"),
         RingVec::from_coeffs_with_ring_dim(vec![ReducedF::zero(); blocks * REDUCED_D], REDUCED_D)
             .expect("folded opening"),
-        hint,
+        crate::compute::InnerRelationStateMaterial::new(REDUCED_D, vec![inner_rows(params)])
+            .expect("inner relation material"),
         params.role_dims(),
     )
 }
@@ -520,15 +518,12 @@ fn compressed_reduced_ring_switch_keeps_quotient_paths_cold() {
         .expect("reduced outer compression");
         assert_reduced_compression_report(&outer_report);
         let outer_output = outer_outputs.pop().expect("outer output");
-        let hint = AkitaCommitmentHint::singleton_with_reduced_outer_compression(
-            inner_rows(&params),
-            &outer_output.witness,
-        )
-        .expect("compressed hint");
-        let outer_source = CompressionSourceWitness::from_outer_hint(
+        let outer_source = CompressionSourceWitness::from_outer_state(
             0,
             &outer_plan,
-            &hint,
+            crate::compute::PortableCompressionState::ReducedEvaluation {
+                witness: outer_output.witness,
+            },
             outer_output.terminal.coefficients().to_vec(),
             RingRelationMode::ReducedEvaluation,
         )
@@ -548,7 +543,7 @@ fn compressed_reduced_ring_switch_keeps_quotient_paths_cold() {
             .expect("compressed witness layout");
         let expected_digits = retained_compression_digits(&layout, &compression);
         let witness = RingRelationWitness::from_groups(
-            vec![reduced_group_witness(&params, hint)],
+            vec![reduced_group_witness(&params)],
             RelationDQuotientWitness::ReducedEvaluation,
             Some(compression),
         );
@@ -575,9 +570,8 @@ fn raw_reduced_ring_switch_keeps_quotient_paths_cold() {
     let setup_coefficients = active_setup_field_len(&params, instance.opening_batch())
         .expect("active setup field length");
     with_reduced_setup(setup_coefficients, |ctx, setup| {
-        let hint = AkitaCommitmentHint::singleton(inner_rows(&params)).expect("raw hint");
         let witness = RingRelationWitness::from_groups(
-            vec![reduced_group_witness(&params, hint)],
+            vec![reduced_group_witness(&params)],
             RelationDQuotientWitness::ReducedEvaluation,
             None,
         );
@@ -604,9 +598,8 @@ fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
     let setup_coefficients = active_setup_field_len(&params, instance.opening_batch())
         .expect("active setup field length");
     with_reduced_setup(setup_coefficients, |ctx, _| {
-        let hint = AkitaCommitmentHint::singleton(inner_rows(&params)).expect("mismatched hint");
         let witness = RingRelationWitness::from_groups(
-            vec![reduced_group_witness(&params, hint)],
+            vec![reduced_group_witness(&params)],
             RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new())),
             None,
         );

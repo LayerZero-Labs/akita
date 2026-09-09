@@ -1,5 +1,6 @@
 //! Declarative NTT requirements for one resolved prover execution.
 
+use super::commitment::CommitmentNttStage;
 use akita_error::AkitaError;
 use akita_types::{
     centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
@@ -27,6 +28,8 @@ pub struct RoutedNttRequirement {
     pub fold_level: usize,
     /// Operation cluster within that stack.
     pub cluster: NttOperationCluster,
+    /// Exact commitment stage when `cluster` is [`NttOperationCluster::Commit`].
+    pub commitment_stage: Option<CommitmentNttStage>,
     /// Exact transform prefix used when this operation is retained.
     pub key: NttCacheKey,
     /// Full operation extent used by the backend's cached-versus-streamed route.
@@ -123,9 +126,9 @@ impl NttExecutionRequirements {
                 SignedCommitSource::Dense,
             )?,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             fold_level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
                 params.inner.matrix.output_rank(),
@@ -138,9 +141,9 @@ impl NttExecutionRequirements {
             params.outer.matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             fold_level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
                 params.outer.matrix.output_rank(),
@@ -157,6 +160,39 @@ impl NttExecutionRequirements {
         key: NttCacheKey,
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
+        if cluster == NttOperationCluster::Commit {
+            return Err(AkitaError::InvalidSetup(
+                "commitment NTT requirements require an inner/outer stage discriminator".into(),
+            ));
+        }
+        self.push_matrix(fold_level, cluster, None, key, routing_extent)
+    }
+
+    /// Add one exact commitment matrix request with its owning A/B stage.
+    pub fn add_commitment_matrix(
+        &mut self,
+        fold_level: usize,
+        stage: CommitmentNttStage,
+        key: NttCacheKey,
+        routing_extent: usize,
+    ) -> Result<(), AkitaError> {
+        self.push_matrix(
+            fold_level,
+            NttOperationCluster::Commit,
+            Some(stage),
+            key,
+            routing_extent,
+        )
+    }
+
+    fn push_matrix(
+        &mut self,
+        fold_level: usize,
+        cluster: NttOperationCluster,
+        commitment_stage: Option<CommitmentNttStage>,
+        key: NttCacheKey,
+        routing_extent: usize,
+    ) -> Result<(), AkitaError> {
         if routing_extent < key.num_ring_elements {
             return Err(AkitaError::InvalidSetup(
                 "NTT routing extent is smaller than its cache prefix".into(),
@@ -165,6 +201,7 @@ impl NttExecutionRequirements {
         self.entries.push(RoutedNttRequirement {
             fold_level,
             cluster,
+            commitment_stage,
             key,
             routing_extent,
         });
@@ -172,6 +209,10 @@ impl NttExecutionRequirements {
             (
                 entry.fold_level,
                 cluster_order(entry.cluster),
+                entry.commitment_stage.map_or(2, |stage| match stage {
+                    CommitmentNttStage::Inner => 0,
+                    CommitmentNttStage::Outer => 1,
+                }),
                 entry.key.ring_d,
                 domain_order(entry.key.domain),
                 entry.routing_extent,
@@ -199,9 +240,9 @@ impl NttExecutionRequirements {
                 source,
             )?,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
                 params.inner().matrix.output_rank(),
@@ -214,9 +255,9 @@ impl NttExecutionRequirements {
             params.outer().matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
                 params.outer().matrix.output_rank(),
@@ -329,9 +370,9 @@ impl NttExecutionRequirements {
                 SignedCommitSource::Dense,
             )?,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
                 layout.inner.matrix.output_rank(),
@@ -344,9 +385,9 @@ impl NttExecutionRequirements {
             layout.outer.matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
                 layout.outer.matrix.output_rank(),
@@ -434,9 +475,9 @@ impl NttExecutionRequirements {
                 SignedCommitSource::RecursiveWitness,
             )?,
         )?;
-        self.add_matrix(
+        self.add_commitment_matrix(
             level,
-            NttOperationCluster::Commit,
+            CommitmentNttStage::Inner,
             key,
             matrix_extent(
                 params.inner.matrix.output_rank(),
@@ -454,12 +495,12 @@ fn matrix_extent(num_rows: usize, active_width: usize) -> Result<usize, AkitaErr
 
 /// Transform domain required to commit balanced digits at one basis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SignedCommitSource {
+pub(crate) enum SignedCommitSource {
     Dense,
     RecursiveWitness,
 }
 
-fn signed_commit_domain(
+pub(crate) fn signed_commit_domain(
     modulus_profile: SisModulusProfileId,
     ring_dimension: usize,
     width: usize,
@@ -547,9 +588,9 @@ mod tests {
         let mut requirements = NttExecutionRequirements::default();
         for width in [7, 3, 11, 5] {
             requirements
-                .add_matrix(
+                .add_commitment_matrix(
                     2,
-                    NttOperationCluster::Commit,
+                    CommitmentNttStage::Inner,
                     NttCacheKey::from_matrix_shape(64, 3, width, NttTransformDomain::Negacyclic)
                         .unwrap(),
                     33,
@@ -724,14 +765,14 @@ mod tests {
                 NttTransformDomain::Cyclic,
             ),
         ] {
-            requirements
-                .add_matrix(
-                    level,
-                    cluster,
-                    NttCacheKey::from_matrix_shape(64, 2, 9, domain).unwrap(),
-                    18,
-                )
-                .unwrap();
+            let key = NttCacheKey::from_matrix_shape(64, 2, 9, domain).unwrap();
+            if cluster == NttOperationCluster::Commit {
+                requirements
+                    .add_commitment_matrix(level, CommitmentNttStage::Inner, key, 18)
+                    .unwrap();
+            } else {
+                requirements.add_matrix(level, cluster, key, 18).unwrap();
+            }
         }
         assert_eq!(requirements.entries.len(), 4);
     }
