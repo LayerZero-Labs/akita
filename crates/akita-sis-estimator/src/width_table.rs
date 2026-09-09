@@ -126,7 +126,7 @@ pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
 /// Change this value whenever an estimator or certification change can alter
 /// a work result. Operational changes such as parallelism and progress output
 /// do not change it.
-pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v3";
+pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v4";
 
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
