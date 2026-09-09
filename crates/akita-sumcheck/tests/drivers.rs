@@ -4,11 +4,10 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{
-    advance_eq_factored_claim, CompressedUniPoly, EqFactoredSumcheckInstanceProver,
-    EqFactoredSumcheckInstanceProverExt, EqFactoredSumcheckInstanceVerifier,
-    EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly, SumcheckInstanceProver,
-    SumcheckInstanceProverExt, SumcheckInstanceVerifier, SumcheckInstanceVerifierExt,
-    SumcheckProof, UniPoly,
+    CompressedUniPoly, EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,
+    EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly,
+    SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -189,27 +188,31 @@ fn eq_factored_round_wire_contains_every_nonconstant_coefficient() {
 
 #[test]
 fn eq_factored_degree_zero_round_has_an_empty_message() {
-    let q_coeffs = vec![F::from_u64(23)];
-    let mut prover = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs.clone());
-    let mut prover_transcript = new_transcript();
-    let (proof, _, final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, |_| Ok(F::from_u64(11)))
-        .unwrap();
+    // Empty eq-factored messages preserve the normalized claim, including at
+    // Boolean equality points and challenges, unlike empty ordinary messages.
+    for tau in [F::zero(), F::one(), F::from_u64(7)] {
+        for challenge in [F::zero(), F::one(), F::from_u64(11)] {
+            let q_coeffs = vec![F::from_u64(23)];
+            let mut prover = ToyEqFactoredInstance::new(tau, q_coeffs.clone());
+            let (proof, _, final_claim) = prover
+                .prove::<F, _, _>(&mut new_transcript(), |_| Ok(challenge))
+                .unwrap();
 
-    assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
-    let mut encoded = Vec::new();
-    proof.round_polys[0]
-        .serialize_uncompressed(&mut encoded)
-        .unwrap();
-    assert!(encoded.is_empty());
-    assert_eq!(final_claim, q_coeffs[0]);
+            assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
+            let mut encoded = Vec::new();
+            proof.round_polys[0]
+                .serialize_uncompressed(&mut encoded)
+                .unwrap();
+            assert!(encoded.is_empty());
+            assert_eq!(final_claim, q_coeffs[0]);
 
-    let verifier = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs);
-    let mut verifier_transcript = new_transcript();
-    assert_eq!(
-        verifier.verify::<F, _, _>(&proof, &mut verifier_transcript, |_| Ok(F::from_u64(11))),
-        Ok(vec![F::from_u64(11)])
-    );
+            let verifier = ToyEqFactoredInstance::new(tau, q_coeffs);
+            assert_eq!(
+                verifier.verify::<F, _, _>(&proof, &mut new_transcript(), |_| Ok(challenge)),
+                Ok(vec![challenge])
+            );
+        }
+    }
 }
 
 struct ToyTwoRoundEqFactoredInstance {
@@ -568,19 +571,4 @@ fn empty_zero_polynomial_round_trips_through_standard_and_batched_sumcheck() {
         ),
         Ok(challenges)
     );
-}
-
-/// The eq-factored driver is not vulnerable and so is not guarded: an empty
-/// `q` message leaves the normalized claim untouched rather than zeroing it,
-/// because both the `tau`-scaled correction and the evaluation are zero.
-#[test]
-fn eq_factored_empty_round_message_preserves_the_claim() {
-    let empty = EqFactoredUniPoly::<F> {
-        coeffs_except_constant_term: Vec::new(),
-    };
-    let claim = F::from_u64(7);
-
-    let advanced = advance_eq_factored_claim(claim, F::from_u64(2), &empty, F::from_u64(9));
-
-    assert_eq!(advanced, claim);
 }
