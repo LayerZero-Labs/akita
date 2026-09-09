@@ -51,9 +51,17 @@ certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
 
+The infinity estimator evaluates Gaussian probabilities in log space, using
+the complementary error-function tail when the coordinate probability is
+close to one. Numerical allowances are applied toward greater attack success
+before combining coordinates, so rounding uncertainty favors a cheaper
+attack. Independent high-precision power-series fixtures check the probability
+calculation and integer repetition thresholds. These checks cover numerical
+regressions; they do not certify all floating-point lattice simulation steps.
+
 The estimator hardening described above changes the acceptance model. The
 checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
-and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+and wire tag `1`; evaluator revision `akita-infinity-width-v4`, the regenerated
 table digest, and dependent catalog identities bind the corrected semantics.
 The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
 uses `2^44 - 1`. Within those guards, the audited A cells are the exact

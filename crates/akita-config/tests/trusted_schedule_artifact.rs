@@ -595,6 +595,7 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
 
 #[test]
 fn recursive_prefix_slot_id_fixture() {
+    // These setup-prefix identities bind the regenerated SIS table digest.
     let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>();
     let multichunk =
         recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
@@ -602,14 +603,14 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             3,
-            "7aa5dc54754bdf48823cde0aac34c3926c207e64a118f8ebe9c44d7985484dac".to_string(),
+            "df5adf6bdafb81d3cb374aaa203fd82270d226bd6c504f481cb0dcb7fcb674d3".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
             3,
-            "20fc40144b1de0c287268de2fd6a9bf168f49fb715f60525ef410f6ab4a07156".to_string(),
+            "0ea09bafa95cc857b27075caefeaa5dda6c8fb07ade9216198aac783c6384a59".to_string(),
         )
     );
 }

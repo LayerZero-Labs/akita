@@ -320,7 +320,7 @@ where
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
         stage1.compression,
-        &setup.expanded,
+        setup.expanded(),
         rs.alpha,
         setup_claim,
         relation_claim,
@@ -559,7 +559,7 @@ where
             ),
         };
     let ring_switch_replay = RingSwitchReplay {
-        setup: &setup.expanded,
+        setup: setup.expanded(),
         relation: &relation_instance,
         row_coefficients: &prefix.row_coefficients,
         lp: prepared.lp,

@@ -188,7 +188,7 @@ jobs:
           mkdir -p "$artifact_dir"
           cargo run --release -p akita-planner --features catalog-gen \
             --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
-            --catalog-baseline specs/evidence/subring-coefficient-packing/head.tsv \
+            --catalog-baseline artifacts/schedule-catalog.tsv \
             --require-catalog-baseline-match \
             --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
           diff -ru artifacts/schedules "$artifact_dir"
