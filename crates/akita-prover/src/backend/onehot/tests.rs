@@ -24,7 +24,7 @@ where
         let coeff_idx = field_pos % D;
         coeffs[ring_idx].coeffs[coeff_idx] += F::one();
     }
-    DensePoly::from_ring_coeffs(coeffs)
+    DensePoly::from_ring_coeffs(coeffs).unwrap()
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
