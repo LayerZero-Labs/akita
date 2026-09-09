@@ -588,19 +588,22 @@ mod tests {
 
         let mut bytes = Vec::new();
         verifier_setup
-            .expanded
+            .expanded()
             .serialize_compressed(&mut bytes)
             .unwrap();
         let decoded = AkitaExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
-        assert_eq!(decoded, verifier_setup.expanded.as_ref().clone());
+        assert_eq!(decoded, verifier_setup.expanded().as_ref().clone());
         assert_eq!(decoded.descriptor().max_num_batched_polys, 3);
 
         let decoded_prover = AkitaProverSetup::from_validated_expanded(decoded.clone()).unwrap();
         let derived_verifier = decoded_prover.to_verifier_setup(capacity).unwrap();
         assert_eq!(derived_verifier, verifier_setup);
         assert_eq!(
-            verifier_setup.expanded.shared_matrix().num_field_elements(),
+            verifier_setup
+                .expanded()
+                .shared_matrix()
+                .num_field_elements(),
             capacity.num_field_elements
         );
     }

@@ -194,7 +194,7 @@ where
     let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
     })?;
-    let slot = setup.prefix_slots.get(&selected_slot_id).ok_or_else(|| {
+    let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
         AkitaError::InvalidSetup(
             "planned setup-prefix slot is missing from verifier setup".to_string(),
         )
@@ -423,7 +423,7 @@ mod tests {
         let (setup, offloaded_params) =
             verifier_setup_with_unaligned_matrix(level_params.clone(), natural_field_len);
         assert!(!setup
-            .expanded
+            .expanded()
             .shared_matrix()
             .num_field_elements()
             .is_multiple_of(RING_D));

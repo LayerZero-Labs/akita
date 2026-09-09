@@ -235,7 +235,7 @@ where
     let selection = statement.selection();
     let claims = statement.into_claims();
     claims
-        .validate(setup.expanded.descriptor())
+        .validate(setup.expanded().descriptor())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims
         .committed_layout()
@@ -309,7 +309,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     validate_schedule_ring_dims(schedule)?;
-    ensure_verifier_schedule_fits_setup(setup.expanded.as_ref(), schedule, &opening_batch)?;
+    ensure_verifier_schedule_fits_setup(setup.expanded().as_ref(), schedule, &opening_batch)?;
     schedule
         .validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)
         .map_err(|_| AkitaError::InvalidProof)?;
@@ -328,7 +328,7 @@ where
     let grinding_plan = {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
         bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
-            &setup.expanded,
+            setup.expanded(),
             &opening_batch,
             selection,
             schedule,

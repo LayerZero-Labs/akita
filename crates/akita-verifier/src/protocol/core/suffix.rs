@@ -36,7 +36,7 @@ where
         let setup_prefix_id = setup_prefix.slot_id().ok_or_else(|| {
             AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
         })?;
-        let slot = setup.prefix_slots.get(&setup_prefix_id).ok_or_else(|| {
+        let slot = setup.prefix_slots().get(&setup_prefix_id).ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "planned setup-prefix slot is missing from verifier setup".to_string(),
             )
