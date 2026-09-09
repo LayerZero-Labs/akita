@@ -33,12 +33,28 @@ pub fn log2_amplify(target_success_probability: f64, log2_success_probability: f
         return f64::INFINITY;
     }
 
-    let success_probability = 2.0_f64.powf(log2_success_probability);
-    if success_probability > 0.0 {
-        return amplify(target_success_probability, success_probability).log2();
+    if log2_success_probability >= target_success_probability.log2() {
+        return 0.0;
     }
 
-    (-((1.0 - target_success_probability).ln())).log2() - log2_success_probability
+    // Below machine epsilon, -ln(1-p) = p to binary64 precision.
+    // Stay in log space before either the quotient overflows or p underflows.
+    if log2_success_probability < -54.0 {
+        let log_repetitions =
+            (-(-target_success_probability).ln_1p()).log2() - log2_success_probability;
+        // A similarly tiny target can still require a small integer count.
+        return if log_repetitions < 53.0 {
+            log_repetitions.exp2().ceil().log2()
+        } else {
+            log_repetitions
+        };
+    }
+
+    amplify(
+        target_success_probability,
+        2.0_f64.powf(log2_success_probability),
+    )
+    .log2()
 }
 
 #[cfg(test)]

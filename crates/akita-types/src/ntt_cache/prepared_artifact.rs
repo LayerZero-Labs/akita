@@ -500,7 +500,7 @@ mod tests {
         };
         let artifact = build_riscv64_scalar_q128_cache_artifact(
             setup
-                .expanded
+                .expanded()
                 .shared_matrix()
                 .ring_view::<D>(1, WIDTH)
                 .expect("matrix view"),

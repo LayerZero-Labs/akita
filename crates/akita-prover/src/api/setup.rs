@@ -226,10 +226,10 @@ mod tests {
                 num_field_elements: 3,
             })
             .expect("narrow verifier setup");
-        assert_eq!(verifier.expanded.descriptor().num_field_elements, 3);
-        assert_eq!(verifier.expanded.shared_matrix().num_field_elements(), 3);
+        assert_eq!(verifier.expanded().descriptor().num_field_elements, 3);
+        assert_eq!(verifier.expanded().shared_matrix().num_field_elements(), 3);
         assert_eq!(
-            verifier.expanded.shared_matrix().as_field_slice(),
+            verifier.expanded().shared_matrix().as_field_slice(),
             &setup.expanded.shared_matrix().as_field_slice()[..3]
         );
         assert!(
