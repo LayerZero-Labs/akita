@@ -161,7 +161,10 @@ where
         akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
             .expect("verifier capacity");
     assert_eq!(
-        verifier_setup.expanded.shared_matrix().num_field_elements(),
+        verifier_setup
+            .expanded()
+            .shared_matrix()
+            .num_field_elements(),
         verifier_capacity.num_field_elements
     );
     if setup.expanded.shared_matrix().num_field_elements() >= verifier_capacity.num_field_elements {
@@ -171,7 +174,7 @@ where
             })
             .expect("construct undersized verifier fixture");
         akita_config::ensure_verifier_schedule_fits_setup(
-            undersized.expanded.as_ref(),
+            undersized.expanded().as_ref(),
             &schedule,
             &opening_layout,
         )
@@ -300,7 +303,10 @@ where
         akita_types::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
             .expect("verifier capacity");
     assert_eq!(
-        verifier_setup.expanded.shared_matrix().num_field_elements(),
+        verifier_setup
+            .expanded()
+            .shared_matrix()
+            .num_field_elements(),
         verifier_capacity.num_field_elements
     );
 

@@ -673,7 +673,7 @@ fn verifier_setup_with_alternate_full_prefix(
     .expect("commit altered full setup prefix");
 
     let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
-    for (id, slot) in verifier_setup.prefix_slots.iter() {
+    for (id, slot) in verifier_setup.prefix_slots().iter() {
         let replacement = if id == slot_id {
             altered_slot.verifier_slot()
         } else {
@@ -684,7 +684,7 @@ fn verifier_setup_with_alternate_full_prefix(
             .expect("insert verifier slot");
     }
     Some(
-        AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+        AkitaVerifierSetup::from_parts(verifier_setup.expanded().clone(), prefix_slots)
             .expect("alternate verifier setup"),
     )
 }

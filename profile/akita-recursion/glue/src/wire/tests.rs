@@ -294,8 +294,8 @@ fn strict_setup_decoder_preserves_prefix_slots() {
             .expect("decode setup");
 
     assert!(rest.is_empty());
-    assert!(decoded.prefix_slots.get(&id).is_some());
-    assert_eq!(decoded.prefix_slots.len(), 1);
+    assert!(decoded.prefix_slots().get(&id).is_some());
+    assert_eq!(decoded.prefix_slots().len(), 1);
 }
 
 #[test]

@@ -268,23 +268,58 @@ fn validate_infinity_profile(config: &EstimateConfig) -> Result<()> {
 }
 
 fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
-    match bound {
-        Bound::Integer(value) => {
-            if value.is_zero() {
-                return Err(EstimatorError::InvalidParameter {
-                    field: "length_bound",
-                    reason: "integer bound must be positive".to_string(),
-                });
-            }
-            Ok(value.to_f64().unwrap_or(f64::INFINITY))
-        }
-        Bound::Float(value) => Ok(*value),
+    bound.validate()?;
+    let value = match bound {
+        Bound::Integer(value) => value.to_f64().unwrap_or(f64::INFINITY),
+        Bound::Float(value) => *value,
         Bound::Rational {
             numerator,
             denominator,
-        } => Ok(numerator.to_f64().unwrap_or(0.0) / denominator.to_f64().unwrap_or(1.0)),
-        Bound::SqrtInteger(value) => Ok(value.to_f64().unwrap_or(f64::INFINITY).sqrt()),
+        } => {
+            let mut exponent = i128::from(numerator.bits()) - i128::from(denominator.bits());
+            if (numerator % denominator).is_zero() {
+                // Exact integers use the same rounding as Bound::Integer.
+                (numerator / denominator).to_f64().unwrap_or(f64::INFINITY)
+            } else if exponent > 1024 {
+                f64::INFINITY
+            } else if exponent < -1074 {
+                0.0
+            } else {
+                // Normalize to floor(log2(numerator / denominator)). Bit
+                // lengths alone can overestimate it by one, depending on
+                // common factors in the representation.
+                let below_power = if exponent >= 0 {
+                    numerator < &(denominator << exponent as usize)
+                } else {
+                    &(numerator << (-exponent) as usize) < denominator
+                };
+                exponent -= i128::from(below_power);
+                // Divide exact integers at the output's binary scale, so
+                // common factors of any size cancel before conversion. Round
+                // the bound upward (toward a cheaper attack), including at
+                // the subnormal boundary.
+                let shift = (52 - exponent).min(1074) as i32;
+                let (scaled_numerator, scaled_denominator) = if shift >= 0 {
+                    (numerator << shift as usize, denominator.clone())
+                } else {
+                    (numerator.clone(), denominator << (-shift) as usize)
+                };
+                let mut significand = &scaled_numerator / &scaled_denominator;
+                if !(&scaled_numerator % &scaled_denominator).is_zero() {
+                    significand += 1u8;
+                }
+                significand.to_f64().unwrap_or(f64::INFINITY) * 2.0_f64.powf(f64::from(-shift))
+            }
+        }
+        Bound::SqrtInteger(value) => value.to_f64().unwrap_or(f64::INFINITY).sqrt(),
+    };
+    if !value.is_finite() || value <= 0.0 {
+        return Err(EstimatorError::InvalidParameter {
+            field: "length_bound",
+            reason: "bound is outside the supported finite positive f64 range".to_string(),
+        });
     }
+    Ok(value)
 }
 
 fn infinity_log_trial_probability(
