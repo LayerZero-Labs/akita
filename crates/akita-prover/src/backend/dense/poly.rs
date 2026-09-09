@@ -5,7 +5,7 @@ use crate::kernels::linear::try_centered_i8;
 use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
@@ -154,7 +154,8 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
     ///
     /// # Errors
     ///
-    /// Returns an error if `evals.len() != 2^num_vars`.
+    /// Returns an error if `2^num_vars` does not fit `usize` or
+    /// `evals.len() != 2^num_vars`.
     pub fn from_field_evals<'a>(
         num_vars: usize,
         evals: impl Into<Cow<'a, [F]>>,
@@ -163,8 +164,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         F: 'a,
     {
         let evals = evals.into();
-        let expected_len = 1usize
-            .checked_shl(num_vars as u32)
+        let expected_len = checked::pow2(num_vars)
             .ok_or_else(|| AkitaError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
         if evals.len() != expected_len {
             return Err(AkitaError::InvalidSize {
@@ -213,14 +213,24 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
 
     /// Flatten an existing vector of ring elements into dense storage.
     ///
-    /// # Panics
+    /// The total coefficient count must be a positive power of two. All
+    /// supplied coefficients belong to the live polynomial; storage padding
+    /// for larger ring views does not change its variable count.
     ///
-    /// Panics if `coeffs.len() * D` overflows `usize`.
-    pub fn from_ring_coeffs<const D: usize>(coeffs: Vec<CyclotomicRing<F, D>>) -> Self {
-        let total = coeffs
-            .len()
-            .checked_mul(D)
-            .expect("ring elems * D overflow");
+    /// # Errors
+    ///
+    /// Returns an error if `coeffs.len() * D` overflows `usize`, is zero, or
+    /// is not a power of two.
+    pub fn from_ring_coeffs<const D: usize>(
+        coeffs: Vec<CyclotomicRing<F, D>>,
+    ) -> Result<Self, AkitaError> {
+        let total = checked::product([coeffs.len(), D])
+            .ok_or_else(|| AkitaError::InvalidInput("ring elems * D overflow".to_string()))?;
+        if !total.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "dense coefficient count {total} must be a positive power of two"
+            )));
+        }
         let physical_len = total.max(MIN_FLAT_COEFF_LEN);
 
         let small_i8_coeffs = try_small_i8_cache_from_ring_coeffs(&coeffs).map(|planes| {
@@ -237,12 +247,12 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         }
         flat.resize(physical_len, F::zero());
 
-        Self {
+        Ok(Self {
             num_vars: total.trailing_zeros() as usize,
             coeffs: RingVec::from_coeffs(flat),
             small_i8_coeffs,
             digit_cache: OnceLock::new(),
-        }
+        })
     }
 
     pub(super) fn digit_planes_for<const D: usize>(

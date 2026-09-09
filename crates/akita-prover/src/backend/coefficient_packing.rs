@@ -306,7 +306,7 @@ mod tests {
             point.packing_weights(),
         )
         .unwrap();
-        let poly = DensePoly::from_ring_coeffs(rings);
+        let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<T> as RootOpeningSource<T, RING_D>>::opening_batch(&polys).unwrap();
         let got = CpuBackend::DEFAULT
@@ -342,7 +342,7 @@ mod tests {
             point.packing_weights(),
         )
         .unwrap();
-        let poly = DensePoly::from_ring_coeffs(rings);
+        let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
         let got = CpuBackend::DEFAULT
@@ -402,7 +402,7 @@ mod tests {
             point.packing_weights(),
         )
         .unwrap();
-        let poly = DensePoly::from_ring_coeffs(rings);
+        let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
         let got = CpuBackend::DEFAULT
@@ -500,7 +500,7 @@ mod tests {
                 }))
             })
             .collect::<Vec<_>>();
-        let dense = DensePoly::from_ring_coeffs(rings);
+        let dense = DensePoly::from_ring_coeffs(rings).unwrap();
         let onehot = OneHotPoly::<F>::new(256, hot.map(Some).to_vec()).unwrap();
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
@@ -543,7 +543,7 @@ mod tests {
             &public_point,
         )
         .expect("recursive-style live prefix point");
-        let dense = DensePoly::from_ring_coeffs::<D>(vec![CyclotomicRing::zero(); 8]);
+        let dense = DensePoly::from_ring_coeffs::<D>(vec![CyclotomicRing::zero(); 8]).unwrap();
         let onehot = OneHotPoly::<F>::new(
             D,
             vec![
@@ -608,7 +608,8 @@ mod tests {
                     ))
                 })
                 .collect(),
-        );
+        )
+        .unwrap();
         let onehot = OneHotPoly::<F>::new(LARGE_D, hot.map(Some).to_vec()).unwrap();
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
@@ -674,6 +675,7 @@ mod tests {
                         })
                         .collect(),
                 )
+                .unwrap()
             })
             .collect::<Vec<_>>();
         let onehot_refs = onehot.iter().collect::<Vec<_>>();
@@ -716,7 +718,7 @@ mod tests {
                 }))
             })
             .collect::<Vec<_>>();
-        let dense = DensePoly::from_ring_coeffs(rings);
+        let dense = DensePoly::from_ring_coeffs(rings).unwrap();
         let dense_refs = [&dense];
         let recursive_refs = [&recursive];
         let dense_batch =

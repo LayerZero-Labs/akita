@@ -1108,7 +1108,7 @@ mod tests {
                     .clone();
                 let num_coeffs = lp.blocks().live_blocks * lp.blocks().positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
-                let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
+                let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs).unwrap();
 
                 let commit_u = |setup: &AkitaProverSetup<TestF>| {
                     let prepared = CpuBackend::DEFAULT.prepare_setup(setup).unwrap();
