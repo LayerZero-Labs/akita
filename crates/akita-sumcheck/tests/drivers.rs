@@ -4,9 +4,10 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{
-    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,
-    EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly,
-    UniPoly,
+    advance_eq_factored_claim, CompressedUniPoly, EqFactoredSumcheckInstanceProver,
+    EqFactoredSumcheckInstanceProverExt, EqFactoredSumcheckInstanceVerifier,
+    EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly, SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -343,4 +344,97 @@ fn eq_factored_sumcheck_rejects_later_tampering_after_eq_factor_vanishes() {
     });
 
     assert_eq!(result, Err(AkitaError::InvalidProof));
+}
+
+/// Standard-driver instance whose input claim is deliberately inconsistent with
+/// its output claim: no honest proof exists, so any acceptance is a soundness
+/// break.
+struct FalseClaimInstance;
+
+impl SumcheckInstanceVerifier<F> for FalseClaimInstance {
+    fn num_rounds(&self) -> usize {
+        4
+    }
+
+    fn degree_bound(&self) -> usize {
+        3
+    }
+
+    fn input_claim(&self) -> F {
+        F::one()
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
+        Ok(F::zero())
+    }
+}
+
+fn empty_round_proof(num_rounds: usize) -> SumcheckProof<F> {
+    SumcheckProof {
+        round_polys: vec![
+            CompressedUniPoly {
+                coeffs_except_linear_term: Vec::new(),
+            };
+            num_rounds
+        ],
+    }
+}
+
+/// An empty compressed round message has `degree() == 0`, so it passes any
+/// degree bound, and `eval_from_hint` evaluates it to zero without reading the
+/// hint. Before the round-message validation, a proof of all-empty rounds drove
+/// the running claim to zero regardless of `input_claim`, and any instance whose
+/// expected output claim is zero accepted it.
+#[test]
+fn standard_sumcheck_rejects_empty_round_messages() {
+    let verifier = FalseClaimInstance;
+    let proof = empty_round_proof(verifier.num_rounds());
+    let mut transcript = new_transcript();
+
+    let result = verifier.verify::<F, _, _>(&proof, &mut transcript, sample_round);
+
+    assert_eq!(result, Err(AkitaError::InvalidProof));
+}
+
+/// The raw [`SumcheckProof::verify`] driver shares the same validation, so it
+/// rejects the same message before absorbing anything into the transcript.
+#[test]
+fn raw_sumcheck_driver_rejects_empty_round_messages() {
+    let proof = empty_round_proof(4);
+    let mut transcript = new_transcript();
+
+    let result = proof.verify::<F, _, _>(F::one(), 4, 3, &mut transcript, sample_round);
+
+    assert_eq!(result, Err(AkitaError::InvalidProof));
+}
+
+/// A single stored coefficient is a legitimate linear round message, even though
+/// `CompressedUniPoly::degree` reports `0` for it. Rejecting on `degree() == 0`
+/// instead of on an empty coefficient vector would reject honest proofs.
+#[test]
+fn sumcheck_validation_accepts_linear_round_messages() {
+    let linear = UniPoly::from_coeffs(vec![F::from_u64(3), F::from_u64(5)]).compress();
+    assert_eq!(linear.coeffs_except_linear_term.len(), 1);
+    assert_eq!(linear.degree(), 0);
+
+    let proof = SumcheckProof {
+        round_polys: vec![linear],
+    };
+
+    assert_eq!(proof.validate_round_messages(1, 3), Ok(()));
+}
+
+/// The eq-factored driver is not vulnerable and so is not guarded: an empty
+/// `q` message leaves the normalized claim untouched rather than zeroing it,
+/// because both the `tau`-scaled correction and the evaluation are zero.
+#[test]
+fn eq_factored_empty_round_message_preserves_the_claim() {
+    let empty = EqFactoredUniPoly::<F> {
+        coeffs_except_constant_term: Vec::new(),
+    };
+    let claim = F::from_u64(7);
+
+    let advanced = advance_eq_factored_claim(claim, F::from_u64(2), &empty, F::from_u64(9));
+
+    assert_eq!(advanced, claim);
 }
