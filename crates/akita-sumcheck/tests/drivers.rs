@@ -347,9 +347,7 @@ fn eq_factored_sumcheck_rejects_later_tampering_after_eq_factor_vanishes() {
     assert_eq!(result, Err(AkitaError::InvalidProof));
 }
 
-/// Standard-driver instance whose input claim is deliberately inconsistent with
-/// its output claim: no honest proof exists, so any acceptance is a soundness
-/// break.
+/// An inconsistent claim for the identically zero polynomial.
 struct FalseClaimInstance;
 
 impl SumcheckInstanceVerifier<F> for FalseClaimInstance {
@@ -370,43 +368,109 @@ impl SumcheckInstanceVerifier<F> for FalseClaimInstance {
     }
 }
 
-fn empty_round_proof(num_rounds: usize) -> SumcheckProof<F> {
-    SumcheckProof {
-        round_polys: vec![
-            CompressedUniPoly {
-                coeffs_except_linear_term: Vec::new(),
-            };
-            num_rounds
-        ],
+fn assert_rounds_rejected_before_replay(proof: &SumcheckProof<F>, expected: AkitaError) {
+    let verifier = FalseClaimInstance;
+    for raw_driver in [false, true] {
+        let mut transcript = new_transcript();
+        let mut samples = 0;
+        let sample = |_: &mut AkitaTranscript<F>| {
+            samples += 1;
+            Ok(F::one())
+        };
+        let result = if raw_driver {
+            proof
+                .verify::<F, _, _>(
+                    verifier.input_claim(),
+                    verifier.num_rounds(),
+                    verifier.degree_bound(),
+                    &mut transcript,
+                    sample,
+                )
+                .map(|_| ())
+        } else {
+            verifier
+                .verify::<F, _, _>(proof, &mut transcript, sample)
+                .map(|_| ())
+        };
+        assert_eq!(result, Err(expected.clone()));
+        assert_eq!(samples, 0);
+        assert_eq!(
+            transcript.challenge_bytes(b"test/rejected-round-state", 32),
+            new_transcript().challenge_bytes(b"test/rejected-round-state", 32)
+        );
     }
 }
 
-/// An empty compressed round message has `degree() == 0`, so it passes any
-/// degree bound, and `eval_from_hint` evaluates it to zero without reading the
-/// hint. Before the round-message validation, a proof of all-empty rounds drove
-/// the running claim to zero regardless of `input_claim`, and any instance whose
-/// expected output claim is zero accepted it.
 #[test]
-fn standard_sumcheck_rejects_empty_round_messages() {
+fn standard_sumcheck_rejects_malformed_messages_at_every_round() {
     let verifier = FalseClaimInstance;
-    let proof = empty_round_proof(verifier.num_rounds());
-    let mut transcript = new_transcript();
-
-    let result = verifier.verify::<F, _, _>(&proof, &mut transcript, sample_round);
-
-    assert_eq!(result, Err(AkitaError::InvalidProof));
+    for round in 0..verifier.num_rounds() {
+        for stored_coefficients in [0, verifier.degree_bound() + 1] {
+            let mut proof = SumcheckProof {
+                round_polys: vec![
+                    UniPoly::from_coeffs(vec![F::zero()]).compress();
+                    verifier.num_rounds()
+                ],
+            };
+            proof.round_polys[round] = CompressedUniPoly {
+                coeffs_except_linear_term: vec![F::one(); stored_coefficients],
+            };
+            let error = if stored_coefficients == 0 {
+                AkitaError::InvalidProof
+            } else {
+                AkitaError::InvalidInput("sumcheck round poly degree 4 exceeds bound 3".into())
+            };
+            assert_rounds_rejected_before_replay(&proof, error);
+        }
+    }
 }
 
-/// The raw [`SumcheckProof::verify`] driver shares the same validation, so it
-/// rejects the same message before absorbing anything into the transcript.
 #[test]
-fn raw_sumcheck_driver_rejects_empty_round_messages() {
-    let proof = empty_round_proof(4);
-    let mut transcript = new_transcript();
+fn standard_sumcheck_rejects_wrong_round_counts_before_replay() {
+    let expected = FalseClaimInstance.num_rounds();
+    for actual in [0, expected - 1, expected + 1] {
+        let proof = SumcheckProof {
+            round_polys: vec![UniPoly::from_coeffs(vec![F::zero()]).compress(); actual],
+        };
+        assert_rounds_rejected_before_replay(&proof, AkitaError::InvalidSize { expected, actual });
+    }
+}
 
-    let result = proof.verify::<F, _, _>(F::one(), 4, 3, &mut transcript, sample_round);
+#[test]
+fn zero_round_sumcheck_preserves_the_claim() {
+    let proof = SumcheckProof::<F> {
+        round_polys: Vec::new(),
+    };
+    let claim = F::from_u64(7);
+    assert_eq!(
+        proof.verify::<F, _, _>(claim, 0, 0, &mut new_transcript(), |_| panic!(
+            "no round to sample"
+        )),
+        Ok((claim, Vec::new()))
+    );
+}
 
-    assert_eq!(result, Err(AkitaError::InvalidProof));
+#[test]
+fn batched_sumcheck_rejects_an_empty_last_round() {
+    let verifier = FalseClaimInstance;
+    let mut proof = SumcheckProof {
+        round_polys: vec![UniPoly::from_coeffs(vec![F::zero()]).compress(); verifier.num_rounds()],
+    };
+    proof
+        .round_polys
+        .last_mut()
+        .unwrap()
+        .coeffs_except_linear_term
+        .clear();
+    assert_eq!(
+        akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
+            &proof,
+            vec![&verifier],
+            &mut new_transcript(),
+            |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+        ),
+        Err(AkitaError::InvalidProof)
+    );
 }
 
 #[test]

@@ -210,8 +210,9 @@ impl<E: Field> SumcheckProof<E> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the proof length does not match `num_rounds` or if any
-    /// per-round polynomial exceeds `degree_bound`.
+    /// Returns an error if the proof length does not match `num_rounds`, a round
+    /// message is empty, or its degree estimate exceeds `degree_bound`. Nonempty
+    /// proofs require a degree bound of at least one, including constant rounds.
     pub fn verify<F, T, S>(
         &self,
         mut claim: E,
@@ -240,25 +241,10 @@ impl<E: Field> SumcheckProof<E> {
         Ok((claim, r))
     }
 
-    /// Reject a round-message vector that no honest prover can produce.
-    ///
-    /// Both transcript drivers call this before absorbing anything, so the two
-    /// loops cannot drift apart on what they accept.
-    ///
-    /// An **empty** compressed round message is the dangerous case. Its
-    /// `degree()` is zero, so it passes any degree bound, and
-    /// `CompressedUniPoly::eval_from_hint` evaluates it to zero without reading
-    /// the hint. Accepting one would let a proof reset the running claim to zero
-    /// and so decouple the incoming claim from every later round.
-    /// `UniPoly::compress` never produces it for a round message: a linear
-    /// polynomial already stores one coefficient.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSize`] if the round count is wrong,
-    /// [`AkitaError::InvalidProof`] for an empty round message, and
-    /// [`AkitaError::InvalidInput`] if a round exceeds `degree_bound`.
-    pub fn validate_round_messages(
+    /// Validate both standard drivers' messages before transcript replay.
+    /// Empty messages must be rejected: their evaluator ignores the incoming
+    /// claim and returns zero instead of reconstructing the linear coefficient.
+    pub(crate) fn validate_round_messages(
         &self,
         num_rounds: usize,
         degree_bound: usize,
