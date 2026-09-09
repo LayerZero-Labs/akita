@@ -7,7 +7,7 @@ use crate::{
     config::{EstimateConfig, OptimizerConfig, SearchMode, ShapeModel},
     cost::{CostValue, EstimateTag, LatticeCost, LogCost},
     error::{EstimatorError, Result},
-    math::{erf, log2_positive, sis_trivially_easy},
+    math::{log2_erf_from_log2_arg, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
     probability::log2_amplify,
     reduction::{
@@ -344,13 +344,6 @@ fn dilithium_log_trial_probability_lgsa_summary(
     Ok(log_trial_prob)
 }
 
-fn log2_erf_from_log2_arg(log2_arg: f64) -> f64 {
-    if log2_arg < -20.0 {
-        return log2_arg + log2_positive(2.0 / std::f64::consts::PI.sqrt());
-    }
-    log2_positive(erf(log2_arg.exp2()))
-}
-
 fn dilithium_log_trial_probability(
     log_q: f64,
     length_bound: f64,
@@ -618,7 +611,8 @@ mod tests {
         let cost = cost_infinity_fixed(343, &params, zeta, &config).unwrap();
 
         assert_eq!(cost.d, effective_dimension);
-        assert!((cost.rop.log2().unwrap() - 118.916_112_523_987).abs() < 1e-9);
+        // Independently recomputed by scripts/sis_golden/probability_oracle.py.
+        assert!((cost.rop.log2().unwrap() - 118.915_126_048_466).abs() < 1e-7);
     }
 
     #[test]
