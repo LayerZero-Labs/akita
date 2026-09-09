@@ -28,34 +28,44 @@ pub fn log2_positive(x: f64) -> f64 {
     }
 }
 
-/// Error function approximation matching Sage `erf` closely enough for golden parity.
+/// Upper numerical estimate of `log2(erf(2^log2_arg))`.
+///
+/// Use the complementary tail above one: rounding `erf(x)` to one before
+/// taking its logarithm loses probability mass that can matter after millions
+/// of coordinates. The tiny-argument branch uses the analytic upper bound
+/// `erf(x) <= 2*x/sqrt(pi)` and never materializes an underflowed argument.
+///
+/// The fdlibm approximations in libm have near-ulp accuracy. Allow 32 epsilons
+/// for their rational/exponential evaluation and eight for the elementary
+/// functions. Apply these allowances *before* multiplying by the coordinate
+/// count, toward greater attack probability (hence lower attack cost). This
+/// guards special-function rounding; it is not an interval certification of
+/// the preceding floating-point lattice simulation.
 #[must_use]
-pub fn erf(x: f64) -> f64 {
-    if x.abs() < 0.5 {
-        let x2 = x * x;
-        let mut term = x;
-        let mut sum = x;
-        for n in 1..32 {
-            term *= -x2 / n as f64;
-            let addend = term / (2 * n + 1) as f64;
-            sum += addend;
-            if addend.abs() < 1e-18 * sum.abs().max(1.0) {
-                break;
-            }
-        }
-        return std::f64::consts::FRAC_2_SQRT_PI * sum;
+pub fn log2_erf_from_log2_arg(log2_arg: f64) -> f64 {
+    const SPECIAL_FUNCTION_ALLOWANCE: f64 = 32.0 * f64::EPSILON;
+    const ELEMENTARY_ALLOWANCE: f64 = 8.0 * f64::EPSILON;
+    // Rounded upward from 1 - log2(pi)/2.
+    const LOG2_TWO_OVER_SQRT_PI_UPPER: f64 = 0.174_251_935_263_840_63;
+    if log2_arg.is_nan() || log2_arg == f64::NEG_INFINITY {
+        return f64::NEG_INFINITY;
     }
-
-    // Abramowitz and Stegun 7.1.26
-    let sign = if x.is_sign_negative() { -1.0 } else { 1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.3275911 * x);
-    let y = 1.0
-        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
-            + 0.254829592)
-            * t
-            * (-x * x).exp();
-    sign * y
+    if log2_arg < -20.0 {
+        return (log2_arg + LOG2_TWO_OVER_SQRT_PI_UPPER).next_up();
+    }
+    let x = (libm::exp2(log2_arg) * (1.0 + ELEMENTARY_ALLOWANCE)).next_up();
+    let log_probability = if x < 1.0 {
+        let mass = (libm::erf(x) * (1.0 + SPECIAL_FUNCTION_ALLOWANCE)).next_up();
+        libm::log2(mass.min(1.0))
+    } else {
+        let tail = (libm::erfc(x) * (1.0 - SPECIAL_FUNCTION_ALLOWANCE))
+            .next_down()
+            .max(0.0);
+        libm::log1p(-tail) * std::f64::consts::LOG2_E
+    };
+    (log_probability * (1.0 - ELEMENTARY_ALLOWANCE))
+        .next_up()
+        .min(0.0)
 }
 
 /// Compute `log(1 - 2^log_x)` from `log_x = log2(x)` with `x <= 1`.
@@ -107,7 +117,9 @@ mod tests {
     }
 
     #[test]
-    fn erf_at_zero_is_zero() {
-        assert!(erf(0.0).abs() < 1e-12);
+    fn log_erf_preserves_tails_and_extreme_arguments() {
+        assert!(log2_erf_from_log2_arg(3.0) < 0.0);
+        assert!(log2_erf_from_log2_arg(-10_000.0).is_finite());
+        assert_eq!(log2_erf_from_log2_arg(1_024.0), 0.0);
     }
 }
