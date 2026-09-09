@@ -38,13 +38,15 @@ impl<E: Field> UniPoly<E> {
     ///
     /// The verifier can reconstruct/evaluate the missing linear coefficient using
     /// the per-round hint `g(0)+g(1)` from the sumcheck protocol.
+    /// An empty zero polynomial stores `[0]`, so every compressed round retains
+    /// a constant coefficient and can reconstruct its linear term from the hint.
     ///
     /// This matches the technique used by Jolt's sumcheck (`CompressedUniPoly`).
     pub fn compress(&self) -> CompressedUniPoly<E> {
         let coeffs = &self.coeffs;
         if coeffs.is_empty() {
             return CompressedUniPoly {
-                coeffs_except_linear_term: Vec::new(),
+                coeffs_except_linear_term: vec![E::zero()],
             };
         }
         if coeffs.len() == 1 {

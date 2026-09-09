@@ -6,8 +6,9 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{
     advance_eq_factored_claim, CompressedUniPoly, EqFactoredSumcheckInstanceProver,
     EqFactoredSumcheckInstanceProverExt, EqFactoredSumcheckInstanceVerifier,
-    EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly, SumcheckInstanceVerifier,
-    SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
+    EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly, SumcheckInstanceProver,
+    SumcheckInstanceProverExt, SumcheckInstanceVerifier, SumcheckInstanceVerifierExt,
+    SumcheckProof, UniPoly,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -422,6 +423,78 @@ fn sumcheck_validation_accepts_linear_round_messages() {
     };
 
     assert_eq!(proof.validate_round_messages(1, 3), Ok(()));
+}
+
+struct ZeroSumcheckInstance;
+
+impl SumcheckInstanceProver<F> for ZeroSumcheckInstance {
+    fn num_rounds(&self) -> usize {
+        4
+    }
+
+    fn degree_bound(&self) -> usize {
+        1
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
+        UniPoly::from_coeffs(Vec::new())
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, _challenge: F) {}
+}
+
+impl SumcheckInstanceVerifier<F> for ZeroSumcheckInstance {
+    fn num_rounds(&self) -> usize {
+        SumcheckInstanceProver::num_rounds(self)
+    }
+
+    fn degree_bound(&self) -> usize {
+        SumcheckInstanceProver::degree_bound(self)
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
+        Ok(F::zero())
+    }
+}
+
+#[test]
+fn empty_zero_polynomial_round_trips_through_standard_and_batched_sumcheck() {
+    let (proof, challenges, final_claim) = ZeroSumcheckInstance
+        .prove::<F, _, _>(&mut new_transcript(), sample_round)
+        .unwrap();
+    assert_eq!(final_claim, F::zero());
+    assert!(proof
+        .round_polys
+        .iter()
+        .all(|poly| poly.coeffs_except_linear_term == [F::zero()]));
+    assert_eq!(
+        ZeroSumcheckInstance.verify::<F, _, _>(&proof, &mut new_transcript(), sample_round),
+        Ok(challenges)
+    );
+
+    let (proof, challenges) = akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
+        vec![&mut ZeroSumcheckInstance],
+        &mut new_transcript(),
+        |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+    )
+    .unwrap();
+    assert_eq!(
+        akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
+            &proof,
+            vec![&ZeroSumcheckInstance],
+            &mut new_transcript(),
+            |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+        ),
+        Ok(challenges)
+    );
 }
 
 /// The eq-factored driver is not vulnerable and so is not guarded: an empty
