@@ -38,6 +38,7 @@ name = "akita-fuzz"
 version = "0.0.0"
 dependencies = [
  "akita-serialization",
+ "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "jolt-field",

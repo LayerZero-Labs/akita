@@ -345,6 +345,48 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
 }
 
 #[test]
+fn typed_verifier_rejects_empty_stage2_round_messages() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::Dense;
+        const LABEL: &[u8] = b"soundness/empty-stage2-round";
+        let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+        let (setup, commitment, proof, point, opening, _layout, selection) =
+            make_dense_fixture::<F, 256, Cfg>(&scheme, DENSE_TEST_NV, LABEL);
+        let statement = verify_input::<Cfg>(selection, &point, &[opening], &commitment);
+        scheme
+            .batched_verify(
+                &proof,
+                &setup,
+                &mut AkitaTranscript::<F>::new(LABEL),
+                statement,
+                BasisMode::Lagrange,
+            )
+            .expect("honest proof must verify");
+
+        let rounds = proof.root.stage2.sumcheck_proof.round_polys.len();
+        assert!(rounds > 1, "fixture must exercise a later round");
+        for round in [0, rounds - 1] {
+            let mut malformed = proof.clone();
+            malformed.root.stage2.sumcheck_proof.round_polys[round]
+                .coeffs_except_linear_term
+                .clear();
+            assert_invalid_proof(
+                "empty typed Stage 2 round",
+                scheme.batched_verify(
+                    &malformed,
+                    &setup,
+                    &mut AkitaTranscript::<F>::new(LABEL),
+                    verify_input::<Cfg>(selection, &point, &[opening], &commitment),
+                    BasisMode::Lagrange,
+                ),
+            );
+        }
+    });
+}
+
+#[test]
 fn trace_internalization_rejects_tampered_root_fold_handle() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

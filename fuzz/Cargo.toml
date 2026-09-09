@@ -13,6 +13,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "solinas",
 ] }
 akita-serialization = { path = "../crates/akita-serialization" }
+akita-sumcheck = { path = "../crates/akita-sumcheck" }
 akita-transcript = { path = "../crates/akita-transcript" }
 akita-types = { path = "../crates/akita-types" }
 libfuzzer-sys = "0.4.12"
@@ -27,6 +28,13 @@ bench = false
 [[bin]]
 name = "transcript_labels"
 path = "fuzz_targets/transcript_labels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sumcheck_rounds"
+path = "fuzz_targets/sumcheck_rounds.rs"
 test = false
 doc = false
 bench = false
