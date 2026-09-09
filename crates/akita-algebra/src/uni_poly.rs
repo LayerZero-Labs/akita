@@ -180,19 +180,13 @@ pub struct CompressedUniPoly<E: Field> {
 }
 
 impl<E: Field> CompressedUniPoly<E> {
-    /// Degree of the underlying uncompressed polynomial.
+    /// Upper bound on the degree of the underlying uncompressed polynomial.
     ///
-    /// `compress()` stores `[c0, c2, ..., cd]` — exactly `d` entries for
-    /// degree `d >= 2`.  For `len <= 1` (degree 0 or 1, which are ambiguous
-    /// in compressed form) we report 0; this is conservative for the
-    /// verifier's degree-bound check since `degree_bound >= 2` in practice.
+    /// A single stored coefficient can represent a linear polynomial because
+    /// the omitted linear term depends on the sumcheck hint. Constant rounds
+    /// therefore also require a degree bound of at least one.
     pub fn degree(&self) -> usize {
-        let len = self.coeffs_except_linear_term.len();
-        if len <= 1 {
-            0
-        } else {
-            len
-        }
+        self.coeffs_except_linear_term.len()
     }
 
     fn recover_linear_term(&self, hint: &E) -> E {

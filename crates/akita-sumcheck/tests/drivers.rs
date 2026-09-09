@@ -409,20 +409,29 @@ fn raw_sumcheck_driver_rejects_empty_round_messages() {
     assert_eq!(result, Err(AkitaError::InvalidProof));
 }
 
-/// A single stored coefficient is a legitimate linear round message, even though
-/// `CompressedUniPoly::degree` reports `0` for it. Rejecting on `degree() == 0`
-/// instead of on an empty coefficient vector would reject honest proofs.
 #[test]
-fn sumcheck_validation_accepts_linear_round_messages() {
-    let linear = UniPoly::from_coeffs(vec![F::from_u64(3), F::from_u64(5)]).compress();
-    assert_eq!(linear.coeffs_except_linear_term.len(), 1);
-    assert_eq!(linear.degree(), 0);
+fn compressed_constant_and_linear_rounds_require_degree_bound_one() {
+    for coeffs in [vec![F::from_u64(3)], vec![F::from_u64(3), F::from_u64(5)]] {
+        let polynomial = UniPoly::from_coeffs(coeffs);
+        let claim = polynomial.evaluate(&F::zero()) + polynomial.evaluate(&F::one());
+        let challenge = F::from_u64(7);
+        let compressed = polynomial.compress();
+        assert_eq!(compressed.degree(), 1);
+        let proof = SumcheckProof {
+            round_polys: vec![compressed],
+        };
 
-    let proof = SumcheckProof {
-        round_polys: vec![linear],
-    };
-
-    assert_eq!(proof.validate_round_messages(1, 3), Ok(()));
+        assert_eq!(
+            proof.verify::<F, _, _>(claim, 1, 1, &mut new_transcript(), |_| Ok(challenge)),
+            Ok((polynomial.evaluate(&challenge), vec![challenge]))
+        );
+        assert!(matches!(
+            proof.verify::<F, _, _>(claim, 1, 0, &mut new_transcript(), |_| panic!(
+                "invalid degree must reject before sampling"
+            )),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
 }
 
 struct ZeroSumcheckInstance;
