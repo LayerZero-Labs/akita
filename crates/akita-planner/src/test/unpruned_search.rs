@@ -278,11 +278,12 @@ pub(super) fn find_schedule(
     };
     let selected_descriptor = schedule_descriptor_bytes(&selected)?;
     let planned = materialize_candidate_schedule(
-        selected.cost.proof_bytes(),
-        selected.cost.nonce_bits(),
-        selected.cost.expanded_query_count(),
-        selected.setup_field_elements,
-        cached_first_direct_setup_field_len,
+        CandidateMaterializationCost {
+            proof_bytes: selected.cost.proof_bytes(),
+            grinding: selected.cost.grinding_cost(),
+            num_setup_field_elements: selected.setup_field_elements,
+            first_direct_setup_field_len: cached_first_direct_setup_field_len,
+        },
         policy,
         &schedule_key.opening_layout()?,
         selected.folds.to_vec(),

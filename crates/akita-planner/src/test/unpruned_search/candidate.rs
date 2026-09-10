@@ -360,9 +360,7 @@ pub(super) fn prepend_root(
         &candidate.folds.to_vec(),
         candidate.terminal.as_ref(),
     )?;
-    if candidate.cost.nonce_bits() != canonical_cost.total_nonce_bits
-        || candidate.cost.expanded_query_count() != canonical_cost.expanded_query_count
-    {
+    if candidate.cost.grinding_cost() != canonical_cost {
         return Err(AkitaError::InvalidSetup(
             "edge-wise oracle grinding cost disagrees with the canonical complete schedule".into(),
         ));

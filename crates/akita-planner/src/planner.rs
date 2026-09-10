@@ -20,8 +20,8 @@ use akita_schedules::ResolvedScheduleRow;
 use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
-    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn, ScheduleMemo,
-    SuffixCtx, SuffixState,
+    AbCommitmentCandidateRequest, CandidateMaterializationCost, PlannerOpeningCandidate,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -905,11 +905,12 @@ pub(crate) fn find_schedule_in_relation_order(
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.cost.proof_bytes(),
-        best.cost.nonce_bits(),
-        best.cost.expanded_query_count(),
-        best.setup_field_elements,
-        first_direct_setup_field_len,
+        CandidateMaterializationCost {
+            proof_bytes: best.cost.proof_bytes(),
+            grinding: best.cost.grinding_cost(),
+            num_setup_field_elements: best.setup_field_elements,
+            first_direct_setup_field_len,
+        },
         active_policy,
         &root_layout,
         best.folds.to_vec(),

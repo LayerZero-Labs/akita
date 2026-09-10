@@ -20,7 +20,7 @@ use akita_types::sis::{
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
     DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    PolynomialGroupLayout, TranscriptGrindingCost,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
@@ -37,7 +37,8 @@ mod suffix_dp;
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
-    materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
+    materialize_candidate_schedule, CandidateFoldStep, CandidateMaterializationCost,
+    CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
@@ -426,12 +427,11 @@ impl PackedProofCost {
         )?))
     }
 
-    pub(crate) const fn nonce_bits(self) -> usize {
-        self.nonce_bits
-    }
-
-    pub(crate) const fn expanded_query_count(self) -> u64 {
-        self.expanded_query_count
+    pub(crate) const fn grinding_cost(self) -> TranscriptGrindingCost {
+        TranscriptGrindingCost {
+            total_nonce_bits: self.nonce_bits,
+            expanded_query_count: self.expanded_query_count,
+        }
     }
 
     pub(crate) const fn queries_never_worse(self, other: Self) -> bool {

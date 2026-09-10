@@ -518,6 +518,15 @@ pub struct CandidateTerminalResponse {
     pub estimated_payload_bytes: usize,
 }
 
+/// Cached planner costs checked against the materialized schedule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CandidateMaterializationCost {
+    pub proof_bytes: usize,
+    pub grinding: akita_types::TranscriptGrindingCost,
+    pub num_setup_field_elements: usize,
+    pub first_direct_setup_field_len: Option<usize>,
+}
+
 fn fold_schedule_from_candidate_parts(
     folds: &[CandidateFoldStep],
     terminal_response: &CandidateTerminalResponse,
@@ -732,19 +741,20 @@ pub fn expanded_schedule_proof_payload_bytes(
 
 /// Materialize and validate the schedule shared by offline search and generated replay.
 ///
-/// `cached_num_setup_field_elements` is the exact shared flat setup capacity.
-#[allow(clippy::too_many_arguments)]
+/// `cached.num_setup_field_elements` is the exact shared flat setup capacity.
 pub fn materialize_candidate_schedule(
-    cached_total: usize,
-    cached_nonce_bits: usize,
-    cached_expanded_query_count: u64,
-    cached_num_setup_field_elements: usize,
-    cached_first_direct_setup_field_len: Option<usize>,
+    cached: CandidateMaterializationCost,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    let CandidateMaterializationCost {
+        proof_bytes: cached_total,
+        grinding: cached_grinding_cost,
+        num_setup_field_elements: cached_num_setup_field_elements,
+        first_direct_setup_field_len: cached_first_direct_setup_field_len,
+    } = cached;
     let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
     let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
         AkitaError::UnsupportedSchedule(
@@ -778,11 +788,13 @@ pub fn materialize_candidate_schedule(
         policy.decomposition.field_bits(),
         policy.claim_ext_degree,
     )?;
-    if grinding_plan.total_nonce_bits() != cached_nonce_bits
-        || grinding_plan.expanded_query_count() != cached_expanded_query_count
+    if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
+        || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
     {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached grinding cost ({cached_nonce_bits} nonce bits, {cached_expanded_query_count} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            "cached grinding cost ({} nonce bits, {} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            cached_grinding_cost.total_nonce_bits,
+            cached_grinding_cost.expanded_query_count,
             grinding_plan.total_nonce_bits(),
             grinding_plan.expanded_query_count(),
         )));
