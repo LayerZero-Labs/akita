@@ -1,6 +1,6 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or tensor-projection symbols in scope.
-use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
+use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
@@ -16,13 +16,12 @@ use jolt_field::{Fold, Unreduced};
 ///
 /// This path never runs extension-opening reduction or tensor projection.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C, O, TS, R>(
+pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     block_claims: ProverOpeningData<'a, E, P, F>,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
-    validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -45,16 +44,18 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
-    V: FnOnce() -> Result<(), AkitaError>,
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
-    let opening_batch = block_claims
-        .opening_layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let protocol_points = prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
+    let opening_batch = block_claims.opening_layout().clone();
+    let protocol_points: Vec<Vec<E>> = block_claims
+        .opening_claims()
+        .groups()
+        .iter()
+        .map(|group| group.point().to_vec())
+        .collect();
     finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
         stack,
         block_claims,
