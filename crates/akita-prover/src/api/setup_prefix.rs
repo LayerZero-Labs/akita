@@ -573,13 +573,6 @@ mod tests {
         .expect("setup-prefix source");
         let sources: [&dyn CommitmentSource<F>; 1] = [&source];
         let plan = CommitmentExecutionPlan::for_setup_prefix(&id).expect("setup-prefix plan");
-        let metrics = executor
-            .planned_request_ntt_cache_metrics(&plan, &sources)
-            .expect("planned executor metrics");
-        let metric_keys = metrics
-            .iter()
-            .flat_map(|metric| metric.keys.iter().copied())
-            .collect::<Vec<_>>();
         let mut requirements = NttExecutionRequirements::default();
         requirements
             .add_setup_prefix_commitment(0, &id)
@@ -601,17 +594,20 @@ mod tests {
                 None => expected_keys.push(requirement.key),
             }
         }
-        assert_eq!(metric_keys, expected_keys);
-
         executor
             .prewarm_request(&plan, &sources)
             .expect("prewarm setup-prefix request");
-        let planned_bytes = metrics
-            .iter()
-            .map(|metric| metric.cache_bytes)
-            .sum::<usize>();
-        assert_eq!(prepared.shared_ntt_cache_bytes(), planned_bytes);
-        assert_eq!(executor.release_built_ntt_slots().unwrap(), planned_bytes);
+        let resident = prepared
+            .shared_ntt_cache_metrics()
+            .expect("resident executor metrics");
+        let resident_keys = resident.iter().map(|metric| metric.key).collect::<Vec<_>>();
+        assert_eq!(resident_keys, expected_keys);
+        let cached_bytes = prepared.shared_ntt_cache_bytes();
+        assert!(cached_bytes > 0);
+        assert_eq!(
+            backend.release_built_ntt_slots(&prepared).unwrap(),
+            cached_bytes
+        );
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
     }
 

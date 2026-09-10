@@ -96,23 +96,6 @@ where
         Ok(Some(self.backend.ntt_cache_owner_id(self.prepared)))
     }
 
-    fn planned_ntt(
-        &self,
-        requirement: RoutedNttRequirement,
-    ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
-        if !self
-            .backend
-            .ntt_requirement_is_cached(self.prepared, requirement)?
-        {
-            return Ok(None);
-        }
-        Ok(Some((
-            self.backend.ntt_cache_owner_id(self.prepared),
-            self.backend
-                .planned_ntt_cache_entry_bytes(self.prepared, requirement.key)?,
-        )))
-    }
-
     fn release_ntt_if_new(
         &self,
         released_owners: &mut Vec<NttCacheOwnerId>,
@@ -245,18 +228,6 @@ where
             NttOperationCluster::Opening => self.opening.retained_ntt_owner(requirement),
             NttOperationCluster::Tensor => self.tensor.retained_ntt_owner(requirement),
             NttOperationCluster::RingSwitch => self.ring_switch.retained_ntt_owner(requirement),
-        }
-    }
-
-    fn planned_requirement(
-        &self,
-        requirement: RoutedNttRequirement,
-    ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
-        match requirement.cluster {
-            NttOperationCluster::Commit => self.commitment.planned_routed_requirement(requirement),
-            NttOperationCluster::Opening => self.opening.planned_ntt(requirement),
-            NttOperationCluster::Tensor => self.tensor.planned_ntt(requirement),
-            NttOperationCluster::RingSwitch => self.ring_switch.planned_ntt(requirement),
         }
     }
 }
@@ -417,87 +388,6 @@ where
             .prewarm_requirement(requirement)?;
     }
     Ok(())
-}
-
-/// Planned cache state for one physical prepared owner after max-joining routes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlannedNttCacheOwnerMetric {
-    /// Process-local physical cache identity. Never serialized or transcript-bound.
-    pub owner_id: NttCacheOwnerId,
-    /// Max-joined exact keys resident on this owner.
-    pub keys: Vec<akita_types::NttCacheKey>,
-    /// Backend-reported resident bytes for `keys`.
-    pub cache_bytes: usize,
-}
-
-/// Report planned bytes after routing and physical prepared-owner aliasing.
-pub fn planned_ntt_cache_metrics<'a, F, S>(
-    stacks: &S,
-    requirements: &NttExecutionRequirements,
-) -> Result<Vec<PlannedNttCacheOwnerMetric>, AkitaError>
-where
-    F: Field + CanonicalEncoding + 'a,
-    S: LevelProveStacks<'a, F> + ?Sized + 'a,
-{
-    let mut owners = Vec::<PlannedNttCacheOwnerMetric>::new();
-    let mut entry_bytes = Vec::<Vec<usize>>::new();
-    for requirement in requirements.entries() {
-        let stack = stacks.prove_stack_at_level(requirement.fold_level);
-        let Some((owner_id, bytes)) = stack.planned_requirement(*requirement)? else {
-            continue;
-        };
-        let owner_index = owners
-            .iter()
-            .position(|owner| owner.owner_id == owner_id)
-            .unwrap_or_else(|| {
-                owners.push(PlannedNttCacheOwnerMetric {
-                    owner_id,
-                    keys: Vec::new(),
-                    cache_bytes: 0,
-                });
-                entry_bytes.push(Vec::new());
-                owners.len() - 1
-            });
-        let key_index = owners[owner_index].keys.iter().position(|key| {
-            key.ring_d == requirement.key.ring_d && key.domain == requirement.key.domain
-        });
-        match key_index {
-            Some(index) => {
-                let current = owners[owner_index].keys[index];
-                if requirement.key.num_ring_elements > current.num_ring_elements {
-                    owners[owner_index].keys[index] = requirement.key;
-                    entry_bytes[owner_index][index] = bytes;
-                } else if requirement.key.num_ring_elements == current.num_ring_elements
-                    && entry_bytes[owner_index][index] != bytes
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "aliased NTT cache backends disagree on planned bytes".into(),
-                    ));
-                }
-            }
-            None => {
-                owners[owner_index].keys.push(requirement.key);
-                entry_bytes[owner_index].push(bytes);
-            }
-        }
-    }
-    for (owner, bytes) in owners.iter_mut().zip(entry_bytes) {
-        owner.cache_bytes = bytes.into_iter().try_fold(0usize, |total, entry| {
-            total
-                .checked_add(entry)
-                .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))
-        })?;
-        owner.keys.sort_by_key(|key| {
-            let domain = match key.domain {
-                akita_types::NttTransformDomain::Negacyclic => 0,
-                akita_types::NttTransformDomain::Cyclic => 1,
-                akita_types::NttTransformDomain::I16TailBothTransforms => 2,
-                akita_types::NttTransformDomain::ExactNegacyclicI16 { .. } => 3,
-            };
-            (key.ring_d, domain)
-        });
-    }
-    Ok(owners)
 }
 
 impl<'a, F, O, T, R, SP> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, O, T, R, SP>

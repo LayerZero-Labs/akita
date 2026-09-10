@@ -77,13 +77,6 @@ impl CommitmentResourceControl<F> for CountingResources<'_> {
         self.inner.cache_owner_id()
     }
 
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError> {
-        self.inner.planned_ntt_cache_entry_bytes(requirement)
-    }
-
     fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
         self.inner.release_built_ntt_slots()
     }

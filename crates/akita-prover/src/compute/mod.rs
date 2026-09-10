@@ -69,7 +69,6 @@ pub use runtime_capabilities::{
     SuffixTensorProveBackend,
 };
 pub use stack::{
-    planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
-    PlannedNttCacheOwnerMetric, ProverComputeStack, ReleaseRootNttAfterFold, TieredProveStacks,
-    UniformProverStack,
+    prewarm_ntt_requirements, LevelProveStacks, OperationCtx, ProverComputeStack,
+    ReleaseRootNttAfterFold, TieredProveStacks, UniformProverStack,
 };

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
-    CpuOuterCommitOperation, CpuPreparedSetup, PlannedNttCacheOwnerMetric,
+    CpuOuterCommitOperation, CpuPreparedSetup,
 };
 use akita_error::AkitaError;
 use akita_types::AkitaExpandedSetup;
@@ -379,72 +379,6 @@ where
             &self.state_exporters(plan)?,
             plan.mode(),
         )
-    }
-
-    /// Planned retained NTT cache metrics after stage routing and owner aliasing.
-    pub fn planned_request_ntt_cache_metrics(
-        &self,
-        plan: &CommitmentExecutionPlan,
-        sources: &[&dyn CommitmentSource<F>],
-    ) -> Result<Vec<PlannedNttCacheOwnerMetric>, AkitaError> {
-        let compiled =
-            compile_commitment_request(plan.inner(), sources, self.request_capabilities(plan)?)?;
-        let mut metrics = Vec::<PlannedNttCacheOwnerMetric>::new();
-        let mut entry_bytes = Vec::<Vec<usize>>::new();
-        for requirement in self.request_ntt_requirements(plan, &compiled)? {
-            let registration = self.stage_resources(plan, requirement.stage())?;
-            if !registration.requirement_is_cached(requirement)? {
-                continue;
-            }
-            let owner_id = registration.cache_owner_id().ok_or_else(|| {
-                AkitaError::InvalidSetup("cached commitment requirement has no owner".into())
-            })?;
-            let bytes = registration.planned_ntt_cache_entry_bytes(requirement)?;
-            let owner_index = metrics
-                .iter()
-                .position(|metric| metric.owner_id == owner_id)
-                .unwrap_or_else(|| {
-                    metrics.push(PlannedNttCacheOwnerMetric {
-                        owner_id,
-                        keys: Vec::new(),
-                        cache_bytes: 0,
-                    });
-                    entry_bytes.push(Vec::new());
-                    metrics.len() - 1
-                });
-            let key = requirement.key();
-            match metrics[owner_index]
-                .keys
-                .iter()
-                .position(|stored| stored.ring_d == key.ring_d && stored.domain == key.domain)
-            {
-                Some(index)
-                    if key.num_ring_elements
-                        > metrics[owner_index].keys[index].num_ring_elements =>
-                {
-                    metrics[owner_index].keys[index] = key;
-                    entry_bytes[owner_index][index] = bytes;
-                }
-                Some(_) => {}
-                None => {
-                    metrics[owner_index].keys.push(key);
-                    entry_bytes[owner_index].push(bytes);
-                }
-            }
-        }
-        for (metric, bytes) in metrics.iter_mut().zip(entry_bytes) {
-            metric.cache_bytes = bytes.into_iter().try_fold(0usize, |total, entry| {
-                total.checked_add(entry).ok_or_else(|| {
-                    AkitaError::InvalidSetup("planned commitment NTT bytes overflow".into())
-                })
-            })?;
-        }
-        Ok(metrics)
-    }
-
-    /// Release each physical stage resource owner at most once.
-    pub fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
-        self.release_built_ntt_slots_deduplicated(&mut Vec::new())
     }
 
     pub(crate) fn release_built_ntt_slots_deduplicated(
@@ -940,17 +874,11 @@ mod tests {
         };
         let sources: [&dyn CommitmentSource<F>; 1] = [&source];
 
-        let metrics = executor
-            .planned_request_ntt_cache_metrics(&plan, &sources)
-            .unwrap();
-        assert_eq!(metrics.len(), 1);
-        assert_eq!(metrics[0].keys.len(), 1);
-        assert!(metrics[0].cache_bytes > 0);
         executor.prewarm_request(&plan, &sources).unwrap();
         assert_eq!(source.materializations.load(Ordering::SeqCst), 0);
         let cached = prepared.shared_ntt_cache_bytes();
-        assert_eq!(cached, metrics[0].cache_bytes);
-        assert_eq!(executor.release_built_ntt_slots().unwrap(), cached);
+        assert!(cached > 0);
+        assert_eq!(backend.release_built_ntt_slots(&prepared).unwrap(), cached);
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
     }
 

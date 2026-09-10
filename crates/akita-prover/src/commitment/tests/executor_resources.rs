@@ -39,13 +39,6 @@ impl CommitmentResourceControl<F> for StreamedResources {
         NttCacheOwnerId::from_owner(self.ensures.as_ref())
     }
 
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        _requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError> {
-        Ok(0)
-    }
-
     fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
         Ok(0)
     }

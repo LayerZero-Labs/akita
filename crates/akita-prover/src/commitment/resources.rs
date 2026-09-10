@@ -185,12 +185,6 @@ where
     /// Physical cache-owner identity used for deduplication.
     fn cache_owner_id(&self) -> NttCacheOwnerId;
 
-    /// Planned bytes for one exact cache entry.
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError>;
-
     /// Release backend-designated cache slots.
     fn release_built_ntt_slots(&self) -> Result<usize, AkitaError>;
 
@@ -257,14 +251,6 @@ where
 
     fn cache_owner_id(&self) -> NttCacheOwnerId {
         self.backend.ntt_cache_owner_id(self.prepared)
-    }
-
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError> {
-        self.backend
-            .planned_ntt_cache_entry_bytes(self.prepared, requirement.key())
     }
 
     fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
@@ -367,18 +353,6 @@ where
         }
     }
 
-    pub(crate) fn planned_ntt_cache_entry_bytes(
-        &self,
-        requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError> {
-        match self {
-            Self::None => Err(AkitaError::InvalidSetup(
-                "commitment stage has no resources for planned NTT bytes".into(),
-            )),
-            Self::Controlled(control) => control.planned_ntt_cache_entry_bytes(requirement),
-        }
-    }
-
     pub(crate) fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
         match self {
             Self::None => Ok(0),
@@ -463,27 +437,6 @@ where
             return Ok(None);
         }
         Ok(resources.cache_owner_id())
-    }
-
-    pub(crate) fn planned_routed_requirement(
-        &self,
-        requirement: RoutedNttRequirement,
-    ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
-        let route = requirement.commitment_route.ok_or_else(|| {
-            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
-        })?;
-        let requirement = Self::routed_requirement(requirement)?;
-        let resources = self.routed_resources(route, requirement.stage())?;
-        if !resources.requirement_is_cached(requirement)? {
-            return Ok(None);
-        }
-        let owner = resources.cache_owner_id().ok_or_else(|| {
-            AkitaError::InvalidSetup("cached commitment requirement has no owner".into())
-        })?;
-        Ok(Some((
-            owner,
-            resources.planned_ntt_cache_entry_bytes(requirement)?,
-        )))
     }
 }
 

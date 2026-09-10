@@ -704,7 +704,7 @@ divisible by its own dimension; the containing public matrix need not be.
 Every backend operation that consumes a public matrix MUST declare its exact
 matrix prefix and transform domain from the same rows and active width passed
 to the kernel. The implementation MUST have one canonical derivation path used
-by prewarming, lazy cache checks, memory reporting, and tests. A prewarm planner
+by prewarming, lazy cache acquisition, and tests. A prewarm planner
 and the actual kernel call MUST NOT compute independent approximations.
 
 The implementation realizes that contract as follows:
@@ -716,13 +716,9 @@ The implementation realizes that contract as follows:
   separate API calls; `add_setup_prefix_commitment` likewise adds the
   independently invoked setup-prefix preprocessing call layout;
 - `prewarm_ntt_requirements` routes each level through its selected
-  `ProverComputeStack` cluster before transcript binding; and
-- `planned_ntt_cache_metrics` routes the same requirements, partitions them by
-  process-local physical `NttCacheOwnerId`, and max-joins keys per owner before
-  asking the selected backend for bytes. This preserves real cache aliasing
-  when several levels or clusters share one prepared setup. Integration and
-  stack tests cover one fully shared owner, two partially shared owners, and
-  four independent owners, and require planned and resident bytes to agree.
+  `ProverComputeStack` cluster before transcript binding and max-joins retained
+  requirements by process-local physical `NttCacheOwnerId`. This preserves
+  real cache aliasing when several levels or clusters share one prepared setup.
 
 The execution compiler first max-joins one `(level, cluster, D, domain)` route.
 After routing, requirements that land on the same physical owner combine again

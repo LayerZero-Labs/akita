@@ -215,19 +215,10 @@ fn prewarm_routes_only_to_declared_physical_cluster_owner() {
             .domain,
         akita_types::NttTransformDomain::Cyclic
     );
-    let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-    assert_eq!(metrics.len(), 2);
-    assert_eq!(
-        metrics
-            .iter()
-            .map(|metric| metric.cache_bytes)
-            .sum::<usize>(),
-        commit_prepared.shared_ntt_cache_bytes() + ring_prepared.shared_ntt_cache_bytes()
-    );
 }
 
 #[test]
-fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
+fn prewarm_skips_streamed_cpu_ring_switch_slots() {
     let setup =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
@@ -257,13 +248,10 @@ fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm streamed plan");
 
     assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
-    assert!(planned_ntt_cache_metrics::<F, _>(&stack, &requirements)
-        .unwrap()
-        .is_empty());
 }
 
 #[test]
-fn configured_ring_switch_limit_drives_prewarm_and_metrics_boundary() {
+fn configured_ring_switch_limit_drives_prewarm_boundary() {
     let setup =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
     let backend =
@@ -295,10 +283,6 @@ fn configured_ring_switch_limit_drives_prewarm_and_metrics_boundary() {
     let resident = prepared.shared_ntt_cache_metrics().unwrap();
     assert_eq!(resident.len(), 1);
     assert_eq!(resident[0].key.num_ring_elements, 5);
-    let planned = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-    assert_eq!(planned.len(), 1);
-    assert_eq!(planned[0].keys.len(), 1);
-    assert_eq!(planned[0].keys[0].num_ring_elements, 5);
 }
 
 #[test]
@@ -343,10 +327,6 @@ fn prewarm_preserves_cached_operation_sharing_a_route_with_streamed_operation() 
     let resident = prepared.shared_ntt_cache_metrics().unwrap();
     assert_eq!(resident.len(), 1);
     assert_eq!(resident[0].key.num_ring_elements, 5);
-    let planned = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-    assert_eq!(planned.len(), 1);
-    assert_eq!(planned[0].keys.len(), 1);
-    assert_eq!(planned[0].keys[0].num_ring_elements, 5);
 }
 
 #[test]
@@ -420,25 +400,6 @@ fn fused_operation_extent_routes_all_domains_together() {
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm fused streamed plan");
 
     assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
-    assert!(planned_ntt_cache_metrics::<F, _>(&stack, &requirements)
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
-fn planned_metrics_deduplicate_all_shared_clusters() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-    let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-        .expect("uniform stack");
-    let requirements = all_cluster_requirements();
-
-    prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-    let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-
-    assert_eq!(metrics.len(), 1);
-    assert_eq!(metrics[0].cache_bytes, prepared.shared_ntt_cache_bytes());
 }
 
 #[test]
@@ -473,49 +434,6 @@ fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
     prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
     assert_eq!(stack.release_built_ntt_slots().unwrap(), shared_bytes);
     assert_eq!(prepared.compression_ntt_cache_bytes(), compression_bytes);
-}
-
-#[test]
-fn planned_metrics_keep_four_independent_clusters_separate() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
-    let commit = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("commit prepared");
-    let opening = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("opening prepared");
-    let tensor = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("tensor prepared");
-    let ring = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("ring prepared");
-    let stack: ProverComputeStack<'_, F, CpuBackend, CpuBackend, CpuBackend> =
-        ProverComputeStack::new(
-            commitment_executor(&setup, &commit),
-            (&CpuBackend::DEFAULT, &opening),
-            (&CpuBackend::DEFAULT, &tensor),
-            (&CpuBackend::DEFAULT, &ring),
-            setup.expanded.as_ref(),
-        )
-        .expect("independent stack");
-    let requirements = all_cluster_requirements();
-
-    prewarm_ntt_requirements::<F, _>(&stack, &requirements).unwrap();
-    let metrics = planned_ntt_cache_metrics::<F, _>(&stack, &requirements).unwrap();
-
-    assert_eq!(metrics.len(), 4);
-    assert_eq!(
-        metrics
-            .iter()
-            .map(|metric| metric.cache_bytes)
-            .sum::<usize>(),
-        commit.shared_ntt_cache_bytes()
-            + opening.shared_ntt_cache_bytes()
-            + tensor.shared_ntt_cache_bytes()
-            + ring.shared_ntt_cache_bytes()
-    );
 }
 
 #[test]

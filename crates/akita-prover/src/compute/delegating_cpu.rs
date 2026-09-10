@@ -56,14 +56,6 @@ macro_rules! delegate_compute_backend_setup {
                 CpuBackend::DEFAULT.ntt_requirement_is_cached(prepared, requirement)
             }
 
-            fn planned_ntt_cache_entry_bytes(
-                &self,
-                prepared: &Self::PreparedSetup,
-                key: NttCacheKey,
-            ) -> Result<usize, AkitaError> {
-                CpuBackend::DEFAULT.planned_ntt_cache_entry_bytes(prepared, key)
-            }
-
             fn release_built_ntt_slots(
                 &self,
                 prepared: &Self::PreparedSetup,

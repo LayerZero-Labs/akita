@@ -85,7 +85,6 @@ struct RecordingResources {
     identity: Arc<AtomicUsize>,
     ensures: Arc<AtomicUsize>,
     releases: Arc<AtomicUsize>,
-    planned_bytes: usize,
     released_bytes: usize,
 }
 
@@ -110,13 +109,6 @@ impl CommitmentResourceControl<F> for RecordingResources {
         NttCacheOwnerId::from_owner(self.identity.as_ref())
     }
 
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        _requirement: CommitmentNttRequirement,
-    ) -> Result<usize, AkitaError> {
-        Ok(self.planned_bytes)
-    }
-
     fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
         self.releases.fetch_add(1, Ordering::SeqCst);
         Ok(self.released_bytes)
@@ -124,7 +116,7 @@ impl CommitmentResourceControl<F> for RecordingResources {
 }
 
 #[test]
-fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
+fn distinct_resource_owners_are_prewarmed_and_released_independently() {
     struct TestBackend;
     struct TestContext;
 
@@ -159,16 +151,14 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
     let inner_releases = Arc::new(AtomicUsize::new(0));
     let outer_releases = Arc::new(AtomicUsize::new(0));
     let compression_releases = Arc::new(AtomicUsize::new(0));
-    let resources = |ensures: Arc<AtomicUsize>,
-                     releases: Arc<AtomicUsize>,
-                     planned_bytes,
-                     released_bytes| RecordingResources {
-        setup: setup.expanded.descriptor().clone(),
-        identity: Arc::new(AtomicUsize::new(0)),
-        ensures,
-        releases,
-        planned_bytes,
-        released_bytes,
+    let resources = |ensures: Arc<AtomicUsize>, releases: Arc<AtomicUsize>, released_bytes| {
+        RecordingResources {
+            setup: setup.expanded.descriptor().clone(),
+            identity: Arc::new(AtomicUsize::new(0)),
+            ensures,
+            releases,
+            released_bytes,
+        }
     };
     let inner_context = builder
         .operation_context(
@@ -177,7 +167,6 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
             StageResources::controlled(resources(
                 inner_ensures.clone(),
                 inner_releases.clone(),
-                101,
                 11,
             )),
         )
@@ -189,7 +178,6 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
             StageResources::controlled(resources(
                 outer_ensures.clone(),
                 outer_releases.clone(),
-                202,
                 13,
             )),
         )
@@ -201,7 +189,6 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
             StageResources::controlled(resources(
                 compression_ensures.clone(),
                 compression_releases.clone(),
-                303,
                 17,
             )),
         )
@@ -254,21 +241,17 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
 
-    let mut bytes: Vec<_> = executor
-        .planned_request_ntt_cache_metrics(&plan, &sources)
-        .unwrap()
-        .into_iter()
-        .map(|metric| metric.cache_bytes)
-        .collect();
-    bytes.sort_unstable();
-    assert_eq!(bytes, vec![101, 202]);
-
     executor.prewarm_request(&plan, &sources).unwrap();
     assert_eq!(inner_ensures.load(Ordering::SeqCst), 1);
     assert_eq!(outer_ensures.load(Ordering::SeqCst), 1);
     assert_eq!(compression_ensures.load(Ordering::SeqCst), 0);
 
-    assert_eq!(executor.release_built_ntt_slots().unwrap(), 41);
+    assert_eq!(
+        executor
+            .release_built_ntt_slots_deduplicated(&mut Vec::new())
+            .unwrap(),
+        41
+    );
     assert_eq!(inner_releases.load(Ordering::SeqCst), 1);
     assert_eq!(outer_releases.load(Ordering::SeqCst), 1);
     assert_eq!(compression_releases.load(Ordering::SeqCst), 1);

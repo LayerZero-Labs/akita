@@ -59,10 +59,9 @@ where
 
     /// Whether this routed request remains resident for its operation cluster.
     ///
-    /// Prewarming and planned memory reporting both use this decision. The
-    /// default retains every requirement. A backend that streams an operation
-    /// must override this method with the same policy used by its runtime
-    /// kernel.
+    /// Prewarming uses this decision. The default retains every requirement. A
+    /// backend that streams an operation must override this method with the
+    /// same policy used by its runtime kernel.
     fn ntt_requirement_is_cached(
         &self,
         _prepared: &Self::PreparedSetup,
@@ -78,20 +77,6 @@ where
     /// override this method with that storage's identity.
     fn ntt_cache_owner_id(&self, prepared: &Self::PreparedSetup) -> NttCacheOwnerId {
         NttCacheOwnerId::from_owner(prepared)
-    }
-
-    /// Planned resident bytes for one independently stored exact cache entry.
-    ///
-    /// The result excludes any fixed cache-container overhead so callers may
-    /// sum distinct `(D, domain)` entries after max-joining their prefixes.
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        _prepared: &Self::PreparedSetup,
-        _key: NttCacheKey,
-    ) -> Result<usize, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "compute backend does not expose planned NTT cache bytes".into(),
-        ))
     }
 
     /// Expanded setup used to prepare this backend context.
