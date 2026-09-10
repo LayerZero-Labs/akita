@@ -158,17 +158,17 @@ where
 }
 
 #[cfg(test)]
-#[path = "builder_tests.rs"]
+#[path = "tests/builder.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "fusion_tests.rs"]
+#[path = "tests/fusion.rs"]
 mod fusion_tests;
 
 #[cfg(test)]
-#[path = "external_fusion_tests.rs"]
+#[path = "tests/external_fusion.rs"]
 mod external_fusion_tests;
 
 #[cfg(test)]
-#[path = "source_selection_tests.rs"]
+#[path = "tests/source_selection.rs"]
 mod source_selection_tests;

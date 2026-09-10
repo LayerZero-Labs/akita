@@ -232,7 +232,7 @@ pub trait InnerImageExportOperation<F: Field>: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{CommitmentStateBinding, StateOwnerCapability};
+    use crate::commitment::{CommitmentStateBinding, StateOwnerCapability};
     use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed, SisModulusProfileId};
     use jolt_field::Prime128OffsetA7F7;
 

@@ -37,7 +37,8 @@ fn operation_ctx_accepts_matching_expanded_setup() {
         .expect("matching expanded metadata should validate");
 }
 
-use crate::compute::{CommitCluster, CommitmentNttRoute, CommitmentNttStage, RingSwitchCluster};
+use crate::commitment::{CommitmentNttRoute, CommitmentNttStage};
+use crate::compute::{CommitCluster, RingSwitchCluster};
 
 fn assert_distinct_backend_types<C: 'static, R: 'static>() {
     fn type_id<T: 'static>() -> std::any::TypeId {

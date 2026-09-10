@@ -520,7 +520,7 @@ state/capability rejection, and modular/legacy byte parity.
 ## Code map and verification
 
 The canonical implementation lives under
-`crates/akita-prover/src/compute/commitment/`:
+`crates/akita-prover/src/commitment/`:
 
 - `source.rs`: source descriptors, standard representations, and request
   compilation;

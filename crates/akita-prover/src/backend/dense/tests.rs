@@ -1,5 +1,6 @@
 use super::poly::DensePoly;
-use crate::compute::{CommitmentSource, RootPolyMeta};
+use crate::commitment::CommitmentSource;
+use crate::compute::RootPolyMeta;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_field::Prime128OffsetA7F7 as F;

@@ -1,14 +1,16 @@
 use super::*;
-use crate::compute::{
+use crate::commitment::{
     BackendKindId, CommitmentExecutionPlan, CommitmentNttRequirement,
     CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
     CommitmentStateBinding, CompressionOperation, CompressionOperationCapabilities,
-    CompressionStageOutput, CompressionState, ComputeBackendSetup, CpuBackend,
-    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,
-    InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageInput, NttCacheOwnerId,
-    OuterCommitOperation, PolynomialType, PreparedCommitmentResources, PreparedCompression,
-    PreparedInnerCommitment, PreparedOuterCommitment, ResolvedCommitSource,
+    CompressionStageOutput, CompressionState, InnerCommitOperation, InnerCommitOutput, InnerImage,
+    InnerImageInput, OuterCommitOperation, PolynomialType, PreparedCommitmentResources,
+    PreparedCompression, PreparedInnerCommitment, PreparedOuterCommitment, ResolvedCommitSource,
     StageDimensionCapabilities, StageResources, StateOwnerCapability,
+};
+use crate::compute::{
+    ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+    CpuOuterCommitOperation, NttCacheOwnerId,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -41,7 +43,7 @@ struct UnusedOuter;
 impl OuterCommitOperation<F> for UnusedOuter {
     fn commit_outer(
         &self,
-        _plan: &crate::compute::UncompressedCommitPlan,
+        _plan: &crate::commitment::UncompressedCommitPlan,
         _inner: InnerImageInput<'_, F>,
     ) -> Result<RingVec<F>, AkitaError> {
         Err(AkitaError::InvalidInput("unused test operation".into()))
@@ -70,7 +72,7 @@ struct RecordingCpuOuter<'a> {
 impl OuterCommitOperation<F> for RecordingCpuOuter<'_> {
     fn commit_outer(
         &self,
-        plan: &crate::compute::UncompressedCommitPlan,
+        plan: &crate::commitment::UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
     ) -> Result<RingVec<F>, AkitaError> {
         self.calls.fetch_add(1, Ordering::SeqCst);

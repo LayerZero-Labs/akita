@@ -710,8 +710,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::commitment::external::CpuBackendKind;
-    use crate::compute::{
+    use crate::commitment::external::CpuBackendKind;
+    use crate::commitment::{
         AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CompressionOperation,
         CompressionState, DenseCoefficientSource, DenseRepresentation, DenseType,
         NoRetainedStatePolicy, OuterCommitOperation, PolynomialRepresentation,
@@ -1481,9 +1481,9 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "executor_binding_tests.rs"]
+#[path = "tests/executor_binding.rs"]
 mod binding_tests;
 
 #[cfg(test)]
-#[path = "executor_resource_tests.rs"]
+#[path = "tests/executor_resources.rs"]
 mod resource_tests;

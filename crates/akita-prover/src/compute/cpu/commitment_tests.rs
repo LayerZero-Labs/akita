@@ -1,9 +1,9 @@
 use super::*;
-use crate::compute::{
-    compile_commitment_request, BackendKindId, CommitInnerPlan, CommitmentRequestCapabilities,
-    CommitmentSource, ComputeBackendSetup, DenseType, OneHotIndexWidth, OneHotType, PolynomialType,
-    ShortNormType,
+use crate::commitment::{
+    compile_commitment_request, BackendKindId, CommitmentRequestCapabilities, CommitmentSource,
+    DenseType, OneHotIndexWidth, OneHotType, PolynomialType, ShortNormType,
 };
+use crate::compute::{CommitInnerPlan, ComputeBackendSetup};
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly, RecursiveWitnessFlat};
 use akita_types::{RingVec, SetupMatrixCapacity};
 use jolt_field::{Prime128Offset275, Ring};

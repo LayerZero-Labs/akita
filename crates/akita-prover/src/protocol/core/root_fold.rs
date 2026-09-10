@@ -1,8 +1,10 @@
 use super::*;
+use crate::commitment::{
+    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
+};
 use crate::compute::{
-    CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend, InnerRelationState,
-    LevelProveStacks, OuterCompressionState, ProverComputeStack, RuntimeRingSwitchProveBackend,
-    TerminalBindingState,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
+    RuntimeRingSwitchProveBackend,
 };
 use jolt_field::AdditiveGroup;
 

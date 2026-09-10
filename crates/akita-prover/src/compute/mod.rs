@@ -21,9 +21,11 @@
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
 //! | `poly` | Root polynomial opening, tensor, and shape capability traits |
 //! | `stack` | Per-fold [`LevelProveStacks`] + per-cluster [`OperationCtx`] / [`ProverComputeStack`] |
+//!
+//! Commitment-specific API, routing, and state live in the sibling
+//! [`crate::commitment`] module.
 
 mod backend;
-pub mod commitment;
 pub(crate) mod compression;
 mod cpu;
 pub mod delegating_cpu;
@@ -31,40 +33,13 @@ mod kernels;
 mod operation_plans;
 mod plans;
 mod poly;
-mod requirements;
+pub(crate) mod requirements;
 mod runtime_capabilities;
 mod stack;
 
 pub use backend::{
     CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
     CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
-};
-pub use commitment::{
-    compile_commitment_request, cpu_external_inner_commitment_capability,
-    cpu_external_inner_prepared_setup, AvailablePolynomialTypes, BackendInstanceId, BackendKindId,
-    BackendStateRef, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionMode,
-    CommitmentExecutionOutput, CommitmentExecutionPlan, CommitmentExecutionSchedule,
-    CommitmentExecutionScheduleBuilder, CommitmentExecutor, CommitmentExecutorBuilder,
-    CommitmentNttRequirement, CommitmentNttRoute, CommitmentNttStage, CommitmentOperationContext,
-    CommitmentOperationId, CommitmentRequestCapabilities, CommitmentResourceControl,
-    CommitmentRoundStep, CommitmentSource, CommitmentStateBinding, CommitmentStateComponents,
-    CommitmentStateOutput, CommitmentStatePolicy, CompiledCommitmentRequest, CompressionOperation,
-    CompressionOperationCapabilities, CompressionStageOutput, CompressionState,
-    DenseCoefficientSource, DenseRepresentation, DenseType, ExternalFusedInnerCommitmentEncoder,
-    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity, FullCommitmentOutput,
-    FusedInnerOuterOperation, InnerCommitOperation, InnerCommitOutput, InnerImage,
-    InnerImageExportOperation, InnerImageInput, InnerOuterRouteKind, InnerRelationState,
-    InnerRelationStateMaterial, IntoPortableCommitmentState, NoRetainedStatePolicy,
-    OneHotIndexWidth, OneHotRepresentation, OneHotType, OuterCommitOperation, OuterCommitPlan,
-    OuterCompressionState, PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
-    PortableCommitmentState, PortableCompressionState, PortableCompressionStateExport,
-    PortableStatePolicy, PredecomposedDigitPlanes, PreparedCommitmentResources,
-    PreparedCompression, PreparedExternalInnerCommitment, PreparedFusedCommitment,
-    PreparedInnerCommitment, PreparedOuterCommitment, ResidentCommitmentState, ResidentStatePolicy,
-    ResolvedCommitSource, ShortNormRepresentation, ShortNormType, StageDimensionCapabilities,
-    StageResources, StateOwnerCapability, TerminalBindingState, TerminalTFieldsMessage,
-    UncompressedCommitPlan, UncompressedCommitmentOutput, UnitPositionSlice,
 };
 pub use cpu::{
     CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,

@@ -1,6 +1,6 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
-use crate::compute::InnerRelationStateMaterial;
+use crate::commitment::InnerRelationStateMaterial;
 use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;

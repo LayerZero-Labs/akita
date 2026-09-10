@@ -334,14 +334,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{
+    use crate::commitment::{
         BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
-        CommitmentStateBinding, CompressionOperationCapabilities, CpuBackend,
-        CpuCompressionOperation, DenseType, FusedInnerOuterOperation, InnerImage, PolynomialType,
-        PortableStatePolicy, PreparedCommitmentResources, PreparedCompression,
-        PreparedFusedCommitment, ResolvedCommitSource, StageDimensionCapabilities, StageResources,
-        StateOwnerCapability, UncompressedCommitPlan, UncompressedCommitmentOutput,
+        CommitmentStateBinding, CompressionOperationCapabilities, DenseType,
+        FusedInnerOuterOperation, InnerImage, PolynomialType, PortableStatePolicy,
+        PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
+        ResolvedCommitSource, StageDimensionCapabilities, StageResources, StateOwnerCapability,
+        UncompressedCommitPlan, UncompressedCommitmentOutput,
     };
+    use crate::compute::{CpuBackend, CpuCompressionOperation};
     use crate::AkitaProverSetup;
     use akita_types::{RingVec, SetupMatrixCapacity};
     use jolt_field::Prime64Offset59;

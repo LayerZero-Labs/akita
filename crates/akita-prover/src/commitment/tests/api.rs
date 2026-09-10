@@ -1,6 +1,8 @@
 use super::*;
-use crate::compute::{ComputeBackendSetup, OperationCtx, PortableStatePolicy};
-use crate::{AkitaProverSetup, CpuBackend, DensePoly};
+use crate::commitment::PortableStatePolicy;
+use crate::compute::CpuBackend;
+use crate::compute::{ComputeBackendSetup, OperationCtx};
+use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_types::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,

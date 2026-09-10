@@ -6,7 +6,7 @@ use super::exact_i16::{
 use super::{CpuBackend, CpuPreparedSetup};
 use crate::backend::packed_digits::PackedSignedDigitView;
 use crate::backend::{commit_onehot_sources, OneHotSource};
-use crate::compute::commitment::{
+use crate::commitment::{
     CommitSourceDescriptor, DenseCoefficientSource, DenseRepresentation, DenseType,
     OneHotIndexWidth, PolynomialRepresentation, PolynomialType, PredecomposedDigitPlanes,
     ResolvedCommitSource, UnitPositionSlice,

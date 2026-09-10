@@ -110,7 +110,7 @@
       "description": "Setup expansion and Ajtai commitment",
       "code": [
         "crates/akita-setup/**",
-        "crates/akita-prover/src/api/commitment.rs",
+        "crates/akita-prover/src/commitment/**",
         "crates/akita-prover/src/backend/**"
       ],
       "consider_updating": [

@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{
+use crate::commitment::{
     CommitmentSource, DenseType, InnerCommitOperation, InnerImage, NoRetainedStatePolicy,
     ResolvedCommitSource, StateOwnerCapability,
 };

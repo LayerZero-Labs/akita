@@ -1,8 +1,8 @@
 use crate::backend::RecursiveFoldSource;
-use crate::compute::{
-    InnerRelationState, InnerRelationStateMaterial, OuterCompressionState,
-    PortableCompressionState, RootPolyMeta,
+use crate::commitment::{
+    InnerRelationState, InnerRelationStateMaterial, OuterCompressionState, PortableCompressionState,
 };
+use crate::compute::RootPolyMeta;
 use crate::protocol::core::RootProverGroupMeta;
 use crate::{ErasedPreparedProverGroup, PreparedProverGroup};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};

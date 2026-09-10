@@ -1,8 +1,9 @@
 use super::*;
-use crate::compute::{
+use crate::commitment::{
     BackendInstanceId, CommitmentNttRequirement, CommitmentOperationContext,
-    CommitmentResourceControl, DenseType, NttCacheOwnerId,
+    CommitmentResourceControl, DenseType,
 };
+use crate::compute::NttCacheOwnerId;
 use crate::AkitaProverSetup;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId};

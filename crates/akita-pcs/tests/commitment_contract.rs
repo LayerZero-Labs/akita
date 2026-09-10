@@ -9,13 +9,14 @@
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_prover::compute::{
-    AvailablePolynomialTypes, CommitInnerPlan, CommitSourceClass, CommitSourceDescriptor,
-    CommitmentExecutor, CommitmentSource, ComputeBackendSetup, DenseCoefficientSource,
-    DenseRepresentation, DenseType, InnerRelationState, NoRetainedStatePolicy,
-    OuterCompressionState, PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
-    PortableCommitmentState, PortableCompressionState, PortableStatePolicy, ResidentStatePolicy,
+use akita_prover::commitment::{
+    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutor,
+    CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType, InnerRelationState,
+    NoRetainedStatePolicy, OuterCompressionState, PolynomialRepresentation, PolynomialType,
+    PolynomialTypeSelection, PortableCommitmentState, PortableCompressionState,
+    PortableStatePolicy, ResidentStatePolicy,
 };
+use akita_prover::compute::{CommitInnerPlan, ComputeBackendSetup};
 use akita_prover::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_types::{CommittedSourceEncoding, OpeningClaimsLayout};
 use jolt_field::Ring;

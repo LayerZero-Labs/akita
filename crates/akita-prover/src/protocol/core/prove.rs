@@ -1,11 +1,14 @@
 use super::*;
 use crate::backend::RecursiveFoldSource;
+use crate::commitment::{
+    CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
+    TerminalBindingState,
+};
 use crate::compute::{
-    prewarm_ntt_requirements, CommitmentExecutionPlan, CommitmentStatePolicy, ComputeBackendSetup,
-    DigitRowsComputeBackend, InnerRelationState, LevelProveStacks, NttExecutionRequirements,
-    OuterCompressionState, RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, TerminalBindingState,
+    SuffixTensorProveBackend,
 };
 use crate::SelectedProverOpeningData;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};

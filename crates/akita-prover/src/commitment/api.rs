@@ -1,6 +1,6 @@
-//! Prover-owned commitment kernels.
+//! Top-level prover commitment API.
 
-use crate::compute::{
+use crate::commitment::{
     CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
@@ -18,10 +18,6 @@ use akita_types::{
     GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
-
-mod inner_outer;
-pub(crate) use inner_outer::compute_outer_commitment_from_rows;
-pub use inner_outer::for_each_outer_slice_input;
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
@@ -282,9 +278,9 @@ where
     };
     for poly in polys {
         match poly.descriptor()?.class() {
-            crate::compute::CommitSourceClass::OneHot { chunk_size }
+            crate::commitment::CommitSourceClass::OneHot { chunk_size }
                 if chunk_size == required_chunk_size => {}
-            crate::compute::CommitSourceClass::OneHot { chunk_size } => {
+            crate::commitment::CommitSourceClass::OneHot { chunk_size } => {
                 return Err(AkitaError::InvalidInput(format!(
                     "committed source is a unit one-hot representation with chunk size \
                      {chunk_size}, but this schedule is priced for one hot position per \
@@ -471,4 +467,5 @@ where
 }
 
 #[cfg(test)]
+#[path = "tests/api.rs"]
 mod tests;

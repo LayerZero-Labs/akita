@@ -2,9 +2,9 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
+use crate::commitment::TerminalBindingState;
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
-    RuntimeRingSwitchProveBackend, TerminalBindingState,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::sumcheck::relation_range_image::{
     prepare_coefficient_packing_linear_terms, PreparedProverLinearTerms,
@@ -112,7 +112,7 @@ where
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
-    SP: crate::compute::CommitmentStatePolicy<F>,
+    SP: crate::commitment::CommitmentStatePolicy<F>,
 {
     stack: &'a ProverComputeStack<'a, F, O, TS, R, SP>,
     block_claims: ProverOpeningData<'a, E, Q, F, S>,
@@ -151,11 +151,11 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     Q: RootProverGroupOpening<F, E, O>,
-    S: crate::compute::InnerRelationState<F> + crate::compute::OuterCompressionState<F>,
+    S: crate::commitment::InnerRelationState<F> + crate::commitment::OuterCompressionState<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     TS: ComputeBackendSetup<F>,
-    SP: crate::compute::CommitmentStatePolicy<F>,
+    SP: crate::commitment::CommitmentStatePolicy<F>,
 {
     let FinishFoldArgs {
         stack,
@@ -416,8 +416,8 @@ where
     TS: ComputeBackendSetup<F>,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    SP: crate::compute::CommitmentStatePolicy<F>,
-    SP::State: crate::compute::TerminalBindingState<F>,
+    SP: crate::commitment::CommitmentStatePolicy<F>,
+    SP::State: crate::commitment::TerminalBindingState<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let opening_batch = prepared_fold.instance.opening_batch();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy};
+use crate::commitment::{CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy};
 use akita_types::{dispatch_for_field, CommittedSourceEncoding, TerminalFoldParams};
 
 /// Public state bound for the witness produced by one intermediate fold.
@@ -70,7 +70,7 @@ where
     )?;
     let witness = packed_witness.as_ref().unwrap_or(logical_w);
     let plan = CommitmentExecutionPlan::for_recursive(commit_params, fold_level, 1)?;
-    let sources: [&dyn crate::compute::CommitmentSource<Cfg::Field>; 1] = [witness];
+    let sources: [&dyn crate::commitment::CommitmentSource<Cfg::Field>; 1] = [witness];
     let (commitment, prover_state) = if commit_params.payload_mode.is_compressed() {
         executor.execute_full(&plan, &sources)?.into_parts()
     } else {
@@ -116,7 +116,7 @@ where
     )?;
     let witness = packed_witness.as_ref().unwrap_or(logical_w);
     let plan = CommitmentExecutionPlan::for_terminal(commit_params)?;
-    let sources: [&dyn crate::compute::CommitmentSource<Cfg::Field>; 1] = [witness];
+    let sources: [&dyn crate::commitment::CommitmentSource<Cfg::Field>; 1] = [witness];
     let prover_state = executor.execute_inner(&plan, &sources)?.into_state();
     Ok(NextWitnessStateOutput {
         witness: packed_witness,

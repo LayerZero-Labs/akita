@@ -265,7 +265,7 @@ metadata, descriptors, and trusted external catalog identity.
 Relevant implementation sources:
 
 - `crates/akita-types/src/commitment_slicing.rs`
-- `crates/akita-prover/src/api/commitment.rs`
+- `crates/akita-prover/src/commitment/api.rs`
 - `crates/akita-types/src/setup_contribution/plan/physical_b.rs`
 
 Public-stream and view sources:
@@ -291,7 +291,7 @@ count does not create extra stored B matrices.
 
 - `crates/akita-setup/src/lib.rs` constructs setup and validates cached public
   matrices against their seed. Its tests cover seed and cache mismatches.
-- `crates/akita-prover/src/api/commitment.rs` checks standalone commitment
+- `crates/akita-prover/src/commitment/api.rs` checks standalone commitment
   profiles, computes inner images, and executes sliced outer commitments.
 - `crates/akita-types/src/proof/hints.rs` defines the retained prover state and
   tests its canonical serialization and shape checks.

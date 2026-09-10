@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod commitment;
 pub mod compute;
 pub mod kernels;
 pub mod protocol;
@@ -19,8 +20,7 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 pub use api::{
-    commit, commit_setup_prefix, for_each_outer_slice_input, resolve_polynomial_group_layout,
-    AkitaProverSetup, CommitOutput, ErasedPreparedProverGroup, GroupContext, PreparedGroupProveOps,
+    commit_setup_prefix, AkitaProverSetup, ErasedPreparedProverGroup, PreparedGroupProveOps,
     PreparedProverGroup,
 };
 
@@ -29,46 +29,48 @@ pub use backend::{
     RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry, SuffixWitnessBatchView,
     SuffixWitnessView,
 };
-pub use compute::{
-    compile_commitment_request, cpu_external_inner_commitment_capability,
-    cpu_external_inner_prepared_setup, planned_ntt_cache_metrics, prewarm_ntt_requirements,
-    AvailablePolynomialTypes, BackendInstanceId, BackendKindId, BackendStateRef,
-    BatchDecomposeFoldOutcome, CommitCluster, CommitSourceClass, CommitSourceDescriptor,
-    CommitmentExecutionMode, CommitmentExecutionOutput, CommitmentExecutionPlan,
-    CommitmentExecutionSchedule, CommitmentExecutionScheduleBuilder, CommitmentExecutor,
-    CommitmentExecutorBuilder, CommitmentNttRequirement, CommitmentNttRoute, CommitmentNttStage,
-    CommitmentOperationContext, CommitmentOperationId, CommitmentRequestCapabilities,
-    CommitmentResourceControl, CommitmentRoundStep, CommitmentSource, CommitmentStateBinding,
-    CommitmentStateComponents, CommitmentStateOutput, CommitmentStatePolicy,
-    CompiledCommitmentRequest, CompressionOperation, CompressionOperationCapabilities,
-    CompressionStageOutput, CompressionState, ComputeBackendSetup, CpuBackend,
-    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation, CpuPreparedSetup,
-    CyclicRowsComputeBackend, DenseCoefficientSource, DenseRepresentation, DenseType,
-    DigitRowsComputeBackend, ExternalFusedInnerCommitmentEncoder,
+pub use commitment::{
+    commit, compile_commitment_request, cpu_external_inner_commitment_capability,
+    cpu_external_inner_prepared_setup, for_each_outer_slice_input, resolve_polynomial_group_layout,
+    AvailablePolynomialTypes, BackendInstanceId, BackendKindId, BackendStateRef, CommitOutput,
+    CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionMode, CommitmentExecutionOutput,
+    CommitmentExecutionPlan, CommitmentExecutionSchedule, CommitmentExecutionScheduleBuilder,
+    CommitmentExecutor, CommitmentExecutorBuilder, CommitmentNttRequirement, CommitmentNttRoute,
+    CommitmentNttStage, CommitmentOperationContext, CommitmentOperationId,
+    CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentRoundStep,
+    CommitmentSource, CommitmentStateBinding, CommitmentStateComponents, CommitmentStateOutput,
+    CommitmentStatePolicy, CompiledCommitmentRequest, CompressionOperation,
+    CompressionOperationCapabilities, CompressionStageOutput, CompressionState,
+    DenseCoefficientSource, DenseRepresentation, DenseType, ExternalFusedInnerCommitmentEncoder,
     ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
     ExternalInnerCommitmentOperation, ExternalOperationIdentity, FullCommitmentOutput,
-    FusedInnerOuterOperation, InnerCommitOperation, InnerCommitOutput, InnerImage,
+    FusedInnerOuterOperation, GroupContext, InnerCommitOperation, InnerCommitOutput, InnerImage,
     InnerImageExportOperation, InnerImageInput, InnerOuterRouteKind, InnerRelationState,
-    InnerRelationStateMaterial, IntoPortableCommitmentState, LevelProveStacks,
-    NoRetainedStatePolicy, NttCacheOwnerId, NttExecutionRequirements, NttOperationCluster,
-    OneHotIndexWidth, OneHotRepresentation, OneHotType, OpeningCluster, OpeningProveBackendFor,
-    OperationCtx, OuterCommitOperation, OuterCommitPlan, OuterCompressionState,
-    PlannedNttCacheOwnerMetric, PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
+    InnerRelationStateMaterial, IntoPortableCommitmentState, NoRetainedStatePolicy,
+    OneHotIndexWidth, OneHotRepresentation, OneHotType, OuterCommitOperation, OuterCommitPlan,
+    OuterCompressionState, PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
     PortableCommitmentState, PortableCompressionState, PortableCompressionStateExport,
     PortableStatePolicy, PredecomposedDigitPlanes, PreparedCommitmentResources,
-    PreparedCompression, PreparedCrtNttProfile, PreparedExternalInnerCommitment,
-    PreparedFusedCommitment, PreparedInnerCommitment, PreparedNttCacheMetric,
-    PreparedOuterCommitment, ProveFlowBackendFor, ProveStackFor, ProverComputeStack,
-    RecursiveProveBackend, ReleaseRootNttAfterFold, ResidentCommitmentState, ResidentStatePolicy,
-    ResolvedCommitSource, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
-    RootTensorSource, RoutedNttRequirement, RuntimeCoefficientPackingBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
-    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    ShortNormRepresentation, ShortNormType, StageDimensionCapabilities, StageResources,
-    StateOwnerCapability, SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
-    TensorCluster, TerminalBindingState, TerminalTFieldsMessage, TieredProveStacks,
-    UncompressedCommitPlan, UncompressedCommitmentOutput, UniformProverStack, UnitPositionSlice,
+    PreparedCompression, PreparedExternalInnerCommitment, PreparedFusedCommitment,
+    PreparedInnerCommitment, PreparedOuterCommitment, ResidentCommitmentState, ResidentStatePolicy,
+    ResolvedCommitSource, ShortNormRepresentation, ShortNormType, StageDimensionCapabilities,
+    StageResources, StateOwnerCapability, TerminalBindingState, TerminalTFieldsMessage,
+    UncompressedCommitPlan, UncompressedCommitmentOutput, UnitPositionSlice,
+};
+pub use compute::{
+    planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome, CommitCluster,
+    ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+    CpuOuterCommitOperation, CpuPreparedSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
+    LevelProveStacks, NttCacheOwnerId, NttExecutionRequirements, NttOperationCluster,
+    OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
+    PreparedCrtNttProfile, PreparedNttCacheMetric, ProveFlowBackendFor, ProveStackFor,
+    ProverComputeStack, RecursiveProveBackend, ReleaseRootNttAfterFold, RingSwitchCluster,
+    RingSwitchProveBackend, RingSwitchRelationRows, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
+    TensorCluster, TieredProveStacks, UniformProverStack,
 };
 pub use protocol::sumcheck::{
     DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,

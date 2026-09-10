@@ -21,7 +21,7 @@ pub enum CommitSourceClass {
 }
 
 #[cfg(test)]
-#[path = "source_bounds_tests.rs"]
+#[path = "tests/source_bounds.rs"]
 mod bounds_tests;
 
 /// O(1) structural metadata used before representation materialization.
@@ -1059,7 +1059,7 @@ impl<F: Field> CommitmentSource<F> for crate::RecursiveWitnessFlat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::commitment::{
+    use crate::commitment::{
         ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
     };
     use crate::{DensePoly, OneHotPoly};

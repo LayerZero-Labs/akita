@@ -1,5 +1,5 @@
 use super::{CpuBackend, CpuPreparedSetup};
-use crate::compute::commitment::{
+use crate::commitment::{
     BackendStateRef, CommitmentStateBinding, CompressionOperation, CompressionStageOutput,
     CompressionState, PortableCompressionState, PortableCompressionStateExport,
     StateOwnerCapability,
@@ -226,7 +226,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{CommitInnerPlan, CommitmentStateBinding, ComputeBackendSetup};
+    use crate::commitment::CommitmentStateBinding;
+    use crate::compute::{CommitInnerPlan, ComputeBackendSetup};
     use crate::AkitaProverSetup;
     use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
     use jolt_field::{Prime128OffsetA7F7, Ring};

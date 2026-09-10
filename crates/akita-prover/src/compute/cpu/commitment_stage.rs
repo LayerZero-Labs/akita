@@ -1,16 +1,138 @@
 use super::{CpuBackend, CpuPreparedSetup};
-use crate::compute::commitment::{
-    BackendStateRef, CommitmentStateBinding, InnerCommitOperation, InnerCommitOutput, InnerImage,
-    InnerImageExportOperation, InnerImageInput, OuterCommitOperation, ResolvedCommitSource,
-    StateOwnerCapability,
+use crate::commitment::{
+    for_each_outer_slice_input, BackendStateRef, CommitmentStateBinding, InnerCommitOperation,
+    InnerCommitOutput, InnerImage, InnerImageExportOperation, InnerImageInput,
+    OuterCommitOperation, OuterCommitPlan, ResolvedCommitSource, StateOwnerCapability,
 };
-use crate::compute::{CommitInnerPlan, OuterCommitPlan};
+use crate::compute::{CommitInnerPlan, DigitRowsComputeBackend};
+use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::CommitInnerWitness;
+use akita_algebra::ring::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_types::{dispatch_for_field, RingVec};
+use akita_types::{dispatch_for_field, DigitBlocks, RingVec};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::mem::size_of;
 use std::sync::Arc;
+
+fn compute_outer_commitment_from_rows<F, B, const D_A: usize, const D_B: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup,
+    inner_rows: &[&RingVec<F>],
+    inner_plan: &CommitInnerPlan,
+    outer_plan: &OuterCommitPlan,
+) -> Result<RingVec<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    B: DigitRowsComputeBackend<F>,
+{
+    if inner_plan.ring_dimension != D_A || outer_plan.ring_dimension() != D_B {
+        return Err(AkitaError::InvalidSetup(
+            "commitment stage plan ring dimensions disagree with dispatch".into(),
+        ));
+    }
+    if outer_plan.geometry().num_polynomials() != inner_rows.len() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} inner commitments for {} sources",
+            inner_rows.len(),
+            outer_plan.geometry().num_polynomials()
+        )));
+    }
+    let expected_rows = inner_plan
+        .num_live_blocks
+        .checked_mul(inner_plan.n_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("inner commitment row count overflow".into()))?;
+    let prepared_polynomials = cfg_into_iter!(inner_rows)
+        .map(|rows| -> Result<DigitBlocks, AkitaError> {
+            if rows.ring_dim() != D_A || rows.count() != expected_rows {
+                return Err(AkitaError::InvalidSetup(
+                    "resident inner commitment row shape is invalid".into(),
+                ));
+            }
+            let typed = rows.as_ring_slice::<D_A>().map_err(|_| {
+                AkitaError::InvalidSetup("resident inner commitment ring storage is invalid".into())
+            })?;
+            let blocks = typed.chunks_exact(inner_plan.n_a).collect::<Vec<_>>();
+            if blocks.len() != inner_plan.num_live_blocks {
+                return Err(AkitaError::InvalidSetup(
+                    "resident inner commitment block geometry is invalid".into(),
+                ));
+            }
+            decompose_commit_blocks_into::<F, D_A, D_B>(
+                &blocks,
+                outer_plan.num_digits_outer(),
+                outer_plan.log_basis_outer(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let typed_u = commit_outer_slices::<F, _, D_B>(
+        backend,
+        prepared,
+        outer_plan.n_b(),
+        prepared_polynomials.iter(),
+        outer_plan.geometry(),
+        outer_plan.log_basis_outer(),
+    )?;
+    let u = RingVec::from_ring_elems(&typed_u);
+    let expected_coefficients = outer_plan.output_coefficient_len()?;
+    if u.coeff_len() != expected_coefficients {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} outer commitment coefficients, expected {expected_coefficients}",
+            u.coeff_len()
+        )));
+    }
+    Ok(u)
+}
+
+fn commit_outer_slices<'a, F, B, const D_B: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup,
+    n_b: usize,
+    polynomial_digits: impl IntoIterator<Item = &'a DigitBlocks>,
+    geometry: &akita_types::CommitmentSliceGeometry,
+    log_basis: u32,
+) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    B: DigitRowsComputeBackend<F>,
+{
+    let per_block = geometry.ring_elements_per_block_per_polynomial();
+    let num_live_blocks = geometry
+        .block_ranges()
+        .last()
+        .map(|range| range.end)
+        .ok_or_else(|| AkitaError::InvalidSetup("B commitment has no slices".into()))?;
+    let polynomial_planes = polynomial_digits
+        .into_iter()
+        .map(|digits| {
+            if digits.block_count() != num_live_blocks
+                || digits.block_sizes().iter().any(|&size| size != per_block)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "B slice input does not match the frozen block geometry".into(),
+                ));
+            }
+            digits.typed_planes::<D_B>()
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let mut inputs = Vec::with_capacity(geometry.slice_count().get());
+    for_each_outer_slice_input::<D_B>(polynomial_planes, geometry, |input| {
+        inputs.push(input.to_vec());
+        Ok(())
+    })?;
+    let input_refs = inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let row_batches = backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?;
+    if row_batches.len() != input_refs.len() || row_batches.iter().any(|rows| rows.len() != n_b) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned B commitment row shape {:?}, expected {} batches of {n_b} rows",
+            row_batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            input_refs.len(),
+        )));
+    }
+    let mut stacked = Vec::with_capacity(geometry.logical_output_rows(n_b)?);
+    stacked.extend(row_batches.into_iter().flatten());
+    Ok(stacked)
+}
 
 struct CpuInnerImageStore<F: Field> {
     owner: StateOwnerCapability<InnerImage>,
@@ -265,7 +387,7 @@ where
     fn export_inner_rows(
         &self,
         plan: &CommitInnerPlan,
-        image: &crate::compute::commitment::BackendStateRef<InnerImage>,
+        image: &crate::commitment::BackendStateRef<InnerImage>,
     ) -> Result<Vec<RingVec<F>>, AkitaError> {
         self.storage.export_rows(plan, image)
     }
@@ -317,12 +439,13 @@ impl<'a, F: Field> CpuOuterCommitOperation<'a, F> {
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
                 F,
                 outer_plan.ring_dimension(),
-                |D_B| crate::api::commitment::compute_outer_commitment_from_rows::<
-                    F,
-                    CpuBackend,
-                    D_A,
-                    D_B,
-                >(self.backend, self.prepared, rows, inner_plan, outer_plan,)
+                |D_B| compute_outer_commitment_from_rows::<F, CpuBackend, D_A, D_B>(
+                    self.backend,
+                    self.prepared,
+                    rows,
+                    inner_plan,
+                    outer_plan,
+                )
             )
         )
     }
@@ -334,7 +457,7 @@ where
 {
     fn commit_outer(
         &self,
-        plan: &crate::compute::UncompressedCommitPlan,
+        plan: &crate::commitment::UncompressedCommitPlan,
         inner: InnerImageInput<'_, F>,
     ) -> Result<RingVec<F>, AkitaError> {
         let inner_plan = *plan.inner();
@@ -367,10 +490,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{
+    use crate::commitment::{
         compile_commitment_request, BackendKindId, CommitmentRequestCapabilities, CommitmentSource,
-        ComputeBackendSetup, DenseType, PolynomialType,
+        DenseType, PolynomialType,
     };
+    use crate::compute::ComputeBackendSetup;
     use crate::{AkitaProverSetup, DensePoly};
     use akita_types::SetupMatrixCapacity;
     use jolt_field::{Prime128Offset275, Ring};
@@ -413,7 +537,7 @@ mod tests {
         .materialize()
         .unwrap();
         let operation = CpuInnerCommitOperation::new(&backend, &prepared);
-        let binding = crate::compute::commitment::CommitmentStateBinding::new(
+        let binding = crate::commitment::CommitmentStateBinding::new(
             setup.expanded.descriptor.clone(),
             plan,
             1,

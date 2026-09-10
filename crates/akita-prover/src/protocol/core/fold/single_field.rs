@@ -1,9 +1,9 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
+use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
-    CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend, InnerRelationState,
-    OuterCompressionState, ProverComputeStack, RuntimeRingSwitchProveBackend,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::core::RootProverGroupOpening;
 use crate::ProverOpeningData;

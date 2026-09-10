@@ -101,7 +101,7 @@ where
 /// Largest centered magnitudes over a flat field slice, as
 /// `(negative_abs_max, positive_max)`.
 ///
-/// Shared by dense [`crate::compute::CommitmentSource`] implementations so the
+/// Shared by dense [`crate::commitment::CommitmentSource`] implementations so the
 /// centering convention is written once: a canonical
 /// residue at or below `centering_threshold` is the positive side, anything above
 /// it is negative with magnitude `modulus - canonical`. That is the same split

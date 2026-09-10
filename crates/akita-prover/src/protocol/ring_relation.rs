@@ -2,13 +2,14 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
+use crate::commitment::{InnerRelationState, OuterCompressionState, PortableCompressionState};
 use crate::compute::{
-    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, OuterCompressionState, PortableCompressionState,
-    RootOpeningSource, RuntimeRingSwitchProveBackend,
+    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, DigitRowsComputeBackend,
+    OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource,
+    RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, InnerRelationState, ProverOpeningData};
+use crate::{DecomposeFoldWitness, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};

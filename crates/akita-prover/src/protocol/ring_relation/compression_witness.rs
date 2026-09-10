@@ -1,10 +1,11 @@
 //! Canonical materialization of B/D compression chains for one ring relation.
 
+use crate::commitment::PortableCompressionState;
 use crate::compute::compression::{
     execute_compression_chains, CompressionExecutionInput, CompressionExecutionOutput,
     CompressionExecutionReport, CompressionRelationOutput,
 };
-use crate::compute::{CompressionComputeBackend, OperationCtx, PortableCompressionState};
+use crate::compute::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
 use akita_types::{
     CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload, RelationRhsLayout,

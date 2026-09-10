@@ -1,6 +1,6 @@
 use super::*;
-use crate::api::commitment::for_each_outer_slice_input;
 use crate::backend::RingSwitchRelationView;
+use crate::commitment::for_each_outer_slice_input;
 use crate::compute::{
     OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel, RingSwitchRelationPlan,
     RuntimeRingSwitchProveBackend,

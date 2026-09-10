@@ -1,11 +1,13 @@
 use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
+use crate::commitment::{
+    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
+};
 use crate::compute::{
-    CommitmentStatePolicy, ComputeBackendSetup, DigitRowsComputeBackend, InnerRelationState,
-    LevelProveStacks, OuterCompressionState, ProverComputeStack,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
     RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, TerminalBindingState,
+    SuffixTensorProveBackend,
 };
 use akita_types::AkitaCommitmentHint;
 use jolt_field::AdditiveGroup;

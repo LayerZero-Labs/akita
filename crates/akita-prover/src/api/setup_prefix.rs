@@ -1,7 +1,7 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
 use crate::backend::DensePoly;
-use crate::compute::{
+use crate::commitment::{
     CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
     IntoPortableCommitmentState,
 };
@@ -137,12 +137,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{
+    use crate::commitment::{
         BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
-        CompressionOperationCapabilities, ComputeBackendSetup, CpuBackend, CpuCompressionOperation,
-        CpuInnerCommitOperation, CpuOuterCommitOperation, DenseType, NttExecutionRequirements,
-        PolynomialType, PortableStatePolicy, PreparedCompression, PreparedInnerCommitment,
-        PreparedOuterCommitment, ResidentStatePolicy, StageDimensionCapabilities, StageResources,
+        CompressionOperationCapabilities, DenseType, PolynomialType, PortableStatePolicy,
+        PreparedCompression, PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
+        StageDimensionCapabilities, StageResources,
+    };
+    use crate::compute::{
+        ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+        CpuOuterCommitOperation, NttExecutionRequirements,
     };
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;

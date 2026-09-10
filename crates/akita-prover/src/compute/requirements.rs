@@ -1,6 +1,6 @@
 //! Declarative NTT requirements for one resolved prover execution.
 
-use super::commitment::{CommitmentNttRoute, CommitmentNttStage};
+use crate::commitment::{CommitmentNttRoute, CommitmentNttStage};
 use akita_error::AkitaError;
 use akita_types::{
     centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,

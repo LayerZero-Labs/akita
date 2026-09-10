@@ -1,11 +1,12 @@
-use crate::compute::{
-    compile_commitment_request, AvailablePolynomialTypes, BackendKindId, CommitInnerPlan,
-    CommitSourceClass, CommitSourceDescriptor, CommitmentRequestCapabilities, CommitmentSource,
+use crate::commitment::{
+    compile_commitment_request, AvailablePolynomialTypes, BackendKindId, CommitSourceClass,
+    CommitSourceDescriptor, CommitmentRequestCapabilities, CommitmentSource,
     DenseCoefficientSource, DenseRepresentation, DenseType, ExternalInnerCommitmentCapability,
     ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
     PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
     PreparedExternalInnerCommitment,
 };
+use crate::compute::CommitInnerPlan;
 use crate::CommitInnerWitness;
 use akita_error::AkitaError;
 use jolt_field::Prime64Offset59;

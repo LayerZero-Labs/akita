@@ -1,18 +1,20 @@
 use super::*;
-use crate::compute::{
+use crate::commitment::{
     BackendKindId, BackendStateRef, CommitmentExecutionPlan, CommitmentNttRequirement,
     CommitmentNttRoute, CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
-    CommitmentStateBinding, CompressionOperationCapabilities, CompressionState,
+    CommitmentStateBinding, CompressionOperationCapabilities, CompressionState, DenseType,
+    FusedInnerOuterOperation, InnerCommitOperation, InnerCommitOutput, InnerImage,
+    InnerImageExportOperation, InnerImageInput, InnerRelationState, NoRetainedStatePolicy,
+    OuterCommitOperation, OuterCompressionState, PolynomialType, PortableCompressionState,
+    PortableCompressionStateExport, PortableStatePolicy, PreparedCommitmentResources,
+    PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
+    ResidentStatePolicy, ResolvedCommitSource, StageDimensionCapabilities, StageResources,
+    UncompressedCommitPlan, UncompressedCommitmentOutput,
+};
+use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
-    CpuOuterCommitOperation, CpuPreparedSetup, DenseType, FusedInnerOuterOperation,
-    InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageExportOperation,
-    InnerImageInput, InnerRelationState, NoRetainedStatePolicy, NttCacheOwnerId,
-    NttOperationCluster, OuterCommitOperation, OuterCompressionState, PolynomialType,
-    PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
-    PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
-    PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy, ResolvedCommitSource,
-    RoutedNttRequirement, StageDimensionCapabilities, StageResources, UncompressedCommitPlan,
-    UncompressedCommitmentOutput,
+    CpuOuterCommitOperation, CpuPreparedSetup, NttCacheOwnerId, NttOperationCluster,
+    RoutedNttRequirement,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;

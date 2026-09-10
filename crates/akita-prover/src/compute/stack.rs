@@ -16,8 +16,8 @@
 //! Prove entry points call `stacks.prove_stack_at_level(level)` once per fold,
 //! then dispatch through the cluster accessors on that stack.
 
+use crate::commitment::{CommitmentExecutor, CommitmentStatePolicy, PortableStatePolicy};
 use crate::compute::backend::{ComputeBackendSetup, NttCacheOwnerId};
-use crate::compute::commitment::{CommitmentExecutor, CommitmentStatePolicy, PortableStatePolicy};
 use crate::compute::requirements::{
     NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
 };

@@ -1,13 +1,15 @@
-//! Composable commitment execution contracts.
+//! Commitment API, source contracts, execution plans, backend stages, routing,
+//! resources, and retained state.
 //!
-//! This module is introduced in stages. Source discovery and borrowed
-//! representations land first; stage operations and the executor build on
-//! these checked, ring-dimension-free inputs.
+//! This is the canonical home for commitment orchestration. General compute
+//! backend traits and shared CPU primitives remain in [`crate::compute`].
 
+mod api;
 mod builder;
 mod capabilities;
 mod executor;
 mod external;
+mod outer_slices;
 mod plan;
 mod prepared;
 mod registration;
@@ -16,6 +18,9 @@ mod schedule;
 mod source;
 mod stages;
 mod state_policy;
+
+pub use api::{commit, resolve_polynomial_group_layout, CommitOutput, GroupContext};
+pub use outer_slices::for_each_outer_slice_input;
 
 pub use builder::CommitmentExecutorBuilder;
 pub use capabilities::{

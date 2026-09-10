@@ -1,16 +1,19 @@
 use super::*;
-use crate::compute::{
+use crate::commitment::{
     AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
     CommitmentExecutionPlan, CommitmentRequestCapabilities, CommitmentSource,
-    CommitmentStateBinding, CompressionOperationCapabilities, ComputeBackendSetup, CpuBackend,
-    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,
-    ExternalFusedInnerCommitmentEncoder, ExternalInnerCommitmentCapability,
-    ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
-    FusedInnerOuterOperation, InnerImage, NoRetainedStatePolicy, PolynomialRepresentation,
-    PolynomialType, PolynomialTypeSelection, PreparedCompression, PreparedExternalInnerCommitment,
+    CommitmentStateBinding, CompressionOperationCapabilities, ExternalFusedInnerCommitmentEncoder,
+    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+    ExternalInnerCommitmentOperation, ExternalOperationIdentity, FusedInnerOuterOperation,
+    InnerImage, NoRetainedStatePolicy, PolynomialRepresentation, PolynomialType,
+    PolynomialTypeSelection, PreparedCompression, PreparedExternalInnerCommitment,
     PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
     ResolvedCommitSource, StageDimensionCapabilities, StageResources, StateOwnerCapability,
     UncompressedCommitPlan, UncompressedCommitmentOutput,
+};
+use crate::compute::{
+    ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+    CpuOuterCommitOperation,
 };
 use crate::{AkitaProverSetup, CommitInnerWitness};
 use akita_challenges::SparseChallengeConfig;

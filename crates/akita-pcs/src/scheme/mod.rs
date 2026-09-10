@@ -2,12 +2,15 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_prover::commitment::{
+    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, InnerRelationState,
+    OuterCompressionState, TerminalBindingState,
+};
 use akita_prover::compute::{
-    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, ComputeBackendSetup,
-    DigitRowsComputeBackend, InnerRelationState, LevelProveStacks, OuterCompressionState,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, TerminalBindingState,
+    SuffixTensorProveBackend,
 };
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
