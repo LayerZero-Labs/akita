@@ -173,11 +173,13 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let group_inputs = bind_group_inputs(hints, groups)?;
-        Ok(Self {
+        let data = Self {
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
             opening_layout,
             group_inputs,
-        })
+        };
+        data.validate_claims()?;
+        Ok(data)
     }
 }
 
