@@ -125,6 +125,8 @@ dead_patterns=(
   'RootPolyMeta::num_ring_elems\b'
   'meta_ring_elems\b'
   'total_ring_elems\b'
+  'MultilinearPolynomial\b'
+  'multilinear_polynomial'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"

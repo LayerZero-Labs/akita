@@ -44,7 +44,6 @@ kernel modules. They are a sizing aid, not a removal target.
 | `crates/akita-prover/src/backend/onehot.rs` | 4 | Current cutover: one-hot representation must preserve sparse/one-hot planning. |
 | `crates/akita-prover/src/backend/sparse_ring.rs` | 4 | Current cutover: sparse-ring representation must avoid dense materialization. |
 | `crates/akita-prover/src/backend/field_reduction.rs` | 2 | Current cutover: root tensor projection delegates through migrated commit path. |
-| `crates/akita-prover/src/backend/multilinear_polynomial.rs` | 4 | Current cutover: enum wrapper forwards to dense/one-hot migrated plans. |
 | `crates/akita-prover/src/backend/recursive_witness.rs` | 8 | Current cutover: recursive witness commit path becomes plan-backed. |
 | `crates/akita-prover/src/protocol/flow.rs` | 40 | Current cutover: root and recursive flow accept backend-prepared setup. |
 | `crates/akita-prover/src/protocol/ring_switch.rs` | 25 | Current cutover: `commit_w`, next-w commitment, and ring-switch build use backend plans. |
@@ -122,7 +121,6 @@ or ring-switch commit:
 | `OneHotPoly<F, D, I>` in `backend/onehot.rs` | `type CommitCache = NttSlotCache<D>`; `commit_inner`; `commit_inner_witness` | Must preserve one-hot sparse planning. |
 | `SparseRingPoly<F, D>` in `backend/sparse_ring.rs` | `type CommitCache = NttSlotCache<D>`; `commit_inner`; `commit_inner_witness` | Must preserve sparse-ring row planning. |
 | `RootTensorProjectionPoly<F, D>` in `backend/field_reduction.rs` | `type CommitCache = NttSlotCache<D>`; forwards to inner poly | Used by transformed root commit path. |
-| `MultilinearPolynomial<'_, F, D, I>` in `backend/multilinear_polynomial.rs` | `type CommitCache = NttSlotCache<D>`; forwards dense/one-hot | Wrapper must not reintroduce CPU cache bounds. |
 | `SuffixWitness<'_, F, D>` in `backend/recursive_witness.rs` | direct `NttSlotCache<D>` parameters on recursive commit helpers | Used by `commit_w` and recursive folded levels. |
 
 ### Scheme orchestration

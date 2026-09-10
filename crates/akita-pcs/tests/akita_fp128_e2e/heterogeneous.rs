@@ -56,7 +56,7 @@ fn heterogeneous_group_types() {
         let final_onehot = make_onehot_poly::<OneHotCfg>(FINAL_NV, 0x1701_0000);
 
         let dense_polys = [dense_a.clone(), dense_b.clone()];
-        let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
+        let final_polys = [final_onehot.clone()];
 
         // OneHot pre-group committed with OneHotCfg (matches catalog descriptor[0]).
         let akita_prover::CommitOutput {
@@ -130,39 +130,52 @@ fn heterogeneous_group_types() {
         let dense_opening_b = dense_opening_lagrange(&dense_evals_b, &dense_point);
         let final_opening = onehot_opening_lagrange(&final_onehot, &final_point);
 
-        let onehot_pre_refs = [&MultilinearPolynomial::onehot(onehot_pre.clone())];
-        let dense_refs = [
-            &MultilinearPolynomial::dense(dense_a.clone()),
-            &MultilinearPolynomial::dense(dense_b.clone()),
-        ];
+        let onehot_pre_refs = [&onehot_pre];
+        let dense_refs = [&dense_a, &dense_b];
         let final_refs = [&final_polys[0]];
 
-        let prover_data = selected_prover_data::<OneHotCfg, _>(
-            OpeningClaims::from_groups(vec![
-                PolynomialGroupClaims::new(
-                    onehot_pre_point.clone(),
-                    vec![onehot_pre_opening],
-                    onehot_pre_commitment.clone(),
-                )
-                .expect("K=256 prover group"),
-                PolynomialGroupClaims::new(
-                    dense_point.clone(),
-                    vec![dense_opening_a, dense_opening_b],
-                    dense_commitment.clone(),
-                )
-                .expect("dense prover group"),
-                PolynomialGroupClaims::new(
-                    final_point.clone(),
-                    vec![final_opening],
-                    final_commitment.clone(),
-                )
-                .expect("final prover group"),
-            ])
-            .expect("prover claims"),
+        let prover_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                onehot_pre_point.clone(),
+                vec![onehot_pre_opening],
+                onehot_pre_commitment.clone(),
+            )
+            .expect("K=256 prover group"),
+            PolynomialGroupClaims::new(
+                dense_point.clone(),
+                vec![dense_opening_a, dense_opening_b],
+                dense_commitment.clone(),
+            )
+            .expect("dense prover group"),
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                vec![final_opening],
+                final_commitment.clone(),
+            )
+            .expect("final prover group"),
+        ])
+        .expect("prover claims");
+        let groups = vec![
+            ErasedPreparedProverGroup::<F, F, CpuBackend>::from_refs::<
+                akita_prover::OneHotPoly<F, u8>,
+            >(&onehot_pre_refs)
+            .expect("one-hot group"),
+            ErasedPreparedProverGroup::<F, F, CpuBackend>::from_refs::<akita_prover::DensePoly<F>>(
+                &dense_refs,
+            )
+            .expect("dense group"),
+            ErasedPreparedProverGroup::<F, F, CpuBackend>::from_refs::<
+                akita_prover::OneHotPoly<F, u8>,
+            >(&final_refs)
+            .expect("final group"),
+        ];
+        let prover_data = SelectedProverOpeningData::from_prepared_groups::<OneHotCfg>(
+            prover_claims,
             vec![onehot_pre_hint, dense_hint, final_hint],
-            vec![&onehot_pre_refs, &dense_refs, &final_refs],
+            groups,
             onehot_scheme.schedules(),
-        );
+        )
+        .expect("selected prover data");
         let selection = prover_data.selection();
 
         // The openings below come from independent oracles, so the resolved
@@ -314,7 +327,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let precommitteds =
             PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
                 .expect("nonempty precommitted groups");
-        let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
+        let final_polys = [final_onehot.clone()];
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             prover_state: final_hint,
@@ -338,29 +351,41 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let bounded_point_for_tamper = bounded_point.clone();
         let final_point_for_tamper = final_point.clone();
 
-        let bounded_refs = [&MultilinearPolynomial::dense(bounded_dense.clone())];
+        let bounded_refs = [&bounded_dense];
         let final_refs = [&final_polys[0]];
 
-        let prover_data = selected_prover_data::<OneHotCfg, _>(
-            OpeningClaims::from_groups(vec![
-                PolynomialGroupClaims::new(
-                    bounded_point.clone(),
-                    vec![bounded_opening],
-                    bounded_commitment.clone(),
-                )
-                .expect("bounded dense prover group"),
-                PolynomialGroupClaims::new(
-                    final_point.clone(),
-                    vec![final_opening],
-                    final_commitment.clone(),
-                )
-                .expect("final prover group"),
-            ])
-            .expect("prover claims"),
+        let prover_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                bounded_point.clone(),
+                vec![bounded_opening],
+                bounded_commitment.clone(),
+            )
+            .expect("bounded dense prover group"),
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                vec![final_opening],
+                final_commitment.clone(),
+            )
+            .expect("final prover group"),
+        ])
+        .expect("prover claims");
+        let groups = vec![
+            ErasedPreparedProverGroup::<F, F, CpuBackend>::from_refs::<akita_prover::DensePoly<F>>(
+                &bounded_refs,
+            )
+            .expect("bounded dense group"),
+            ErasedPreparedProverGroup::<F, F, CpuBackend>::from_refs::<
+                akita_prover::OneHotPoly<F, u8>,
+            >(&final_refs)
+            .expect("one-hot final group"),
+        ];
+        let prover_data = SelectedProverOpeningData::from_prepared_groups::<OneHotCfg>(
+            prover_claims,
             vec![bounded_hint, final_hint],
-            vec![&bounded_refs, &final_refs],
+            groups,
             onehot_scheme.schedules(),
-        );
+        )
+        .expect("selected prover data");
         let selection = prover_data.selection();
 
         let schedule = onehot_scheme

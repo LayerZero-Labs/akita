@@ -229,8 +229,9 @@ pub struct PolynomialTypeSelection {
     selected: PolynomialType,
 }
 
-enum PendingCommitSourcePath {
-    Standard(PolynomialTypeSelection),
+#[derive(Clone, Copy)]
+enum PendingCommitGroupPath {
+    Standard(PolynomialType),
     External(ExternalInnerCommitmentCapability),
 }
 
@@ -238,27 +239,29 @@ enum PendingCommitSourcePath {
 pub struct CompiledCommitmentRequest<'a, F: Field> {
     plan: CommitInnerPlan,
     sources: &'a [&'a dyn CommitmentSource<F>],
-    declarations: Vec<(CommitSourceDescriptor, PendingCommitSourcePath)>,
+    descriptors: Vec<CommitSourceDescriptor>,
+    path: PendingCommitGroupPath,
 }
 
 impl<'a, F: Field> CompiledCommitmentRequest<'a, F> {
     /// Selected standard types; external paths own their resource requirements.
     pub fn selected_polynomial_types(&self) -> impl Iterator<Item = PolynomialType> + '_ {
-        self.declarations.iter().filter_map(|(_, path)| match path {
-            PendingCommitSourcePath::Standard(selection) => Some(selection.polynomial_type()),
-            PendingCommitSourcePath::External(_) => None,
-        })
+        let selected = match self.path {
+            PendingCommitGroupPath::Standard(selected) => Some(selected),
+            PendingCommitGroupPath::External(_) => None,
+        };
+        selected.into_iter()
     }
 
     /// Materialize only the representations selected during request compilation.
     pub fn materialize(self) -> Result<Vec<ResolvedCommitSource<'a, F>>, AkitaError> {
         self.sources
             .iter()
-            .zip(self.declarations)
-            .enumerate()
-            .map(|(source_order, (source, (descriptor, pending)))| {
-                let path = match pending {
-                    PendingCommitSourcePath::Standard(selection) => {
+            .zip(self.descriptors)
+            .map(|(source, descriptor)| {
+                let path = match self.path {
+                    PendingCommitGroupPath::Standard(selected) => {
+                        let selection = PolynomialTypeSelection { selected };
                         let selected = selection.polynomial_type();
                         let representation = source.represent_as(selection, &self.plan)?;
                         validate_materialized_representation(
@@ -272,7 +275,7 @@ impl<'a, F: Field> CompiledCommitmentRequest<'a, F> {
                             representation,
                         }
                     }
-                    PendingCommitSourcePath::External(capability) => {
+                    PendingCommitGroupPath::External(capability) => {
                         let prepared =
                             source.prepare_external_inner_commitment(capability, &self.plan)?;
                         if prepared.capability() != capability {
@@ -284,7 +287,6 @@ impl<'a, F: Field> CompiledCommitmentRequest<'a, F> {
                     }
                 };
                 Ok(ResolvedCommitSource {
-                    source_order,
                     descriptor,
                     inner_plan: self.plan,
                     path,
@@ -562,18 +564,12 @@ enum ResolvedCommitSourcePath<'a, F: Field> {
 
 /// One admitted source with its compiled representation choice.
 pub struct ResolvedCommitSource<'a, F: Field> {
-    source_order: usize,
     descriptor: CommitSourceDescriptor,
     inner_plan: CommitInnerPlan,
     path: ResolvedCommitSourcePath<'a, F>,
 }
 
 impl<'a, F: Field> ResolvedCommitSource<'a, F> {
-    /// Position in the caller's original committed group.
-    pub const fn source_order(&self) -> usize {
-        self.source_order
-    }
-
     /// Validated source metadata.
     pub const fn descriptor(&self) -> &CommitSourceDescriptor {
         &self.descriptor
@@ -721,25 +717,6 @@ pub fn compile_commitment_request<'a, F: Field>(
             ));
         }
         let available = source.available_polynomial_types(plan)?;
-        let standard = capabilities
-            .standard_types
-            .iter()
-            .find_map(|supported| {
-                available
-                    .as_slice()
-                    .iter()
-                    .position(|offered| offered == supported)
-                    .map(|index| available.select(index))
-            })
-            .transpose()?
-            .or_else(|| {
-                capabilities
-                    .accepts_any_standard_type
-                    .then(|| available.select(0))
-                    .transpose()
-                    .ok()
-                    .flatten()
-            });
         let external = source.external_inner_commitment_capability(capabilities.backend, plan)?;
         if let Some(external) = external {
             if external.backend() != capabilities.backend
@@ -754,7 +731,7 @@ pub fn compile_commitment_request<'a, F: Field>(
                 ));
             }
         }
-        candidates.push((descriptor, standard, external));
+        candidates.push((descriptor, available, external));
     }
 
     let homogeneous_external = candidates
@@ -765,30 +742,47 @@ pub fn compile_commitment_request<'a, F: Field>(
                 .iter()
                 .all(|(_, _, external)| *external == Some(*selected))
         });
-    let declarations = if let Some(external) = homogeneous_external {
-        candidates
-            .into_iter()
-            .map(|(descriptor, _, _)| (descriptor, PendingCommitSourcePath::External(external)))
-            .collect()
+    let path = if let Some(external) = homogeneous_external {
+        PendingCommitGroupPath::External(external)
     } else {
-        candidates
-            .into_iter()
-            .map(|(descriptor, standard, _)| {
-                let Some(standard) = standard else {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "source group containing family {} has neither a homogeneous external path nor complete standard support for the selected inner operation",
-                        descriptor.family_name()
-                    )));
-                };
-                Ok((descriptor, PendingCommitSourcePath::Standard(standard)))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?
+        let common =
+            if capabilities.standard_types.is_empty() && capabilities.accepts_any_standard_type {
+                candidates.first().and_then(|(_, available, _)| {
+                    available.as_slice().iter().copied().find(|offered| {
+                        candidates
+                            .iter()
+                            .all(|(_, available, _)| available.as_slice().contains(offered))
+                    })
+                })
+            } else {
+                capabilities
+                    .standard_types
+                    .iter()
+                    .copied()
+                    .find(|supported| {
+                        candidates
+                            .iter()
+                            .all(|(_, available, _)| available.as_slice().contains(supported))
+                    })
+            };
+        let Some(selected) = common else {
+            return Err(AkitaError::InvalidInput(
+                "commitment source group has neither one common external path nor one common standard representation for the selected inner operation".into(),
+            ));
+        };
+        PendingCommitGroupPath::Standard(selected)
     };
+
+    let descriptors = candidates
+        .into_iter()
+        .map(|(descriptor, _, _)| descriptor)
+        .collect();
 
     Ok(CompiledCommitmentRequest {
         plan: *plan,
         sources,
-        declarations,
+        descriptors,
+        path,
     })
 }
 
@@ -1062,67 +1056,6 @@ impl<F: Field> CommitmentSource<F> for crate::RecursiveWitnessFlat {
     }
 }
 
-macro_rules! impl_multilinear_commitment_source {
-    ($index:ty) => {
-        impl<F: Field> CommitmentSource<F> for crate::MultilinearPolynomial<F, $index> {
-            fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
-                match self {
-                    Self::Dense(poly) => CommitmentSource::<F>::descriptor(poly),
-                    Self::OneHot(poly) => CommitmentSource::<F>::descriptor(poly),
-                }
-            }
-
-            fn committed_centered_reach(
-                &self,
-                modulus: u128,
-                centering_threshold: u128,
-            ) -> Result<(u128, u128), AkitaError>
-            where
-                F: CanonicalEncoding,
-            {
-                match self {
-                    Self::Dense(poly) => CommitmentSource::<F>::committed_centered_reach(
-                        poly,
-                        modulus,
-                        centering_threshold,
-                    ),
-                    Self::OneHot(poly) => CommitmentSource::<F>::committed_centered_reach(
-                        poly,
-                        modulus,
-                        centering_threshold,
-                    ),
-                }
-            }
-
-            fn available_polynomial_types(
-                &self,
-                plan: &CommitInnerPlan,
-            ) -> Result<AvailablePolynomialTypes, AkitaError> {
-                match self {
-                    Self::Dense(poly) => poly.available_polynomial_types(plan),
-                    Self::OneHot(poly) => poly.available_polynomial_types(plan),
-                }
-            }
-
-            fn represent_as(
-                &self,
-                selected: PolynomialTypeSelection,
-                plan: &CommitInnerPlan,
-            ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
-                match self {
-                    Self::Dense(poly) => poly.represent_as(selected, plan),
-                    Self::OneHot(poly) => poly.represent_as(selected, plan),
-                }
-            }
-        }
-    };
-}
-
-impl_multilinear_commitment_source!(u8);
-impl_multilinear_commitment_source!(u16);
-impl_multilinear_commitment_source!(u32);
-impl_multilinear_commitment_source!(usize);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1356,6 +1289,70 @@ mod tests {
         assert_eq!(dense.materializations.load(Ordering::SeqCst), 0);
         assert_eq!(compiled.materialize().unwrap().len(), 1);
         assert_eq!(dense.materializations.load(Ordering::SeqCst), 1);
+    }
+
+    struct OfferingSource {
+        offers: Vec<PolynomialType>,
+    }
+
+    impl CommitmentSource<F> for OfferingSource {
+        fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+            CommitSourceDescriptor::new(6, 64, 64, CommitSourceClass::Dense, "offering_source")
+        }
+
+        fn committed_centered_reach(
+            &self,
+            _modulus: u128,
+            _centering_threshold: u128,
+        ) -> Result<(u128, u128), AkitaError> {
+            Ok((0, 1))
+        }
+
+        fn available_polynomial_types(
+            &self,
+            _plan: &CommitInnerPlan,
+        ) -> Result<AvailablePolynomialTypes, AkitaError> {
+            AvailablePolynomialTypes::new(self.offers.clone())
+        }
+
+        fn represent_as(
+            &self,
+            _selected: PolynomialTypeSelection,
+            _plan: &CommitInnerPlan,
+        ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
+            unreachable!("selection tests do not materialize")
+        }
+    }
+
+    #[test]
+    fn request_selects_one_common_representation_for_the_group() {
+        let coefficients = PolynomialType::Dense(DenseType::Coefficients);
+        let digits = PolynomialType::Dense(DenseType::PredecomposedDigits);
+        let first = OfferingSource {
+            offers: vec![digits, coefficients],
+        };
+        let second = OfferingSource {
+            offers: vec![coefficients, digits],
+        };
+        let sources: [&dyn CommitmentSource<F>; 2] = [&first, &second];
+        struct TestBackend;
+        let backend = BackendKindId::of::<TestBackend>("test").unwrap();
+
+        let preferred =
+            CommitmentRequestCapabilities::split::<()>(backend, vec![coefficients, digits]);
+        let compiled = compile_commitment_request(&plan(), &sources, &preferred).unwrap();
+        assert_eq!(
+            compiled.selected_polynomial_types().collect::<Vec<_>>(),
+            vec![coefficients]
+        );
+
+        let mut accept_any = CommitmentRequestCapabilities::split::<()>(backend, Vec::new());
+        accept_any.accept_any_standard_type();
+        let compiled = compile_commitment_request(&plan(), &sources, &accept_any).unwrap();
+        assert_eq!(
+            compiled.selected_polynomial_types().collect::<Vec<_>>(),
+            vec![digits]
+        );
     }
 
     #[test]

@@ -54,6 +54,5 @@ pub use entries::OneHotIndex;
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
 pub(crate) use ops::commit_onehot_sources;
-pub(super) use ops::onehot_coefficient_packing_partials;
 pub use ops::{OneHotBatchView, OneHotView};
 pub use poly::{OneHotPoly, OneHotSource};

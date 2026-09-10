@@ -20,13 +20,14 @@ use jolt_field::Field;
 
 pub use api::{
     commit, commit_setup_prefix, for_each_outer_slice_input, resolve_polynomial_group_layout,
-    AkitaProverSetup, CommitOutput, GroupContext, PreparedGroupProveOps, PreparedProverGroup,
+    AkitaProverSetup, CommitOutput, ErasedPreparedProverGroup, GroupContext, PreparedGroupProveOps,
+    PreparedProverGroup,
 };
 
 pub use backend::{
-    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
-    OneHotSource, RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry,
-    SuffixWitnessBatchView, SuffixWitnessView,
+    tensor_pack_recursive_witness, DensePoly, OneHotIndex, OneHotPoly, OneHotSource,
+    RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry, SuffixWitnessBatchView,
+    SuffixWitnessView,
 };
 pub use compute::{
     compile_commitment_request, cpu_external_inner_commitment_capability,
@@ -61,13 +62,13 @@ pub use compute::{
     RecursiveProveBackend, ReleaseRootNttAfterFold, ResidentCommitmentState, ResidentStatePolicy,
     ResolvedCommitSource, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
     RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
-    RootTensorSource, RoutedNttRequirement, RuntimeOpeningProveBackendFor,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
-    RuntimeTensorBackendFor, ShortNormRepresentation, ShortNormType, StageDimensionCapabilities,
-    StageResources, StateOwnerCapability, SuffixOpeningProveBackend, SuffixTensorProveBackend,
-    TensorBackendFor, TensorCluster, TerminalBindingState, TerminalTFieldsMessage,
-    TieredProveStacks, UncompressedCommitPlan, UncompressedCommitmentOutput, UniformProverStack,
-    UnitPositionSlice,
+    RootTensorSource, RoutedNttRequirement, RuntimeCoefficientPackingBackendFor,
+    RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
+    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    ShortNormRepresentation, ShortNormType, StageDimensionCapabilities, StageResources,
+    StateOwnerCapability, SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
+    TensorCluster, TerminalBindingState, TerminalTFieldsMessage, TieredProveStacks,
+    UncompressedCommitPlan, UncompressedCommitmentOutput, UniformProverStack, UnitPositionSlice,
 };
 pub use protocol::sumcheck::{
     DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,

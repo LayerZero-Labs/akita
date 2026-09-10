@@ -175,14 +175,21 @@ opening where it is useful.
 
 ## Dense and one hot groups in one batch
 
-The concrete polynomial type is a prover side application choice. An
-application that opens dense and one hot groups in the same proof can define
-one enum that owns both representations and implements the required source
-traits.
+Every commitment group is homogeneous: all of its polynomials use one concrete
+source type and one selected commitment representation. Commit dense and one
+hot data as separate groups. They can still be opened together in one proof.
 
-The application keeps this enum as its one polynomial source type. Akita calls
-the representation specific operations directly, so one hot data stays compact
-throughout commitment and opening.
+Build each `ErasedPreparedProverGroup` from a nonempty slice of references to
+one concrete type, then pass the ordered erased groups to
+`SelectedProverOpeningData::from_prepared_groups`. Erasure occurs once per
+group. Akita continues to call the concrete dense or one hot batch kernels, and
+one hot data stays compact throughout commitment and opening. Claims, retained
+states, and erased groups must use the same group order.
+
+Akita rejects a commitment request unless all members share one external
+operation or one exact standard representation supported by the selected
+backend. It does not split a mixed group automatically because that would
+change commitment identities and opening claims.
 
 ## Explicit commitment parameters
 

@@ -146,11 +146,16 @@ sources in original group order, and its backend context. It has no transcript
 access and cannot implement B or compression through this interface.
 
 When all sources in a group advertise one compatible external capability,
-request compilation prefers that homogeneous path. Otherwise every source
-must have a supported standard representation. Standard representation
-selection is per source, so two sources in one standard-path group may use
-different supported representations. Mixing external and standard inner
-execution within one group is rejected before arithmetic.
+request compilation prefers that homogeneous path. Otherwise it selects one
+exact standard representation from the intersection of every source offer and
+the backend capabilities. Every source in the group receives that selection.
+An empty intersection, or a mixture of external and standard inner execution,
+is rejected before materialization or arithmetic.
+
+Each commitment group is therefore representation-homogeneous. Different
+groups in one opening batch may use different concrete source types and
+representations. Proving erases complete prepared groups through
+`ErasedPreparedProverGroup`; it does not erase or dispatch each polynomial.
 
 A fused route accepts an external-only source only when its capability declares
 support for the fused command context. The source encoder may append A work to

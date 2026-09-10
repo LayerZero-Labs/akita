@@ -180,8 +180,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .collect::<Vec<_>>();
             let polynomial =
                 akita_prover::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
-            let polynomial =
-                akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
 
             let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]

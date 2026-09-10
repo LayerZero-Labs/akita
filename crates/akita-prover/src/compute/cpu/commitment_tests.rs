@@ -51,7 +51,7 @@ fn assert_rows_equal(left: &RingVec<F>, right: &RingVec<F>) {
 }
 
 #[test]
-fn resolved_dense_and_all_onehot_widths_commit_in_source_order() {
+fn resolved_homogeneous_groups_cover_dense_and_all_onehot_widths() {
     let (_setup, prepared) = prepared();
     let backend = CpuBackend::DEFAULT;
     let dense = DensePoly::from_field_evals(
@@ -79,31 +79,40 @@ fn resolved_dense_and_all_onehot_widths_commit_in_source_order() {
     let u16_poly = onehot!(u16);
     let u32_poly = onehot!(u32);
     let usize_poly = onehot!(usize);
-    let source_refs: [&dyn CommitmentSource<F>; 5] =
-        [&dense, &u8_poly, &u16_poly, &u32_poly, &usize_poly];
-    let resolved = compile_commitment_request(
-        &plan(),
-        &source_refs,
-        &capabilities(vec![
-            PolynomialType::Dense(DenseType::Coefficients),
-            PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U8).unwrap()),
-            PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U16).unwrap()),
-            PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U32).unwrap()),
-            PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::Usize).unwrap()),
-        ]),
-    )
-    .unwrap()
-    .materialize()
-    .unwrap();
-    let actual = backend
-        .commit_resolved_inner_host::<F, D>(&prepared, &resolved, plan())
-        .unwrap();
-
-    assert_eq!(actual.len(), source_refs.len());
-    for witness in actual {
-        assert_eq!(witness.inner_rows.ring_dim(), D);
-        assert_eq!(witness.inner_rows.count(), plan().n_a);
+    macro_rules! assert_group {
+        ($poly:expr, $kind:expr) => {{
+            let source_refs: [&dyn CommitmentSource<F>; 1] = [$poly];
+            let resolved =
+                compile_commitment_request(&plan(), &source_refs, &capabilities(vec![$kind]))
+                    .unwrap()
+                    .materialize()
+                    .unwrap();
+            let actual = backend
+                .commit_resolved_inner_host::<F, D>(&prepared, &resolved, plan())
+                .unwrap();
+            assert_eq!(actual.len(), 1);
+            assert_eq!(actual[0].inner_rows.ring_dim(), D);
+            assert_eq!(actual[0].inner_rows.count(), plan().n_a);
+        }};
     }
+
+    assert_group!(&dense, PolynomialType::Dense(DenseType::Coefficients));
+    assert_group!(
+        &u8_poly,
+        PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U8).unwrap())
+    );
+    assert_group!(
+        &u16_poly,
+        PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U16).unwrap())
+    );
+    assert_group!(
+        &u32_poly,
+        PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::U32).unwrap())
+    );
+    assert_group!(
+        &usize_poly,
+        PolynomialType::OneHot(OneHotType::new(64, OneHotIndexWidth::Usize).unwrap())
+    );
 }
 
 #[test]

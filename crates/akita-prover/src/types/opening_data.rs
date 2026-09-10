@@ -4,18 +4,18 @@ use crate::compute::{
     PortableCompressionState, RootPolyMeta,
 };
 use crate::protocol::core::RootProverGroupMeta;
-use crate::PreparedProverGroup;
+use crate::{ErasedPreparedProverGroup, PreparedProverGroup};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
-    CommittedGroupParams, CompressionChainPlan, OpeningClaims, OpeningClaimsLayout,
+    CommittedGroupParams, CompressionChainPlan, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
     OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingRelationMode,
     SetupPrefixSlot,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Exact top-level row selection paired with its prover opening material.
 #[derive(Debug, Clone)]
@@ -80,6 +80,52 @@ fn bind_group_inputs<G, S>(
         .zip(groups)
         .map(|(state, group)| ProverGroupInput::new(state, group))
         .collect())
+}
+
+fn opening_data_from_committed_groups<'a, PointF, G, CommitF, S>(
+    opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
+    states: Vec<S>,
+    groups: Vec<G>,
+) -> Result<ProverOpeningData<'a, PointF, G, CommitF, S>, AkitaError>
+where
+    PointF: Clone,
+    CommitF: Field,
+    G: RootProverGroupMeta<CommitF>,
+{
+    let opening_layout = opening_claims.committed_layout()?;
+    if opening_claims.num_groups() != groups.len() {
+        return Err(AkitaError::InvalidInput(
+            "committed claims and prover source groups are misaligned".into(),
+        ));
+    }
+    for (claims_group, source_group) in opening_claims.groups().iter().zip(&groups) {
+        let actual =
+            PolynomialGroupLayout::new(source_group.num_vars()?, source_group.num_polynomials());
+        if claims_group.commitment().profile().group != actual {
+            return Err(AkitaError::InvalidInput(
+                "committed group geometry does not match the prover polynomials".into(),
+            ));
+        }
+    }
+    let raw_groups = opening_claims
+        .groups()
+        .iter()
+        .map(|group| {
+            PolynomialGroupClaims::new(
+                group.point().to_vec(),
+                group.evaluations().to_vec(),
+                group.commitment().commitment().clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let group_inputs = bind_group_inputs(states, groups)?;
+    let data = ProverOpeningData {
+        opening_claims: OpeningClaims::from_groups(raw_groups)?,
+        opening_layout,
+        group_inputs,
+    };
+    data.check_alignment()?;
+    Ok(data)
 }
 
 fn opening_layout_for_groups<PointF: Clone, G, CommitF: Field>(
@@ -200,46 +246,60 @@ where
         states: Vec<S>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
-        let opening_layout = opening_claims.committed_layout()?;
         let groups = polynomials
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
-        if opening_claims.num_groups() != groups.len() {
-            return Err(AkitaError::InvalidInput(
-                "committed claims and prover source groups are misaligned".into(),
-            ));
-        }
-        for (claims_group, source_group) in opening_claims.groups().iter().zip(&groups) {
-            let actual = PolynomialGroupLayout::new(
-                source_group.num_vars()?,
-                source_group.num_polynomials(),
-            );
-            if claims_group.commitment().profile().group != actual {
-                return Err(AkitaError::InvalidInput(
-                    "committed group geometry does not match the prover polynomials".into(),
-                ));
-            }
-        }
-        let raw_groups = opening_claims
-            .groups()
-            .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    group.commitment().commitment().clone(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let group_inputs = bind_group_inputs(states, groups)?;
-        let data = Self {
-            opening_claims: OpeningClaims::from_groups(raw_groups)?,
-            opening_layout,
-            group_inputs,
-        };
-        data.check_alignment()?;
-        Ok(data)
+        opening_data_from_committed_groups(opening_claims, states, groups)
+    }
+}
+
+impl<'a, PointF, CommitF, S, O>
+    SelectedProverOpeningData<
+        'a,
+        PointF,
+        ErasedPreparedProverGroup<'a, CommitF, PointF, O>,
+        CommitF,
+        S,
+    >
+where
+    PointF: Clone
+        + FpExtEncoding<CommitF>
+        + ExtField<CommitF>
+        + MulBaseUnreduced<CommitF>
+        + AkitaSerialize,
+    CommitF: Field
+        + CanonicalEncoding
+        + jolt_field::Ring
+        + jolt_field::Unreduced
+        + AkitaSerialize
+        + 'static,
+    <CommitF as jolt_field::Unreduced>::Wide: From<CommitF> + jolt_field::AdditiveGroup,
+    O: crate::compute::ComputeBackendSetup<CommitF>
+        + crate::compute::DigitRowsComputeBackend<CommitF>,
+{
+    /// Select a catalog row for an ordered batch of already prepared groups.
+    pub fn from_prepared_groups<Cfg>(
+        opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
+        states: Vec<S>,
+        groups: Vec<ErasedPreparedProverGroup<'a, CommitF, PointF, O>>,
+        schedules: &TrustedScheduleCatalog<Cfg>,
+    ) -> Result<Self, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = CommitF, ExtField = PointF>,
+    {
+        let batch_profile = CommittedGroupBatchProfile::from_ordered_groups(
+            opening_claims
+                .groups()
+                .iter()
+                .map(PolynomialGroupClaims::commitment),
+        )?;
+        let selection = schedules.resolve_profiles(&batch_profile)?.selection();
+        let opening_data = opening_data_from_committed_groups(opening_claims, states, groups)?;
+        Ok(Self {
+            selection,
+            opening_data,
+        })
     }
 }
 

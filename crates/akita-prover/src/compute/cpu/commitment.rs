@@ -7,8 +7,9 @@ use super::{CpuBackend, CpuPreparedSetup};
 use crate::backend::packed_digits::PackedSignedDigitView;
 use crate::backend::{commit_onehot_sources, OneHotSource};
 use crate::compute::commitment::{
-    CommitSourceDescriptor, DenseCoefficientSource, DenseRepresentation, PolynomialRepresentation,
-    PredecomposedDigitPlanes, ResolvedCommitSource, UnitPositionSlice,
+    CommitSourceDescriptor, DenseCoefficientSource, DenseRepresentation, DenseType,
+    OneHotIndexWidth, PolynomialRepresentation, PolynomialType, PredecomposedDigitPlanes,
+    ResolvedCommitSource, UnitPositionSlice,
 };
 use crate::compute::plans::DenseCommitInput;
 use crate::compute::CommitInnerPlan;
@@ -32,8 +33,8 @@ use std::array::from_fn;
 impl CpuBackend {
     /// Execute the standard CPU inner stage over request-compiled sources.
     ///
-    /// Results remain in original source order even though one-hot inputs are
-    /// grouped by their stored index width for the multi-source sweep.
+    /// Every source has the same request-compiled representation. Results
+    /// remain in source order.
     pub fn commit_resolved_inner_host<F, const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
@@ -50,45 +51,95 @@ impl CpuBackend {
             ));
         }
 
-        let mut ordered = Vec::with_capacity(sources.len());
-        let mut onehot_u8 = Vec::new();
-        let mut onehot_u16 = Vec::new();
-        let mut onehot_u32 = Vec::new();
-        let mut onehot_usize = Vec::new();
-
         for source in sources {
             source.validate_plan(&plan)?;
-            let order = source.source_order();
-            let representation = source.representation().ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "CPU standard inner stage cannot execute an external source path".into(),
-                )
-            })?;
-            match representation {
-                PolynomialRepresentation::Dense(DenseRepresentation::Coefficients(dense)) => {
-                    let rows = self.dense_coefficient_commit_rows::<F, D>(
+            if source.selected_type() != sources[0].selected_type() {
+                return Err(AkitaError::InvalidInput(
+                    "CPU inner source group is not representation-homogeneous".into(),
+                ));
+            }
+        }
+
+        macro_rules! commit_onehot_group {
+            ($variant:ident) => {{
+                let group = sources
+                    .iter()
+                    .map(|source| {
+                        let Some(PolynomialRepresentation::OneHot(onehot)) =
+                            source.representation()
+                        else {
+                            return Err(AkitaError::InvalidInput(
+                                "compiled one-hot group contains another representation".into(),
+                            ));
+                        };
+                        let UnitPositionSlice::$variant(positions) = onehot.positions else {
+                            return Err(AkitaError::InvalidInput(
+                                "compiled one-hot group contains another index width".into(),
+                            ));
+                        };
+                        Ok(OneHotSource {
+                            indices: positions,
+                            chunk_size: onehot.chunk_size,
+                            num_vars: onehot.num_vars,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?;
+                commit_onehot_sources::<F, D, _>(self, prepared, &group, plan)
+            }};
+        }
+
+        match sources[0].selected_type() {
+            Some(PolynomialType::Dense(DenseType::Coefficients)) => sources
+                .iter()
+                .map(|source| {
+                    let Some(PolynomialRepresentation::Dense(DenseRepresentation::Coefficients(
+                        dense,
+                    ))) = source.representation()
+                    else {
+                        return Err(AkitaError::InvalidInput(
+                            "compiled dense group contains another representation".into(),
+                        ));
+                    };
+                    self.dense_coefficient_commit_rows::<F, D>(
                         prepared,
                         *dense,
                         source.descriptor(),
                         plan,
-                    )?;
-                    ordered.push((order, CommitInnerWitness::from_rows(rows)));
-                }
-                PolynomialRepresentation::Dense(DenseRepresentation::PredecomposedDigits(
-                    planes,
-                )) => {
-                    let rows =
-                        self.predecomposed_dense_commit_rows::<F, D>(prepared, planes, plan)?;
-                    ordered.push((order, CommitInnerWitness::from_rows(rows)));
-                }
-                PolynomialRepresentation::ShortNorm(short) => {
+                    )
+                    .map(CommitInnerWitness::from_rows)
+                })
+                .collect(),
+            Some(PolynomialType::Dense(DenseType::PredecomposedDigits)) => sources
+                .iter()
+                .map(|source| {
+                    let Some(PolynomialRepresentation::Dense(
+                        DenseRepresentation::PredecomposedDigits(planes),
+                    )) = source.representation()
+                    else {
+                        return Err(AkitaError::InvalidInput(
+                            "compiled dense-digit group contains another representation".into(),
+                        ));
+                    };
+                    self.predecomposed_dense_commit_rows::<F, D>(prepared, planes, plan)
+                        .map(CommitInnerWitness::from_rows)
+                })
+                .collect(),
+            Some(PolynomialType::ShortNorm(_)) => sources
+                .iter()
+                .map(|source| {
+                    let Some(PolynomialRepresentation::ShortNorm(short)) = source.representation()
+                    else {
+                        return Err(AkitaError::InvalidInput(
+                            "compiled short-norm group contains another representation".into(),
+                        ));
+                    };
                     let digits = short.packed_view.ok_or_else(|| {
                         AkitaError::InvalidInput(
                             "CPU packed inner stage requires a validated zero-copy packed view"
                                 .into(),
                         )
                     })?;
-                    let rows = self.recursive_packed_witness_commit_rows::<F, D>(
+                    self.recursive_packed_witness_commit_rows::<F, D>(
                         prepared,
                         digits,
                         plan.n_a,
@@ -96,63 +147,20 @@ impl CpuBackend {
                         plan.num_live_blocks,
                         plan.num_digits_inner,
                         plan.log_basis_inner,
-                    )?;
-                    ordered.push((order, CommitInnerWitness::from_rows(rows)));
-                }
-                PolynomialRepresentation::OneHot(onehot) => match onehot.positions {
-                    UnitPositionSlice::U8(positions) => onehot_u8.push((
-                        order,
-                        OneHotSource {
-                            indices: positions,
-                            chunk_size: onehot.chunk_size,
-                            num_vars: onehot.num_vars,
-                        },
-                    )),
-                    UnitPositionSlice::U16(positions) => onehot_u16.push((
-                        order,
-                        OneHotSource {
-                            indices: positions,
-                            chunk_size: onehot.chunk_size,
-                            num_vars: onehot.num_vars,
-                        },
-                    )),
-                    UnitPositionSlice::U32(positions) => onehot_u32.push((
-                        order,
-                        OneHotSource {
-                            indices: positions,
-                            chunk_size: onehot.chunk_size,
-                            num_vars: onehot.num_vars,
-                        },
-                    )),
-                    UnitPositionSlice::Usize(positions) => onehot_usize.push((
-                        order,
-                        OneHotSource {
-                            indices: positions,
-                            chunk_size: onehot.chunk_size,
-                            num_vars: onehot.num_vars,
-                        },
-                    )),
-                },
-            }
+                    )
+                    .map(CommitInnerWitness::from_rows)
+                })
+                .collect(),
+            Some(PolynomialType::OneHot(kind)) => match kind.index_width() {
+                OneHotIndexWidth::U8 => commit_onehot_group!(U8),
+                OneHotIndexWidth::U16 => commit_onehot_group!(U16),
+                OneHotIndexWidth::U32 => commit_onehot_group!(U32),
+                OneHotIndexWidth::Usize => commit_onehot_group!(Usize),
+            },
+            None => Err(AkitaError::InvalidInput(
+                "CPU standard inner stage cannot execute an external source path".into(),
+            )),
         }
-
-        commit_onehot_subgroup::<F, D, _>(self, prepared, onehot_u8, plan, &mut ordered)?;
-        commit_onehot_subgroup::<F, D, _>(self, prepared, onehot_u16, plan, &mut ordered)?;
-        commit_onehot_subgroup::<F, D, _>(self, prepared, onehot_u32, plan, &mut ordered)?;
-        commit_onehot_subgroup::<F, D, _>(self, prepared, onehot_usize, plan, &mut ordered)?;
-
-        ordered.sort_unstable_by_key(|(order, _)| *order);
-        if ordered.len() != sources.len()
-            || ordered
-                .iter()
-                .enumerate()
-                .any(|(expected, (actual, _))| expected != *actual)
-        {
-            return Err(AkitaError::InvalidInput(
-                "resolved CPU inner source order is incomplete or duplicated".into(),
-            ));
-        }
-        Ok(ordered.into_iter().map(|(_, witness)| witness).collect())
     }
 
     fn predecomposed_dense_commit_rows<F, const D: usize>(
@@ -494,31 +502,6 @@ impl CpuBackend {
             )
         }
     }
-}
-
-fn commit_onehot_subgroup<F, const D: usize, I>(
-    backend: &CpuBackend,
-    prepared: &CpuPreparedSetup<F>,
-    sources: Vec<(usize, OneHotSource<'_, I>)>,
-    plan: CommitInnerPlan,
-    ordered: &mut Vec<(usize, CommitInnerWitness<F>)>,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
-    I: crate::OneHotIndex,
-{
-    if sources.is_empty() {
-        return Ok(());
-    }
-    let (orders, sources): (Vec<_>, Vec<_>) = sources.into_iter().unzip();
-    let witnesses = commit_onehot_sources::<F, D, I>(backend, prepared, &sources, plan)?;
-    if witnesses.len() != orders.len() {
-        return Err(AkitaError::InvalidSetup(
-            "one-hot CPU subgroup returned the wrong source count".into(),
-        ));
-    }
-    ordered.extend(orders.into_iter().zip(witnesses));
-    Ok(())
 }
 
 pub(crate) fn dense_coefficient_block_slices<const D: usize, F: Field>(

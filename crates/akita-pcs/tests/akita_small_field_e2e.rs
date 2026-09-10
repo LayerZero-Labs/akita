@@ -119,9 +119,12 @@ macro_rules! small_field_test {
                         .map(|i| weights[i] * <$se>::lift_base(evals[i]))
                         .fold(<$se>::from_u64(0), |a, b| a + b);
 
-                    let roundtrip = single_group_roundtrip::<$cfg>(
+                    let roundtrip = single_group_roundtrip::<
+                        $cfg,
+                        akita_prover::DensePoly<$sf>,
+                    >(
                         nv,
-                        &akita_prover::MultilinearPolynomial::dense(poly),
+                        &poly,
                         point,
                         expected,
                         label,
@@ -304,9 +307,12 @@ macro_rules! small_field_test {
                         .collect();
                     let expected = onehot_opening_lagrange(&poly, &point);
 
-                    single_group_roundtrip::<$cfg>(
+                    single_group_roundtrip::<
+                        $cfg,
+                        akita_prover::OneHotPoly<$sf, u8>,
+                    >(
                         nv,
-                        &akita_prover::MultilinearPolynomial::onehot(poly),
+                        &poly,
                         point,
                         expected,
                         label,
