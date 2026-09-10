@@ -125,7 +125,7 @@ fn price_planned_fold_candidate(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     search: &OpeningSearch<'_>,
-    guide: Option<(CompleteObjectiveBound, Option<usize>, u64)>,
+    guide: Option<(CompleteObjectiveBound, Option<usize>)>,
     candidate: PlannedFoldCandidate,
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
@@ -150,12 +150,10 @@ fn price_planned_fold_candidate(
             return Ok(());
         }
     }
-    let natural_len = guide
-        .and_then(|(_, natural_len, _)| natural_len)
-        .map_or_else(
-            || active_setup_field_len(&params, search.opening_layout),
-            Ok,
-        )?;
+    let natural_len = guide.and_then(|(_, natural_len)| natural_len).map_or_else(
+        || active_setup_field_len(&params, search.opening_layout),
+        Ok,
+    )?;
     let direct_edge_is_admissible =
         state
             .topology
@@ -168,7 +166,7 @@ fn price_planned_fold_candidate(
         ctx.policy.selection_policy,
         crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
-        && guide.is_some_and(|(lower_bound, _, _)| {
+        && guide.is_some_and(|(lower_bound, _)| {
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
         })
     {
@@ -179,19 +177,9 @@ fn price_planned_fold_candidate(
     }
     let prune_direct_edge = if direct_edge_is_admissible {
         guide
-            .zip(search.guide_scope)
-            .map(|((lower_bound, _, query_lower_bound), guide_scope)| {
-                direct_edge_bound_is_strictly_worse(
-                    ctx.policy,
-                    guide_scope,
-                    &params,
-                    natural_len,
-                    lower_bound,
-                    query_lower_bound,
-                    &frontiers.projected,
-                )
+            .map(|(lower_bound, _)| {
+                direct_edge_bound_is_strictly_worse(ctx.policy, lower_bound, &frontiers.projected)
             })
-            .transpose()?
             .unwrap_or(false)
     } else {
         false
@@ -303,8 +291,9 @@ fn process_candidate_batch(
     if candidates.is_empty() {
         return Ok(());
     }
-    let incoming_setup_prefix = state.topology.incoming_setup_prefix();
-    let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
+    // Recursive-prefix objective bounds have no sound query-count lower
+    // bound, so guided early pruning is restricted to complete roots.
+    let guide_scope = GuideScope::for_state(is_root_level);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
     let search = OpeningSearch {
         state,

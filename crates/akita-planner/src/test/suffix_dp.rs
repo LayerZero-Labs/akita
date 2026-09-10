@@ -255,21 +255,12 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
 }
 
 #[test]
-fn guided_early_pruning_admits_query_safe_recursive_prefixes() {
-    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
+fn guided_early_pruning_is_limited_to_complete_roots() {
     assert!(matches!(
-        super::GuideScope::for_state(&policy, true, None),
+        super::GuideScope::for_state(true),
         Some(super::GuideScope::CompleteRoot)
     ));
-    assert!(matches!(
-        super::GuideScope::for_state(&policy, false, Some(1)),
-        Some(super::GuideScope::RecursivePrefix)
-    ));
-    assert!(super::GuideScope::for_state(&policy, false, None).is_none());
-
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
-    assert!(super::GuideScope::for_state(&policy, false, Some(1)).is_none());
+    assert!(super::GuideScope::for_state(false).is_none());
 }
 
 #[test]

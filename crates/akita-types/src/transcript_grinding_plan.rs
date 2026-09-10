@@ -61,32 +61,6 @@ pub fn transcript_grinding_cost_for_planner_candidate(
     })
 }
 
-/// Lower-bound the expanded queries contributed by any completion of one planner edge.
-///
-/// Every nonterminal edge includes one fold-response query and the fold-challenge
-/// queries determined entirely by its current parameters and opening layout.
-/// Successor-dependent proof-of-work, Stage-3, and terminal queries are omitted.
-pub fn transcript_grinding_query_lower_bound_for_planner_edge(
-    params: &CommittedGroupParams,
-    layout: &OpeningClaimsLayout,
-) -> Result<u64, AkitaError> {
-    let mut expanded_query_count = GrindingRun::fold_response(0).multiplicity();
-    append_fold_queries(
-        &mut |run| {
-            expanded_query_count = expanded_query_count
-                .checked_add(run.multiplicity())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("grinding query lower bound overflow".into())
-                })?;
-            Ok(())
-        },
-        0,
-        params,
-        layout,
-    )?;
-    Ok(expanded_query_count)
-}
-
 /// Price one planner edge using the canonical query builders.
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_cost_for_planner_edge(
@@ -569,31 +543,5 @@ mod tests {
                 .count(),
             expected_rounds - 2
         );
-    }
-
-    #[test]
-    fn planner_edge_query_lower_bound_is_conservative() {
-        let current = params(64);
-        let successor = params(128);
-        let layout = OpeningClaimsLayout::new(6, 1).expect("opening layout");
-        let successor = FoldSuccessor::Recursive(&successor);
-        let relation_geometry = current
-            .relation_address_geometry(&layout, 1, successor.ring_dimension(), 64)
-            .expect("relation geometry");
-        let actual = transcript_grinding_cost_for_planner_edge(
-            &current,
-            relation_geometry,
-            &layout,
-            successor,
-            128,
-            1,
-            0,
-        )
-        .expect("edge grinding cost");
-        let lower_bound = transcript_grinding_query_lower_bound_for_planner_edge(&current, &layout)
-            .expect("edge query lower bound");
-
-        assert!(lower_bound > 0);
-        assert!(lower_bound <= actual.expanded_query_count);
     }
 }

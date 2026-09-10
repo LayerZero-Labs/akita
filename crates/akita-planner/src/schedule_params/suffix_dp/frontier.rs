@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use akita_error::AkitaError;
 
-use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
+use crate::PlannerPolicy;
 
 use super::{
     child_choice, child_edge_price, ParentObservableKey, PendingScheduleCandidate,
@@ -357,28 +357,6 @@ impl ProjectedFrontier {
             .sum()
     }
 
-    pub(super) fn recursive_direct_bound_is_strictly_worse(
-        &self,
-        parent_cost: &ParentObservableKey,
-        first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
-        lower_bound: CompleteObjectiveBound,
-        query_lower_bound: u64,
-    ) -> bool {
-        let candidate_admission = ParentAdmissionClass {
-            fold_depth: 2,
-            first_direct_setup_capacity,
-        };
-        let Some(choices) = self.by_parent_cost.get(parent_cost) else {
-            return false;
-        };
-        recursive_direct_bound_is_dominated(
-            candidate_admission,
-            lower_bound,
-            query_lower_bound,
-            choices,
-        )
-    }
-
     fn consider(
         &mut self,
         policy: &PlannerPolicy,
@@ -570,45 +548,6 @@ impl ProjectedFrontier {
         }
         Ok(())
     }
-}
-
-fn recursive_direct_bound_is_dominated(
-    candidate_admission: ParentAdmissionClass,
-    lower_bound: CompleteObjectiveBound,
-    query_lower_bound: u64,
-    incumbents: &ProjectedObjectiveChoices,
-) -> bool {
-    Projection::ALL.into_iter().all(|projection| {
-        projection_bound_is_dominated(
-            projection,
-            candidate_admission,
-            lower_bound,
-            query_lower_bound,
-            incumbents
-                .projected(projection)
-                .iter()
-                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
-        )
-    })
-}
-
-fn projection_bound_is_dominated(
-    projection: Projection,
-    candidate_admission: ParentAdmissionClass,
-    lower_bound: CompleteObjectiveBound,
-    query_lower_bound: u64,
-    incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
-) -> bool {
-    incumbents.into_iter().any(|(admission, metrics)| {
-        admission.admits_every_parent_of(candidate_admission)
-            && metrics.cost.grinding_cost().expanded_query_count <= query_lower_bound
-            && match projection {
-                Projection::FirstDirectSetup => {
-                    lower_bound.is_strictly_worse_for_recursive_parent(metrics)
-                }
-                Projection::Payload => lower_bound.is_strictly_worse_for_recursive_payload(metrics),
-            }
-    })
 }
 
 fn setup_dominates_for_policy(
