@@ -83,6 +83,36 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
             )),
         }
     }
+
+    fn consume_compression_state(
+        &self,
+        state: BackendStateRef<CompressionState>,
+    ) -> Result<PortableCompressionState<F>, AkitaError> {
+        let relation_mode = state.binding().relation_mode();
+        match self.owner.try_unwrap::<CpuCompressionRetention<F>>(state)? {
+            Ok(retained) => match (relation_mode, retained.relation) {
+                (
+                    Some(RingRelationMode::QuotientLift),
+                    CompressionRelationOutput::QuotientLift { quotients },
+                ) if quotients.len() == retained.witness.plan().maps().len() => {
+                    Ok(PortableCompressionState::QuotientLift {
+                        witness: retained.witness,
+                        quotients,
+                    })
+                }
+                (
+                    Some(RingRelationMode::ReducedEvaluation),
+                    CompressionRelationOutput::ReducedEvaluation,
+                ) => Ok(PortableCompressionState::ReducedEvaluation {
+                    witness: retained.witness,
+                }),
+                _ => Err(AkitaError::InvalidInput(
+                    "CPU compression state disagrees with its bound relation mode".into(),
+                )),
+            },
+            Err(shared) => self.export_compression_state(&shared),
+        }
+    }
 }
 
 /// CPU compression operation whose returned state directly owns its witness.

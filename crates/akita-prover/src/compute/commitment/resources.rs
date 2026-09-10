@@ -54,6 +54,15 @@ pub enum CommitmentNttStage {
     Outer,
 }
 
+/// Execution route that owns a proof-wide commitment cache request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitmentNttRoute {
+    /// Terminal A-only commitment.
+    InnerOnly,
+    /// A/B commitment, executed by the fused registration when one exists.
+    InnerOuter,
+}
+
 /// Exact cache request routed to one registered commitment stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentNttRequirement {
@@ -101,6 +110,7 @@ impl CommitmentNttRequirement {
             fold_level: 0,
             cluster: NttOperationCluster::Commit,
             commitment_stage: Some(self.stage),
+            commitment_route: Some(CommitmentNttRoute::InnerOuter),
             key: self.key,
             routing_extent: self.routing_extent,
         }
@@ -393,8 +403,14 @@ where
 
     fn routed_resources(
         &self,
+        route: CommitmentNttRoute,
         stage: CommitmentNttStage,
     ) -> Result<&StageResources<'a, F>, AkitaError> {
+        if route == CommitmentNttRoute::InnerOuter {
+            if let Some(fused) = &self.fused {
+                return Ok(&fused.stage.resources);
+            }
+        }
         if self.inner.is_none() && self.outer.is_none() {
             return self
                 .fused
@@ -426,8 +442,11 @@ where
         &self,
         requirement: RoutedNttRequirement,
     ) -> Result<(), AkitaError> {
+        let route = requirement.commitment_route.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
+        })?;
         let requirement = Self::routed_requirement(requirement)?;
-        self.routed_resources(requirement.stage())?
+        self.routed_resources(route, requirement.stage())?
             .ensure_ntt_slot(requirement)
     }
 
@@ -435,8 +454,11 @@ where
         &self,
         requirement: RoutedNttRequirement,
     ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
+        let route = requirement.commitment_route.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
+        })?;
         let requirement = Self::routed_requirement(requirement)?;
-        let resources = self.routed_resources(requirement.stage())?;
+        let resources = self.routed_resources(route, requirement.stage())?;
         if !resources.requirement_is_cached(requirement)? {
             return Ok(None);
         }
@@ -447,8 +469,11 @@ where
         &self,
         requirement: RoutedNttRequirement,
     ) -> Result<Option<(NttCacheOwnerId, usize)>, AkitaError> {
+        let route = requirement.commitment_route.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
+        })?;
         let requirement = Self::routed_requirement(requirement)?;
-        let resources = self.routed_resources(requirement.stage())?;
+        let resources = self.routed_resources(route, requirement.stage())?;
         if !resources.requirement_is_cached(requirement)? {
             return Ok(None);
         }

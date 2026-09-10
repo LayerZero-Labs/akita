@@ -130,6 +130,13 @@ where
     F: Field,
     S: InnerRelationState<F>,
 {
+    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+        match self {
+            Self::Portable(hint) => hint.preflight_inner_relation(),
+            Self::Selected(state) => state.preflight_inner_relation(),
+        }
+    }
+
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         match self {
             Self::Portable(hint) => hint.inner_relation_material(),
@@ -143,6 +150,13 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize,
     S: OuterCompressionState<F>,
 {
+    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+        match self {
+            Self::Portable(hint) => hint.preflight_outer_compression(),
+            Self::Selected(state) => state.preflight_outer_compression(),
+        }
+    }
+
     fn outer_compression_material(
         &self,
         plan: &CompressionChainPlan,

@@ -13,21 +13,8 @@ pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
 
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_extension_claim_fold<
-    'a,
-    F,
-    E,
-    T,
-    P,
-    S,
-    V,
-    C,
-    O,
-    TS,
-    R,
-    SP,
->(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
+pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, S, V, O, TS, R, SP>(
+    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F, S>,
     eor_source: ExtensionOpeningSource<'_, P>,
@@ -60,7 +47,6 @@ where
     S: InnerRelationState<F> + OuterCompressionState<F>,
     V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,
-    C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     SP: CommitmentStatePolicy<F>,
@@ -114,7 +100,7 @@ where
         (protocol_points, None)
     };
 
-    finish_prepared_fold::<F, E, T, P, S, C, O, TS, R, SP>(FinishFoldArgs {
+    finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,
         protocol_points: &protocol_points,

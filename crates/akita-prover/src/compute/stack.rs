@@ -134,10 +134,9 @@ where
 /// tensor / ring-switch) may still use a different backend and prepared setup.
 /// [`UniformProverStack`] is the degenerate case where all four clusters share
 /// one backend ([`ProverComputeStack::uniform`]).
-pub struct ProverComputeStack<'a, F, C, O, T, R, SP = PortableStatePolicy>
+pub struct ProverComputeStack<'a, F, O, T, R, SP = PortableStatePolicy>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
@@ -147,13 +146,11 @@ where
     opening: OperationCtx<'a, F, O>,
     tensor: OperationCtx<'a, F, T>,
     ring_switch: OperationCtx<'a, F, R>,
-    _commit_backend: PhantomData<fn() -> C>,
 }
 
-impl<'a, F, C, O, T, R, SP> ProverComputeStack<'a, F, C, O, T, R, SP>
+impl<'a, F, O, T, R, SP> ProverComputeStack<'a, F, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
@@ -207,7 +204,6 @@ where
             opening: OperationCtx::new(opening.0, opening.1, expanded)?,
             tensor: OperationCtx::new(tensor.0, tensor.1, expanded)?,
             ring_switch: OperationCtx::new(ring_switch.0, ring_switch.1, expanded)?,
-            _commit_backend: PhantomData,
         })
     }
 
@@ -267,7 +263,7 @@ where
 
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
 pub type UniformProverStack<'a, F, B, SP = PortableStatePolicy> =
-    ProverComputeStack<'a, F, B, B, B, B, SP>;
+    ProverComputeStack<'a, F, B, B, B, SP>;
 
 /// Per-fold selection of a [`ProverComputeStack`] during proving.
 ///
@@ -293,8 +289,6 @@ pub trait LevelProveStacks<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
-    /// Commit cluster backend for stacks returned by this selector.
-    type Commit: ComputeBackendSetup<F>;
     /// Commitment state policy shared by every selected fold stack.
     type CommitmentStatePolicy: CommitmentStatePolicy<F>;
     /// Opening cluster backend for stacks returned by this selector.
@@ -312,7 +306,6 @@ where
     ) -> &ProverComputeStack<
         'a,
         F,
-        Self::Commit,
         Self::Opening,
         Self::Tensor,
         Self::RingSwitch,
@@ -357,35 +350,24 @@ impl<S> ReleaseRootNttAfterFold<S> {
     }
 }
 
-impl<'a, F, C, O, T, R, SP, S> LevelProveStacks<'a, F> for ReleaseRootNttAfterFold<S>
+impl<'a, F, O, T, R, SP, S> LevelProveStacks<'a, F> for ReleaseRootNttAfterFold<S>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F> + 'a,
     O: ComputeBackendSetup<F> + 'a,
     T: ComputeBackendSetup<F> + 'a,
     R: ComputeBackendSetup<F> + 'a,
     SP: CommitmentStatePolicy<F>,
-    S: LevelProveStacks<
-        'a,
-        F,
-        Commit = C,
-        Opening = O,
-        Tensor = T,
-        RingSwitch = R,
-        CommitmentStatePolicy = SP,
-    >,
-    C::PreparedSetup: 'a,
+    S: LevelProveStacks<'a, F, Opening = O, Tensor = T, RingSwitch = R, CommitmentStatePolicy = SP>,
     O::PreparedSetup: 'a,
     T::PreparedSetup: 'a,
     R::PreparedSetup: 'a,
 {
-    type Commit = C;
     type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, O, T, R, SP> {
         self.stacks.prove_stack_at_level(level)
     }
 
@@ -518,16 +500,14 @@ where
     Ok(owners)
 }
 
-impl<'a, F, C, O, T, R, SP> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R, SP>
+impl<'a, F, O, T, R, SP> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
 {
-    type Commit = C;
     type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
@@ -538,31 +518,22 @@ where
     }
 }
 
-impl<'a, F, C, O, T, R, SP, S> LevelProveStacks<'a, F> for &S
+impl<'a, F, O, T, R, SP, S> LevelProveStacks<'a, F> for &S
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
-    S: LevelProveStacks<
-            'a,
-            F,
-            Commit = C,
-            Opening = O,
-            Tensor = T,
-            RingSwitch = R,
-            CommitmentStatePolicy = SP,
-        > + ?Sized,
+    S: LevelProveStacks<'a, F, Opening = O, Tensor = T, RingSwitch = R, CommitmentStatePolicy = SP>
+        + ?Sized,
 {
-    type Commit = C;
     type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, O, T, R, SP> {
         (*self).prove_stack_at_level(level)
     }
 
@@ -585,23 +556,21 @@ where
 /// let tiered = TieredProveStacks::new(&stacks, &[1, 3, usize::MAX])?;
 /// batched_prove(..., &tiered, ...)?;
 /// ```
-pub struct TieredProveStacks<'a, F, C, O, T, R, SP = PortableStatePolicy>
+pub struct TieredProveStacks<'a, F, O, T, R, SP = PortableStatePolicy>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
 {
-    stacks: &'a [ProverComputeStack<'a, F, C, O, T, R, SP>],
+    stacks: &'a [ProverComputeStack<'a, F, O, T, R, SP>],
     tier_max_level: &'a [usize],
 }
 
-impl<'a, F, C, O, T, R, SP> TieredProveStacks<'a, F, C, O, T, R, SP>
+impl<'a, F, O, T, R, SP> TieredProveStacks<'a, F, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
@@ -614,7 +583,7 @@ where
     /// Returns an error if the tier table is empty or `tier_max_level` is not
     /// strictly increasing.
     pub fn new(
-        stacks: &'a [ProverComputeStack<'a, F, C, O, T, R, SP>],
+        stacks: &'a [ProverComputeStack<'a, F, O, T, R, SP>],
         tier_max_level: &'a [usize],
     ) -> Result<Self, AkitaError> {
         if stacks.is_empty() {
@@ -648,27 +617,25 @@ where
     }
 }
 
-impl<'a, F, C, O, T, R, SP> LevelProveStacks<'a, F> for TieredProveStacks<'a, F, C, O, T, R, SP>
+impl<'a, F, O, T, R, SP> LevelProveStacks<'a, F> for TieredProveStacks<'a, F, O, T, R, SP>
 where
     F: Field + CanonicalEncoding,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
 {
-    type Commit = C;
     type CommitmentStatePolicy = SP;
     type Opening = O;
     type Tensor = T;
     type RingSwitch = R;
 
-    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, C, O, T, R, SP> {
+    fn prove_stack_at_level(&self, level: usize) -> &ProverComputeStack<'a, F, O, T, R, SP> {
         &self.stacks[self.tier_index_for_level(level)]
     }
 }
 
-impl<'a, F, SP> ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend, SP>
+impl<'a, F, SP> ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, SP>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
     SP: CommitmentStatePolicy<F>,
@@ -698,8 +665,7 @@ where
     }
 }
 
-impl<'a, F>
-    ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend, PortableStatePolicy>
+impl<'a, F> ProverComputeStack<'a, F, CpuBackend, CpuBackend, CpuBackend, PortableStatePolicy>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
 {

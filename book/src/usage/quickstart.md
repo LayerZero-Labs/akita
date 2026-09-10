@@ -81,7 +81,7 @@ and no earlier groups.
 let commit_output = scheme.commit(
     &setup,
     std::slice::from_ref(&polynomial),
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
@@ -89,7 +89,7 @@ let commit_output = scheme.commit(
 The call returns two values:
 
 - `committed_group` is public. The verifier receives it.
-- `hint` is private prover data. The prover keeps it with the polynomial.
+- `prover_state` is private prover data. The prover keeps it with the polynomial.
 
 The group context tells Akita which catalog row to use for the commitment. A
 later chapter explains how earlier commitment groups change this context.
@@ -97,7 +97,7 @@ later chapter explains how earlier commitment groups change this context.
 ## Assemble the opening claim
 
 An opening claim joins the point, claimed value, and commitment. The prover also
-supplies the original polynomial and its private hint.
+supplies the original polynomial and its private prover state.
 
 ```rust
 let prover_claims = OpeningClaims::from_groups(vec![
@@ -111,7 +111,7 @@ let prover_claims = OpeningClaims::from_groups(vec![
 let polynomial_group = [&polynomial];
 let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
     prover_claims,
-    vec![commit_output.hint],
+    vec![commit_output.prover_state],
     vec![&polynomial_group],
     scheme.schedules(),
 )?;
@@ -168,8 +168,8 @@ statement before allocating for an incoming proof.
 ## Verify with fresh public state
 
 The verifier needs public setup, the commitment, the point, the claimed value,
-and the selected schedule row. It does not receive the polynomial or commitment
-hint.
+and the selected schedule row. It does not receive the polynomial or private
+prover state.
 
 ```rust
 let verifier_setup = scheme.setup_verifier(&setup)?;

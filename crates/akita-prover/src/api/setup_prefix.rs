@@ -138,10 +138,11 @@ where
 mod tests {
     use super::*;
     use crate::compute::{
-        BackendKindId, CommitmentExecutorBuilder, CompressionOperationCapabilities,
-        ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
-        CpuOuterCommitOperation, DenseType, NttExecutionRequirements, PolynomialType,
-        PortableStatePolicy, ResidentStatePolicy, StageDimensionCapabilities, StageResources,
+        BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
+        CompressionOperationCapabilities, ComputeBackendSetup, CpuBackend, CpuCompressionOperation,
+        CpuInnerCommitOperation, CpuOuterCommitOperation, DenseType, NttExecutionRequirements,
+        PolynomialType, PortableStatePolicy, PreparedCompression, PreparedInnerCommitment,
+        PreparedOuterCommitment, ResidentStatePolicy, StageDimensionCapabilities, StageResources,
     };
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
@@ -309,11 +310,10 @@ mod tests {
     ) -> MissingExportExecutor<'a> {
         struct MissingExportRoute;
 
-        let mut builder = CommitmentExecutorBuilder::new::<MissingExportRoute>(
-            &setup.expanded,
+        let mut builder = CommitmentExecutorBuilder::new(&setup.expanded, ResidentStatePolicy);
+        let capabilities = CommitmentRequestCapabilities::split::<MissingExportRoute>(
             BackendKindId::of::<MissingExportRoute>("missing-export-route").unwrap(),
             vec![PolynomialType::Dense(DenseType::Coefficients)],
-            ResidentStatePolicy,
         );
         let inner = Arc::new(CpuInnerCommitOperation::new(backend, prepared));
         let outer = Arc::new(CpuOuterCommitOperation::new(
@@ -339,28 +339,33 @@ mod tests {
             .unwrap();
         builder
             .register_inner(
-                inner.clone(),
-                inner.owner().clone(),
-                inner_context,
-                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
-                None,
+                PreparedInnerCommitment::new(
+                    inner.clone(),
+                    inner.owner().clone(),
+                    inner_context,
+                    capabilities,
+                    StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         builder
-            .register_outer(
+            .register_outer(PreparedOuterCommitment::new(
                 outer,
                 inner.owner().clone(),
                 outer_context,
                 StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-            )
+            ))
             .unwrap();
         builder
-            .register_compression(
+            .register_compression(PreparedCompression::new(
                 compression.clone(),
+                compression.owner().clone(),
                 compression_context,
                 CompressionOperationCapabilities::cpu::<F>(),
                 None,
-            )
+            ))
             .unwrap();
         (builder.build().unwrap(), inner, compression)
     }

@@ -1,13 +1,16 @@
 use super::*;
 use crate::compute::{
-    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionPlan,
-    CommitmentSource, CommitmentStateBinding, ComputeBackendSetup, CpuBackend,
+    AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
+    CommitmentExecutionPlan, CommitmentRequestCapabilities, CommitmentSource,
+    CommitmentStateBinding, CompressionOperationCapabilities, ComputeBackendSetup, CpuBackend,
     CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,
     ExternalFusedInnerCommitmentEncoder, ExternalInnerCommitmentCapability,
     ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
-    NoRetainedStatePolicy, PolynomialRepresentation, PolynomialTypeSelection,
-    PreparedExternalInnerCommitment, ResolvedCommitSource, StageResources, UncompressedCommitPlan,
-    UncompressedCommitmentOutput,
+    FusedInnerOuterOperation, InnerImage, NoRetainedStatePolicy, PolynomialRepresentation,
+    PolynomialType, PolynomialTypeSelection, PreparedCompression, PreparedExternalInnerCommitment,
+    PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
+    ResolvedCommitSource, StageDimensionCapabilities, StageResources, StateOwnerCapability,
+    UncompressedCommitPlan, UncompressedCommitmentOutput,
 };
 use crate::{AkitaProverSetup, CommitInnerWitness};
 use akita_challenges::SparseChallengeConfig;
@@ -205,12 +208,8 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
     .unwrap();
     let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(&setup).unwrap();
-    let mut builder = CommitmentExecutorBuilder::new::<SplitContext>(
-        setup.expanded.as_ref(),
-        BackendKindId::of::<SplitBackend>("split").unwrap(),
-        vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
-        NoRetainedStatePolicy,
-    );
+    let mut builder =
+        CommitmentExecutorBuilder::new(setup.expanded.as_ref(), NoRetainedStatePolicy);
     let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
     let outer = Arc::new(CpuOuterCommitOperation::new(
         &backend,
@@ -235,46 +234,58 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
     let fused_context = no_resources("fused");
     builder
         .register_inner(
-            inner.clone(),
-            inner.owner().clone(),
-            inner_context,
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-            Some(inner.portable_exporter()),
+            PreparedInnerCommitment::new(
+                inner.clone(),
+                inner.owner().clone(),
+                inner_context,
+                CommitmentRequestCapabilities::split::<SplitContext>(
+                    BackendKindId::of::<SplitBackend>("split").unwrap(),
+                    vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
+                ),
+                StageDimensionCapabilities::new(vec![64]).unwrap(),
+                Some(inner.portable_exporter()),
+            )
+            .unwrap(),
         )
         .unwrap();
     builder
-        .register_outer(
+        .register_outer(PreparedOuterCommitment::new(
             outer,
             inner.owner().clone(),
             outer_context,
             StageDimensionCapabilities::new(vec![64]).unwrap(),
-        )
+        ))
         .unwrap();
     builder
-        .register_compression(
+        .register_compression(PreparedCompression::new(
             compression.clone(),
+            compression.owner().clone(),
             compression_context,
             CompressionOperationCapabilities::cpu::<F>(),
             Some(compression.portable_exporter()),
-        )
+        ))
         .unwrap();
     let fused_owner = StateOwnerCapability::new();
     let submissions = Arc::new(AtomicUsize::new(0));
     let encoded_values = Arc::new(AtomicUsize::new(0));
     builder
         .register_fused(
-            Arc::new(EncodingFused {
-                owner: fused_owner.clone(),
-                submissions: submissions.clone(),
-                encoded_values: encoded_values.clone(),
-            }),
-            fused_context,
-            CommitmentRequestCapabilities::fused::<ExternalContext, FusedCommand>(
-                BackendKindId::of::<ExternalBackend>("external-fused").unwrap(),
-                Vec::new(),
-            ),
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-            None,
+            PreparedFusedCommitment::new(
+                Arc::new(EncodingFused {
+                    owner: fused_owner.clone(),
+                    submissions: submissions.clone(),
+                    encoded_values: encoded_values.clone(),
+                }),
+                fused_owner,
+                fused_context,
+                CommitmentRequestCapabilities::fused::<ExternalContext, FusedCommand>(
+                    BackendKindId::of::<ExternalBackend>("external-fused").unwrap(),
+                    Vec::new(),
+                ),
+                StageDimensionCapabilities::new(vec![64]).unwrap(),
+                None,
+            )
+            .unwrap(),
         )
         .unwrap();
     let executor = builder.build().unwrap();

@@ -338,9 +338,9 @@ mod tests {
         BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
         CommitmentStateBinding, CompressionOperationCapabilities, CpuBackend,
         CpuCompressionOperation, DenseType, FusedInnerOuterOperation, InnerImage, PolynomialType,
-        PortableStatePolicy, PreparedCommitmentResources, ResolvedCommitSource,
-        StageDimensionCapabilities, StageResources, StateOwnerCapability, UncompressedCommitPlan,
-        UncompressedCommitmentOutput,
+        PortableStatePolicy, PreparedCommitmentResources, PreparedCompression,
+        PreparedFusedCommitment, ResolvedCommitSource, StageDimensionCapabilities, StageResources,
+        StateOwnerCapability, UncompressedCommitPlan, UncompressedCommitmentOutput,
     };
     use crate::AkitaProverSetup;
     use akita_types::{RingVec, SetupMatrixCapacity};
@@ -378,7 +378,7 @@ mod tests {
         struct FusedCommand;
         struct FusedBackend;
 
-        let mut builder = CommitmentExecutorBuilder::new_fused(expanded, PortableStatePolicy);
+        let mut builder = CommitmentExecutorBuilder::new(expanded, PortableStatePolicy);
         let instance = builder.issue_backend_instance();
         let resources = StageResources::controlled(
             PreparedCommitmentResources::new(backend, prepared, expanded).unwrap(),
@@ -389,27 +389,35 @@ mod tests {
         let compression_context = builder
             .operation_context(instance, "cpu-compression", resources)
             .unwrap();
+        let fused_owner = StateOwnerCapability::new();
         builder
             .register_fused(
-                Arc::new(ZeroFused {
-                    owner: StateOwnerCapability::new(),
-                }),
-                fused_context,
-                CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
-                    BackendKindId::of::<FusedBackend>("zero-fused").unwrap(),
-                    vec![PolynomialType::Dense(DenseType::Coefficients)],
-                ),
-                StageDimensionCapabilities::new(vec![64]).unwrap(),
-                None,
+                PreparedFusedCommitment::new(
+                    Arc::new(ZeroFused {
+                        owner: fused_owner.clone(),
+                    }),
+                    fused_owner,
+                    fused_context,
+                    CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
+                        BackendKindId::of::<FusedBackend>("zero-fused").unwrap(),
+                        vec![PolynomialType::Dense(DenseType::Coefficients)],
+                    ),
+                    StageDimensionCapabilities::new(vec![64]).unwrap(),
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
+        let compression =
+            Arc::new(CpuCompressionOperation::new(backend, prepared, expanded).unwrap());
         builder
-            .register_compression(
-                Arc::new(CpuCompressionOperation::new(backend, prepared, expanded).unwrap()),
+            .register_compression(PreparedCompression::new(
+                compression.clone(),
+                compression.owner().clone(),
                 compression_context,
                 CompressionOperationCapabilities::cpu::<F>(),
                 None,
-            )
+            ))
             .unwrap();
         builder.build().unwrap()
     }

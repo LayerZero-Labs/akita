@@ -32,6 +32,14 @@ pub trait PortableCompressionStateExport<F: Field>: Send + Sync {
         &self,
         state: &BackendStateRef<CompressionState>,
     ) -> Result<PortableCompressionState<F>, AkitaError>;
+
+    /// Consume resident compression state, moving its buffers when possible.
+    fn consume_compression_state(
+        &self,
+        state: BackendStateRef<CompressionState>,
+    ) -> Result<PortableCompressionState<F>, AkitaError> {
+        self.export_compression_state(&state)
+    }
 }
 
 /// Route-specific operations that can export retained stage state.
@@ -131,9 +139,67 @@ fn export_portable<F: Field>(
             AkitaError::InvalidInput("commitment route has no portable inner-image exporter".into())
         })?
         .export_inner_rows(binding.inner_plan(), &components.image)?;
-    match components.mode() {
+    let compression = match components.compression() {
+        Some(state) => Some(
+            components
+                .exporters
+                .compression
+                .as_ref()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "commitment route has no portable compression exporter".into(),
+                    )
+                })?
+                .export_compression_state(state)?,
+        ),
+        None => None,
+    };
+    assemble_portable_hint(binding, components.mode(), rows, compression)
+}
+
+fn into_portable<F: Field>(
+    components: CommitmentStateComponents<F>,
+) -> Result<AkitaCommitmentHint<F>, AkitaError> {
+    let CommitmentStateComponents {
+        mode,
+        image,
+        compression,
+        exporters,
+    } = components;
+    let binding = image.binding().clone();
+    let rows = exporters
+        .inner
+        .as_ref()
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("commitment route has no portable inner-image exporter".into())
+        })?
+        .consume_inner_rows(binding.inner_plan(), image)?;
+    let compression = match compression {
+        Some(state) => Some(
+            exporters
+                .compression
+                .as_ref()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "commitment route has no portable compression exporter".into(),
+                    )
+                })?
+                .consume_compression_state(state)?,
+        ),
+        None => None,
+    };
+    assemble_portable_hint(binding, mode, rows, compression)
+}
+
+fn assemble_portable_hint<F: Field>(
+    binding: CommitmentStateBinding,
+    mode: CommitmentExecutionMode,
+    rows: Vec<RingVec<F>>,
+    compression: Option<PortableCompressionState<F>>,
+) -> Result<AkitaCommitmentHint<F>, AkitaError> {
+    match mode {
         CommitmentExecutionMode::InnerOnly | CommitmentExecutionMode::Uncompressed => {
-            if components.compression().is_some() {
+            if compression.is_some() {
                 return Err(AkitaError::InvalidInput(
                     "uncompressed portable state unexpectedly retained compression".into(),
                 ));
@@ -141,24 +207,12 @@ fn export_portable<F: Field>(
             AkitaCommitmentHint::new(binding.inner_plan().ring_dimension, rows)
         }
         CommitmentExecutionMode::Full => {
-            let compression = components.compression().ok_or_else(|| {
+            let compression = compression.ok_or_else(|| {
                 AkitaError::InvalidInput(
                     "compressed portable state omitted compression material".into(),
                 )
             })?;
-            match (
-                binding.relation_mode(),
-                components
-                    .exporters
-                    .compression
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "commitment route has no portable compression exporter".into(),
-                        )
-                    })?
-                    .export_compression_state(compression)?,
-            ) {
+            match (binding.relation_mode(), compression) {
                 (
                     Some(RingRelationMode::QuotientLift),
                     PortableCompressionState::QuotientLift { witness, quotients },
@@ -204,6 +258,23 @@ pub(super) fn validate_portable_export_route<F: Field>(
     Ok(())
 }
 
+pub(super) fn validate_prover_state_consumer_route<F: Field>(
+    exporters: &CommitmentStateExporters<F>,
+    mode: CommitmentExecutionMode,
+) -> Result<(), AkitaError> {
+    if exporters.inner.is_none() {
+        return Err(AkitaError::InvalidInput(
+            "commitment route has no inner-relation state operation".into(),
+        ));
+    }
+    if mode == CommitmentExecutionMode::Full && exporters.compression.is_none() {
+        return Err(AkitaError::InvalidInput(
+            "commitment route has no outer-compression state operation".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Selects the prover-private state returned by commitment execution.
 pub trait CommitmentStatePolicy<F: Field>: Send + Sync {
     /// Policy-selected prover state.
@@ -233,6 +304,24 @@ impl<F: Field> ResidentCommitmentState<F> {
     /// Immutable checked request binding.
     pub fn binding(&self) -> &CommitmentStateBinding {
         self.components.binding()
+    }
+
+    /// Backend-reported bytes retained by this complete commitment state.
+    pub fn retained_bytes(&self) -> Result<usize, AkitaError> {
+        self.components.compression().map_or(
+            Ok(self.components.image().retained_bytes()),
+            |compression| {
+                self.components
+                    .image()
+                    .retained_bytes()
+                    .checked_add(compression.retained_bytes())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "resident commitment retained-byte total overflow".into(),
+                        )
+                    })
+            },
+        )
     }
 }
 
@@ -286,12 +375,22 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 
 /// Independent state capability used by the inner ring relation.
 pub trait InnerRelationState<F: Field> {
+    /// Validate that inner-relation material can be produced without exporting it.
+    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+        Ok(())
+    }
+
     /// Derive canonical inner rows without constructing a portable hint.
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError>;
 }
 
 /// Independent state capability used by outer-compression relations.
 pub trait OuterCompressionState<F: Field> {
+    /// Validate that compression-relation material can be produced without exporting it.
+    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+        Ok(())
+    }
+
     /// Derive the canonical compression witness and mode-specific relation data.
     fn outer_compression_material(
         &self,
@@ -306,6 +405,16 @@ pub struct TerminalTFieldsMessage {
 }
 
 impl TerminalTFieldsMessage {
+    /// Encode one canonical terminal inner row for transcript binding.
+    pub fn from_row<F>(row: &RingVec<F>) -> Result<Self, AkitaError>
+    where
+        F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
+    {
+        Ok(Self {
+            bytes: akita_types::raw_field_segment_bytes(row)?,
+        })
+    }
+
     /// Canonical raw-field segment bytes absorbed by the transcript.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -327,9 +436,7 @@ where
     let [row] = hint.inner_rows() else {
         return Err(AkitaError::InvalidProof);
     };
-    Ok(TerminalTFieldsMessage {
-        bytes: akita_types::raw_field_segment_bytes(row)?,
-    })
+    TerminalTFieldsMessage::from_row(row)
 }
 
 fn terminal_message_from_inner_material<F>(
@@ -342,9 +449,7 @@ where
         .into_rows()
         .try_into()
         .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
-    Ok(TerminalTFieldsMessage {
-        bytes: akita_types::raw_field_segment_bytes(&row)?,
-    })
+    TerminalTFieldsMessage::from_row(&row)
 }
 
 impl<F> TerminalBindingState<F> for AkitaCommitmentHint<F>
@@ -372,6 +477,15 @@ impl<F: Field> InnerRelationState<F> for AkitaCommitmentHint<F> {
 }
 
 impl<F: Field> InnerRelationState<F> for ResidentCommitmentState<F> {
+    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+        if self.components.exporters.inner.is_none() {
+            return Err(AkitaError::InvalidInput(
+                "commitment route has no inner-relation state operation".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         let binding = self.components.binding();
         let rows = self
@@ -413,6 +527,17 @@ where
 }
 
 impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
+    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+        if self.components.compression().is_none()
+            || self.components.exporters.compression.is_none()
+        {
+            return Err(AkitaError::InvalidInput(
+                "commitment route has no outer-compression state operation".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn outer_compression_material(
         &self,
         plan: &CompressionChainPlan,
@@ -472,7 +597,7 @@ impl<F: Field> IntoPortableCommitmentState<F> for AkitaCommitmentHint<F> {
 
 impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn into_portable_hint(self) -> Result<AkitaCommitmentHint<F>, AkitaError> {
-        export_portable(&self.components)
+        into_portable(self.components)
     }
 }
 
@@ -505,7 +630,7 @@ impl<F: Field> CommitmentStatePolicy<F> for PortableStatePolicy {
     type State = AkitaCommitmentHint<F>;
 
     fn bind(&self, components: CommitmentStateComponents<F>) -> Result<Self::State, AkitaError> {
-        export_portable(&components)
+        into_portable(components)
     }
 }
 

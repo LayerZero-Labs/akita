@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 static NEXT_OWNER_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_INVOCATION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Semantic marker for a resident inner commitment image.
 pub enum InnerImage {}
@@ -17,6 +18,7 @@ pub enum CompressionState {}
 /// Immutable setup and request facts attached to resident stage state.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CommitmentStateBinding {
+    invocation: u64,
     setup: AkitaSetupDescriptor,
     inner_plan: CommitInnerPlan,
     source_count: usize,
@@ -45,6 +47,7 @@ impl CommitmentStateBinding {
             ));
         }
         Ok(Self {
+            invocation: NEXT_INVOCATION_ID.fetch_add(1, Ordering::Relaxed),
             setup,
             inner_plan,
             source_count,
@@ -73,6 +76,7 @@ impl std::fmt::Debug for CommitmentStateBinding {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("CommitmentStateBinding")
+            .field("invocation", &"opaque")
             .field("inner_plan", &self.inner_plan)
             .field("source_count", &self.source_count)
             .field("relation_mode", &self.relation_mode)
@@ -158,6 +162,10 @@ impl<K> StateOwnerCapability<K> {
         self.owner == other.owner
     }
 
+    pub(crate) fn owns(&self, state: &BackendStateRef<K>) -> bool {
+        self.owner == state.state.owner
+    }
+
     /// Bind and directly own one concrete backend value.
     pub fn bind<T>(
         &self,
@@ -192,6 +200,39 @@ impl<K> StateOwnerCapability<K> {
         state.state.value.downcast_ref::<T>().ok_or_else(|| {
             AkitaError::InvalidInput("backend state has the wrong concrete representation".into())
         })
+    }
+
+    /// Consume a uniquely held state value without copying it.
+    ///
+    /// Shared state is returned intact so an exporter can use its borrowed
+    /// fallback. Ownership and concrete type are always checked first.
+    pub fn try_unwrap<T>(
+        &self,
+        state: BackendStateRef<K>,
+    ) -> Result<Result<T, BackendStateRef<K>>, AkitaError>
+    where
+        T: Any + Send + Sync,
+    {
+        if state.state.owner != self.owner {
+            return Err(AkitaError::InvalidInput(
+                "backend state belongs to a different owner".into(),
+            ));
+        }
+        match Arc::try_unwrap(state.state) {
+            Ok(owned) => owned
+                .value
+                .downcast::<T>()
+                .map(|value| Ok(*value))
+                .map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "backend state has the wrong concrete representation".into(),
+                    )
+                }),
+            Err(shared) => Ok(Err(BackendStateRef {
+                state: shared,
+                marker: PhantomData,
+            })),
+        }
     }
 }
 
@@ -258,5 +299,24 @@ mod tests {
         let state = owner.bind(binding(), 0, 7_u64);
         assert!(foreign.value::<u64>(&state).is_err());
         assert!(owner.value::<u32>(&state).is_err());
+    }
+
+    #[test]
+    fn consuming_extraction_moves_unique_state_and_preserves_shared_state() {
+        let owner = StateOwnerCapability::<InnerImage>::new();
+        let unique = owner.bind(binding(), 0, vec![1_u64, 2, 3]);
+        assert_eq!(
+            owner.try_unwrap::<Vec<u64>>(unique).unwrap().unwrap(),
+            [1, 2, 3]
+        );
+
+        let shared = owner.bind(binding(), 0, vec![4_u64, 5]);
+        let lease = shared.clone();
+        let returned = owner
+            .try_unwrap::<Vec<u64>>(shared)
+            .unwrap()
+            .expect_err("shared state must be returned intact");
+        assert_eq!(owner.value::<Vec<u64>>(&returned).unwrap(), &[4, 5]);
+        assert_eq!(owner.value::<Vec<u64>>(&lease).unwrap(), &[4, 5]);
     }
 }

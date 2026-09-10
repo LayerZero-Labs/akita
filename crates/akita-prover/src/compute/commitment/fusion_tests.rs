@@ -1,13 +1,18 @@
 use super::*;
 use crate::compute::{
-    BackendStateRef, CommitmentExecutionPlan, CommitmentNttRequirement, CommitmentResourceControl,
-    CommitmentSource, CommitmentStateBinding, CompressionState, ComputeBackendSetup, CpuBackend,
-    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation, CpuPreparedSetup,
-    DenseType, InnerCommitOutput, InnerImage, InnerImageExportOperation, InnerImageInput,
-    InnerRelationState, NoRetainedStatePolicy, NttCacheOwnerId, OuterCompressionState,
+    BackendKindId, BackendStateRef, CommitmentExecutionPlan, CommitmentNttRequirement,
+    CommitmentNttRoute, CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
+    CommitmentStateBinding, CompressionOperationCapabilities, CompressionState,
+    ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+    CpuOuterCommitOperation, CpuPreparedSetup, DenseType, FusedInnerOuterOperation,
+    InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageExportOperation,
+    InnerImageInput, InnerRelationState, NoRetainedStatePolicy, NttCacheOwnerId,
+    NttOperationCluster, OuterCommitOperation, OuterCompressionState, PolynomialType,
     PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
-    PreparedCommitmentResources, ResidentStatePolicy, ResolvedCommitSource, StageResources,
-    UncompressedCommitPlan, UncompressedCommitmentOutput,
+    PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
+    PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy, ResolvedCommitSource,
+    RoutedNttRequirement, StageDimensionCapabilities, StageResources, UncompressedCommitPlan,
+    UncompressedCommitmentOutput,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -219,12 +224,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     )
     .unwrap();
 
-    let mut builder = CommitmentExecutorBuilder::new::<SplitContext>(
-        setup.expanded.as_ref(),
-        BackendKindId::of::<SplitBackend>("split-cpu").unwrap(),
-        standard_types.clone(),
-        ResidentStatePolicy,
-    );
+    let mut builder = CommitmentExecutorBuilder::new(setup.expanded.as_ref(), ResidentStatePolicy);
     let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
     let split_inner_calls = Arc::new(AtomicUsize::new(0));
     let split_inner = Arc::new(RecordingInner {
@@ -311,44 +311,80 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         .unwrap();
     builder
         .register_inner(
-            split_inner,
-            inner.owner().clone(),
-            inner_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
-            Some(inner.portable_exporter()),
+            PreparedInnerCommitment::new(
+                split_inner,
+                inner.owner().clone(),
+                inner_context,
+                CommitmentRequestCapabilities::split::<SplitContext>(
+                    BackendKindId::of::<SplitBackend>("split-cpu").unwrap(),
+                    standard_types.clone(),
+                ),
+                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                Some(inner.portable_exporter()),
+            )
+            .unwrap(),
         )
         .unwrap();
     builder
-        .register_outer(
+        .register_outer(PreparedOuterCommitment::new(
             split_outer,
             inner.owner().clone(),
             outer_context,
             StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-        )
+        ))
         .unwrap();
     builder
-        .register_compression(
+        .register_compression(PreparedCompression::new(
             compression.clone(),
+            compression.owner().clone(),
             compression_context,
             CompressionOperationCapabilities::cpu::<F>(),
             Some(fused_compression_consumer),
-        )
+        ))
         .unwrap();
     builder
         .register_fused(
-            fused,
-            fused_context,
-            CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
-                BackendKindId::of::<FusedBackend>("recording-fused").unwrap(),
-                standard_types,
-            ),
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-            Some(fused_inner_consumer),
+            PreparedFusedCommitment::new(
+                fused,
+                inner.owner().clone(),
+                fused_context,
+                CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
+                    BackendKindId::of::<FusedBackend>("recording-fused").unwrap(),
+                    standard_types,
+                ),
+                StageDimensionCapabilities::new(vec![64]).unwrap(),
+                Some(fused_inner_consumer),
+            )
+            .unwrap(),
         )
         .unwrap();
     let fused_executor = builder.build().unwrap();
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+
+    let inner_requirement = plan
+        .inner_ntt_requirement(PolynomialType::Dense(DenseType::Coefficients))
+        .unwrap()
+        .unwrap();
+    let routed = |route| RoutedNttRequirement {
+        fold_level: 0,
+        cluster: NttOperationCluster::Commit,
+        commitment_stage: Some(inner_requirement.stage()),
+        commitment_route: Some(route),
+        key: inner_requirement.key(),
+        routing_extent: inner_requirement.routing_extent(),
+    };
+    fused_executor
+        .prewarm_routed_requirement(routed(CommitmentNttRoute::InnerOuter))
+        .unwrap();
+    assert_eq!(fused_ensures.load(Ordering::SeqCst), 1);
+    assert_eq!(split_inner_ensures.load(Ordering::SeqCst), 0);
+    fused_executor
+        .prewarm_routed_requirement(routed(CommitmentNttRoute::InnerOnly))
+        .unwrap();
+    assert_eq!(split_inner_ensures.load(Ordering::SeqCst), 1);
+    fused_ensures.store(0, Ordering::SeqCst);
+    split_inner_ensures.store(0, Ordering::SeqCst);
 
     fused_executor.prewarm_request(&plan, &sources).unwrap();
     assert_eq!(fused_ensures.load(Ordering::SeqCst), 2);
@@ -499,7 +535,7 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
         CpuCompressionOperation::new(&backend, &prepared, setup.expanded.as_ref()).unwrap(),
     );
     let mut builder =
-        CommitmentExecutorBuilder::new_fused(setup.expanded.as_ref(), NoRetainedStatePolicy);
+        CommitmentExecutorBuilder::new(setup.expanded.as_ref(), NoRetainedStatePolicy);
     let instance = builder.issue_backend_instance();
     let resources = StageResources::controlled(
         PreparedCommitmentResources::new(&backend, &prepared, setup.expanded.as_ref()).unwrap(),
@@ -512,23 +548,28 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
         .unwrap();
     builder
         .register_fused(
-            fused,
-            fused_context,
-            CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
-                BackendKindId::of::<FusedBackend>("fused-only").unwrap(),
-                vec![PolynomialType::Dense(DenseType::Coefficients)],
-            ),
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-            None,
+            PreparedFusedCommitment::new(
+                fused,
+                inner.owner().clone(),
+                fused_context,
+                CommitmentRequestCapabilities::fused::<FusedContext, FusedCommand>(
+                    BackendKindId::of::<FusedBackend>("fused-only").unwrap(),
+                    vec![PolynomialType::Dense(DenseType::Coefficients)],
+                ),
+                StageDimensionCapabilities::new(vec![64]).unwrap(),
+                None,
+            )
+            .unwrap(),
         )
         .unwrap();
     builder
-        .register_compression(
-            compression,
+        .register_compression(PreparedCompression::new(
+            compression.clone(),
+            compression.owner().clone(),
             compression_context,
             CompressionOperationCapabilities::cpu::<F>(),
             None,
-        )
+        ))
         .unwrap();
     let executor = builder.build().unwrap();
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();

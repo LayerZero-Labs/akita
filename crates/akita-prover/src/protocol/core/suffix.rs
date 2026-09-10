@@ -52,13 +52,12 @@ impl<F: Field, E: Field, S> SuffixProverState<F, E, S> {
 /// Returns an error if level proving fails or the required recursive suffix is
 /// absent.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, SP>(
+pub fn prove_suffix<'stack, Cfg, T, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         Cfg::Field,
-        Commit = C,
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
@@ -89,7 +88,6 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: akita_types::ProverTranscriptGrinding<Cfg::Field>,
-    C: ComputeBackendSetup<Cfg::Field> + 'stack,
     SP: CommitmentStatePolicy<Cfg::Field> + 'stack,
     SP::State: InnerRelationState<Cfg::Field>
         + OuterCompressionState<Cfg::Field>
@@ -111,7 +109,6 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
@@ -153,7 +150,7 @@ where
         let role_dims = level_params.role_dims();
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
-            prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, _>(
+            prepare_suffix::<Cfg::Field, Cfg::ExtField, T, O, TS, R, SP, _>(
                 stack,
                 expanded,
                 prefix_slots,
@@ -169,7 +166,7 @@ where
                 ))
             })?
         };
-        let out = super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, Cfg>(
+        let out = super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, O, TS, R, SP, Cfg>(
             expanded,
             prefix_slots,
             stacks.prove_stack_at_level(level),
@@ -199,7 +196,7 @@ where
             current_witness_len,
         )));
     }
-    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, SP, _>(
+    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, O, TS, R, SP, _>(
         stacks.prove_stack_at_level(level),
         transcript,
         level,
@@ -215,8 +212,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_terminal_suffix<F, E, T, C, O, TS, R, SP, S>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
+fn prove_terminal_suffix<F, E, T, O, TS, R, SP, S>(
+    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     transcript: &mut T,
     level: usize,
     current_state: SuffixProverState<F, E, S>,
@@ -246,7 +243,6 @@ where
     TS: SuffixTensorProveBackend<F, E>
         + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
         + ComputeBackendSetup<F>,
-    C: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
     S: InnerRelationState<F> + TerminalBindingState<F>,
@@ -419,8 +415,8 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R, SP, S>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R, SP>,
+pub(in crate::protocol::core) fn prepare_suffix<F, E, T, O, TS, R, SP, S>(
+    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     transcript: &mut T,
@@ -454,7 +450,6 @@ where
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>,
-    C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     SP: CommitmentStatePolicy<F>,
     S: InnerRelationState<F> + OuterCompressionState<F>,
@@ -538,7 +533,7 @@ where
         .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
         .collect::<Result<Vec<_>, _>>()?;
     if const { <E as ExtField<F>>::DEGREE == 1 } {
-        prepare_single_field_fold::<F, E, T, _, _, _, C, O, TS, R, SP>(
+        prepare_single_field_fold::<F, E, T, _, _, _, O, TS, R, SP>(
             stack,
             block_claims,
             true,
@@ -550,7 +545,7 @@ where
             BasisMode::Lagrange,
         )
     } else {
-        prepare_extension_claim_fold::<F, E, T, _, _, _, C, O, TS, R, SP>(
+        prepare_extension_claim_fold::<F, E, T, _, _, _, O, TS, R, SP>(
             stack,
             needs_extension_reduction,
             block_claims,

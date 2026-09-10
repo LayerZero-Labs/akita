@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Author | Omid Bodaghi |
-| Revised | 2026-09-09 |
+| Revised | 2026-09-10 |
 | Status | active |
 | PR | [#20](https://github.com/LayerZero-Labs/akita/pull/20) |
 | Scope | Prover-side commitment execution in `akita-prover`, direct callers, and downstream Jolt integration |
@@ -146,9 +146,11 @@ sources in original group order, and its backend context. It has no transcript
 access and cannot implement B or compression through this interface.
 
 When all sources in a group advertise one compatible external capability,
-request compilation prefers that homogeneous path. Otherwise the complete
-group must share a compatible standard representation. Mixing external and
-standard inner execution within one group is rejected before arithmetic.
+request compilation prefers that homogeneous path. Otherwise every source
+must have a supported standard representation. Standard representation
+selection is per source, so two sources in one standard-path group may use
+different supported representations. Mixing external and standard inner
+execution within one group is rejected before arithmetic.
 
 A fused route accepts an external-only source only when its capability declares
 support for the fused command context. The source encoder may append A work to
@@ -157,30 +159,29 @@ execution represents one backend operation.
 
 ## Executor construction
 
-Every executor is bound to one expanded setup. Registrations include an opaque
-backend instance identity, diagnostic name, supported source and dimension
-capabilities, and stage resources.
+Every executor is bound to one expanded setup. Backend preparation produces a
+stage object that owns the operation together with its state owner, opaque
+backend instance identity, diagnostic name, source and dimension capabilities,
+stage resources, and optional export edge. The builder receives these prepared
+objects, so correlated configuration cannot be supplied as separate registration
+arguments.
 
-A split executor registers all three stages:
+A complete split executor registers all three stages:
 
 ```rust,ignore
-let mut builder = CommitmentExecutorBuilder::new::<InnerContext>(
-    expanded,
-    inner_backend_kind,
-    accepted_source_types,
-    ResidentStatePolicy,
-);
+let mut builder = CommitmentExecutorBuilder::new(expanded, ResidentStatePolicy);
 
-builder.register_inner(
-    inner, inner_owner, inner_context, inner_dimensions, optional_inner_export,
-)?;
-builder.register_outer(
+builder.register_inner(PreparedInnerCommitment::new(
+    inner, inner_owner, inner_context, inner_capabilities, inner_dimensions,
+    optional_inner_export,
+)?)?;
+builder.register_outer(PreparedOuterCommitment::new(
     outer, outer_owner, outer_context, outer_dimensions,
-)?;
-builder.register_compression(
-    compression, compression_context, compression_capabilities,
+))?;
+builder.register_compression(PreparedCompression::new(
+    compression, compression_owner, compression_context, compression_capabilities,
     optional_compression_export,
-)?;
+))?;
 let executor = builder.build()?;
 ```
 
@@ -193,28 +194,29 @@ or fallback.
 A fused-only executor registers no dummy split operations:
 
 ```rust,ignore
-let mut builder = CommitmentExecutorBuilder::new_fused(
-    expanded,
-    ResidentStatePolicy,
-);
+let mut builder = CommitmentExecutorBuilder::new(expanded, ResidentStatePolicy);
 
-builder.register_fused(
-    fused, fused_context, fused_capabilities, fused_dimensions,
+builder.register_fused(PreparedFusedCommitment::new(
+    fused, fused_owner, fused_context, fused_capabilities, fused_dimensions,
     optional_inner_export,
-)?;
-builder.register_compression(
-    compression, compression_context, compression_capabilities,
+)?)?;
+builder.register_compression(PreparedCompression::new(
+    compression, compression_owner, compression_context, compression_capabilities,
     optional_compression_export,
-)?;
+))?;
 let executor = builder.build()?;
 ```
 
 An executor may contain split operations and a fused operation. Full and
 uncompressed plans use fused; inner-only plans use the registered split inner
-operation. A fused-only executor supports full and uncompressed requests and
-rejects inner-only execution.
+operation. The builder accepts the components needed by the modes the caller
+will use: inner alone supports inner-only, inner plus outer supports
+uncompressed, either A/B route plus compression supports full, and fused plus
+split inner supports fused nonterminal rounds followed by a terminal inner-only
+round. Missing mode dependencies are rejected during preflight before source
+materialization.
 
-`CommitmentExecutor::cpu` is the compatibility constructor. It registers the
+`CommitmentExecutor::cpu` is the standard CPU constructor. It registers the
 existing optimized CPU inner, outer, and compression implementations and
 preserves the standard source paths.
 
@@ -263,6 +265,9 @@ executor and never retries with a fallback.
 Each selected stack contains its own commitment executor, so applications can
 also change commitment routes and the opening/tensor/ring-switch stack from
 fold to fold. These decisions are fixed before transcript work begins.
+`batched_prove` uses that stack sequence as its only routing authority; the
+standalone `CommitmentExecutionSchedule` is for commitment-only callers and is
+not a second schedule input to proving.
 
 ## Retained state and hints
 
@@ -275,8 +280,11 @@ let state = owner.bind(binding, retained_bytes, MyDeviceLease { /* ... */ });
 
 Only the same owner can recover the concrete value with
 `owner.value::<MyDeviceLease>(&state)`. External callers do not downcast it.
-The binding records the setup descriptor, inner plan, source count, and
-relation mode.
+The binding records the setup descriptor, inner plan, source count, relation
+mode, and an opaque process-local invocation identity. Backends propagate the
+binding passed into an operation by cloning it; creating a same-shaped binding
+does not identify the same invocation. The executor checks returned state
+against its expected binding before export or subsequent arithmetic.
 
 The concrete value needs no `Clone`, serialization, `Debug`, host-row, or
 portable-hint implementation. Cloning the state wrapper creates a shared lease;
@@ -294,7 +302,9 @@ implementation to recycle a GPU allocation or remote object.
 
 Portable export is a capability and an explicit transfer boundary. Setup-prefix
 persistence uses it because persisted bytes retain their existing format.
-Resident routes do not pay that cost unless a later consumer requests export.
+Consuming export moves uniquely owned CPU rows and compression buffers; shared
+leases use the borrowed copying fallback. Resident routes do not pay that cost
+unless a later consumer requests export.
 
 The direct ownership model has no global state slot table, pending deposit,
 generation counter, cleanup callback registry, CPU token map, or second
@@ -327,8 +337,10 @@ cached-versus-streamed policy, planned bytes, cache owner identity, release,
 and optional compression-cache accounting.
 
 `CommitmentNttRequirement` identifies the exact key, routing extent, and owning
-stage. A requirements are routed to inner, B requirements to outer, both to a
-fused operation, and compression-private resources to compression. Physical
+stage. Proof-wide routed requirements also identify whether the request is
+inner-only or A/B. A/B requirements use the fused registration when present;
+terminal A requirements use split inner. The same resolved route controls
+prewarm, retained-byte planning, owner selection, and execution. Physical
 owners are deduplicated by `NttCacheOwnerId` when stages share prepared state.
 
 Releasing NTT residency does not release live commitment state. A retained
@@ -389,8 +401,15 @@ through `LevelProveStacks` and `TieredProveStacks`.
 
 State consumers remain capability-specific. Inner-relation,
 outer-compression, terminal-binding, portable-export, and recomputation support
-are separate contracts. A complete proof route must preflight the required
-state transition before transcript mutation.
+are separate contracts. `batched_prove` checks the existing opening states and
+the consumer edges for every scheduled recursive and terminal commitment before
+prewarm and transcript mutation. Runtime export still validates the returned
+material.
+
+`ProverComputeStack` is generic only over the opening, tensor, and ring-switch
+backends it stores as typed contexts. Commitment execution is already fully
+owned by `CommitmentExecutor`, so the stack carries no phantom commitment
+backend type.
 
 Setup-prefix generation uses a commitment executor and explicitly exports
 portable state before building `SetupPrefixSlot`. Slot identities and persisted
@@ -429,6 +448,21 @@ ProgramImageInit
 OneHotTrace
 ```
 
+## Deferred extensions
+
+This version intentionally materializes the outer image `u` as a host
+`RingVec<F>` between fused or outer execution and compression. The large inner
+witness may remain entirely backend-resident and is never downloaded merely to
+complete a fused commitment. A future device-resident `u` carrier requires an
+explicit same-owner, cross-owner, and host-export contract and should be added
+only if measurement justifies it.
+
+Coordinated production shared by several mathematically independent
+commitments is also deferred. Sources may share ordinary `Arc`-owned storage or
+backend caches today, but Akita does not yet collect several commitment
+requests into one production graph. A future phase-local preparation API must
+preserve each commitment's identity, profile, ordering, and opening obligation.
+
 Absent optional groups are omitted, and full-program mode omits the direct
 program suffix. For `C` bytecode chunks and `A` present advice kinds, setup
 capacity remains `C + 2 + A`, including the existing 260-group maximum at
@@ -465,8 +499,9 @@ state/capability rejection, and modular/legacy byte parity.
   commitment modes use checked plans.
 - [x] Independent inner/outer and compression ranges compile into an immutable,
   inspectable round schedule.
-- [x] Invalid routes, state, dimensions, relation modes, sources, and setup
-  identities fail before arithmetic or transcript-dependent consumption.
+- [x] Invalid route configuration, dimensions, relation modes, sources, and
+  setup capacity fail before arithmetic; invalid backend-returned state fails
+  before the next stage or transcript-dependent consumer.
 - [x] Stage-specific NTT routing, planning, release, and owner deduplication are
   preserved.
 - [x] Public commitments, portable hints, transcripts, proof bytes, proof size,
@@ -487,7 +522,8 @@ The canonical implementation lives under
 - `external.rs`: checked external operation erasure;
 - `plan.rs`: full, uncompressed, inner-only, and setup-prefix plans;
 - `stages.rs`: operation traits and checked stage outputs;
-- `builder.rs` and `executor.rs`: registration, preflight, and execution;
+- `prepared.rs`, `builder.rs`, and `executor.rs`: cohesive stage registration,
+  preflight, and execution;
 - `state_policy.rs`: direct state ownership and portable/resident policies;
 - `resources.rs`: prepared resources and NTT routing; and
 - `schedule.rs`: immutable per-round orchestration.
@@ -498,4 +534,3 @@ inner export during fused commitment, schedule cutovers and invalid schedules,
 resource routing, setup-prefix persistence, and state policies. Repository CI
 also covers all supported feature graphs, transcript implementations,
 portability targets, Jolt recursion smoke checks, and documentation guardrails.
-

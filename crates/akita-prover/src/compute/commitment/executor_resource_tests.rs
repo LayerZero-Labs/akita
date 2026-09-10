@@ -1,6 +1,7 @@
 use super::*;
 use crate::compute::{
-    CommitmentNttRequirement, CommitmentResourceControl, DenseType, NttCacheOwnerId,
+    BackendInstanceId, CommitmentNttRequirement, CommitmentOperationContext,
+    CommitmentResourceControl, DenseType, NttCacheOwnerId,
 };
 use crate::AkitaProverSetup;
 use akita_challenges::SparseChallengeConfig;
@@ -77,7 +78,7 @@ fn stage_registration_skips_streamed_slots() {
         .unwrap()
         .unwrap();
     let ensures = Arc::new(AtomicUsize::new(0));
-    let registration = StageRegistration::new(
+    let registration = super::super::prepared::PreparedStage::new(
         Arc::new(()),
         CommitmentOperationContext {
             backend_instance: BackendInstanceId::issue(),

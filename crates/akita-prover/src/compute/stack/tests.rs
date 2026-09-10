@@ -37,7 +37,7 @@ fn operation_ctx_accepts_matching_expanded_setup() {
         .expect("matching expanded metadata should validate");
 }
 
-use crate::compute::{CommitCluster, CommitmentNttStage, RingSwitchCluster};
+use crate::compute::{CommitCluster, CommitmentNttRoute, CommitmentNttStage, RingSwitchCluster};
 
 fn assert_distinct_backend_types<C: 'static, R: 'static>() {
     fn type_id<T: 'static>() -> std::any::TypeId {
@@ -48,7 +48,7 @@ fn assert_distinct_backend_types<C: 'static, R: 'static>() {
 
 type TestUniformStack<'a> = UniformProverStack<'a, F, CpuBackend>;
 type TestHeterogeneousStack<'a> =
-    ProverComputeStack<'a, F, CommitCluster, CpuBackend, CpuBackend, RingSwitchCluster>;
+    ProverComputeStack<'a, F, CpuBackend, CpuBackend, RingSwitchCluster>;
 
 fn commitment_executor<'a>(
     setup: &'a AkitaProverSetup<F>,
@@ -91,7 +91,13 @@ fn all_cluster_requirements() -> NttExecutionRequirements {
         let key = akita_types::NttCacheKey::from_matrix_shape(64, 1, width, domain).unwrap();
         if cluster == NttOperationCluster::Commit {
             requirements
-                .add_commitment_matrix(0, CommitmentNttStage::Inner, key, width)
+                .add_commitment_matrix(
+                    0,
+                    CommitmentNttRoute::InnerOnly,
+                    CommitmentNttStage::Inner,
+                    key,
+                    width,
+                )
                 .unwrap();
         } else {
             requirements.add_matrix(0, cluster, key, width).unwrap();
@@ -165,6 +171,7 @@ fn prewarm_routes_only_to_declared_physical_cluster_owner() {
     requirements
         .add_commitment_matrix(
             0,
+            CommitmentNttRoute::InnerOnly,
             CommitmentNttStage::Inner,
             akita_types::NttCacheKey::from_matrix_shape(
                 64,
@@ -352,6 +359,7 @@ fn prewarm_max_joins_retained_requests_by_physical_owner_before_building() {
     requirements
         .add_commitment_matrix(
             0,
+            CommitmentNttRoute::InnerOnly,
             CommitmentNttStage::Inner,
             akita_types::NttCacheKey::from_matrix_shape(
                 64,
@@ -482,7 +490,7 @@ fn planned_metrics_keep_four_independent_clusters_separate() {
     let ring = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("ring prepared");
-    let stack: ProverComputeStack<'_, F, CpuBackend, CpuBackend, CpuBackend, CpuBackend> =
+    let stack: ProverComputeStack<'_, F, CpuBackend, CpuBackend, CpuBackend> =
         ProverComputeStack::new(
             commitment_executor(&setup, &commit),
             (&CpuBackend::DEFAULT, &opening),
@@ -511,8 +519,7 @@ fn planned_metrics_keep_four_independent_clusters_separate() {
 
 #[test]
 fn tiered_prove_stacks_rejects_empty_table() {
-    let result =
-        TieredProveStacks::<F, CpuBackend, CpuBackend, CpuBackend, CpuBackend>::new(&[], &[]);
+    let result = TieredProveStacks::<F, CpuBackend, CpuBackend, CpuBackend>::new(&[], &[]);
     assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
 }
 

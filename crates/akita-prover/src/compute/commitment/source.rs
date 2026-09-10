@@ -20,6 +20,10 @@ pub enum CommitSourceClass {
     },
 }
 
+#[cfg(test)]
+#[path = "source_bounds_tests.rs"]
+mod bounds_tests;
+
 /// O(1) structural metadata used before representation materialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitSourceDescriptor {
@@ -429,6 +433,27 @@ impl UnitPositionSlice<'_> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn contains_out_of_range_position(&self, chunk_size: usize) -> bool {
+        match self {
+            Self::U8(values) => values
+                .iter()
+                .flatten()
+                .any(|position| usize::from(*position) >= chunk_size),
+            Self::U16(values) => values
+                .iter()
+                .flatten()
+                .any(|position| usize::from(*position) >= chunk_size),
+            Self::U32(values) => values
+                .iter()
+                .flatten()
+                .any(|position| usize::try_from(*position).map_or(true, |p| p >= chunk_size)),
+            Self::Usize(values) => values
+                .iter()
+                .flatten()
+                .any(|position| *position >= chunk_size),
+        }
+    }
 }
 
 /// Borrowed one-hot source representation.
@@ -652,6 +677,14 @@ fn validate_materialized_representation<F: Field>(
             {
                 return Err(AkitaError::InvalidInput(
                     "one-hot representation disagrees with its source descriptor".into(),
+                ));
+            }
+            if representation
+                .positions
+                .contains_out_of_range_position(representation.chunk_size)
+            {
+                return Err(AkitaError::InvalidInput(
+                    "one-hot representation contains a position outside its chunk".into(),
                 ));
             }
         }
@@ -1323,6 +1356,33 @@ mod tests {
         assert_eq!(dense.materializations.load(Ordering::SeqCst), 0);
         assert_eq!(compiled.materialize().unwrap().len(), 1);
         assert_eq!(dense.materializations.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn onehot_materialization_rejects_positions_outside_the_chunk() {
+        let source = CountingSource {
+            onehot: true,
+            coefficients: Vec::new(),
+            positions: vec![Some(0), Some(7), None, Some(8), None, None, None, None],
+            materializations: AtomicUsize::new(0),
+        };
+        let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+        struct TestBackend;
+        let capabilities = CommitmentRequestCapabilities::split::<()>(
+            BackendKindId::of::<TestBackend>("test").unwrap(),
+            vec![PolynomialType::OneHot(
+                OneHotType::new(8, OneHotIndexWidth::U8).unwrap(),
+            )],
+        );
+
+        let error = compile_commitment_request(&plan(), &sources, &capabilities)
+            .unwrap()
+            .materialize()
+            .err()
+            .expect("out-of-range one-hot position must be rejected");
+        assert!(
+            matches!(error, AkitaError::InvalidInput(message) if message.contains("outside its chunk"))
+        );
     }
 
     struct ExternalBackend;

@@ -218,6 +218,15 @@ pub trait InnerImageExportOperation<F: Field>: Send + Sync {
         plan: &CommitInnerPlan,
         image: &BackendStateRef<InnerImage>,
     ) -> Result<Vec<RingVec<F>>, AkitaError>;
+
+    /// Consume a resident image, moving its rows when ownership permits.
+    fn consume_inner_rows(
+        &self,
+        plan: &CommitInnerPlan,
+        image: BackendStateRef<InnerImage>,
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
+        self.export_inner_rows(plan, &image)
+    }
 }
 
 #[cfg(test)]

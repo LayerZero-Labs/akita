@@ -40,7 +40,7 @@ let stack = UniformProverStack::uniform(
 let commit_output = scheme.commit(
     &setup,
     polys,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
@@ -161,7 +161,7 @@ Covered operation families:
   `RingSwitchRelationKernel`.
 
 **Prove routing:** `batched_prove` takes `&impl LevelProveStacks`. Each fold
-selects a `ProverComputeStack<C, O, TS, R>`; commit / opening / tensor /
+selects a `ProverComputeStack<O, TS, R>`; commit / opening / tensor /
 ring-switch call the matching `OperationCtx`. `TieredProveStacks` supports
 per-fold backend tiers; `UniformProverStack::uniform(cpu)` is the degenerate
 single-backend case.

@@ -70,6 +70,46 @@ impl<F: Field + 'static> CpuInnerImageStore<F> {
                 .collect()
         })
     }
+
+    fn consume_rows(
+        &self,
+        plan: &CommitInnerPlan,
+        image: BackendStateRef<InnerImage>,
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
+        if image.binding().inner_plan() != plan {
+            return Err(AkitaError::InvalidInput(
+                "CPU inner export plan disagrees with resident state".into(),
+            ));
+        }
+        let source_count = image.binding().source_count();
+        let expected_coefficients =
+            checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension]).ok_or_else(
+                || AkitaError::InvalidInput("CPU inner export extent overflow".into()),
+            )?;
+        match self.owner.try_unwrap::<Vec<CommitInnerWitness<F>>>(image)? {
+            Ok(witnesses) => {
+                if witnesses.len() != source_count {
+                    return Err(AkitaError::InvalidInput(
+                        "CPU inner resident source count is invalid".into(),
+                    ));
+                }
+                witnesses
+                    .into_iter()
+                    .map(|witness| {
+                        if witness.inner_rows.ring_dim() != plan.ring_dimension
+                            || witness.inner_rows.coeff_len() != expected_coefficients
+                        {
+                            return Err(AkitaError::InvalidInput(
+                                "CPU inner resident row shape is invalid".into(),
+                            ));
+                        }
+                        Ok(witness.inner_rows)
+                    })
+                    .collect()
+            }
+            Err(shared) => self.export_rows(plan, &shared),
+        }
+    }
 }
 
 struct CpuInnerImageExporter<F: Field> {
@@ -83,6 +123,14 @@ impl<F: Field + 'static> InnerImageExportOperation<F> for CpuInnerImageExporter<
         image: &BackendStateRef<InnerImage>,
     ) -> Result<Vec<RingVec<F>>, AkitaError> {
         self.storage.export_rows(plan, image)
+    }
+
+    fn consume_inner_rows(
+        &self,
+        plan: &CommitInnerPlan,
+        image: BackendStateRef<InnerImage>,
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
+        self.storage.consume_rows(plan, image)
     }
 }
 
@@ -220,6 +268,14 @@ where
         image: &crate::compute::commitment::BackendStateRef<InnerImage>,
     ) -> Result<Vec<RingVec<F>>, AkitaError> {
         self.storage.export_rows(plan, image)
+    }
+
+    fn consume_inner_rows(
+        &self,
+        plan: &CommitInnerPlan,
+        image: BackendStateRef<InnerImage>,
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
+        self.storage.consume_rows(plan, image)
     }
 }
 
@@ -373,5 +429,16 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].ring_dim(), 64);
         assert_eq!(rows[0].coeff_len(), 2 * 64);
+        let resident_pointer = operation
+            .owner()
+            .value::<Vec<CommitInnerWitness<F>>>(output.image())
+            .unwrap()[0]
+            .inner_rows
+            .coeffs()
+            .as_ptr();
+        let moved = operation
+            .consume_inner_rows(&plan, output.into_image())
+            .unwrap();
+        assert_eq!(moved[0].coeffs().as_ptr(), resident_pointer);
     }
 }

@@ -7,14 +7,14 @@ earlier commitments combined into a final proof.
 
 ## Commit one group
 
-Every call to `commit` supplies the setup, a slice of polynomials, a prepared
-compute stack, and the complete context for that group.
+Every call to `commit` supplies the setup, a slice of polynomials, a commitment
+executor, and the complete context for that group.
 
 ```rust
 let output = scheme.commit(
     &setup,
     &polynomials,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
@@ -28,13 +28,13 @@ The result has two parts:
 ```rust
 let CommitOutput {
     committed_group,
-    hint,
+    prover_state,
 } = output;
 ```
 
 `committed_group` is public and self describing. It carries the commitment and
-the frozen profile that produced it. `hint` is private prover data. Store the
-hint beside the exact polynomial group and preserve their order.
+the frozen profile that produced it. `prover_state` is private prover data.
+Store it beside the exact polynomial group and preserve their order.
 
 ## Independent commitments stay reusable
 
@@ -44,7 +44,7 @@ or used as an earlier group in a later batched proof. The commitment does not
 need to predict that later proof.
 
 This property is important for long lived application state. A host can commit
-to a table once, keep its commitment and hint, and decide later which other
+to a table once, keep its commitment and prover state, and decide later which other
 groups to open beside it.
 
 ## State one group's opening claims
@@ -70,7 +70,7 @@ The prover then pairs the public claims with private material:
 let polynomial_refs: Vec<&DensePoly<F>> = polynomials.iter().collect();
 let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
     claims,
-    vec![hint],
+    vec![prover_state],
     vec![&polynomial_refs],
 )?;
 let selection = prover_data.selection();
@@ -94,7 +94,7 @@ let claims = OpeningClaims::from_groups(vec![
 ```
 
 The final group is the last item. Every earlier item is a precommitted group.
-This order is visible to the protocol. Build the hint vector and polynomial
+This order is visible to the protocol. Build the prover-state vector and polynomial
 group vector in exactly the same order.
 
 Akita binds the following facts for each group:
@@ -121,7 +121,7 @@ let prior = PrecommittedGroupProfiles::from_ordered_groups(
 let final_output = scheme.commit(
     &setup,
     &final_polynomials,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
 ```
@@ -152,7 +152,7 @@ let setup = recursive_scheme.setup_prover(max_num_vars, max_total_batched_polys)
 let earlier = base_scheme.commit(
     &setup,
     &earlier_polynomials,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 
@@ -164,7 +164,7 @@ let final_group = AkitaCommitmentScheme::<
 >::commit(
     &setup,
     &final_polynomials,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
 ```

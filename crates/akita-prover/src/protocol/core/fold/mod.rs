@@ -105,17 +105,16 @@ where
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
-pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>
+pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, S, O, TS, R, SP>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: Field,
-    C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: crate::compute::CommitmentStatePolicy<F>,
 {
-    stack: &'a ProverComputeStack<'a, F, C, O, TS, R, SP>,
+    stack: &'a ProverComputeStack<'a, F, O, TS, R, SP>,
     block_claims: ProverOpeningData<'a, E, Q, F, S>,
     protocol_points: &'a [Vec<E>],
     reduction: Option<ExtensionOpeningReduction<E>>,
@@ -130,8 +129,8 @@ where
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
 /// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
 #[allow(clippy::needless_lifetimes)]
-pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>(
-    args: FinishFoldArgs<'a, 'p, F, E, T, Q, S, C, O, TS, R, SP>,
+pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, S, O, TS, R, SP>(
+    args: FinishFoldArgs<'a, 'p, F, E, T, Q, S, O, TS, R, SP>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: Field
@@ -155,7 +154,6 @@ where
     S: crate::compute::InnerRelationState<F> + crate::compute::OuterCompressionState<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
-    C: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     SP: crate::compute::CommitmentStatePolicy<F>,
 {
@@ -385,10 +383,10 @@ impl<'a> FoldSuccessorParams<'a> {
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, SP, Cfg>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, O, TS, R, SP, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R, SP>,
+    stack: &'stack ProverComputeStack<'stack, F, O, TS, R, SP>,
     transcript: &mut T,
     level: usize,
     lp: &CommittedGroupParams,
@@ -414,11 +412,9 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
-    C: ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
-    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     SP: crate::compute::CommitmentStatePolicy<F>,
     SP::State: crate::compute::TerminalBindingState<F>,

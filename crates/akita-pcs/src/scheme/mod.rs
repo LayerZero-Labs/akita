@@ -171,7 +171,6 @@ where
         stacks: &'a impl LevelProveStacks<
             'a,
             Cfg::Field,
-            Commit = B,
             Opening = B,
             Tensor = B,
             RingSwitch = B,
@@ -204,7 +203,7 @@ where
             + TerminalBindingState<Cfg::Field>,
     {
         let t_prove_total = Instant::now();
-        let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, B, SP>(
+        let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, SP>(
             &setup.expanded,
             &setup.prefix_slots,
             &self.schedules,

@@ -89,9 +89,9 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_prover::{
-    batched_prove, CommitCluster, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
-    MultilinearPolynomial, OpeningCluster, PortableStatePolicy, ProverComputeStack,
-    RingSwitchCluster, TensorCluster, UniformProverStack,
+    batched_prove, CommitmentExecutor, ComputeBackendSetup, CpuBackend, MultilinearPolynomial,
+    OpeningCluster, PortableStatePolicy, ProverComputeStack, RingSwitchCluster, TensorCluster,
+    UniformProverStack,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;

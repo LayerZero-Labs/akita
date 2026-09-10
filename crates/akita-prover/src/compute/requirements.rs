@@ -1,6 +1,6 @@
 //! Declarative NTT requirements for one resolved prover execution.
 
-use super::commitment::CommitmentNttStage;
+use super::commitment::{CommitmentNttRoute, CommitmentNttStage};
 use akita_error::AkitaError;
 use akita_types::{
     centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
@@ -30,6 +30,8 @@ pub struct RoutedNttRequirement {
     pub cluster: NttOperationCluster,
     /// Exact commitment stage when `cluster` is [`NttOperationCluster::Commit`].
     pub commitment_stage: Option<CommitmentNttStage>,
+    /// Exact commitment execution route when `cluster` is commit.
+    pub commitment_route: Option<CommitmentNttRoute>,
     /// Exact transform prefix used when this operation is retained.
     pub key: NttCacheKey,
     /// Full operation extent used by the backend's cached-versus-streamed route.
@@ -128,6 +130,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             fold_level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
@@ -143,6 +146,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             fold_level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
@@ -165,13 +169,14 @@ impl NttExecutionRequirements {
                 "commitment NTT requirements require an inner/outer stage discriminator".into(),
             ));
         }
-        self.push_matrix(fold_level, cluster, None, key, routing_extent)
+        self.push_matrix(fold_level, cluster, None, None, key, routing_extent)
     }
 
     /// Add one exact commitment matrix request with its owning A/B stage.
     pub fn add_commitment_matrix(
         &mut self,
         fold_level: usize,
+        route: CommitmentNttRoute,
         stage: CommitmentNttStage,
         key: NttCacheKey,
         routing_extent: usize,
@@ -180,6 +185,7 @@ impl NttExecutionRequirements {
             fold_level,
             NttOperationCluster::Commit,
             Some(stage),
+            Some(route),
             key,
             routing_extent,
         )
@@ -190,6 +196,7 @@ impl NttExecutionRequirements {
         fold_level: usize,
         cluster: NttOperationCluster,
         commitment_stage: Option<CommitmentNttStage>,
+        commitment_route: Option<CommitmentNttRoute>,
         key: NttCacheKey,
         routing_extent: usize,
     ) -> Result<(), AkitaError> {
@@ -202,6 +209,7 @@ impl NttExecutionRequirements {
             fold_level,
             cluster,
             commitment_stage,
+            commitment_route,
             key,
             routing_extent,
         });
@@ -212,6 +220,10 @@ impl NttExecutionRequirements {
                 entry.commitment_stage.map_or(2, |stage| match stage {
                     CommitmentNttStage::Inner => 0,
                     CommitmentNttStage::Outer => 1,
+                }),
+                entry.commitment_route.map_or(2, |route| match route {
+                    CommitmentNttRoute::InnerOnly => 0,
+                    CommitmentNttRoute::InnerOuter => 1,
                 }),
                 entry.key.ring_d,
                 domain_order(entry.key.domain),
@@ -242,6 +254,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
@@ -257,6 +270,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
@@ -372,6 +386,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Inner,
             inner_key,
             matrix_extent(
@@ -387,6 +402,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             level,
+            CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Outer,
             outer_key,
             matrix_extent(
@@ -477,6 +493,7 @@ impl NttExecutionRequirements {
         )?;
         self.add_commitment_matrix(
             level,
+            CommitmentNttRoute::InnerOnly,
             CommitmentNttStage::Inner,
             key,
             matrix_extent(
@@ -590,6 +607,7 @@ mod tests {
             requirements
                 .add_commitment_matrix(
                     2,
+                    CommitmentNttRoute::InnerOnly,
                     CommitmentNttStage::Inner,
                     NttCacheKey::from_matrix_shape(64, 3, width, NttTransformDomain::Negacyclic)
                         .unwrap(),
@@ -768,7 +786,13 @@ mod tests {
             let key = NttCacheKey::from_matrix_shape(64, 2, 9, domain).unwrap();
             if cluster == NttOperationCluster::Commit {
                 requirements
-                    .add_commitment_matrix(level, CommitmentNttStage::Inner, key, 18)
+                    .add_commitment_matrix(
+                        level,
+                        CommitmentNttRoute::InnerOnly,
+                        CommitmentNttStage::Inner,
+                        key,
+                        18,
+                    )
                     .unwrap();
             } else {
                 requirements.add_matrix(level, cluster, key, 18).unwrap();

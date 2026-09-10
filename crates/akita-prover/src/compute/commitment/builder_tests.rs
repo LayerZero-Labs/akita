@@ -1,10 +1,14 @@
 use super::*;
 use crate::compute::{
-    CommitmentExecutionPlan, CommitmentNttRequirement, CommitmentResourceControl, CommitmentSource,
-    CommitmentStateBinding, CompressionStageOutput, ComputeBackendSetup, CpuBackend,
-    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation, InnerCommitOutput,
-    InnerImageInput, NttCacheOwnerId, PreparedCommitmentResources, ResolvedCommitSource,
-    StageResources,
+    BackendKindId, CommitmentExecutionPlan, CommitmentNttRequirement,
+    CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
+    CommitmentStateBinding, CompressionOperation, CompressionOperationCapabilities,
+    CompressionStageOutput, CompressionState, ComputeBackendSetup, CpuBackend,
+    CpuCompressionOperation, CpuInnerCommitOperation, CpuOuterCommitOperation,
+    InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageInput, NttCacheOwnerId,
+    OuterCommitOperation, PolynomialType, PreparedCommitmentResources, PreparedCompression,
+    PreparedInnerCommitment, PreparedOuterCommitment, ResolvedCommitSource,
+    StageDimensionCapabilities, StageResources, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -138,14 +142,12 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
         9,
         1,
         SetupMatrixCapacity {
-            num_field_elements: 4 * 64,
+            num_field_elements: 128 * 64,
         },
     )
     .unwrap();
-    let mut builder = CommitmentExecutorBuilder::new::<TestContext>(
+    let mut builder = CommitmentExecutorBuilder::new(
         setup.expanded.as_ref(),
-        BackendKindId::of::<TestBackend>("test").unwrap(),
-        vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
         super::super::NoRetainedStatePolicy,
     );
     let image_owner = StateOwnerCapability::<InnerImage>::new();
@@ -204,20 +206,27 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
         .unwrap();
     builder
         .register_inner(
-            Arc::new(UnusedInner),
-            image_owner.clone(),
-            inner_context,
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-            None,
+            PreparedInnerCommitment::new(
+                Arc::new(UnusedInner),
+                image_owner.clone(),
+                inner_context,
+                CommitmentRequestCapabilities::split::<TestContext>(
+                    BackendKindId::of::<TestBackend>("test").unwrap(),
+                    vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
+                ),
+                StageDimensionCapabilities::new(vec![64]).unwrap(),
+                None,
+            )
+            .unwrap(),
         )
         .unwrap();
     builder
-        .register_outer(
+        .register_outer(PreparedOuterCommitment::new(
             Arc::new(UnusedOuter),
             image_owner,
             outer_context,
             StageDimensionCapabilities::new(vec![64]).unwrap(),
-        )
+        ))
         .unwrap();
     let compression_dimensions = plan
         .compression()
@@ -227,8 +236,9 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
         .map(|map| map.ring_dimension())
         .collect();
     builder
-        .register_compression(
+        .register_compression(PreparedCompression::new(
             Arc::new(UnusedCompression),
+            StateOwnerCapability::<CompressionState>::new(),
             compression_context,
             CompressionOperationCapabilities::new(
                 StageDimensionCapabilities::new(compression_dimensions).unwrap(),
@@ -236,7 +246,7 @@ fn distinct_resource_owners_are_planned_prewarmed_and_released_independently() {
             )
             .unwrap(),
             None,
-        )
+        ))
         .unwrap();
     let executor = builder.build().unwrap();
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
@@ -299,10 +309,8 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
     )
     .unwrap();
 
-    let mut builder = CommitmentExecutorBuilder::new::<MixedContext>(
+    let mut builder = CommitmentExecutorBuilder::new(
         setup.expanded.as_ref(),
-        BackendKindId::of::<MixedBackend>("mixed").unwrap(),
-        standard_types,
         super::super::NoRetainedStatePolicy,
     );
     let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
@@ -334,28 +342,36 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
         .unwrap();
     builder
         .register_inner(
-            inner.clone(),
-            inner.owner().clone(),
-            inner_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
-            Some(inner.portable_exporter()),
+            PreparedInnerCommitment::new(
+                inner.clone(),
+                inner.owner().clone(),
+                inner_context,
+                CommitmentRequestCapabilities::split::<MixedContext>(
+                    BackendKindId::of::<MixedBackend>("mixed").unwrap(),
+                    standard_types,
+                ),
+                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                Some(inner.portable_exporter()),
+            )
+            .unwrap(),
         )
         .unwrap();
     builder
-        .register_outer(
+        .register_outer(PreparedOuterCommitment::new(
             Arc::new(outer),
             StateOwnerCapability::new(),
             outer_context,
             StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-        )
+        ))
         .unwrap();
     builder
-        .register_compression(
+        .register_compression(PreparedCompression::new(
             compression.clone(),
+            compression.owner().clone(),
             compression_context,
             CompressionOperationCapabilities::cpu::<F>(),
             Some(compression.portable_exporter()),
-        )
+        ))
         .unwrap();
     let mixed = builder.build().unwrap();
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
@@ -365,4 +381,40 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
     let actual = mixed.execute_full(&plan, &sources).unwrap();
     assert_eq!(actual.terminal_payload(), expected.terminal_payload());
     assert_eq!(outer_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn builder_rejects_duplicate_inner_type_capabilities() {
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        9,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 4 * 64,
+        },
+    )
+    .unwrap();
+    let dense = PolynomialType::Dense(super::super::DenseType::Coefficients);
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let error = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        setup.expanded.as_ref(),
+        vec![dense, dense],
+        super::super::ResidentStatePolicy,
+    )
+    .err()
+    .expect("duplicate capabilities must be rejected");
+    assert!(matches!(
+        error,
+        AkitaError::InvalidSetup(message) if message.contains("duplicate")
+    ));
+    assert!(CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        setup.expanded.as_ref(),
+        vec![dense],
+        super::super::ResidentStatePolicy,
+    )
+    .is_ok());
 }

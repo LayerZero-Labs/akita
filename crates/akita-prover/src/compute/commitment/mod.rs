@@ -9,6 +9,7 @@ mod capabilities;
 mod executor;
 mod external;
 mod plan;
+mod prepared;
 mod registration;
 mod resources;
 mod schedule;
@@ -30,12 +31,16 @@ pub use external::{
 pub use plan::{
     CommitmentExecutionMode, CommitmentExecutionPlan, OuterCommitPlan, UncompressedCommitPlan,
 };
+pub use prepared::{
+    PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
+};
 pub use registration::{
     BackendStateRef, CommitmentStateBinding, CompressionState, InnerImage, StateOwnerCapability,
 };
 pub use resources::{
-    BackendInstanceId, CommitmentNttRequirement, CommitmentNttStage, CommitmentOperationContext,
-    CommitmentOperationId, CommitmentResourceControl, PreparedCommitmentResources, StageResources,
+    BackendInstanceId, CommitmentNttRequirement, CommitmentNttRoute, CommitmentNttStage,
+    CommitmentOperationContext, CommitmentOperationId, CommitmentResourceControl,
+    PreparedCommitmentResources, StageResources,
 };
 pub use schedule::{
     CommitmentExecutionSchedule, CommitmentExecutionScheduleBuilder, CommitmentRoundStep,

@@ -764,21 +764,15 @@ fn heterogeneous_compute_backends() {
             PortableStatePolicy,
         )
         .expect("commitment executor");
-        let stack: ProverComputeStack<
-            '_,
-            F,
-            CommitCluster,
-            OpeningCluster,
-            TensorCluster,
-            RingSwitchCluster,
-        > = ProverComputeStack::new(
-            commitment_executor,
-            (&opening_backend, &prepared),
-            (&tensor, &prepared),
-            (&ring, &prepared),
-            setup.expanded.as_ref(),
-        )
-        .expect("heterogeneous stack");
+        let stack: ProverComputeStack<'_, F, OpeningCluster, TensorCluster, RingSwitchCluster> =
+            ProverComputeStack::new(
+                commitment_executor,
+                (&opening_backend, &prepared),
+                (&tensor, &prepared),
+                (&ring, &prepared),
+                setup.expanded.as_ref(),
+            )
+            .expect("heterogeneous stack");
 
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
@@ -814,7 +808,7 @@ fn heterogeneous_compute_backends() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let proof = batched_prove::<Cfg, _, _, _, _, _, _, _, _>(
+        let proof = batched_prove::<Cfg, _, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
             scheme.schedules(),

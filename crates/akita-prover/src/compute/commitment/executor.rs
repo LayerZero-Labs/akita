@@ -1,12 +1,11 @@
 use super::{
-    compile_commitment_request, BackendInstanceId, BackendKindId, CommitmentExecutionOutput,
-    CommitmentExecutionPlan, CommitmentExecutorBuilder, CommitmentOperationContext,
-    CommitmentOperationId, CommitmentRequestCapabilities, CommitmentSource, CommitmentStateBinding,
-    CommitmentStateOutput, CommitmentStatePolicy, CompiledCommitmentRequest, CompressionOperation,
-    CompressionOperationCapabilities, FullCommitmentOutput, FusedInnerOuterOperation,
-    InnerCommitOperation, InnerCommitOutput, InnerImage, InnerImageExportOperation,
-    OuterCommitOperation, PolynomialType, PreparedCommitmentResources, ResidentStatePolicy,
-    StageDimensionCapabilities, StageResources, StateOwnerCapability, UncompressedCommitmentOutput,
+    compile_commitment_request, BackendKindId, CommitmentExecutionOutput, CommitmentExecutionPlan,
+    CommitmentExecutorBuilder, CommitmentRequestCapabilities, CommitmentSource,
+    CommitmentStateBinding, CommitmentStateOutput, CommitmentStatePolicy,
+    CompiledCommitmentRequest, CompressionOperationCapabilities, FullCommitmentOutput,
+    InnerCommitOutput, PolynomialType, PreparedCommitmentResources, PreparedCompression,
+    PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
+    StageDimensionCapabilities, StageResources, UncompressedCommitmentOutput,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
@@ -22,81 +21,6 @@ use super::state_policy::CommitmentStateExporters;
 #[cfg(test)]
 struct CpuInnerContext;
 
-pub(super) struct StageRegistration<'a, F, O: ?Sized>
-where
-    F: Field + CanonicalEncoding,
-{
-    operation: Arc<O>,
-    operation_id: CommitmentOperationId,
-    backend_instance: BackendInstanceId,
-    name: &'static str,
-    pub(super) resources: StageResources<'a, F>,
-}
-
-impl<'a, F, O: ?Sized> StageRegistration<'a, F, O>
-where
-    F: Field + CanonicalEncoding,
-{
-    pub(super) fn new(operation: Arc<O>, context: CommitmentOperationContext<'a, F>) -> Self {
-        Self {
-            operation,
-            operation_id: CommitmentOperationId::issue(),
-            backend_instance: context.backend_instance,
-            name: context.name,
-            resources: context.resources,
-        }
-    }
-
-    fn ensure_ntt_slot(
-        &self,
-        requirement: super::CommitmentNttRequirement,
-    ) -> Result<(), AkitaError> {
-        if !self.resources.requirement_is_cached(requirement)? {
-            return Ok(());
-        }
-        self.resources.ensure_ntt_slot(requirement)
-    }
-}
-
-pub(super) struct InnerRegistration<'a, F>
-where
-    F: Field + CanonicalEncoding,
-{
-    pub(super) stage: StageRegistration<'a, F, dyn InnerCommitOperation<F> + 'a>,
-    pub(super) owner: StateOwnerCapability<InnerImage>,
-    pub(super) capabilities: CommitmentRequestCapabilities,
-    pub(super) dimensions: StageDimensionCapabilities,
-    pub(super) exporter: Option<Arc<dyn InnerImageExportOperation<F>>>,
-}
-
-pub(super) struct OuterRegistration<'a, F>
-where
-    F: Field + CanonicalEncoding,
-{
-    pub(super) stage: StageRegistration<'a, F, dyn OuterCommitOperation<F> + 'a>,
-    pub(super) owner: StateOwnerCapability<InnerImage>,
-    pub(super) dimensions: StageDimensionCapabilities,
-}
-
-pub(super) struct CompressionRegistration<'a, F>
-where
-    F: Field + CanonicalEncoding,
-{
-    pub(super) stage: StageRegistration<'a, F, dyn CompressionOperation<F> + 'a>,
-    pub(super) capabilities: CompressionOperationCapabilities,
-    pub(super) exporter: Option<Arc<dyn super::PortableCompressionStateExport<F>>>,
-}
-
-pub(super) struct FusedRegistration<'a, F>
-where
-    F: Field + CanonicalEncoding,
-{
-    pub(super) stage: StageRegistration<'a, F, dyn FusedInnerOuterOperation<F> + 'a>,
-    pub(super) capabilities: CommitmentRequestCapabilities,
-    pub(super) dimensions: StageDimensionCapabilities,
-    pub(super) exporter: Option<Arc<dyn InnerImageExportOperation<F>>>,
-}
-
 /// Checked commitment-stage executor.
 ///
 /// Registrations keep each operation with its capabilities and explicit
@@ -108,10 +32,10 @@ pub struct CommitmentExecutor<
     SP: CommitmentStatePolicy<F> = ResidentStatePolicy,
 > {
     pub(super) setup: akita_types::AkitaSetupDescriptor,
-    pub(super) inner: Option<InnerRegistration<'a, F>>,
-    pub(super) outer: Option<OuterRegistration<'a, F>>,
-    pub(super) compression: CompressionRegistration<'a, F>,
-    pub(super) fused: Option<FusedRegistration<'a, F>>,
+    pub(super) inner: Option<PreparedInnerCommitment<'a, F>>,
+    pub(super) outer: Option<PreparedOuterCommitment<'a, F>>,
+    pub(super) compression: Option<PreparedCompression<'a, F>>,
+    pub(super) fused: Option<PreparedFusedCommitment<'a, F>>,
     pub(super) state_policy: SP,
 }
 
@@ -133,13 +57,12 @@ where
                 "CPU commitment executor setup descriptor mismatch".into(),
             ));
         }
-        let mut builder = CommitmentExecutorBuilder::new::<CpuPreparedSetup<F>>(
-            expanded,
+        let mut builder = CommitmentExecutorBuilder::new(expanded, state_policy);
+        let mut inner_capabilities = CommitmentRequestCapabilities::split::<CpuPreparedSetup<F>>(
             BackendKindId::of::<super::external::CpuBackendKind>("cpu")?,
             standard_types,
-            state_policy,
         );
-        builder.accept_any_standard_type();
+        inner_capabilities.accept_any_standard_type();
         let inner_operation = Arc::new(CpuInnerCommitOperation::new(backend, prepared));
         let outer_operation = Arc::new(CpuOuterCommitOperation::new(
             backend,
@@ -160,25 +83,27 @@ where
             builder.operation_context(backend_instance, "cpu-outer", resources.clone())?;
         let compression_context =
             builder.operation_context(backend_instance, "cpu-compression", resources)?;
-        builder.register_inner(
+        builder.register_inner(PreparedInnerCommitment::new(
             inner_operation.clone(),
             inner_owner,
             inner_context,
+            inner_capabilities,
             StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
             Some(inner_operation.portable_exporter()),
-        )?;
-        builder.register_outer(
+        )?)?;
+        builder.register_outer(PreparedOuterCommitment::new(
             outer_operation,
             outer_owner,
             outer_context,
             StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-        )?;
-        builder.register_compression(
+        ))?;
+        builder.register_compression(PreparedCompression::new(
             compression_operation.clone(),
+            compression_operation.owner().clone(),
             compression_context,
             CompressionOperationCapabilities::cpu::<F>(),
             Some(compression_operation.portable_exporter()),
-        )?;
+        ))?;
         builder.build()
     }
 }
@@ -197,15 +122,21 @@ where
         }
     }
 
-    fn split_inner(&self) -> Result<&InnerRegistration<'a, F>, AkitaError> {
+    fn split_inner(&self) -> Result<&PreparedInnerCommitment<'a, F>, AkitaError> {
         self.inner.as_ref().ok_or_else(|| {
             AkitaError::InvalidInput("commitment route has no split inner operation".into())
         })
     }
 
-    fn split_outer(&self) -> Result<&OuterRegistration<'a, F>, AkitaError> {
+    fn split_outer(&self) -> Result<&PreparedOuterCommitment<'a, F>, AkitaError> {
         self.outer.as_ref().ok_or_else(|| {
             AkitaError::InvalidInput("commitment route has no split outer operation".into())
+        })
+    }
+
+    fn compression(&self) -> Result<&PreparedCompression<'a, F>, AkitaError> {
+        self.compression.as_ref().ok_or_else(|| {
+            AkitaError::InvalidInput("commitment route has no compression operation".into())
         })
     }
 
@@ -232,7 +163,10 @@ where
         Ok(())
     }
 
-    fn fused_for_plan(&self, plan: &CommitmentExecutionPlan) -> Option<&FusedRegistration<'a, F>> {
+    fn fused_for_plan(
+        &self,
+        plan: &CommitmentExecutionPlan,
+    ) -> Option<&PreparedFusedCommitment<'a, F>> {
         plan.uncompressed().is_some().then_some(())?;
         self.fused.as_ref()
     }
@@ -256,7 +190,10 @@ where
                 Some(fused) => fused.exporter.clone(),
                 None => self.split_inner()?.exporter.clone(),
             },
-            compression: self.compression.exporter.clone(),
+            compression: self
+                .compression
+                .as_ref()
+                .and_then(|compression| compression.exporter.clone()),
         })
     }
 
@@ -275,6 +212,7 @@ where
     }
 
     fn validate_plan_capabilities(&self, plan: &CommitmentExecutionPlan) -> Result<(), AkitaError> {
+        self.validate_setup_capacity(plan)?;
         if let Some(fused) = self.fused_for_plan(plan) {
             let uncompressed = plan.uncompressed().ok_or_else(|| {
                 AkitaError::InvalidInput("fused route requires an outer-stage plan".into())
@@ -313,7 +251,7 @@ where
         }
         if let (Some(compression), Some(relation_mode)) = (plan.compression(), plan.relation_mode())
         {
-            if !self.compression.capabilities.supports(
+            if !self.compression()?.capabilities.supports(
                 compression.maps().iter().map(|map| map.ring_dimension()),
                 relation_mode,
             ) {
@@ -322,6 +260,40 @@ where
                         .into(),
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn validate_setup_capacity(&self, plan: &CommitmentExecutionPlan) -> Result<(), AkitaError> {
+        let inner = plan.inner();
+        let inner_width =
+            akita_error::checked::product([inner.num_positions_per_block, inner.num_digits_inner])
+                .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
+        let mut required =
+            akita_error::checked::product([inner.n_a, inner_width, inner.ring_dimension])
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment A setup footprint overflow".into())
+                })?;
+        if let Some(uncompressed) = plan.uncompressed() {
+            let outer = uncompressed.outer();
+            let outer_required = akita_error::checked::product([
+                outer.n_b(),
+                outer.geometry().physical_input_width(),
+                outer.ring_dimension(),
+            ])
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("commitment B setup footprint overflow".into())
+            })?;
+            required = required.max(outer_required);
+        }
+        if let Some(compression) = plan.compression() {
+            required = required.max(compression.max_setup_field_elements()?);
+        }
+        if required > self.setup.num_field_elements {
+            return Err(AkitaError::InvalidSetup(format!(
+                "commitment execution requires {required} setup field elements, but setup has {}",
+                self.setup.num_field_elements
+            )));
         }
         Ok(())
     }
@@ -342,10 +314,12 @@ where
                 }
             }
         }
-        let outer_resources = self.stage_resources(plan, super::CommitmentNttStage::Outer)?;
-        if outer_resources.is_controlled() {
-            if let Some(requirement) = plan.outer_ntt_requirement()? {
-                requirements.push(requirement);
+        if plan.uncompressed().is_some() {
+            let outer_resources = self.stage_resources(plan, super::CommitmentNttStage::Outer)?;
+            if outer_resources.is_controlled() {
+                if let Some(requirement) = plan.outer_ntt_requirement()? {
+                    requirements.push(requirement);
+                }
             }
         }
         Ok(requirements)
@@ -387,6 +361,21 @@ where
             compile_commitment_request(plan.inner(), sources, self.request_capabilities(plan)?)?;
         self.validate_plan_capabilities(plan)?;
         super::state_policy::validate_portable_export_route(
+            &self.state_exporters(plan)?,
+            plan.mode(),
+        )
+    }
+
+    /// Validate the state-consumer edges needed by later proving stages.
+    ///
+    /// This check does not discover or materialize commitment sources. It is
+    /// intended for proof-wide validation before transcript mutation.
+    pub fn preflight_prover_state_consumers(
+        &self,
+        plan: &CommitmentExecutionPlan,
+    ) -> Result<(), AkitaError> {
+        self.validate_plan_capabilities(plan)?;
+        super::state_policy::validate_prover_state_consumer_route(
             &self.state_exporters(plan)?,
             plan.mode(),
         )
@@ -470,7 +459,9 @@ where
         if let Some(outer) = &self.outer {
             registrations.push(&outer.stage.resources);
         }
-        registrations.push(&self.compression.stage.resources);
+        if let Some(compression) = &self.compression {
+            registrations.push(&compression.stage.resources);
+        }
         if let Some(fused) = &self.fused {
             registrations.push(&fused.stage.resources);
         }
@@ -507,10 +498,13 @@ where
             sources.len(),
             plan.relation_mode(),
         )?;
-        inner_registration
-            .stage
-            .operation
-            .commit_inner(&binding, plan.inner(), &resolved)
+        let output =
+            inner_registration
+                .stage
+                .operation
+                .commit_inner(&binding, plan.inner(), &resolved)?;
+        Self::validate_output_state(&binding, output.image(), &inner_registration.owner, "inner")?;
+        Ok(output)
     }
 
     /// Execute an inner-only route and bind its policy-selected state.
@@ -557,10 +551,18 @@ where
             plan.relation_mode(),
         )?;
         if let Some(fused) = self.fused_for_plan(plan) {
-            return fused
-                .stage
-                .operation
-                .commit_inner_outer(&binding, uncompressed, &resolved);
+            let output =
+                fused
+                    .stage
+                    .operation
+                    .commit_inner_outer(&binding, uncompressed, &resolved)?;
+            Self::validate_output_state(
+                &binding,
+                output.image(),
+                &fused.owner,
+                "fused inner/outer",
+            )?;
+            return Ok(output);
         }
         let inner_registration = self.split_inner()?;
         let outer_registration = self.split_outer()?;
@@ -569,6 +571,7 @@ where
             uncompressed.inner(),
             &resolved,
         )?;
+        Self::validate_output_state(&binding, inner.image(), &inner_registration.owner, "inner")?;
         let u = if inner_registration
             .owner
             .same_owner(&outer_registration.owner)
@@ -635,11 +638,19 @@ where
         })?;
         let uncompressed = self.execute_uncompressed_stages(plan, sources)?;
         let (image, u) = uncompressed.into_parts();
-        let compression = self.compression.stage.operation.compress(
-            image.binding(),
+        let expected_binding = image.binding().clone();
+        let compression_registration = self.compression()?;
+        let compression = compression_registration.stage.operation.compress(
+            &expected_binding,
             compression_plan,
             relation_mode,
             u,
+        )?;
+        Self::validate_output_state(
+            &expected_binding,
+            compression.state(),
+            &compression_registration.owner,
+            "compression",
         )?;
         let output = FullCommitmentOutput::new(image, compression)?;
         CommitmentExecutionOutput::from_full(
@@ -653,26 +664,46 @@ where
         let fused = self.fused.as_ref();
         let inner = self.inner.as_ref();
         let outer = self.outer.as_ref();
+        let compression = self.compression.as_ref();
         tracing::debug!(
             ?mode,
             inner = inner.map(|registration| registration.stage.name),
             outer = outer.map(|registration| registration.stage.name),
-            compression = self.compression.stage.name,
+            compression = compression.map(|registration| registration.stage.name),
             inner_operation = ?inner.map(|registration| registration.stage.operation_id),
             outer_operation = ?outer.map(|registration| registration.stage.operation_id),
-            compression_operation = ?self.compression.stage.operation_id,
+            compression_operation = ?compression.map(|registration| registration.stage.operation_id),
             inner_backend = ?inner.map(|registration| registration.stage.backend_instance),
             outer_backend = ?outer.map(|registration| registration.stage.backend_instance),
-            compression_backend = ?self.compression.stage.backend_instance,
+            compression_backend = ?compression.map(|registration| registration.stage.backend_instance),
             inner_cache_owner = ?inner.and_then(|registration| registration.stage.resources.cache_owner_id()),
             outer_cache_owner = ?outer.and_then(|registration| registration.stage.resources.cache_owner_id()),
-            compression_cache_owner = ?self.compression.stage.resources.cache_owner_id(),
+            compression_cache_owner = ?compression.and_then(|registration| registration.stage.resources.cache_owner_id()),
             fused = fused.is_some() && mode != super::CommitmentExecutionMode::InnerOnly,
             fused_operation = ?fused.map(|registration| registration.stage.operation_id),
             fused_backend = ?fused.map(|registration| registration.stage.backend_instance),
             fused_cache_owner = ?fused.and_then(|registration| registration.stage.resources.cache_owner_id()),
             "resolved commitment executor route"
         );
+    }
+
+    fn validate_output_state<K>(
+        expected: &CommitmentStateBinding,
+        actual: &super::BackendStateRef<K>,
+        owner: &super::StateOwnerCapability<K>,
+        stage: &'static str,
+    ) -> Result<(), AkitaError> {
+        if actual.binding() != expected {
+            return Err(AkitaError::InvalidInput(format!(
+                "{stage} operation returned state bound to a different commitment request"
+            )));
+        }
+        if !owner.owns(actual) {
+            return Err(AkitaError::InvalidInput(format!(
+                "{stage} operation returned state owned by a different prepared implementation"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -681,9 +712,10 @@ mod tests {
     use super::*;
     use crate::compute::commitment::external::CpuBackendKind;
     use crate::compute::{
-        AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CompressionState,
-        DenseCoefficientSource, DenseRepresentation, DenseType, NoRetainedStatePolicy,
-        PolynomialRepresentation, PolynomialTypeSelection, PortableStatePolicy,
+        AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CompressionOperation,
+        CompressionState, DenseCoefficientSource, DenseRepresentation, DenseType,
+        NoRetainedStatePolicy, OuterCommitOperation, PolynomialRepresentation,
+        PolynomialTypeSelection, PortableStatePolicy, StateOwnerCapability,
     };
     use crate::{AkitaProverSetup, DensePoly};
     use akita_challenges::SparseChallengeConfig;
@@ -710,6 +742,13 @@ mod tests {
         .unwrap();
         let terminal = TerminalFoldParams::from_expanded_group(params);
         CommitmentExecutionPlan::for_terminal(&terminal).unwrap()
+    }
+
+    fn split_capabilities() -> CommitmentRequestCapabilities {
+        CommitmentRequestCapabilities::split::<CpuInnerContext>(
+            BackendKindId::of::<CpuBackendKind>("cpu").unwrap(),
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+        )
     }
 
     struct CountingDense {
@@ -782,7 +821,14 @@ mod tests {
         };
         let sources: [&dyn CommitmentSource<F>; 1] = [&source];
 
-        assert!(executor.execute_inner(&plan, &sources).is_err());
+        let error = executor
+            .execute_inner(&plan, &sources)
+            .err()
+            .expect("undersized setup must fail before materialization");
+        assert!(matches!(
+            error,
+            AkitaError::InvalidSetup(message) if message.contains("setup field elements")
+        ));
         assert_eq!(source.materializations.load(Ordering::SeqCst), 0);
     }
 
@@ -793,7 +839,7 @@ mod tests {
             9,
             1,
             SetupMatrixCapacity {
-                num_field_elements: 4 * 64,
+                num_field_elements: 128 * 64,
             },
         )
         .unwrap();
@@ -837,7 +883,7 @@ mod tests {
             9,
             1,
             SetupMatrixCapacity {
-                num_field_elements: 4 * 64,
+                num_field_elements: 128 * 64,
             },
         )
         .unwrap();
@@ -851,11 +897,12 @@ mod tests {
             ResidentStatePolicy,
         )
         .unwrap();
-        executor.compression.capabilities = CompressionOperationCapabilities::new(
-            StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
-            vec![akita_types::RingRelationMode::ReducedEvaluation],
-        )
-        .unwrap();
+        executor.compression.as_mut().unwrap().capabilities =
+            CompressionOperationCapabilities::new(
+                StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
+                vec![akita_types::RingRelationMode::ReducedEvaluation],
+            )
+            .unwrap();
         let source = CountingDense {
             poly: DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap(),
             materializations: AtomicUsize::new(0),
@@ -975,18 +1022,14 @@ mod tests {
             9,
             1,
             SetupMatrixCapacity {
-                num_field_elements: 4 * 64,
+                num_field_elements: 128 * 64,
             },
         )
         .unwrap();
         let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let mut builder = CommitmentExecutorBuilder::new::<CpuInnerContext>(
-            setup.expanded.as_ref(),
-            BackendKindId::of::<CpuBackendKind>("cpu").unwrap(),
-            vec![PolynomialType::Dense(DenseType::Coefficients)],
-            ResidentStatePolicy,
-        );
+        let mut builder =
+            CommitmentExecutorBuilder::new(setup.expanded.as_ref(), ResidentStatePolicy);
         let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
         let inner_owner = inner.owner().clone();
         let inner_resources = StageResources::controlled(
@@ -1001,11 +1044,15 @@ mod tests {
             .unwrap();
         builder
             .register_inner(
-                inner.clone(),
-                inner_owner,
-                inner_context,
-                StageDimensionCapabilities::new(vec![64]).unwrap(),
-                Some(inner.portable_exporter()),
+                PreparedInnerCommitment::new(
+                    inner.clone(),
+                    inner_owner,
+                    inner_context,
+                    split_capabilities(),
+                    StageDimensionCapabilities::new(vec![64]).unwrap(),
+                    Some(inner.portable_exporter()),
+                )
+                .unwrap(),
             )
             .unwrap();
         let host_calls = Arc::new(AtomicUsize::new(0));
@@ -1017,14 +1064,14 @@ mod tests {
             )
             .unwrap();
         builder
-            .register_outer(
+            .register_outer(PreparedOuterCommitment::new(
                 Arc::new(RecordingOuter {
                     host_calls: host_calls.clone(),
                 }),
                 StateOwnerCapability::new(),
                 outer_context,
                 StageDimensionCapabilities::new(vec![64]).unwrap(),
-            )
+            ))
             .unwrap();
         let compression_calls = Arc::new(AtomicUsize::new(0));
         let compression_owner = StateOwnerCapability::new();
@@ -1036,11 +1083,12 @@ mod tests {
             )
             .unwrap();
         builder
-            .register_compression(
+            .register_compression(PreparedCompression::new(
                 Arc::new(RecordingCompression {
                     calls: compression_calls.clone(),
                     owner: compression_owner.clone(),
                 }),
+                compression_owner,
                 compression_context,
                 CompressionOperationCapabilities::new(
                     StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
@@ -1048,7 +1096,7 @@ mod tests {
                 )
                 .unwrap(),
                 None,
-            )
+            ))
             .unwrap();
         let executor = builder.build().unwrap();
         let poly = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
@@ -1075,12 +1123,8 @@ mod tests {
         .unwrap();
         let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).unwrap();
-        let mut builder = CommitmentExecutorBuilder::new::<CpuInnerContext>(
-            setup.expanded.as_ref(),
-            BackendKindId::of::<CpuBackendKind>("cpu").unwrap(),
-            vec![PolynomialType::Dense(DenseType::Coefficients)],
-            ResidentStatePolicy,
-        );
+        let mut builder =
+            CommitmentExecutorBuilder::new(setup.expanded.as_ref(), ResidentStatePolicy);
         let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
         let inner_context = builder
             .operation_context(
@@ -1091,11 +1135,15 @@ mod tests {
             .unwrap();
         builder
             .register_inner(
-                inner.clone(),
-                inner.owner().clone(),
-                inner_context,
-                StageDimensionCapabilities::new(vec![64]).unwrap(),
-                None,
+                PreparedInnerCommitment::new(
+                    inner.clone(),
+                    inner.owner().clone(),
+                    inner_context,
+                    split_capabilities(),
+                    StageDimensionCapabilities::new(vec![64]).unwrap(),
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         let outer_context = builder
@@ -1106,14 +1154,14 @@ mod tests {
             )
             .unwrap();
         builder
-            .register_outer(
+            .register_outer(PreparedOuterCommitment::new(
                 Arc::new(RecordingOuter {
                     host_calls: Arc::new(AtomicUsize::new(0)),
                 }),
                 StateOwnerCapability::new(),
                 outer_context,
                 StageDimensionCapabilities::new(vec![64]).unwrap(),
-            )
+            ))
             .unwrap();
         let compression_owner = StateOwnerCapability::new();
         let compression_context = builder
@@ -1124,11 +1172,12 @@ mod tests {
             )
             .unwrap();
         builder
-            .register_compression(
+            .register_compression(PreparedCompression::new(
                 Arc::new(RecordingCompression {
                     calls: Arc::new(AtomicUsize::new(0)),
                     owner: compression_owner.clone(),
                 }),
+                compression_owner,
                 compression_context,
                 CompressionOperationCapabilities::new(
                     StageDimensionCapabilities::new(vec![32, 16]).unwrap(),
@@ -1136,29 +1185,8 @@ mod tests {
                 )
                 .unwrap(),
                 None,
-            )
+            ))
             .unwrap();
-
-        assert!(builder.build().is_err());
-    }
-
-    #[test]
-    fn builder_rejects_duplicate_inner_type_capabilities() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(
-            9,
-            1,
-            SetupMatrixCapacity {
-                num_field_elements: 4 * 64,
-            },
-        )
-        .unwrap();
-        let dense = PolynomialType::Dense(DenseType::Coefficients);
-        let builder = CommitmentExecutorBuilder::new::<CpuInnerContext>(
-            setup.expanded.as_ref(),
-            BackendKindId::of::<CpuBackendKind>("cpu").unwrap(),
-            vec![dense, dense],
-            ResidentStatePolicy,
-        );
 
         assert!(builder.build().is_err());
     }
@@ -1190,7 +1218,12 @@ mod tests {
         );
         assert_eq!(
             executor.outer.as_ref().unwrap().stage.backend_instance,
-            executor.compression.stage.backend_instance
+            executor
+                .compression
+                .as_ref()
+                .unwrap()
+                .stage
+                .backend_instance
         );
         assert_ne!(
             executor.inner.as_ref().unwrap().stage.operation_id,
@@ -1198,7 +1231,7 @@ mod tests {
         );
         assert_ne!(
             executor.outer.as_ref().unwrap().stage.operation_id,
-            executor.compression.stage.operation_id
+            executor.compression.as_ref().unwrap().stage.operation_id
         );
         assert_eq!(
             executor
@@ -1224,7 +1257,13 @@ mod tests {
                 .stage
                 .resources
                 .cache_owner_id(),
-            executor.compression.stage.resources.cache_owner_id()
+            executor
+                .compression
+                .as_ref()
+                .unwrap()
+                .stage
+                .resources
+                .cache_owner_id()
         );
         let poly = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
         let sources: [&dyn CommitmentSource<F>; 1] = [&poly];
@@ -1440,6 +1479,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "executor_binding_tests.rs"]
+mod binding_tests;
 
 #[cfg(test)]
 #[path = "executor_resource_tests.rs"]
