@@ -8,6 +8,7 @@ struct OpeningSearch<'a> {
     opening_layout: &'a OpeningClaimsLayout,
     require_child_fold: bool,
     guide_scope: Option<GuideScope>,
+    query_search: QuerySearch,
 }
 
 struct ChildPlan<'a> {
@@ -47,6 +48,19 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
+    let Some(child_query_search) = search.query_search.child(
+        ctx,
+        state,
+        search.opening_layout,
+        plan.params,
+        plan.next_witness_len,
+    )?
+    else {
+        return Ok(PlannedChildren {
+            direct: None,
+            offloaded: None,
+        });
+    };
     let guided_successor_is_offloaded = ctx.adaptation_guide.map(|guide| {
         guide
             .recursive_folds
@@ -61,7 +75,7 @@ fn plan_candidate_children(
     } else if search.depth == MAX_RECURSION_DEPTH {
         Some(empty_suffix_result())
     } else {
-        Some(derive_selected_suffix_schedule(
+        Some(derive_selected_suffix_schedule_with_query_search(
             ctx,
             memo,
             SuffixState {
@@ -75,6 +89,7 @@ fn plan_candidate_children(
                     .direct_successor(plan.params.payload_mode, plan.params.ring_relation_mode),
             },
             search.depth + 1,
+            child_query_search.clone(),
         )?)
     };
     let offload_search_enabled = ctx.policy.recursive_setup_planning
@@ -100,7 +115,7 @@ fn plan_candidate_children(
     )
     .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled)
     .map(|topology| {
-        derive_selected_suffix_schedule(
+        derive_selected_suffix_schedule_with_query_search(
             ctx,
             memo,
             SuffixState {
@@ -112,6 +127,7 @@ fn plan_candidate_children(
                 topology,
             },
             search.depth + 1,
+            child_query_search.clone(),
         )
     })
     .transpose()?;
@@ -177,9 +193,18 @@ fn price_planned_fold_candidate(
     }
     let prune_direct_edge = if direct_edge_is_admissible {
         guide
-            .map(|(lower_bound, _)| {
-                direct_edge_bound_is_strictly_worse(ctx.policy, lower_bound, &frontiers.projected)
+            .zip(search.guide_scope)
+            .map(|((lower_bound, _), guide_scope)| {
+                direct_edge_bound_is_strictly_worse(
+                    ctx.policy,
+                    guide_scope,
+                    &params,
+                    natural_len,
+                    lower_bound,
+                    &frontiers.projected,
+                )
             })
+            .transpose()?
             .unwrap_or(false)
     } else {
         false
@@ -255,6 +280,7 @@ fn process_candidate_batch(
     require_child_fold: bool,
     generated: candidates::GeneratedCandidates,
     frontiers: &mut StateFrontiers,
+    query_search: &QuerySearch,
 ) -> Result<(), AkitaError> {
     let generated_candidate_count = generated
         .terminal
@@ -266,6 +292,7 @@ fn process_candidate_batch(
         price_terminal_candidate(
             ctx,
             state,
+            query_search,
             &candidate.params,
             candidate.opening_reduction_bytes,
             natural_len,
@@ -291,9 +318,8 @@ fn process_candidate_batch(
     if candidates.is_empty() {
         return Ok(());
     }
-    // Recursive-prefix objective bounds have no sound query-count lower
-    // bound, so guided early pruning is restricted to complete roots.
-    let guide_scope = GuideScope::for_state(is_root_level);
+    let incoming_setup_prefix = state.topology.incoming_setup_prefix();
+    let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
     let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
     let search = OpeningSearch {
         state,
@@ -302,6 +328,7 @@ fn process_candidate_batch(
         opening_layout,
         require_child_fold,
         guide_scope,
+        query_search: query_search.clone(),
     };
     for (guide, candidate) in traversal {
         price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
@@ -317,6 +344,16 @@ pub(crate) fn derive_selected_suffix_schedule(
     state: SuffixState,
     depth: usize,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
+    derive_selected_suffix_schedule_with_query_search(ctx, memo, state, depth, QuerySearch::Root)
+}
+
+fn derive_selected_suffix_schedule_with_query_search(
+    ctx: &SuffixCtx<'_>,
+    memo: &mut ScheduleMemo,
+    state: SuffixState,
+    depth: usize,
+    query_search: QuerySearch,
+) -> Result<Arc<SuffixResult>, AkitaError> {
     if !adaptation_guide_allows_state(ctx, state) {
         return Ok(empty_suffix_result());
     }
@@ -326,7 +363,37 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_suffix_call(relation_phase);
     }
     let memo_key = state.memo_key(policy);
-    if depth <= MAX_RECURSION_DEPTH {
+    // Memo entries remain budget-independent objective optima. A restricted
+    // caller reuses that result when it fits its exact root prefix; otherwise
+    // it recomputes this state locally and never replaces the primary entry.
+    if matches!(query_search, QuerySearch::Restricted(_)) {
+        let cached = memo.get(&memo_key).cloned().map_or_else(
+            || {
+                derive_selected_suffix_schedule_with_query_search(
+                    ctx,
+                    memo,
+                    state,
+                    depth,
+                    QuerySearch::Unconstrained,
+                )
+            },
+            Ok,
+        )?;
+        let QuerySearch::Restricted(prefix) = &query_search else {
+            return Err(AkitaError::InvalidSetup(
+                "restricted suffix search lost its query prefix".into(),
+            ));
+        };
+        if prefix.admits_result(policy, &cached)? {
+            if let Some(diagnostics) = ctx.diagnostics {
+                diagnostics.record_memo_result(relation_phase, true);
+            }
+            return Ok(cached);
+        }
+        if let Some(diagnostics) = ctx.diagnostics {
+            diagnostics.record_memo_result(relation_phase, false);
+        }
+    } else if matches!(query_search, QuerySearch::Unconstrained) && depth <= MAX_RECURSION_DEPTH {
         let cached = memo.get(&memo_key);
         if let Some(diagnostics) = ctx.diagnostics {
             diagnostics.record_memo_result(relation_phase, cached.is_some());
@@ -367,6 +434,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                     candidate_domain.require_child_fold,
                     generated,
                     &mut frontiers,
+                    &query_search,
                 )
             })?;
         } else {
@@ -387,6 +455,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                 candidate_domain.require_child_fold,
                 generated,
                 &mut frontiers,
+                &query_search,
             )?;
         }
     }
@@ -394,6 +463,8 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_completed_state(frontiers.candidate_count());
     }
     let result = Arc::new(finish_state(retains_setup_projection, frontiers));
-    memo.insert(memo_key, Arc::clone(&result), ctx.diagnostics);
+    if matches!(query_search, QuerySearch::Unconstrained) {
+        memo.insert(memo_key, Arc::clone(&result), ctx.diagnostics);
+    }
     Ok(result)
 }

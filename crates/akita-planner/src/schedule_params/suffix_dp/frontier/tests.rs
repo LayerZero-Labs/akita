@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use super::{
     payload_primary_strictly_dominates, payload_projection_dominates,
-    setup_primary_strictly_dominates, setup_projection_dominates, DescriptorOrderContext,
-    ParentAdmissionClass, PayloadScore, ProjectionOrder, SetupScore,
+    projection_bound_is_dominated, setup_primary_strictly_dominates, setup_projection_dominates,
+    DescriptorOrderContext, ParentAdmissionClass, PayloadScore, Projection, ProjectionOrder,
+    SetupScore,
 };
-use crate::schedule_params::{PackedProofCost, SetupPrefixCapacity};
+use crate::schedule_params::{
+    objective::CompleteObjectiveBound, CandidateMetrics, PackedProofCost, SetupPrefixCapacity,
+};
 
 const SETUP_FIRST: crate::SelectionPolicyId =
     crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
@@ -344,7 +347,7 @@ fn strict_primary_dominance_does_not_consider_maskable_setup_or_ties() {
 }
 
 #[test]
-fn payload_frontier_preserves_proof_query_tradeoffs() {
+fn unconstrained_payload_frontier_uses_proof_objective() {
     let context = context(2, 7);
     let admission = admission(2, 8);
     let smaller_proof = order(
@@ -360,7 +363,7 @@ fn payload_frontier_preserves_proof_query_tradeoffs() {
         admission,
     );
 
-    assert!(!payload_projection_dominates(
+    assert!(payload_projection_dominates(
         SETUP_FIRST,
         smaller_proof,
         fewer_queries,
@@ -373,7 +376,7 @@ fn payload_frontier_preserves_proof_query_tradeoffs() {
 }
 
 #[test]
-fn setup_frontier_preserves_setup_query_tradeoffs() {
+fn unconstrained_setup_frontier_uses_setup_objective() {
     let context = context(2, 7);
     let admission = admission(2, 8);
     let smaller_setup_more_queries = order(
@@ -389,7 +392,7 @@ fn setup_frontier_preserves_setup_query_tradeoffs() {
         admission,
     );
 
-    assert!(!setup_projection_dominates(
+    assert!(setup_projection_dominates(
         SETUP_FIRST,
         smaller_setup_more_queries,
         larger_setup_fewer_queries,
@@ -435,5 +438,50 @@ fn fewer_queries_do_not_override_objective_or_descriptor_order() {
             &context,
             admission,
         ),
+    ));
+}
+
+fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
+    CandidateMetrics {
+        first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
+        first_direct_output_witness_len: 0,
+        cost: PackedProofCost::new(proof_bytes, 0, 0).unwrap(),
+        setup_field_elements: 0,
+    }
+}
+
+#[test]
+fn recursive_bound_requires_dominance_in_both_parent_projections() {
+    let candidate_admission = admission(2, 16);
+    let lower_bound = CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
+        proof_bytes: 10,
+        setup_field_elements: 0,
+    };
+    let setup_winner = (admission(2, 8), metrics(8, 100));
+
+    assert!(!projection_bound_is_dominated(
+        Projection::Payload,
+        candidate_admission,
+        lower_bound,
+        [setup_winner],
+    ));
+    assert!(projection_bound_is_dominated(
+        Projection::FirstDirectSetup,
+        candidate_admission,
+        lower_bound,
+        [setup_winner],
+    ));
+    assert!(projection_bound_is_dominated(
+        Projection::Payload,
+        candidate_admission,
+        lower_bound,
+        [(admission(2, 8), metrics(8, 9))],
+    ));
+    assert!(!projection_bound_is_dominated(
+        Projection::Payload,
+        candidate_admission,
+        lower_bound,
+        [(admission(2, 8), metrics(8, 10))],
     ));
 }

@@ -164,6 +164,30 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_than(incumbent));
+    assert!(!CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
+        proof_bytes: 20,
+        setup_field_elements: 31,
+    }
+    .is_strictly_worse_for_recursive_parent(incumbent));
+    assert!(CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
+        proof_bytes: 21,
+        setup_field_elements: 0,
+    }
+    .is_strictly_worse_for_recursive_parent(incumbent));
+    assert!(!CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
+        proof_bytes: 20,
+        setup_field_elements: usize::MAX,
+    }
+    .is_strictly_worse_for_recursive_payload(incumbent));
+    assert!(CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 0,
+        proof_bytes: 21,
+        setup_field_elements: 0,
+    }
+    .is_strictly_worse_for_recursive_payload(incumbent));
     let padded_envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),

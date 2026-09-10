@@ -255,12 +255,111 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
 }
 
 #[test]
-fn guided_early_pruning_is_limited_to_complete_roots() {
+fn guided_early_pruning_includes_recursive_prefixes() {
+    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
     assert!(matches!(
-        super::GuideScope::for_state(true),
+        super::GuideScope::for_state(&policy, true, None),
         Some(super::GuideScope::CompleteRoot)
     ));
-    assert!(super::GuideScope::for_state(false).is_none());
+    assert!(matches!(
+        super::GuideScope::for_state(&policy, false, Some(1)),
+        Some(super::GuideScope::RecursivePrefix)
+    ));
+    assert!(super::GuideScope::for_state(&policy, false, None).is_none());
+
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    assert!(super::GuideScope::for_state(&policy, false, Some(1)).is_none());
+}
+
+#[test]
+fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
+    let mut params = akita_types::CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        4,
+        3,
+        2,
+        challenge,
+    )
+    .with_decomp(4, 32, 2, 2, 2)
+    .expect("candidate parameters");
+    let inner = params.inner().matrix;
+    params.own_group_mut().profile.inner.matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            4_095,
+            inner.ring_dimension(),
+        );
+    let (terminal_params, linf_cap) =
+        akita_types::TerminalFoldParams::try_from_expanded_group(params.clone())
+            .expect("terminal parameters");
+    let response_shape = akita_types::TerminalResponseShape::derive(&terminal_params, linf_cap)
+        .expect("terminal response shape");
+    let candidate = |queries| super::ScheduleCandidate {
+        first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
+        first_direct_output_witness_len: 512,
+        cost: super::PackedProofCost::new(1, 0, queries).expect("candidate cost"),
+        setup_field_elements: 1,
+        folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
+            params: std::sync::Arc::new(params.clone()),
+            input_witness_len: 1_024,
+            output_witness_len: 512,
+            estimated_direct_payload_bytes: 1,
+            estimated_stage3_payload_bytes: 0,
+        }),
+        terminal: std::sync::Arc::new(super::CandidateTerminalResponse {
+            params: terminal_params.clone(),
+            sparse_challenge_config: challenge,
+            input_witness_len: 512,
+            estimated_direct_payload_bytes: 0,
+            response_shape: response_shape.clone(),
+            estimated_payload_bytes: 0,
+        }),
+    };
+    let state = super::SuffixState {
+        level: 0,
+        current_witness_len: 1_024,
+        current_lb: 0,
+        source_moment: None,
+        dimension_ceiling: params.role_dims(),
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+    };
+    let opening_layout = super::suffix_opening_layout(1_024, None).expect("opening layout");
+    let incoming =
+        super::PendingQueryEdge::new(state, &opening_layout, &params, 512).expect("incoming edge");
+    let edge_queries = incoming
+        .candidate_grinding_cost(&policy, &candidate(0))
+        .expect("edge grinding cost")
+        .expanded_query_count;
+    let suffix_queries = 10;
+    let prefix = super::QueryPrefix {
+        finalized_query_count: akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
+            - edge_queries
+            - suffix_queries
+            - 1,
+        incoming,
+    };
+
+    assert!(prefix
+        .admits(&policy, &candidate(suffix_queries))
+        .expect("query admission"));
+    assert!(!prefix
+        .admits(&policy, &candidate(suffix_queries + 1))
+        .expect("query rejection"));
 }
 
 #[test]

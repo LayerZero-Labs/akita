@@ -405,7 +405,7 @@ impl PackedProofCost {
         payload_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
-    ) -> Result<Option<Self>, AkitaError> {
+    ) -> Result<Self, AkitaError> {
         let payload_bytes = self
             .payload_bytes
             .checked_add(payload_bytes)
@@ -417,14 +417,7 @@ impl PackedProofCost {
             .expanded_query_count
             .checked_add(expanded_query_count)
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        if expanded_query_count >= akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT {
-            return Ok(None);
-        }
-        Ok(Some(Self::new(
-            payload_bytes,
-            nonce_bits,
-            expanded_query_count,
-        )?))
+        Self::new(payload_bytes, nonce_bits, expanded_query_count)
     }
 
     pub(crate) const fn grinding_cost(self) -> TranscriptGrindingCost {
@@ -434,14 +427,15 @@ impl PackedProofCost {
         }
     }
 
-    pub(crate) const fn queries_never_worse(self, other: Self) -> bool {
-        self.expanded_query_count <= other.expanded_query_count
+    pub(crate) const fn expanded_query_count(self) -> u64 {
+        self.expanded_query_count
+    }
+
+    pub(crate) const fn fits_query_limit(self) -> bool {
+        self.expanded_query_count < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
     pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
-        if !self.queries_never_worse(other) {
-            return false;
-        }
         let Some((left, left_jump)) = self.parent_alignment_order() else {
             return false;
         };
@@ -452,9 +446,6 @@ impl PackedProofCost {
     }
 
     pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
-        if !self.queries_never_worse(other) {
-            return false;
-        }
         let Some((left, left_jump)) = self.parent_alignment_order() else {
             return false;
         };

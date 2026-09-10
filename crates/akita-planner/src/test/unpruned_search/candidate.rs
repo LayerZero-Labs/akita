@@ -264,14 +264,14 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
-    let Some(cost) = child.cost.checked_prepend(
+    let cost = child.cost.checked_prepend(
         direct_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
-    )?
-    else {
+    )?;
+    if !cost.fits_query_limit() {
         return Ok(None);
-    };
+    }
     Ok(Some(ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(
             akita_types::active_setup_field_len(params, &opening_layout)?,
@@ -331,14 +331,14 @@ pub(super) fn prepend_root(
         policy.claim_ext_degree,
         0,
     )?;
-    let Some(cost) = suffix.cost.checked_prepend(
+    let cost = suffix.cost.checked_prepend(
         root_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
-    )?
-    else {
+    )?;
+    if !cost.fits_query_limit() {
         return Ok(None);
-    };
+    }
     let candidate = ScheduleCandidate {
         first_direct_setup_field_len: Some(first_direct_setup_field_len),
         first_direct_output_witness_len: output_witness_len,
