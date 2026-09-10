@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use super::{
     payload_primary_strictly_dominates, payload_projection_dominates,
-    setup_primary_strictly_dominates, setup_projection_dominates, DescriptorOrderContext,
-    ParentAdmissionClass, PayloadScore, ProjectionOrder, SetupScore,
+    projection_bound_is_dominated, setup_primary_strictly_dominates, setup_projection_dominates,
+    DescriptorOrderContext, ParentAdmissionClass, PayloadScore, Projection, ProjectionOrder,
+    SetupScore,
 };
-use crate::schedule_params::{PackedProofCost, SetupPrefixCapacity};
+use crate::schedule_params::{
+    CandidateMetrics, CompleteObjectiveBound, PackedProofCost, SetupPrefixCapacity,
+};
 
 const SETUP_FIRST: crate::SelectionPolicyId =
     crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
@@ -88,6 +91,15 @@ fn payload_score_with_queries(
     PayloadScore {
         cost: PackedProofCost::new(payload_bytes, nonce_bits, expanded_query_count).unwrap(),
         setup_field_elements,
+    }
+}
+
+fn metrics(natural_len: usize, proof_bytes: usize, expanded_query_count: u64) -> CandidateMetrics {
+    CandidateMetrics {
+        first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
+        first_direct_output_witness_len: 0,
+        cost: PackedProofCost::new(proof_bytes, 0, expanded_query_count).unwrap(),
+        setup_field_elements: 0,
     }
 }
 
@@ -435,5 +447,45 @@ fn fewer_queries_do_not_override_objective_or_descriptor_order() {
             &context,
             admission,
         ),
+    ));
+}
+
+#[test]
+fn recursive_bound_prunes_only_with_a_query_safe_incumbent() {
+    let candidate_admission = admission(2, 16);
+    let lower_bound = CompleteObjectiveBound::SetupFirst {
+        first_direct_setup_capacity: 16,
+        proof_bytes: 10,
+        setup_field_elements: 0,
+    };
+    let better_setup = (admission(2, 8), metrics(8, 100, 5));
+
+    assert!(projection_bound_is_dominated(
+        Projection::FirstDirectSetup,
+        candidate_admission,
+        lower_bound,
+        5,
+        [better_setup],
+    ));
+    assert!(!projection_bound_is_dominated(
+        Projection::FirstDirectSetup,
+        candidate_admission,
+        lower_bound,
+        4,
+        [better_setup],
+    ));
+    assert!(projection_bound_is_dominated(
+        Projection::Payload,
+        candidate_admission,
+        lower_bound,
+        5,
+        [(admission(2, 8), metrics(8, 9, 5))],
+    ));
+    assert!(!projection_bound_is_dominated(
+        Projection::Payload,
+        candidate_admission,
+        lower_bound,
+        5,
+        [(admission(2, 8), metrics(8, 9, 6))],
     ));
 }

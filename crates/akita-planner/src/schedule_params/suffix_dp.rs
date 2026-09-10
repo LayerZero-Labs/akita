@@ -166,6 +166,7 @@ struct PlannedFoldCandidate {
 struct GuidedLevelCandidate {
     lower_bound: CompleteObjectiveBound,
     natural_len: Option<usize>,
+    query_lower_bound: u64,
     candidate: PlannedFoldCandidate,
 }
 
@@ -177,17 +178,34 @@ enum CandidateTraversal {
 #[derive(Clone, Copy)]
 enum GuideScope {
     CompleteRoot,
+    RecursivePrefix,
 }
 
 impl GuideScope {
-    fn for_state(is_complete_root: bool) -> Option<Self> {
-        is_complete_root.then_some(Self::CompleteRoot)
+    fn for_state(
+        policy: &PlannerPolicy,
+        is_complete_root: bool,
+        incoming_setup_prefix: Option<usize>,
+    ) -> Option<Self> {
+        if is_complete_root {
+            Some(Self::CompleteRoot)
+        } else if incoming_setup_prefix.is_some()
+            && matches!(
+                policy.selection_policy,
+                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            )
+        {
+            Some(Self::RecursivePrefix)
+        } else {
+            None
+        }
     }
 }
 
 impl Iterator for CandidateTraversal {
     type Item = (
-        Option<(CompleteObjectiveBound, Option<usize>)>,
+        Option<(CompleteObjectiveBound, Option<usize>, u64)>,
         PlannedFoldCandidate,
     );
 
@@ -198,9 +216,15 @@ impl Iterator for CandidateTraversal {
                 |GuidedLevelCandidate {
                      lower_bound,
                      natural_len,
+                     query_lower_bound,
                      candidate,
                      ..
-                 }| { (Some((lower_bound, natural_len)), candidate) },
+                 }| {
+                    (
+                        Some((lower_bound, natural_len, query_lower_bound)),
+                        candidate,
+                    )
+                },
             ),
         }
     }
@@ -409,10 +433,29 @@ fn complete_root_setup_bound_is_strictly_worse(
 
 fn direct_edge_bound_is_strictly_worse(
     policy: &PlannerPolicy,
+    guide_scope: GuideScope,
+    params: &CommittedGroupParams,
+    natural_setup_field_len: usize,
     lower_bound: CompleteObjectiveBound,
+    query_lower_bound: u64,
     frontier: &ProjectedFrontier,
-) -> bool {
-    complete_root_bound_is_strictly_worse(policy, lower_bound, frontier)
+) -> Result<bool, AkitaError> {
+    match guide_scope {
+        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
+            policy,
+            lower_bound,
+            frontier,
+        )),
+        GuideScope::RecursivePrefix => {
+            let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
+            Ok(frontier.recursive_direct_bound_is_strictly_worse(
+                &parent_cost,
+                SetupPrefixCapacity::for_natural_len(natural_setup_field_len),
+                lower_bound,
+                query_lower_bound,
+            ))
+        }
+    }
 }
 
 fn candidate_traversal(
@@ -441,9 +484,15 @@ fn candidate_traversal(
                 candidate.next_witness_len,
                 natural_len.unwrap_or_default(),
             )?;
+            let query_lower_bound =
+                akita_types::transcript_grinding_query_lower_bound_for_planner_edge(
+                    &candidate.params,
+                    opening_layout,
+                )?;
             Ok(GuidedLevelCandidate {
                 lower_bound,
                 natural_len,
+                query_lower_bound,
                 candidate,
             })
         })

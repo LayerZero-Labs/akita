@@ -223,6 +223,7 @@ pub use transcript_grinding::{
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape,
     transcript_grinding_cost_for_planner_candidate, transcript_grinding_cost_for_planner_edge,
+    transcript_grinding_query_lower_bound_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
