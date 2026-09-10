@@ -76,10 +76,10 @@ pub use protocol::sumcheck::{
     DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,
 };
 pub use protocol::{
-    batched_prove, build_relation_weight_events, commit_terminal_w, commit_w, prove, prove_suffix,
-    ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
-    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
-    RelationWeightFactorization, RingSwitchOutput, SuffixProverState,
+    batched_prove, build_relation_weight_events, commit_terminal_w, commit_w, ProveLevelOutput,
+    RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution, RelationWeightEvent,
+    RelationWeightEventInputs, RelationWeightEvents, RelationWeightFactorization, RingSwitchOutput,
+    SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 pub use types::{ProverOpeningData, SelectedProverOpeningData};

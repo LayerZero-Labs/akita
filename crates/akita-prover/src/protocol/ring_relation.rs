@@ -430,7 +430,7 @@ impl RingRelationProver {
         )?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
-        let opening_batch = block_claims.opening_layout()?;
+        let opening_batch = block_claims.opening_layout().clone();
         let num_groups = block_claims.opening_claims().num_groups();
         if prepared_group_openings.len() != num_groups {
             return Err(AkitaError::InvalidInput(

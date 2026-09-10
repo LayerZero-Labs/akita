@@ -1,6 +1,6 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or tensor-projection symbols in scope.
-use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
+use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
 use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
@@ -17,13 +17,12 @@ use jolt_field::{Fold, Unreduced};
 ///
 /// This path never runs extension-opening reduction or tensor projection.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, V, O, TS, R, SP>(
+pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, O, TS, R, SP>(
     stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     block_claims: ProverOpeningData<'a, E, P, F, S>,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
-    validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -47,16 +46,18 @@ where
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
     S: InnerRelationState<F> + OuterCompressionState<F>,
-    V: FnOnce() -> Result<(), AkitaError>,
     O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     SP: CommitmentStatePolicy<F>,
 {
-    let opening_batch = block_claims
-        .opening_layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let protocol_points = prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
+    let opening_batch = block_claims.opening_layout().clone();
+    let protocol_points = block_claims
+        .opening_claims()
+        .groups()
+        .iter()
+        .map(|group| group.point().to_vec())
+        .collect::<Vec<_>>();
     finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,

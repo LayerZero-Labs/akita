@@ -3,99 +3,9 @@ use crate::commitment::{
     CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
 };
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeRingSwitchProveBackend,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeRingSwitchProveBackend,
 };
 use jolt_field::AdditiveGroup;
-
-fn validate_packing_root_opening_shape<F, E>(
-    ring_d: usize,
-    alpha_bits: usize,
-) -> Result<(), AkitaError>
-where
-    F: Field,
-    E: FpExtEncoding<F>,
-{
-    let ext_degree = <E as ExtField<F>>::DEGREE;
-    if ext_degree == 0
-        || !ring_d.is_multiple_of(ext_degree)
-        || !(ring_d / ext_degree).is_power_of_two()
-    {
-        return Err(AkitaError::InvalidInput(
-            "extension-field degree must divide the ring dimension into power-of-two slots"
-                .to_string(),
-        ));
-    }
-
-    let packed_slots = ring_d / ext_degree;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if packed_inner_bits > alpha_bits {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: alpha_bits,
-        });
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_root<F, E, T, P, S, O, TS, R, SP>(
-    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
-    transcript: &mut T,
-    claims: ProverOpeningData<'_, E, P, F, S>,
-    root_params: &CommittedGroupParams,
-    basis: BasisMode,
-) -> Result<PreparedFold<F, E>, AkitaError>
-where
-    F: Field
-        + CanonicalEncoding
-        + akita_serialization::AkitaSerialize
-        + Unreduced
-        + Field
-        + Ring
-        + 'static,
-    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-    P: RootProverGroupOpening<F, E, O> + Clone,
-    S: InnerRelationState<F> + OuterCompressionState<F>,
-    TS: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F>,
-    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
-    SP: CommitmentStatePolicy<F>,
-{
-    let opening_batch = claims.opening_layout()?;
-    let opening_method = root_params.uniform_opening_method(&opening_batch)?;
-    if !matches!(
-        opening_method,
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-    ) || root_params.source_encoding
-        != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
-    {
-        return Err(AkitaError::InvalidSetup(
-            "root folds require canonical coefficient packing".into(),
-        ));
-    }
-    // A-role root fold ring dimension (schedule-derived).
-    let root_ring_d = root_params.role_dims().d_a();
-    let alpha_bits = root_ring_d.trailing_zeros() as usize;
-    prepare_single_field_fold::<F, E, T, P, S, _, O, TS, R, SP>(
-        stack,
-        claims,
-        false,
-        transcript,
-        0,
-        || validate_packing_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
-        root_params,
-        basis,
-    )
-}
 
 /// Prove the folded-root proof payload for an intermediate root.
 ///
@@ -163,27 +73,21 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let root_params = &scheduled.params;
-    let opening_layout = claims.opening_layout()?;
-    let opening_method = root_params.uniform_opening_method(&opening_layout)?;
-    if !matches!(
-        opening_method,
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-    ) || root_params.source_encoding
-        != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
-    {
-        return Err(AkitaError::InvalidSetup(
-            "root folds require canonical coefficient packing".into(),
-        ));
-    }
-
     // Absorb root claims through the D-free flat commitment encoder keyed on the
     // root level's B-role dimension (byte-identical to the verifier's
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
     claims.append_to_transcript::<T>(root_params, transcript)?;
 
-    let prepared_fold =
-        prepare_root::<F, E, T, P, S, O, TS, R, SP>(stack, transcript, claims, root_params, basis)
-            .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
+    let prepared_fold = prepare_single_field_fold::<F, E, T, P, S, O, TS, R, SP>(
+        stack,
+        claims,
+        false,
+        transcript,
+        0,
+        root_params,
+        basis,
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
 
     prove_fold::<F, E, T, O, TS, R, SP, Cfg>(
         expanded,
