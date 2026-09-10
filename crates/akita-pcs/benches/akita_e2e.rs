@@ -15,8 +15,10 @@ use akita_types::{
     AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile,
     GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
 };
+use std::hint::black_box;
+
 use criterion::measurement::WallTime;
-use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
+use criterion::{criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use jolt_field::{CanonicalEncoding, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

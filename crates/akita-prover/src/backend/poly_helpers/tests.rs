@@ -161,7 +161,8 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
                 }))
             })
             .collect(),
-    );
+    )
+    .unwrap();
     assert_output(
         dense
             .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)

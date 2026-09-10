@@ -4,9 +4,10 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{
-    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,
+    CompressedUniPoly, EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt, EqFactoredUniPoly,
-    UniPoly,
+    SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -187,27 +188,31 @@ fn eq_factored_round_wire_contains_every_nonconstant_coefficient() {
 
 #[test]
 fn eq_factored_degree_zero_round_has_an_empty_message() {
-    let q_coeffs = vec![F::from_u64(23)];
-    let mut prover = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs.clone());
-    let mut prover_transcript = new_transcript();
-    let (proof, _, final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, |_| Ok(F::from_u64(11)))
-        .unwrap();
+    // Empty eq-factored messages preserve the normalized claim, including at
+    // Boolean equality points and challenges, unlike empty ordinary messages.
+    for tau in [F::zero(), F::one(), F::from_u64(7)] {
+        for challenge in [F::zero(), F::one(), F::from_u64(11)] {
+            let q_coeffs = vec![F::from_u64(23)];
+            let mut prover = ToyEqFactoredInstance::new(tau, q_coeffs.clone());
+            let (proof, _, final_claim) = prover
+                .prove::<F, _, _>(&mut new_transcript(), |_| Ok(challenge))
+                .unwrap();
 
-    assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
-    let mut encoded = Vec::new();
-    proof.round_polys[0]
-        .serialize_uncompressed(&mut encoded)
-        .unwrap();
-    assert!(encoded.is_empty());
-    assert_eq!(final_claim, q_coeffs[0]);
+            assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
+            let mut encoded = Vec::new();
+            proof.round_polys[0]
+                .serialize_uncompressed(&mut encoded)
+                .unwrap();
+            assert!(encoded.is_empty());
+            assert_eq!(final_claim, q_coeffs[0]);
 
-    let verifier = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs);
-    let mut verifier_transcript = new_transcript();
-    assert_eq!(
-        verifier.verify::<F, _, _>(&proof, &mut verifier_transcript, |_| Ok(F::from_u64(11))),
-        Ok(vec![F::from_u64(11)])
-    );
+            let verifier = ToyEqFactoredInstance::new(tau, q_coeffs);
+            assert_eq!(
+                verifier.verify::<F, _, _>(&proof, &mut new_transcript(), |_| Ok(challenge)),
+                Ok(vec![challenge])
+            );
+        }
+    }
 }
 
 struct ToyTwoRoundEqFactoredInstance {
@@ -343,4 +348,258 @@ fn eq_factored_sumcheck_rejects_later_tampering_after_eq_factor_vanishes() {
     });
 
     assert_eq!(result, Err(AkitaError::InvalidProof));
+}
+
+/// An inconsistent claim for the identically zero polynomial.
+struct FalseClaimInstance;
+
+impl SumcheckInstanceVerifier<F> for FalseClaimInstance {
+    fn num_rounds(&self) -> usize {
+        4
+    }
+
+    fn degree_bound(&self) -> usize {
+        3
+    }
+
+    fn input_claim(&self) -> F {
+        F::one()
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
+        Ok(F::zero())
+    }
+}
+
+fn assert_rounds_rejected_before_replay(proof: &SumcheckProof<F>, expected: AkitaError) {
+    let verifier = FalseClaimInstance;
+    for raw_driver in [false, true] {
+        let mut transcript = new_transcript();
+        let mut samples = 0;
+        let sample = |_: &mut AkitaTranscript<F>| {
+            samples += 1;
+            Ok(F::one())
+        };
+        let result = if raw_driver {
+            proof
+                .verify::<F, _, _>(
+                    verifier.input_claim(),
+                    verifier.num_rounds(),
+                    verifier.degree_bound(),
+                    &mut transcript,
+                    sample,
+                )
+                .map(|_| ())
+        } else {
+            verifier
+                .verify::<F, _, _>(proof, &mut transcript, sample)
+                .map(|_| ())
+        };
+        assert_eq!(result, Err(expected.clone()));
+        assert_eq!(samples, 0);
+        assert_eq!(
+            transcript.challenge_bytes(b"test/rejected-round-state", 32),
+            new_transcript().challenge_bytes(b"test/rejected-round-state", 32)
+        );
+    }
+}
+
+#[test]
+fn standard_sumcheck_rejects_malformed_messages_at_every_round() {
+    let verifier = FalseClaimInstance;
+    for round in 0..verifier.num_rounds() {
+        for stored_coefficients in [0, verifier.degree_bound() + 1] {
+            let mut proof = SumcheckProof {
+                round_polys: vec![
+                    UniPoly::from_coeffs(vec![F::zero()]).compress();
+                    verifier.num_rounds()
+                ],
+            };
+            proof.round_polys[round] = CompressedUniPoly {
+                coeffs_except_linear_term: vec![F::one(); stored_coefficients],
+            };
+            let error = if stored_coefficients == 0 {
+                AkitaError::InvalidProof
+            } else {
+                AkitaError::InvalidInput("sumcheck round poly degree 4 exceeds bound 3".into())
+            };
+            assert_rounds_rejected_before_replay(&proof, error);
+        }
+    }
+}
+
+#[test]
+fn standard_sumcheck_rejects_wrong_round_counts_before_replay() {
+    let expected = FalseClaimInstance.num_rounds();
+    for actual in [0, expected - 1, expected + 1] {
+        let proof = SumcheckProof {
+            round_polys: vec![UniPoly::from_coeffs(vec![F::zero()]).compress(); actual],
+        };
+        assert_rounds_rejected_before_replay(&proof, AkitaError::InvalidSize { expected, actual });
+    }
+}
+
+#[test]
+fn zero_round_sumcheck_preserves_the_claim() {
+    let proof = SumcheckProof::<F> {
+        round_polys: Vec::new(),
+    };
+    let claim = F::from_u64(7);
+    assert_eq!(
+        proof.verify::<F, _, _>(claim, 0, 0, &mut new_transcript(), |_| panic!(
+            "no round to sample"
+        )),
+        Ok((claim, Vec::new()))
+    );
+}
+
+#[test]
+fn batched_sumcheck_rejects_an_empty_last_round() {
+    let verifier = FalseClaimInstance;
+    let mut proof = SumcheckProof {
+        round_polys: vec![UniPoly::from_coeffs(vec![F::zero()]).compress(); verifier.num_rounds()],
+    };
+    proof
+        .round_polys
+        .last_mut()
+        .unwrap()
+        .coeffs_except_linear_term
+        .clear();
+    assert_eq!(
+        akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
+            &proof,
+            vec![&verifier],
+            &mut new_transcript(),
+            |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
+#[test]
+fn compressed_constant_and_linear_rounds_require_degree_bound_one() {
+    for coeffs in [vec![F::from_u64(3)], vec![F::from_u64(3), F::from_u64(5)]] {
+        let polynomial = UniPoly::from_coeffs(coeffs);
+        let claim = polynomial.evaluate(&F::zero()) + polynomial.evaluate(&F::one());
+        let challenge = F::from_u64(7);
+        let compressed = polynomial.compress();
+        assert_eq!(compressed.degree(), 1);
+        let proof = SumcheckProof {
+            round_polys: vec![compressed],
+        };
+
+        assert_eq!(
+            proof.verify::<F, _, _>(claim, 1, 1, &mut new_transcript(), |_| Ok(challenge)),
+            Ok((polynomial.evaluate(&challenge), vec![challenge]))
+        );
+        assert!(matches!(
+            proof.verify::<F, _, _>(claim, 1, 0, &mut new_transcript(), |_| panic!(
+                "invalid degree must reject before sampling"
+            )),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+}
+
+struct ZeroSumcheckInstance {
+    num_rounds: usize,
+    degree_bound: usize,
+}
+
+impl SumcheckInstanceProver<F> for ZeroSumcheckInstance {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.degree_bound
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
+        UniPoly::from_coeffs(Vec::new())
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, _challenge: F) {}
+}
+
+impl SumcheckInstanceVerifier<F> for ZeroSumcheckInstance {
+    fn num_rounds(&self) -> usize {
+        SumcheckInstanceProver::num_rounds(self)
+    }
+
+    fn degree_bound(&self) -> usize {
+        SumcheckInstanceProver::degree_bound(self)
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
+        Ok(F::zero())
+    }
+}
+
+#[test]
+fn standard_and_batched_provers_reject_zero_degree_rounds() {
+    let mut instance = ZeroSumcheckInstance {
+        num_rounds: 4,
+        degree_bound: 0,
+    };
+    assert!(matches!(
+        instance.prove::<F, _, _>(&mut new_transcript(), |_| panic!(
+            "invalid degree must reject before sampling"
+        )),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
+            vec![&mut instance],
+            &mut new_transcript(),
+            |_| panic!("invalid degree must reject before sampling"),
+        ),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn empty_zero_polynomial_round_trips_through_standard_and_batched_sumcheck() {
+    for (num_rounds, degree_bound) in [(0, 0), (4, 1)] {
+        let mut instance = ZeroSumcheckInstance {
+            num_rounds,
+            degree_bound,
+        };
+        let (proof, challenges, final_claim) = instance
+            .prove::<F, _, _>(&mut new_transcript(), sample_round)
+            .unwrap();
+        assert_eq!(final_claim, F::zero());
+        assert!(proof
+            .round_polys
+            .iter()
+            .all(|poly| poly.coeffs_except_linear_term == [F::zero()]));
+        assert_eq!(
+            instance.verify::<F, _, _>(&proof, &mut new_transcript(), sample_round),
+            Ok(challenges)
+        );
+
+        let (proof, challenges) = akita_sumcheck::prove_batched_sumcheck::<F, _, F, _>(
+            vec![&mut instance],
+            &mut new_transcript(),
+            |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+        )
+        .unwrap();
+        assert_eq!(
+            akita_sumcheck::verify_batched_sumcheck::<F, _, F, _>(
+                &proof,
+                vec![&instance],
+                &mut new_transcript(),
+                |tr| tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND),
+            ),
+            Ok(challenges)
+        );
+    }
 }

@@ -9,7 +9,9 @@ use akita_prover::backend::poly_helpers::{
 use akita_prover::compute::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel};
 use akita_prover::RecursiveWitnessFlat;
 use akita_types::sis::compute_num_digits_field_width;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 const FIELD_COEFFICIENTS: usize = 1 << 22;

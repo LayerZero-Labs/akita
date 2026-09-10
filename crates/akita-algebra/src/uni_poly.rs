@@ -38,13 +38,15 @@ impl<E: Field> UniPoly<E> {
     ///
     /// The verifier can reconstruct/evaluate the missing linear coefficient using
     /// the per-round hint `g(0)+g(1)` from the sumcheck protocol.
+    /// An empty zero polynomial stores `[0]`, so every compressed round retains
+    /// a constant coefficient and can reconstruct its linear term from the hint.
     ///
     /// This matches the technique used by Jolt's sumcheck (`CompressedUniPoly`).
     pub fn compress(&self) -> CompressedUniPoly<E> {
         let coeffs = &self.coeffs;
         if coeffs.is_empty() {
             return CompressedUniPoly {
-                coeffs_except_linear_term: Vec::new(),
+                coeffs_except_linear_term: vec![E::zero()],
             };
         }
         if coeffs.len() == 1 {
@@ -178,19 +180,13 @@ pub struct CompressedUniPoly<E: Field> {
 }
 
 impl<E: Field> CompressedUniPoly<E> {
-    /// Degree of the underlying uncompressed polynomial.
+    /// Upper bound on the degree of the underlying uncompressed polynomial.
     ///
-    /// `compress()` stores `[c0, c2, ..., cd]` — exactly `d` entries for
-    /// degree `d >= 2`.  For `len <= 1` (degree 0 or 1, which are ambiguous
-    /// in compressed form) we report 0; this is conservative for the
-    /// verifier's degree-bound check since `degree_bound >= 2` in practice.
+    /// A single stored coefficient can represent a linear polynomial because
+    /// the omitted linear term depends on the sumcheck hint. Constant rounds
+    /// therefore also require a degree bound of at least one.
     pub fn degree(&self) -> usize {
-        let len = self.coeffs_except_linear_term.len();
-        if len <= 1 {
-            0
-        } else {
-            len
-        }
+        self.coeffs_except_linear_term.len()
     }
 
     fn recover_linear_term(&self, hint: &E) -> E {

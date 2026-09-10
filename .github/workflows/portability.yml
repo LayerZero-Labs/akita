@@ -22,8 +22,8 @@ jobs:
     name: Portable x86 verifier check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Check verifier with portable CPU target
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features --features transcript-blake2b
       - name: Test exact-cache boundary
@@ -35,8 +35,8 @@ jobs:
     name: Native AArch64 NEON exact NTT
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Require native AArch64 NEON
         run: |
           test "$(uname -m)" = "aarch64"
@@ -53,8 +53,8 @@ jobs:
     name: AVX-512 IFMA exact NTT (emulated)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Install Intel Software Development Emulator
         run: |
           curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
@@ -74,8 +74,8 @@ jobs:
     name: Wasm serialization check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Check serialization on wasm

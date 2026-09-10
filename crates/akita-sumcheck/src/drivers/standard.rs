@@ -126,12 +126,7 @@ where
         S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
-        if proof.round_polys.len() != num_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: num_rounds,
-                actual: proof.round_polys.len(),
-            });
-        }
+        proof.validate_round_messages(num_rounds, self.degree_bound())?;
 
         let mut claim = self.input_claim();
         tracing::debug!(
@@ -141,18 +136,9 @@ where
         );
         transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
-        let degree_bound = self.degree_bound();
         let mut challenges = Vec::with_capacity(num_rounds);
 
         for poly in &proof.round_polys {
-            if poly.degree() > degree_bound {
-                return Err(AkitaError::InvalidInput(format!(
-                    "sumcheck round poly degree {} exceeds bound {}",
-                    poly.degree(),
-                    degree_bound
-                )));
-            }
-
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
             let r_i = sample_challenge(transcript)?;
             challenges.push(r_i);

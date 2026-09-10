@@ -77,7 +77,7 @@ where
     }
 
     let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, full_prefix_ring_slots)?;
-    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems);
+    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems)?;
     let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
     let witnesses = backend.commit_inner_group(
         prepared,

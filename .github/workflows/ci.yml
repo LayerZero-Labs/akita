@@ -22,8 +22,8 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           components: rustfmt
       - name: Check formatting
@@ -33,9 +33,9 @@ jobs:
     name: TOML format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # taplo-cli
+        uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c # taplo-cli
         with:
           tool: taplo-cli
       - name: Check TOML formatting
@@ -45,7 +45,7 @@ jobs:
     name: Rust file line cap
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test Rust file line checker
         run: scripts/test-rust-file-lines.sh
       - name: Enforce Rust file line cap (zero exceptions)
@@ -55,8 +55,8 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           components: clippy
       - name: Clippy (transparent default features)
@@ -77,10 +77,10 @@ jobs:
     name: Unused dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Install cargo-machete
-        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # cargo-machete
+        uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c # cargo-machete
         with:
           tool: cargo-machete
       - name: Check unused dependencies
@@ -90,8 +90,8 @@ jobs:
     name: Shared field identity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Require one jolt-field identity and no akita-field
         run: scripts/check-shared-field-identity.sh
 
@@ -99,8 +99,8 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Build documentation
         run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-blake2b
         env:
@@ -114,18 +114,18 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           cache: false
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-test-release
           add-job-id-key: false
           cache-on-failure: true
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # carg-nextest
+        uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c # carg-nextest
         with:
           tool: cargo-nextest
       - name: Run tests
@@ -152,7 +152,7 @@ jobs:
           exit "$status"
       - name: Upload test shard artifact
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-test-pass-shard-${{ matrix.shard }}
           path: ${{ runner.temp }}/ci-test-pass-shard-${{ matrix.shard }}
@@ -163,13 +163,13 @@ jobs:
     name: Schedule artifact drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           cache: false
           components: rustfmt
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-test-schedule-artifact-drift
           add-job-id-key: false
@@ -188,7 +188,7 @@ jobs:
           mkdir -p "$artifact_dir"
           cargo run --release -p akita-planner --features catalog-gen \
             --bin gen_schedule_artifacts -- "$artifact_dir" --row-progress \
-            --catalog-baseline specs/evidence/subring-coefficient-packing/head.tsv \
+            --catalog-baseline artifacts/schedule-catalog.tsv \
             --require-catalog-baseline-match \
             --catalog-report "$RUNNER_TEMP/akita-schedule-baseline-comparison.tsv"
           diff -ru artifacts/schedules "$artifact_dir"
@@ -216,8 +216,8 @@ jobs:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Run semantic transcript suites
         run: >-
           cargo test --release -p akita-pcs
@@ -254,12 +254,12 @@ jobs:
     if: always() && needs.test.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test timing script fixtures
         run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
       - name: Download test shard artifacts
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ci-test-pass-shard-*
           merge-multiple: true
@@ -312,7 +312,7 @@ jobs:
           fi
       - name: Upload test timing artifact
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-test-timing-data
           path: ${{ runner.temp }}/ci-test-timing-artifact
@@ -332,8 +332,8 @@ jobs:
     name: Typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check spelling
-        uses: crate-ci/typos@6ac2ebd1b93eade61faf7e12688ad87a073fea59 # v1.46.0
+        uses: crate-ci/typos@bbaefadf97b0ec5fdc942684b647f1a6ab250274 # v1.46.0
         with:
           files: .

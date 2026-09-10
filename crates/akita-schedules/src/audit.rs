@@ -317,7 +317,9 @@ fn audit_committed_params(
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
             dims.d_b(),
-            params.outer().digits.log_basis,
+            // The shared witness scanner certifies the opening alphabet for
+            // t_hat too; the honest outer decomposition can use a smaller base.
+            params.open().digits.log_basis,
         ),
     )?;
     audit_bound(

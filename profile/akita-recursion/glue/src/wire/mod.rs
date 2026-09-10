@@ -263,7 +263,7 @@ where
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
-            .expanded
+            .expanded()
             .descriptor
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
@@ -283,11 +283,11 @@ where
             0,
         );
         self.verifier_setup
-            .expanded
+            .expanded()
             .shared_matrix
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
-            .prefix_slots
+            .prefix_slots()
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.proof_shape
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
@@ -325,7 +325,7 @@ where
             self.schedule_selection.serialized_size(BLOB_COMPRESS),
             self.commitment.serialized_size(BLOB_COMPRESS),
             self.verifier_setup
-                .expanded
+                .expanded()
                 .descriptor
                 .serialized_size(BLOB_COMPRESS),
         ])
@@ -335,11 +335,11 @@ where
         let unpadded_size = checked::sum([
             padding_record_offset,
             self.verifier_setup
-                .expanded
+                .expanded()
                 .shared_matrix
                 .serialized_size(BLOB_COMPRESS),
             self.verifier_setup
-                .prefix_slots
+                .prefix_slots()
                 .serialized_size(BLOB_COMPRESS),
             self.proof_shape.serialized_size(BLOB_COMPRESS),
             self.proof.serialized_size(BLOB_COMPRESS),
