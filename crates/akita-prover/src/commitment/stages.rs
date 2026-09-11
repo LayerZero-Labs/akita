@@ -257,6 +257,7 @@ mod tests {
             },
             1,
             Some(relation_mode),
+            None,
         )
         .unwrap();
         owner.bind(binding, 0, ())

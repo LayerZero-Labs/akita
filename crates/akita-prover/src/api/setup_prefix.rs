@@ -32,6 +32,7 @@ where
     SP: CommitmentStatePolicy<F>,
     SP::State: IntoPortableCommitmentState<F>,
 {
+    executor.validate_setup(expanded)?;
     let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile

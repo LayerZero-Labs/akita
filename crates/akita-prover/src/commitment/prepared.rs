@@ -14,6 +14,7 @@ where
     F: Field + CanonicalEncoding,
 {
     pub(super) operation: Arc<O>,
+    setup: akita_types::AkitaSetupDescriptor,
     pub(super) operation_id: CommitmentOperationId,
     pub(super) backend_instance: BackendInstanceId,
     pub(super) name: &'static str,
@@ -27,11 +28,24 @@ where
     pub(super) fn new(operation: Arc<O>, context: CommitmentOperationContext<'a, F>) -> Self {
         Self {
             operation,
+            setup: context.setup,
             operation_id: CommitmentOperationId::issue(),
             backend_instance: context.backend_instance,
             name: context.name,
             resources: context.resources,
         }
+    }
+
+    pub(super) fn validate_setup(
+        &self,
+        setup: &akita_types::AkitaSetupDescriptor,
+    ) -> Result<(), AkitaError> {
+        if self.setup != *setup {
+            return Err(AkitaError::InvalidSetup(
+                "commitment stage was prepared for a different setup".into(),
+            ));
+        }
+        self.resources.validate_setup(setup)
     }
 
     pub(super) fn ensure_ntt_slot(

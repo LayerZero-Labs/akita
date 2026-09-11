@@ -182,6 +182,7 @@ where
         ring_switch: (&'a R, &'a R::PreparedSetup),
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
+        commitment.validate_setup(expanded)?;
         Ok(Self {
             commitment,
             opening: OperationCtx::new(opening.0, opening.1, expanded)?,

@@ -542,6 +542,7 @@ mod tests {
             plan,
             1,
             None,
+            None,
         )
         .unwrap();
         let trait_object: &dyn InnerCommitOperation<F> = &operation;

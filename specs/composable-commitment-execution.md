@@ -247,6 +247,11 @@ schedule
 let schedule = schedule.compile()?;
 ```
 
+When the scheduled range includes the terminal fold, assign that round
+`InnerOuterRouteKind::InnerOnly`. An executor that registers both fused and
+split-inner operations can therefore run fused nonterminal folds and the
+inner-only terminal fold without registering an unused outer operation.
+
 For four rounds with `i = 2` and `j = 1`, this resolves:
 
 | Round | Inner/outer | Compression |
@@ -262,8 +267,8 @@ source admission, capability, ring-dimension, relation-mode, and setup
 requirements without invoking backend arithmetic.
 
 Compilation rejects zero rounds, out-of-range or overlapping assignments,
-unassigned rounds, missing executor pairs, setup mismatches, and fused/split
-kind mismatches. Empty cutover ranges are valid. Execution uses the resolved
+unassigned rounds, missing executor pairs, setup mismatches, and route-kind
+mismatches. Empty cutover ranges are valid. Execution uses the resolved
 executor and never retries with a fallback.
 
 `TieredProveStacks` remains the fold-level selector for complete prover stacks.
@@ -338,14 +343,14 @@ Operation traits do not inherit a concrete setup backend. Each registration
 instead carries `StageResources`, containing either a
 `CommitmentResourceControl<F>` or an explicit no-resources declaration.
 Resource control exposes setup identity, exact NTT slot preparation,
-cached-versus-streamed policy, planned bytes, cache owner identity, release,
+cached-versus-streamed policy, cache owner identity, release,
 and optional compression-cache accounting.
 
 `CommitmentNttRequirement` identifies the exact key, routing extent, and owning
 stage. Proof-wide routed requirements also identify whether the request is
 inner-only or A/B. A/B requirements use the fused registration when present;
 terminal A requirements use split inner. The same resolved route controls
-prewarm, retained-byte planning, owner selection, and execution. Physical
+prewarm, owner selection, and execution. Physical
 owners are deduplicated by `NttCacheOwnerId` when stages share prepared state.
 
 Releasing NTT residency does not release live commitment state. A retained

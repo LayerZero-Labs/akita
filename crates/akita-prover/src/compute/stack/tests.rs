@@ -37,6 +37,30 @@ fn operation_ctx_accepts_matching_expanded_setup() {
         .expect("matching expanded metadata should validate");
 }
 
+#[test]
+fn commitment_executor_rejects_a_different_expanded_setup() {
+    let setup_a =
+        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup a");
+    let setup_b =
+        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192)).expect("setup b");
+    let prepared_a = CpuBackend::DEFAULT
+        .prepare_setup(&setup_a)
+        .expect("prepared a");
+    let executor = crate::commitment::CommitmentExecutor::cpu(
+        &CpuBackend::DEFAULT,
+        &prepared_a,
+        setup_a.expanded.as_ref(),
+        Vec::new(),
+        crate::commitment::PortableStatePolicy,
+    )
+    .expect("executor");
+
+    assert!(matches!(
+        executor.validate_setup(setup_b.expanded.as_ref()),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
 use crate::commitment::{CommitmentNttRoute, CommitmentNttStage};
 use crate::compute::{CommitCluster, RingSwitchCluster};
 

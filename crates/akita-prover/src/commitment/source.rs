@@ -659,11 +659,15 @@ fn validate_materialized_representation<F: Field>(
             }
         }
         PolynomialRepresentation::OneHot(representation) => {
-            let expected_positions = checked_logical_len(representation.num_vars)?
-                .checked_div(representation.chunk_size)
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("one-hot representation has zero chunk size".into())
-                })?;
+            let logical_len = checked_logical_len(representation.num_vars)?;
+            if representation.chunk_size == 0
+                || !logical_len.is_multiple_of(representation.chunk_size)
+            {
+                return Err(AkitaError::InvalidInput(
+                    "one-hot chunk size must exactly divide the logical coefficient count".into(),
+                ));
+            }
+            let expected_positions = logical_len / representation.chunk_size;
             if representation.num_vars != descriptor.num_vars()
                 || descriptor.class()
                     != (CommitSourceClass::OneHot {

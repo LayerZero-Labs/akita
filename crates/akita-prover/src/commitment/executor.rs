@@ -113,12 +113,24 @@ where
     F: Field + CanonicalEncoding,
     SP: CommitmentStatePolicy<F>,
 {
+    /// Validate that this executor and all of its prepared stages belong to
+    /// the expanded setup used by the caller.
+    pub fn validate_setup(&self, expanded: &AkitaExpandedSetup<F>) -> Result<(), AkitaError> {
+        if self.setup != *expanded.descriptor() {
+            return Err(AkitaError::InvalidSetup(
+                "commitment executor setup descriptor mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn matches_inner_outer_kind(&self, kind: super::InnerOuterRouteKind) -> bool {
         match kind {
             super::InnerOuterRouteKind::Fused => self.fused.is_some(),
             super::InnerOuterRouteKind::Split => {
                 self.fused.is_none() && self.inner.is_some() && self.outer.is_some()
             }
+            super::InnerOuterRouteKind::InnerOnly => self.inner.is_some(),
         }
     }
 
@@ -431,6 +443,7 @@ where
             *plan.inner(),
             sources.len(),
             plan.relation_mode(),
+            plan.compression().cloned(),
         )?;
         let output =
             inner_registration
@@ -483,6 +496,7 @@ where
             *uncompressed.inner(),
             sources.len(),
             plan.relation_mode(),
+            plan.compression().cloned(),
         )?;
         if let Some(fused) = self.fused_for_plan(plan) {
             let output =

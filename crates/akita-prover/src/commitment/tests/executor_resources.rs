@@ -75,6 +75,7 @@ fn stage_registration_skips_streamed_slots() {
     let registration = super::super::prepared::PreparedStage::new(
         Arc::new(()),
         CommitmentOperationContext {
+            setup: setup.expanded.descriptor().clone(),
             backend_instance: BackendInstanceId::issue(),
             name: "streamed-inner",
             resources: StageResources::controlled(StreamedResources {

@@ -278,6 +278,7 @@ pub struct CommitmentOperationContext<'a, F>
 where
     F: Field + CanonicalEncoding,
 {
+    pub(crate) setup: AkitaSetupDescriptor,
     pub(crate) backend_instance: BackendInstanceId,
     pub(crate) name: &'static str,
     pub(crate) resources: StageResources<'a, F>,

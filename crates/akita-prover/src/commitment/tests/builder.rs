@@ -4,9 +4,10 @@ use crate::commitment::{
     CommitmentRequestCapabilities, CommitmentResourceControl, CommitmentSource,
     CommitmentStateBinding, CompressionOperation, CompressionOperationCapabilities,
     CompressionStageOutput, CompressionState, InnerCommitOperation, InnerCommitOutput, InnerImage,
-    InnerImageInput, OuterCommitOperation, PolynomialType, PreparedCommitmentResources,
-    PreparedCompression, PreparedInnerCommitment, PreparedOuterCommitment, ResolvedCommitSource,
-    StageDimensionCapabilities, StageResources, StateOwnerCapability,
+    InnerImageInput, InnerRelationState, OuterCommitOperation, OuterCompressionState,
+    PolynomialType, PreparedCommitmentResources, PreparedCompression, PreparedInnerCommitment,
+    PreparedOuterCommitment, ResidentStatePolicy, ResolvedCommitSource, StageDimensionCapabilities,
+    StageResources, StateOwnerCapability,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
@@ -369,6 +370,56 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
 }
 
 #[test]
+fn resident_state_preflight_rejects_mismatched_plan_metadata() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q64Offset59,
+        64,
+        2,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(4, 8, 1, 2, 2)
+    .unwrap();
+    let plan = CommitmentExecutionPlan::for_root(&params.own_group().profile).unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        9,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 128 * 64,
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        setup.expanded.as_ref(),
+        vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
+        ResidentStatePolicy,
+    )
+    .unwrap();
+    let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
+    let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+    let output = executor.execute_full(&plan, &sources).unwrap();
+    let state = output.prover_state();
+
+    let mut wrong_inner = *plan.inner();
+    wrong_inner.n_a += 1;
+    assert!(state.preflight_inner_relation(&wrong_inner, 1).is_err());
+    let wrong_compression = CompressionChainPlan::for_complete_source(
+        SisModulusProfileId::Q64Offset59,
+        plan.compression().unwrap().source_coefficients() + 64,
+    )
+    .unwrap();
+    assert!(state
+        .preflight_outer_compression(&wrong_compression, RingRelationMode::QuotientLift)
+        .is_err());
+}
+
+#[test]
 fn builder_rejects_duplicate_inner_type_capabilities() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
         9,
@@ -402,4 +453,65 @@ fn builder_rejects_duplicate_inner_type_capabilities() {
         super::super::ResidentStatePolicy,
     )
     .is_ok());
+}
+
+#[test]
+fn builder_rejects_a_prepared_stage_from_another_setup() {
+    struct TestBackend;
+    struct TestContext;
+
+    let setup_a = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 4 * 64,
+        },
+    )
+    .unwrap();
+    let setup_b = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 8 * 64,
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::DEFAULT;
+    let prepared_a = backend.prepare_setup(&setup_a).unwrap();
+    let builder_a = CommitmentExecutorBuilder::new(
+        setup_a.expanded.as_ref(),
+        super::super::NoRetainedStatePolicy,
+    );
+    let context = builder_a
+        .operation_context(
+            builder_a.issue_backend_instance(),
+            "setup-a-inner",
+            StageResources::controlled(
+                PreparedCommitmentResources::new(&backend, &prepared_a, setup_a.expanded.as_ref())
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared_a));
+    let prepared_inner = PreparedInnerCommitment::new(
+        inner.clone(),
+        inner.owner().clone(),
+        context,
+        CommitmentRequestCapabilities::split::<TestContext>(
+            BackendKindId::of::<TestBackend>("test").unwrap(),
+            vec![PolynomialType::Dense(super::super::DenseType::Coefficients)],
+        ),
+        StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+        Some(inner.portable_exporter()),
+    )
+    .unwrap();
+    let mut builder_b = CommitmentExecutorBuilder::new(
+        setup_b.expanded.as_ref(),
+        super::super::NoRetainedStatePolicy,
+    );
+
+    assert!(matches!(
+        builder_b.register_inner(prepared_inner),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 }

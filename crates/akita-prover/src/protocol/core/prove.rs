@@ -94,11 +94,29 @@ where
     let schedule = resolved.schedule();
     schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, opening_batch)?;
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        &schedule.root.params,
+        opening_batch,
+        Cfg::EXT_DEGREE,
+    )?;
     for group_index in 0..claims.opening_claims().num_groups() {
         let state = claims.group_state(group_index)?;
-        state.preflight_inner_relation()?;
+        let group = schedule
+            .root
+            .params
+            .group_params(opening_batch, group_index)?;
+        let plan = CommitmentExecutionPlan::for_root(&group.profile)?;
+        state.preflight_inner_relation(
+            plan.inner(),
+            opening_batch.group_layout(group_index)?.num_polynomials(),
+        )?;
         if schedule.root.params.payload_mode.is_compressed() {
-            state.preflight_outer_compression()?;
+            state.preflight_outer_compression(
+                relation_geometry
+                    .rhs_layout()
+                    .compression_plan_for_group(group_index)?,
+                schedule.root.params.ring_relation_mode,
+            )?;
         }
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {

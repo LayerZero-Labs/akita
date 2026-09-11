@@ -57,6 +57,7 @@ where
         }
         resources.validate_setup(&self.setup)?;
         Ok(CommitmentOperationContext {
+            setup: self.setup.clone(),
             backend_instance,
             name,
             resources,
@@ -73,6 +74,7 @@ where
                 "commitment executor inner operation is already registered".into(),
             ));
         }
+        prepared.stage.validate_setup(&self.setup)?;
         self.inner = Some(prepared);
         Ok(())
     }
@@ -87,6 +89,7 @@ where
                 "commitment executor outer operation is already registered".into(),
             ));
         }
+        prepared.stage.validate_setup(&self.setup)?;
         self.outer = Some(prepared);
         Ok(())
     }
@@ -101,6 +104,7 @@ where
                 "commitment executor compression operation is already registered".into(),
             ));
         }
+        prepared.stage.validate_setup(&self.setup)?;
         self.compression = Some(prepared);
         Ok(())
     }
@@ -116,6 +120,7 @@ where
                 "commitment executor fused operation is already registered".into(),
             ));
         }
+        prepared.stage.validate_setup(&self.setup)?;
         self.fused = Some(prepared);
         Ok(())
     }

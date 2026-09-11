@@ -6,13 +6,15 @@ use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 use std::ops::Range;
 
-/// Whether a planned A/B route is one fused call or two split calls.
+/// Which inner/outer operation shape a round requires.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InnerOuterRouteKind {
     /// One operation performs A, decomposition, slicing, and B.
     Fused,
     /// Separate operations perform inner A and outer B.
     Split,
+    /// Only inner A is executed, as in the terminal fold.
+    InnerOnly,
 }
 
 #[derive(Clone)]
@@ -84,6 +86,34 @@ where
     F: Field + CanonicalEncoding,
     SP: CommitmentStatePolicy<F>,
 {
+    fn validate_round_mode(
+        &self,
+        round: usize,
+        plan: &CommitmentExecutionPlan,
+    ) -> Result<(), AkitaError> {
+        let kind = self
+            .rounds
+            .get(round)
+            .ok_or_else(|| AkitaError::InvalidInput("commitment round is outside the plan".into()))?
+            .step
+            .inner_outer_kind;
+        let matches = match plan.mode() {
+            super::CommitmentExecutionMode::InnerOnly => kind == InnerOuterRouteKind::InnerOnly,
+            super::CommitmentExecutionMode::Full | super::CommitmentExecutionMode::Uncompressed => {
+                matches!(
+                    kind,
+                    InnerOuterRouteKind::Fused | InnerOuterRouteKind::Split
+                )
+            }
+        };
+        if !matches {
+            return Err(AkitaError::InvalidInput(
+                "commitment schedule route kind does not match the round execution mode".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Ordered, read-only routing decisions for all rounds.
     pub fn steps(&self) -> impl ExactSizeIterator<Item = &CommitmentRoundStep> {
         self.rounds.iter().map(|round| &round.step)
@@ -105,16 +135,7 @@ where
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
     ) -> Result<(), AkitaError> {
-        if plan.mode() == super::CommitmentExecutionMode::InnerOnly
-            && self
-                .rounds
-                .get(round)
-                .is_some_and(|entry| entry.step.inner_outer_kind == InnerOuterRouteKind::Fused)
-        {
-            return Err(AkitaError::InvalidInput(
-                "a fused schedule entry cannot execute an inner-only plan".into(),
-            ));
-        }
+        self.validate_round_mode(round, plan)?;
         self.executor(round)?.preflight_request(plan, sources)
     }
 
@@ -125,6 +146,7 @@ where
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
     ) -> Result<CommitmentExecutionOutput<F, SP::State>, AkitaError> {
+        self.validate_round_mode(round, plan)?;
         self.executor(round)?.execute_full(plan, sources)
     }
 
@@ -135,6 +157,7 @@ where
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
     ) -> Result<CommitmentExecutionOutput<F, SP::State>, AkitaError> {
+        self.validate_round_mode(round, plan)?;
         self.executor(round)?.execute_uncompressed(plan, sources)
     }
 
@@ -145,15 +168,7 @@ where
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
     ) -> Result<CommitmentStateOutput<SP::State>, AkitaError> {
-        if self
-            .rounds
-            .get(round)
-            .is_some_and(|entry| entry.step.inner_outer_kind == InnerOuterRouteKind::Fused)
-        {
-            return Err(AkitaError::InvalidInput(
-                "a fused schedule entry cannot execute an inner-only plan".into(),
-            ));
-        }
+        self.validate_round_mode(round, plan)?;
         self.executor(round)?.execute_inner(plan, sources)
     }
 }
@@ -339,10 +354,10 @@ mod tests {
         CommitmentStateBinding, CompressionOperationCapabilities, DenseType,
         FusedInnerOuterOperation, InnerImage, PolynomialType, PortableStatePolicy,
         PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
-        ResolvedCommitSource, StageDimensionCapabilities, StageResources, StateOwnerCapability,
-        UncompressedCommitPlan, UncompressedCommitmentOutput,
+        PreparedInnerCommitment, ResolvedCommitSource, StageDimensionCapabilities, StageResources,
+        StateOwnerCapability, UncompressedCommitPlan, UncompressedCommitmentOutput,
     };
-    use crate::compute::{CpuBackend, CpuCompressionOperation};
+    use crate::compute::{CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation};
     use crate::AkitaProverSetup;
     use akita_types::{RingVec, SetupMatrixCapacity};
     use jolt_field::Prime64Offset59;
@@ -387,6 +402,9 @@ mod tests {
         let fused_context = builder
             .operation_context(instance, "zero-fused", resources.clone())
             .unwrap();
+        let inner_context = builder
+            .operation_context(instance, "cpu-inner", resources.clone())
+            .unwrap();
         let compression_context = builder
             .operation_context(instance, "cpu-compression", resources)
             .unwrap();
@@ -405,6 +423,23 @@ mod tests {
                     ),
                     StageDimensionCapabilities::new(vec![64]).unwrap(),
                     None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let inner = Arc::new(CpuInnerCommitOperation::new(backend, prepared));
+        builder
+            .register_inner(
+                PreparedInnerCommitment::new(
+                    inner.clone(),
+                    inner.owner().clone(),
+                    inner_context,
+                    CommitmentRequestCapabilities::split::<FusedContext>(
+                        BackendKindId::of::<FusedBackend>("cpu-inner").unwrap(),
+                        vec![PolynomialType::Dense(DenseType::Coefficients)],
+                    ),
+                    StageDimensionCapabilities::new(vec![64]).unwrap(),
+                    Some(inner.portable_exporter()),
                 )
                 .unwrap(),
             )
@@ -519,6 +554,37 @@ mod tests {
                 .unwrap();
             assert_eq!(boundaries.compile().unwrap().steps().len(), 4);
         }
+    }
+
+    #[test]
+    fn mixed_executor_routes_fused_then_inner_only_without_an_outer_operation() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            9,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: 128 * 64,
+            },
+        )
+        .unwrap();
+        let backend = CpuBackend::DEFAULT;
+        let prepared =
+            crate::compute::ComputeBackendSetup::prepare_setup(&backend, &setup).unwrap();
+        let executor = fused_executor(&backend, &prepared, setup.expanded.as_ref());
+        let mut builder = CommitmentExecutionScheduleBuilder::new(2).unwrap();
+        builder
+            .register_executor("hybrid", "cpu", &executor)
+            .unwrap()
+            .inner_outer(0..1, "hybrid", InnerOuterRouteKind::Fused)
+            .unwrap()
+            .inner_outer(1..2, "hybrid", InnerOuterRouteKind::InnerOnly)
+            .unwrap()
+            .compression(0..2, "cpu")
+            .unwrap();
+
+        let schedule = builder.compile().unwrap();
+        let steps = schedule.steps().collect::<Vec<_>>();
+        assert_eq!(steps[0].inner_outer_kind(), InnerOuterRouteKind::Fused);
+        assert_eq!(steps[1].inner_outer_kind(), InnerOuterRouteKind::InnerOnly);
     }
 
     #[test]

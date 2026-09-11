@@ -31,6 +31,7 @@ impl InnerCommitOperation<F> for ReboundInner {
                 *plan,
                 binding.source_count(),
                 binding.relation_mode(),
+                binding.compression_plan().cloned(),
             )?
         } else {
             binding.clone()

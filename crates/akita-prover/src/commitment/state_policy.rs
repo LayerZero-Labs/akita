@@ -2,6 +2,7 @@ use super::{
     BackendStateRef, CommitmentExecutionMode, CommitmentStateBinding, CompressionState,
     FullCommitmentOutput, InnerImage, InnerImageExportOperation,
 };
+use crate::compute::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_types::{
     AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, RingRelationMode, RingVec,
@@ -376,7 +377,11 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 /// Independent state capability used by the inner ring relation.
 pub trait InnerRelationState<F: Field> {
     /// Validate that inner-relation material can be produced without exporting it.
-    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+    fn preflight_inner_relation(
+        &self,
+        _plan: &CommitInnerPlan,
+        _source_count: usize,
+    ) -> Result<(), AkitaError> {
         Ok(())
     }
 
@@ -387,7 +392,11 @@ pub trait InnerRelationState<F: Field> {
 /// Independent state capability used by outer-compression relations.
 pub trait OuterCompressionState<F: Field> {
     /// Validate that compression-relation material can be produced without exporting it.
-    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+    fn preflight_outer_compression(
+        &self,
+        _plan: &CompressionChainPlan,
+        _relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
         Ok(())
     }
 
@@ -471,13 +480,46 @@ where
 }
 
 impl<F: Field> InnerRelationState<F> for AkitaCommitmentHint<F> {
+    fn preflight_inner_relation(
+        &self,
+        plan: &CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<(), AkitaError> {
+        let expected_coefficients =
+            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("inner-relation row length overflow".into())
+                })?;
+        if self.ring_dim() != plan.ring_dimension
+            || self.inner_rows().len() != source_count
+            || self
+                .inner_rows()
+                .iter()
+                .any(|row| row.coeff_len() != expected_coefficients)
+        {
+            return Err(AkitaError::InvalidInput(
+                "portable commitment state does not match the requested inner plan".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         InnerRelationStateMaterial::new(self.ring_dim(), self.inner_rows().to_vec())
     }
 }
 
 impl<F: Field> InnerRelationState<F> for ResidentCommitmentState<F> {
-    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+    fn preflight_inner_relation(
+        &self,
+        plan: &CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<(), AkitaError> {
+        if self.binding().inner_plan() != plan || self.binding().source_count() != source_count {
+            return Err(AkitaError::InvalidInput(
+                "resident commitment state does not match the requested inner plan".into(),
+            ));
+        }
         if self.components.exporters.inner.is_none() {
             return Err(AkitaError::InvalidInput(
                 "commitment route has no inner-relation state operation".into(),
@@ -507,6 +549,15 @@ impl<F> OuterCompressionState<F> for AkitaCommitmentHint<F>
 where
     F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
 {
+    fn preflight_outer_compression(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
+        self.outer_compression_material(plan, relation_mode)
+            .map(drop)
+    }
+
     fn outer_compression_material(
         &self,
         plan: &CompressionChainPlan,
@@ -527,7 +578,19 @@ where
 }
 
 impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
-    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+    fn preflight_outer_compression(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
+        if self.components.mode != CommitmentExecutionMode::Full
+            || self.binding().relation_mode() != Some(relation_mode)
+            || self.binding().compression_plan() != Some(plan)
+        {
+            return Err(AkitaError::InvalidInput(
+                "resident commitment state does not match the requested compression plan".into(),
+            ));
+        }
         if self.components.compression().is_none()
             || self.components.exporters.compression.is_none()
         {
@@ -545,6 +608,7 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
     ) -> Result<PortableCompressionState<F>, AkitaError> {
         if self.components.mode != CommitmentExecutionMode::Full
             || self.components.binding().relation_mode() != Some(relation_mode)
+            || self.components.binding().compression_plan() != Some(plan)
         {
             return Err(AkitaError::InvalidInput(
                 "resident commitment state does not match the requested compression mode".into(),

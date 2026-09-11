@@ -179,10 +179,14 @@ where
     F: Field,
     S: InnerRelationState<F>,
 {
-    fn preflight_inner_relation(&self) -> Result<(), AkitaError> {
+    fn preflight_inner_relation(
+        &self,
+        plan: &crate::compute::CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<(), AkitaError> {
         match self {
-            Self::Portable(hint) => hint.preflight_inner_relation(),
-            Self::Selected(state) => state.preflight_inner_relation(),
+            Self::Portable(hint) => hint.preflight_inner_relation(plan, source_count),
+            Self::Selected(state) => state.preflight_inner_relation(plan, source_count),
         }
     }
 
@@ -199,10 +203,14 @@ where
     F: Field + CanonicalEncoding + AkitaSerialize,
     S: OuterCompressionState<F>,
 {
-    fn preflight_outer_compression(&self) -> Result<(), AkitaError> {
+    fn preflight_outer_compression(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
         match self {
-            Self::Portable(hint) => hint.preflight_outer_compression(),
-            Self::Selected(state) => state.preflight_outer_compression(),
+            Self::Portable(hint) => hint.preflight_outer_compression(plan, relation_mode),
+            Self::Selected(state) => state.preflight_outer_compression(plan, relation_mode),
         }
     }
 

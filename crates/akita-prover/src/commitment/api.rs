@@ -450,6 +450,7 @@ where
     P: CommitmentSource<Cfg::Field>,
     SP: CommitmentStatePolicy<Cfg::Field>,
 {
+    executor.validate_setup(expanded)?;
     let commit_params = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
     let execution_plan = CommitmentExecutionPlan::for_root(&commit_params)?;
     let source_refs: Vec<&dyn CommitmentSource<Cfg::Field>> = polys

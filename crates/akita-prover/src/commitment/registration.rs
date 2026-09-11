@@ -1,6 +1,6 @@
 use crate::compute::CommitInnerPlan;
 use akita_error::AkitaError;
-use akita_types::{AkitaSetupDescriptor, RingRelationMode};
+use akita_types::{AkitaSetupDescriptor, CompressionChainPlan, RingRelationMode};
 use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,6 +23,7 @@ pub struct CommitmentStateBinding {
     inner_plan: CommitInnerPlan,
     source_count: usize,
     relation_mode: Option<RingRelationMode>,
+    compression_plan: Option<CompressionChainPlan>,
 }
 
 impl CommitmentStateBinding {
@@ -32,6 +33,7 @@ impl CommitmentStateBinding {
         inner_plan: CommitInnerPlan,
         source_count: usize,
         relation_mode: Option<RingRelationMode>,
+        compression_plan: Option<CompressionChainPlan>,
     ) -> Result<Self, AkitaError> {
         if source_count == 0
             || inner_plan.ring_dimension == 0
@@ -52,6 +54,7 @@ impl CommitmentStateBinding {
             inner_plan,
             source_count,
             relation_mode,
+            compression_plan,
         })
     }
 
@@ -70,6 +73,10 @@ impl CommitmentStateBinding {
     pub const fn relation_mode(&self) -> Option<RingRelationMode> {
         self.relation_mode
     }
+
+    pub const fn compression_plan(&self) -> Option<&CompressionChainPlan> {
+        self.compression_plan.as_ref()
+    }
 }
 
 impl std::fmt::Debug for CommitmentStateBinding {
@@ -80,6 +87,7 @@ impl std::fmt::Debug for CommitmentStateBinding {
             .field("inner_plan", &self.inner_plan)
             .field("source_count", &self.source_count)
             .field("relation_mode", &self.relation_mode)
+            .field("compression_plan", &self.compression_plan)
             .finish_non_exhaustive()
     }
 }
@@ -265,6 +273,7 @@ mod tests {
                 log_basis_inner: 1,
             },
             1,
+            None,
             None,
         )
         .unwrap()

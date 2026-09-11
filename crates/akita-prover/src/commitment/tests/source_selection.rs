@@ -3,8 +3,8 @@ use crate::commitment::{
     CommitSourceDescriptor, CommitmentRequestCapabilities, CommitmentSource,
     DenseCoefficientSource, DenseRepresentation, DenseType, ExternalInnerCommitmentCapability,
     ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
-    PolynomialRepresentation, PolynomialType, PolynomialTypeSelection,
-    PreparedExternalInnerCommitment,
+    OneHotIndexWidth, OneHotRepresentation, OneHotType, PolynomialRepresentation, PolynomialType,
+    PolynomialTypeSelection, PreparedExternalInnerCommitment, UnitPositionSlice,
 };
 use crate::compute::CommitInnerPlan;
 use crate::CommitInnerWitness;
@@ -151,4 +151,68 @@ fn route_selection_is_homogeneous_and_external_first() {
     assert!(resolved.iter().all(|source| source.external().is_some()));
     assert_eq!(first.preparations.load(Ordering::SeqCst), 1);
     assert_eq!(second.preparations.load(Ordering::SeqCst), 1);
+}
+
+struct OversizedOneHot;
+
+impl CommitmentSource<F> for OversizedOneHot {
+    fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+        CommitSourceDescriptor::new(
+            6,
+            64,
+            64,
+            CommitSourceClass::OneHot { chunk_size: 128 },
+            "oversized_one_hot",
+        )
+    }
+
+    fn committed_centered_reach(
+        &self,
+        _modulus: u128,
+        _centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError> {
+        Ok((0, 1))
+    }
+
+    fn available_polynomial_types(
+        &self,
+        _plan: &CommitInnerPlan,
+    ) -> Result<AvailablePolynomialTypes, AkitaError> {
+        AvailablePolynomialTypes::new(vec![PolynomialType::OneHot(OneHotType::new(
+            128,
+            OneHotIndexWidth::U8,
+        )?)])
+    }
+
+    fn represent_as(
+        &self,
+        _selected: PolynomialTypeSelection,
+        _plan: &CommitInnerPlan,
+    ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
+        Ok(PolynomialRepresentation::OneHot(OneHotRepresentation {
+            positions: UnitPositionSlice::U8(&[]),
+            chunk_size: 128,
+            num_vars: 6,
+        }))
+    }
+}
+
+#[test]
+fn one_hot_chunk_must_exactly_partition_the_logical_domain() {
+    struct OneHotBackend;
+    struct OneHotContext;
+
+    let source = OversizedOneHot;
+    let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+    let capabilities = CommitmentRequestCapabilities::split::<OneHotContext>(
+        BackendKindId::of::<OneHotBackend>("one-hot").unwrap(),
+        vec![PolynomialType::OneHot(
+            OneHotType::new(128, OneHotIndexWidth::U8).unwrap(),
+        )],
+    );
+
+    let result = compile_commitment_request(&plan(), &sources, &capabilities)
+        .unwrap()
+        .materialize();
+    assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
 }

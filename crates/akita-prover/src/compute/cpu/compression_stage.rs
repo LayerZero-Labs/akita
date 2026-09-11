@@ -273,6 +273,7 @@ mod tests {
                 },
                 1,
                 Some(mode),
+                Some(plan.clone()),
             )
             .unwrap();
             let source = RingVec::from_coeffs_with_ring_dim(vec![F::from_u64(1); 64], 64).unwrap();
