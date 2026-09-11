@@ -547,10 +547,10 @@ The cutover:
 - A polynomial is flat field coefficients plus arity metadata. `num_vars` is
   stored independently of the scheduled ring dimension. The storage types are
   D-free, and typed views are constructed only at operation boundaries.
-- `RootPolyShape<F, D>` and the view traits (`RootCommitSource`,
-  `RootOpeningSource`, `RootTensorSource`, `DirectRootWitnessSource`) become
-  kernel-entry view constructors reached through operation adapters that
-  dispatch on the schedule's dimension for that operation.
+- `CommitmentSource<F>` provides D-free commitment representations.
+  `RootPolyShape<F, D>` and the opening/tensor view traits remain kernel-entry
+  constructors reached through operation adapters that dispatch on the
+  schedule's dimension for that operation.
 - Orchestration bounds use `RootPolyMeta<F>` only. The
   `RootProvePoly<F, D>`-style bounds on orchestration collapse into
   runtime-supported bundles following the pattern already proven in-tree by

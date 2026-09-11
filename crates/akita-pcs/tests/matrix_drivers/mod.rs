@@ -78,12 +78,12 @@ where
             .collect();
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 &final_polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("recursive direct commit");
@@ -193,19 +193,19 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     &pt[..],
@@ -269,19 +269,19 @@ where
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     &pt[..],
@@ -344,12 +344,12 @@ where
             DensePoly::<F>::from_field_evals(PRE_NV, &pre_evals).expect("pre dense poly");
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
-            hint: pre_hint,
+            prover_state: pre_hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&pre_poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
@@ -362,12 +362,12 @@ where
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&final_poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");
@@ -422,7 +422,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,
@@ -491,12 +491,12 @@ where
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
-            hint: pre_hint,
+            prover_state: pre_hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&pre_poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
@@ -506,12 +506,12 @@ where
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&final_poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");
@@ -547,7 +547,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,

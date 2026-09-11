@@ -61,12 +61,12 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");

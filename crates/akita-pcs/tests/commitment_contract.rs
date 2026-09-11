@@ -2,35 +2,30 @@
 //!
 //! Proves that the unified explicit-parameter `commit` accepts a polynomial
 //! type that is not one of Akita's built-in root representations, with a
-//! downstream-owned backend implementing the root commit capability
-//! for local views (orphan-rule-safe: the backend type is local to this test
-//! crate).
+//! standard representation and the shared CPU commitment executor.
 
 #![allow(missing_docs)]
 
-use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_prover::backend::DenseView;
-use akita_prover::compute::{
-    CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    DigitRowsComputeBackend, RootCommitKernel, RootCommitSource, RootPolyShape,
+use akita_prover::commitment::{
+    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutor,
+    CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType, InnerRelationState,
+    NoRetainedStatePolicy, OuterCompressionState, PolynomialRepresentation, PolynomialType,
+    PolynomialTypeSelection, PortableCommitmentState, PortableCompressionState,
+    PortableStatePolicy, ResidentStatePolicy,
 };
-use akita_prover::{
-    AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
-};
-use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field, Ring};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use akita_prover::compute::{CommitInnerPlan, ComputeBackendSetup};
+use akita_prover::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
+use akita_types::{CommittedSourceEncoding, OpeningClaimsLayout};
+use jolt_field::Ring;
 
 type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
 // The folded-only protocol requires at least two folds. `nv=8` was a
 // root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
-static COMMIT_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
 ///
@@ -52,155 +47,59 @@ impl ContractRootPoly {
     }
 }
 
-/// Local commit view owned by the downstream test crate.
-#[derive(Debug, Clone, Copy)]
-struct ContractCommitView<'a> {
-    poly: &'a ContractRootPoly,
-}
-
-impl<const DD: usize> RootPolyShape<F, DD> for ContractRootPoly {
-    fn num_ring_elems(&self) -> usize {
-        RootPolyShape::<F, DD>::num_ring_elems(&self.dense)
-    }
-
-    fn num_vars(&self) -> usize {
-        self.num_vars
+impl DenseCoefficientSource<F> for ContractRootPoly {
+    fn coefficients(&self) -> &[F] {
+        self.dense.field_coeffs()
     }
 }
 
-impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-}
-
-impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {
-    type CommitView<'a>
-        = ContractCommitView<'a>
-    where
-        Self: 'a;
-
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(ContractCommitView { poly: self })
+impl CommitmentSource<F> for ContractRootPoly {
+    fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+        CommitSourceDescriptor::new(
+            self.num_vars,
+            self.dense.field_coeffs().len(),
+            1usize << self.num_vars,
+            CommitSourceClass::Dense,
+            "contract_dense",
+        )
     }
 
-    /// A downstream source must answer the bounded-commitment question too; this
-    /// one wraps a dense poly, so it delegates to the dense scan.
     fn committed_centered_reach(
         &self,
         modulus: u128,
         centering_threshold: u128,
     ) -> Result<(u128, u128), AkitaError> {
-        RootCommitSource::<F, DD>::committed_centered_reach(
+        <DensePoly<F> as CommitmentSource<F>>::committed_centered_reach(
             &self.dense,
             modulus,
             centering_threshold,
         )
     }
-}
 
-/// Downstream-owned backend: delegates row work to [`CpuBackend`] but carries
-/// the [`RootCommitKernel`] impl for [`ContractCommitView`] in this crate.
-#[derive(Debug, Default, Clone, Copy)]
-struct ContractCommitBackend;
-
-impl<F> ComputeBackendSetup<F> for ContractCommitBackend
-where
-    F: Field + CanonicalEncoding,
-{
-    type PreparedSetup = CpuPreparedSetup<F>;
-
-    fn prepare_expanded(
+    fn available_polynomial_types(
         &self,
-        expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
-    ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend::DEFAULT.prepare_expanded(expanded)
+        _plan: &CommitInnerPlan,
+    ) -> Result<AvailablePolynomialTypes, AkitaError> {
+        AvailablePolynomialTypes::new(vec![PolynomialType::Dense(DenseType::Coefficients)])
     }
 
-    fn ensure_ntt_slot(
+    fn represent_as(
         &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-    ) -> Result<(), AkitaError> {
-        CpuBackend::DEFAULT.ensure_ntt_slot(prepared, key)
-    }
-
-    fn prepared_expanded_setup<'a>(
-        &self,
-        prepared: &'a Self::PreparedSetup,
-    ) -> &'a akita_types::AkitaExpandedSetup<F> {
-        CpuBackend::DEFAULT.prepared_expanded_setup(prepared)
+        selected: PolynomialTypeSelection,
+        _plan: &CommitInnerPlan,
+    ) -> Result<PolynomialRepresentation<'_, F>, AkitaError> {
+        if selected.polynomial_type() != PolynomialType::Dense(DenseType::Coefficients) {
+            return Err(AkitaError::InvalidInput(
+                "contract source received an unsupported representation".into(),
+            ));
+        }
+        Ok(PolynomialRepresentation::Dense(
+            DenseRepresentation::Coefficients(self),
+        ))
     }
 }
 
-impl<F> DigitRowsComputeBackend<F> for ContractCommitBackend
-where
-    F: Field + CanonicalEncoding,
-{
-    fn digit_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        row_len: usize,
-        digit_vectors: &[&[[i8; RING_D]]],
-        log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
-    }
-}
-
-impl<F> CompressionComputeBackend<F> for ContractCommitBackend
-where
-    F: Field + CanonicalEncoding,
-{
-    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
-        CpuBackend::DEFAULT.compression_cache_bytes(prepared)
-    }
-
-    fn compression_rows_products<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        digit_vectors: &[&[[i8; RING_D]]],
-    ) -> Result<Vec<CompressionRowsProducts<F, RING_D>>, AkitaError> {
-        CpuBackend::DEFAULT.compression_rows_products(prepared, digit_vectors)
-    }
-
-    fn compression_negacyclic_rows<const RING_D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        digit_vectors: &[&[[i8; RING_D]]],
-    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
-        CpuBackend::DEFAULT.compression_negacyclic_rows(prepared, digit_vectors)
-    }
-}
-
-impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend
-where
-    F: Field + CanonicalEncoding + Ring + Unreduced,
-    <F as Unreduced>::Wide: From<F>,
-{
-    fn commit_inner_group(
-        &self,
-        prepared: &Self::PreparedSetup,
-        sources: Vec<ContractCommitView<'_>>,
-        plan: CommitInnerPlan,
-    ) -> Result<Vec<akita_prover::CommitInnerWitness<F>>, AkitaError> {
-        COMMIT_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
-        let dense_sources = sources
-            .into_iter()
-            .map(|source| RootCommitSource::<F, DD>::commit_view(&source.poly.dense))
-            .collect::<Result<Vec<_>, _>>()?;
-        <CpuBackend as RootCommitKernel<DenseView<'_, F, DD>, F, DD>>::commit_inner_group(
-            &CpuBackend::DEFAULT,
-            prepared,
-            dense_sources,
-            plan,
-        )
-    }
-}
-
-#[test]
-fn custom_commit_source_runs_unified_explicit_commit() {
-    COMMIT_KERNEL_CALLS.store(0, Ordering::Relaxed);
+fn run_custom_commit_source_contract() {
     let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
@@ -230,32 +129,32 @@ fn custom_commit_source_runs_unified_explicit_commit() {
             .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
-    let contract_backend = ContractCommitBackend;
-    let prepared = contract_backend.prepare_setup(&setup).expect("prepared");
     let expanded = setup.expanded.as_ref();
-    let contract_stack = UniformProverStack::uniform(&contract_backend, &prepared, expanded)
-        .expect("contract stack");
-
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend.prepare_setup(&setup).expect("prepared");
+    let portable_executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        expanded,
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        PortableStatePolicy,
+    )
+    .expect("portable executor");
+    let context = GroupContext::explicit(&params.own_group().profile);
     let contract_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
         &schedules,
-        &contract_stack,
-        GroupContext::explicit(&params.own_group().profile),
+        &portable_executor,
+        context,
     )
     .expect("contract commit");
-
-    let cpu_prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("cpu prepared");
-    let cpu_stack = UniformProverStack::uniform(&CpuBackend::DEFAULT, &cpu_prepared, expanded)
-        .expect("cpu stack");
-    let dense_output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
+    let dense_output = akita_prover::commit::<Cfg, DensePoly<F>, _>(
         std::slice::from_ref(&dense),
         expanded,
         &schedules,
-        &cpu_stack,
-        GroupContext::explicit(&params.own_group().profile),
+        &portable_executor,
+        context,
     )
     .expect("dense oracle commit");
 
@@ -263,8 +162,113 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         contract_output.committed_group,
         dense_output.committed_group
     );
-    assert_eq!(contract_output.hint, dense_output.hint);
-    assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(contract_output.prover_state, dense_output.prover_state);
+
+    let no_state_executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        expanded,
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        NoRetainedStatePolicy,
+    )
+    .expect("no-state executor");
+    let no_state_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
+        std::slice::from_ref(&contract),
+        expanded,
+        &schedules,
+        &no_state_executor,
+        context,
+    )
+    .expect("commit-only route");
+    assert_eq!(
+        no_state_output.committed_group,
+        contract_output.committed_group
+    );
+    assert_eq!(no_state_output.prover_state, ());
+
+    let resident_executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        expanded,
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        ResidentStatePolicy,
+    )
+    .expect("resident executor");
+    let resident_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
+        std::slice::from_ref(&contract),
+        expanded,
+        &schedules,
+        &resident_executor,
+        context,
+    )
+    .expect("resident commit route");
+    assert_eq!(
+        resident_output.committed_group,
+        contract_output.committed_group
+    );
+    let portable_inner = contract_output
+        .prover_state
+        .inner_relation_material()
+        .expect("portable inner relation");
+    let resident_inner = resident_output
+        .prover_state
+        .inner_relation_material()
+        .expect("resident inner relation");
+    assert_eq!(
+        portable_inner.ring_dimension(),
+        resident_inner.ring_dimension()
+    );
+    assert_eq!(portable_inner.rows(), resident_inner.rows());
+
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        &params,
+        &opening_batch,
+        <<Cfg as CommitmentConfig>::ExtField as jolt_field::ExtField<F>>::DEGREE,
+    )
+    .expect("relation geometry");
+    let compression_plan = relation_geometry
+        .rhs_layout()
+        .compression_plan_for_group(0)
+        .expect("outer compression plan");
+    let portable_outer = contract_output
+        .prover_state
+        .outer_compression_material(compression_plan, params.ring_relation_mode)
+        .expect("portable outer relation");
+    let resident_outer = resident_output
+        .prover_state
+        .outer_compression_material(compression_plan, params.ring_relation_mode)
+        .expect("resident outer relation");
+    match (portable_outer, resident_outer) {
+        (
+            PortableCompressionState::QuotientLift {
+                witness: portable_witness,
+                quotients: portable_quotients,
+            },
+            PortableCompressionState::QuotientLift {
+                witness: resident_witness,
+                quotients: resident_quotients,
+            },
+        ) => {
+            assert_eq!(portable_witness, resident_witness);
+            assert_eq!(portable_quotients, resident_quotients);
+        }
+        (
+            PortableCompressionState::ReducedEvaluation {
+                witness: portable_witness,
+            },
+            PortableCompressionState::ReducedEvaluation {
+                witness: resident_witness,
+            },
+        ) => assert_eq!(portable_witness, resident_witness),
+        _ => panic!("portable and resident compression relations disagree"),
+    }
+    assert_eq!(
+        resident_output
+            .prover_state
+            .portable_hint()
+            .expect("explicit resident export"),
+        contract_output.prover_state
+    );
 
     let mut malformed_profile = params.own_group().profile;
     malformed_profile.inner.digits.num_digits += 1;
@@ -272,10 +276,19 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&contract),
         expanded,
         &schedules,
-        &contract_stack,
+        &portable_executor,
         GroupContext::explicit(&malformed_profile),
     )
     .expect_err("malformed explicit profile must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
-    assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn custom_commit_source_runs_unified_explicit_commit() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run_custom_commit_source_contract)
+        .expect("spawn commitment contract test")
+        .join()
+        .expect("commitment contract test panicked");
 }

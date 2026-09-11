@@ -145,12 +145,10 @@ mod tests {
             akita_types::NttTransformDomain::Negacyclic,
         )
         .unwrap();
-        assert_eq!(
-            prepared.ntt_cache_bytes().unwrap(),
-            CpuBackend::DEFAULT
-                .planned_ntt_cache_entry_bytes(&prepared, key)
-                .unwrap()
-        );
+        let resident = prepared.shared_ntt_cache_metrics().unwrap();
+        assert_eq!(resident.len(), 1);
+        assert_eq!(resident[0].key, key);
+        assert!(resident[0].cache_bytes > 0);
         assert_eq!(prepared.compression_ntt_cache_bytes(), 0);
     }
 }

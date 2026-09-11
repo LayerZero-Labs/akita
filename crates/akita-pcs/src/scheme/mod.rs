@@ -2,11 +2,15 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
+use akita_prover::commitment::{
+    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, InnerRelationState,
+    OuterCompressionState, TerminalBindingState,
+};
 use akita_prover::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeCommitSource,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend, UniformProverStack,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
@@ -19,7 +23,7 @@ use akita_types::{
     SetupMatrixCapacity,
 };
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced};
+use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
@@ -74,7 +78,7 @@ where
         max_num_batched_polys: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: AkitaDeserialize<Context = ()>,
+        Cfg::Field: AkitaDeserialize<Context = ()> + WithCommitAccumulator,
     {
         akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
             &self.schedules,
@@ -128,24 +132,24 @@ where
     /// explicit parameters are unsupported, setup capacity is insufficient,
     /// or commitment execution fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    pub fn commit<P, B>(
+    pub fn commit<P, SP>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
-        stack: &UniformProverStack<'_, Cfg::Field, B>,
+        executor: &CommitmentExecutor<'_, Cfg::Field, SP>,
         context: GroupContext<'_>,
-    ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
+    ) -> Result<CommitOutput<Cfg::Field, SP::State>, AkitaError>
     where
         Cfg::Field: Ring + Unreduced + Field + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
-        P: RuntimeCommitSource<Cfg::Field>,
-        B: RuntimeCommitBackendFor<Cfg::Field, P>,
+        P: CommitmentSource<Cfg::Field>,
+        SP: CommitmentStatePolicy<Cfg::Field>,
     {
-        akita_prover::commit::<Cfg, P, B>(
+        akita_prover::commit::<Cfg, P, SP>(
             polys,
             setup.expanded.as_ref(),
             &self.schedules,
-            stack,
+            executor,
             context,
         )
     }
@@ -157,17 +161,23 @@ where
     /// Returns an error if any opening point is invalid or proof generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    pub fn batched_prove<'a, T, P, B>(
+    pub fn batched_prove<'a, T, P, B, SP>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
-        opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            P,
+            Cfg::Field,
+            impl InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+        >,
         stacks: &'a impl LevelProveStacks<
             'a,
             Cfg::Field,
-            Commit = B,
             Opening = B,
             Tensor = B,
             RingSwitch = B,
+            CommitmentStatePolicy = SP,
         >,
         transcript: &mut T,
         basis: BasisMode,
@@ -178,7 +188,6 @@ where
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
         P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
         B: ComputeBackendSetup<Cfg::Field>
-            + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
             + RuntimeCoefficientPackingBackendFor<
                 Cfg::Field,
@@ -191,9 +200,13 @@ where
             + RuntimeRingSwitchProveBackend<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+        SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+        SP::State: InnerRelationState<Cfg::Field>
+            + OuterCompressionState<Cfg::Field>
+            + TerminalBindingState<Cfg::Field>,
     {
         let t_prove_total = Instant::now();
-        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
+        let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, SP>(
             &setup.expanded,
             &setup.prefix_slots,
             &self.schedules,

@@ -51,9 +51,9 @@ pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
 pub use akita_prover::{
     CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DigitRowsComputeBackend, GroupContext, LevelProveStacks,
-    OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps, PreparedProverGroup,
-    ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows, RootCommitSource,
+    DecomposeFoldWitness, DigitRowsComputeBackend, ErasedPreparedProverGroup, GroupContext,
+    LevelProveStacks, OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps,
+    PreparedProverGroup, ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows,
     RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
     SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor, TieredProveStacks,
     UniformProverStack,

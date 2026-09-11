@@ -1,9 +1,8 @@
 //! Dense polynomial: all ring coefficients materialized in memory.
 //!
-//! [`DensePoly`] uses standard dense algorithms — balanced-digit decomposition,
-//! NTT-based matrix-vector multiply, and parallel block folds.
+//! [`DensePoly`] stores dense coefficients and exposes opening/tensor views.
+//! Commitment representations are selected through `CommitmentSource`.
 
-mod commit;
 mod kernels;
 mod ops;
 mod poly;
@@ -11,6 +10,5 @@ mod poly;
 mod tests;
 mod views;
 
-pub(super) use kernels::dense_coefficient_packing_partials;
 pub use poly::DensePoly;
 pub use views::{DenseBatchView, DenseView};

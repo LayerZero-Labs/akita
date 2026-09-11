@@ -5,15 +5,14 @@ use super::*;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan,
 };
 
 /// Borrowed single-polynomial view over one-hot chunk storage.
 ///
-/// One view type backs the commit and opening-fold kernels; the kernel trait it
-/// is passed to selects the operation. `D` is the kernel
+/// `D` is the opening-kernel
 /// dispatch dimension: the underlying polynomial stores flat logical data,
 /// and the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
@@ -92,34 +91,6 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, I>
-where
-    F: Field,
-    I: OneHotIndex,
-{
-    type CommitView<'a>
-        = OneHotView<'a, F, D, I>
-    where
-        Self: 'a;
-
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        self.source_view()
-    }
-
-    /// A unit one-hot source stores hot *positions*, so every coefficient it
-    /// commits is `0` or `1` by construction and no scan is possible or needed.
-    fn committed_centered_reach(
-        &self,
-        _modulus: u128,
-        _centering_threshold: u128,
-    ) -> Result<(u128, u128), AkitaError>
-    where
-        F: jolt_field::CanonicalEncoding,
-    {
-        Ok((0, 1))
-    }
-}
-
 impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, I>
 where
     F: Field,
@@ -147,38 +118,36 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
+pub(crate) fn commit_onehot_sources<F, const D: usize, I>(
+    backend: &CpuBackend,
+    prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+    sources: &[OneHotSource<'_, I>],
+    plan: CommitInnerPlan,
+) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
 {
-    fn commit_inner_group(
-        &self,
-        prepared: &Self::PreparedSetup,
-        sources: Vec<OneHotView<'_, F, D, I>>,
-        plan: CommitInnerPlan,
-    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-        let active_a_cols = plan
-            .num_positions_per_block
-            .checked_mul(plan.num_digits_inner)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".into()))?;
-        let a_view = self
-            .prepared_expanded_setup(prepared)
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
-        let rows = column_sweep_ajtai_onehot_multi::<F, D, I>(
-            &a_view,
-            &sources,
-            plan.n_a,
-            active_a_cols,
-            plan.num_digits_inner,
-            self.commit_scratch_bytes_per_worker(),
-        )?;
-        Ok(rows
-            .into_iter()
-            .map(CommitInnerWitness::from_rows::<D>)
-            .collect())
-    }
+    let active_a_cols = plan
+        .num_positions_per_block
+        .checked_mul(plan.num_digits_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".into()))?;
+    let a_view = backend
+        .prepared_expanded_setup(prepared)
+        .shared_matrix
+        .ring_view::<D>(plan.n_a, active_a_cols)?;
+    let rows = column_sweep_ajtai_onehot_multi::<F, D, I>(
+        &a_view,
+        sources,
+        plan.n_a,
+        active_a_cols,
+        plan.num_digits_inner,
+        backend.commit_scratch_bytes_per_worker(),
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(CommitInnerWitness::from_rows::<D>)
+        .collect())
 }
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
@@ -534,6 +503,7 @@ where
         cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let materialized = self
+                    .commitment_source()
                     .materialize_block_range(D, num_positions_per_block, block_idx..block_idx + 1)
                     .expect("in-range single block build");
                 fold_onehot_block_ring(materialized.block(0), scalars, num_positions_per_block)

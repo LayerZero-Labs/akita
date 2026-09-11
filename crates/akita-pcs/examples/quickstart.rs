@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let commit_output = scheme.commit(
         &setup,
         std::slice::from_ref(&polynomial),
-        &stack,
+        stack.commitment(),
         akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )?;
 
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let polynomial_group = [&polynomial];
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
         prover_claims,
-        vec![commit_output.hint],
+        vec![commit_output.prover_state],
         vec![&polynomial_group],
         scheme.schedules(),
     )?;

@@ -27,8 +27,10 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         .collect();
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);
     let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
-    let sources: Vec<OneHotView<'_, F, D, u8>> =
-        polys.iter().map(|poly| OneHotView { poly }).collect();
+    let sources = polys
+        .iter()
+        .map(OneHotPoly::commitment_source)
+        .collect::<Vec<_>>();
 
     let bucketed = column_sweep_ajtai_onehot_multi_forced(
         &a_view,
@@ -63,7 +65,7 @@ fn retained_sweeps_match_across_polys_and_dimensions() {
 
 #[test]
 fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
-    use crate::compute::{CommitInnerPlan, ComputeBackendSetup, CpuBackend, RootCommitKernel};
+    use crate::compute::{CommitInnerPlan, ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_types::SetupMatrixCapacity;
 
@@ -79,6 +81,8 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
     )
     .unwrap();
     let plan = CommitInnerPlan {
+        ring_dimension: D,
+        num_live_blocks: 1,
         n_a: 2,
         num_positions_per_block: 16,
         num_digits_inner: 1,
@@ -94,21 +98,21 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
     .unwrap();
     let default_backend = CpuBackend::DEFAULT;
     let prepared = default_backend.prepare_setup(&setup).unwrap();
-    let default = default_backend
-        .commit_inner_group(
-            &prepared,
-            vec![OneHotView::<F, D, u8> { poly: &poly }],
-            plan,
-        )
-        .unwrap();
+    let default = commit_onehot_sources::<F, D, u8>(
+        &default_backend,
+        &prepared,
+        &[poly.commitment_source()],
+        plan,
+    )
+    .unwrap();
     let constrained_backend = CpuBackend::with_resource_limits(usize::MAX, 1 << 20).unwrap();
-    let constrained = constrained_backend
-        .commit_inner_group(
-            &prepared,
-            vec![OneHotView::<F, D, u8> { poly: &poly }],
-            plan,
-        )
-        .unwrap();
+    let constrained = commit_onehot_sources::<F, D, u8>(
+        &constrained_backend,
+        &prepared,
+        &[poly.commitment_source()],
+        plan,
+    )
+    .unwrap();
     assert_eq!(constrained.len(), default.len());
     for (constrained, default) in constrained.iter().zip(&default) {
         assert_eq!(constrained.inner_rows.coeffs(), default.inner_rows.coeffs());
@@ -116,13 +120,75 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
 
     let too_small_backend = CpuBackend::with_resource_limits(usize::MAX, 1).unwrap();
     assert!(matches!(
-        too_small_backend.commit_inner_group(
+        commit_onehot_sources::<F, D, u8>(
+            &too_small_backend,
             &prepared,
-            vec![OneHotView::<F, D, u8> { poly: &poly }],
+            &[poly.commitment_source()],
             plan,
         ),
         Err(AkitaError::InvalidSetup(_))
     ));
+}
+
+#[test]
+fn every_stored_index_width_reaches_the_same_commitment_sweep() {
+    use crate::compute::{CommitInnerPlan, ComputeBackendSetup, CpuBackend};
+    use crate::AkitaProverSetup;
+    use akita_types::SetupMatrixCapacity;
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    const K: usize = 64;
+
+    let plan = CommitInnerPlan {
+        ring_dimension: D,
+        num_live_blocks: 1,
+        n_a: 2,
+        num_positions_per_block: 8,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: plan.n_a * plan.num_positions_per_block * D,
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let positions = (0usize..8)
+        .map(|chunk| (!chunk.is_multiple_of(3)).then_some((chunk * 7) % K))
+        .collect::<Vec<_>>();
+
+    macro_rules! commit_at_width {
+        ($index:ty) => {{
+            let poly = OneHotPoly::<F, $index>::new(
+                K,
+                positions
+                    .iter()
+                    .map(|position| position.map(|value| value as $index))
+                    .collect(),
+            )
+            .unwrap();
+            commit_onehot_sources::<F, D, $index>(
+                &backend,
+                &prepared,
+                &[poly.commitment_source()],
+                plan,
+            )
+            .unwrap()
+            .pop()
+            .unwrap()
+            .inner_rows
+        }};
+    }
+
+    let expected = commit_at_width!(u8);
+    assert_eq!(commit_at_width!(u16), expected);
+    assert_eq!(commit_at_width!(u32), expected);
+    assert_eq!(commit_at_width!(usize), expected);
 }
 
 #[test]
@@ -178,7 +244,7 @@ fn retained_sweeps_handle_oversized_and_empty_blocks() {
 
 fn sweep_median_ms<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[OneHotView<'_, F, D, usize>],
+    sources: &[OneHotSource<'_, usize>],
     n_a: usize,
     active_a_cols: usize,
     sweep: super::super::column_sweep::OneHotSweep,
@@ -241,7 +307,7 @@ fn benchmark_sweep_case<const D: usize>(
         .collect::<Vec<_>>();
     let sources = polys
         .iter()
-        .map(|poly| OneHotView { poly })
+        .map(OneHotPoly::commitment_source)
         .collect::<Vec<_>>();
     let a_rows = vec![CyclotomicRing::<F, D>::zero(); n_a * positions_per_block];
     let a_flat = FlatMatrix::from_ring_slice(&a_rows);

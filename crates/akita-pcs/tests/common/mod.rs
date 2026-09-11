@@ -17,13 +17,15 @@ use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSourc
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::SelectedProverOpeningData;
-use akita_prover::{commit_setup_prefix, AkitaProverSetup};
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{
+    commit_setup_prefix, AkitaProverSetup, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
+    DenseType, PolynomialType, PortableStatePolicy,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    canonical_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
-    AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
-    GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    canonical_proof_shape, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
+    PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
@@ -655,22 +657,16 @@ fn verifier_setup_with_alternate_full_prefix(
     let prepared = backend
         .prepare_setup(&altered_setup)
         .expect("prepare altered setup");
-    let altered_slot = dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        F,
-        slot_id.d_setup(),
-        |D| {
-            commit_setup_prefix::<F, D, _>(
-                &altered_setup.expanded,
-                &backend,
-                &prepared,
-                &slot_id.commitment_profile,
-                n_prefix,
-                natural_len,
-            )
-        }
+    let executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        &altered_setup.expanded,
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        PortableStatePolicy,
     )
-    .expect("commit altered full setup prefix");
+    .expect("altered setup-prefix executor");
+    let altered_slot = commit_setup_prefix(&altered_setup.expanded, &executor, slot_id)
+        .expect("commit altered full setup prefix");
 
     let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
     for (id, slot) in verifier_setup.prefix_slots().iter() {

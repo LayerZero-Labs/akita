@@ -1,5 +1,6 @@
 use super::super::*;
 use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
+use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
@@ -12,10 +13,10 @@ pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
 
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
+pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, S, O, TS, R, SP>(
+    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     run_eor: bool,
-    block_claims: ProverOpeningData<'a, E, P, F>,
+    block_claims: ProverOpeningData<'a, E, P, F, S>,
     eor_source: ExtensionOpeningSource<'_, P>,
     pad_base_evals: bool,
     transcript: &mut T,
@@ -42,10 +43,11 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    S: InnerRelationState<F> + OuterCompressionState<F>,
     TS: ComputeBackendSetup<F>,
-    C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     let opening_batch = block_claims.opening_layout().clone();
     let tensor = stack.tensor();
@@ -89,7 +91,7 @@ where
         })?;
         (proved.protocol_points, Some(proved.reduction))
     } else {
-        let protocol_points: Vec<Vec<E>> = block_claims
+        let protocol_points = block_claims
             .opening_claims()
             .groups()
             .iter()
@@ -98,7 +100,7 @@ where
         (protocol_points, None)
     };
 
-    finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
+    finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,
         protocol_points: &protocol_points,

@@ -18,20 +18,24 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitOutput, ComputeBackendSetup, CpuBackend,
-    GroupContext, OneHotPoly, SelectedProverOpeningData,
+    commit_setup_prefix, AkitaProverSetup, CommitOutput, CommitmentExecutor, ComputeBackendSetup,
+    CpuBackend, CpuPreparedSetup, DenseType, GroupContext, OneHotPoly, PolynomialType,
+    PortableStatePolicy, SelectedProverOpeningData,
 };
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup,
-    FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup, FpExtEncoding,
+    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
+use jolt_field::{
+    CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced,
+    WithCommitAccumulator,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -175,13 +179,19 @@ where
 fn materialize_schedule_setup_prefix_slots<FF>(
     setup: &mut AkitaProverSetup<FF>,
     backend: &CpuBackend,
-    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup,
+    prepared: &CpuPreparedSetup<FF>,
     schedule: &akita_types::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    FF: Field + CanonicalEncoding + Valid,
-    CpuBackend: ComputeBackendSetup<FF>,
+    FF: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
+    let executor = CommitmentExecutor::cpu(
+        backend,
+        prepared,
+        setup.expanded.as_ref(),
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        PortableStatePolicy,
+    )?;
     for setup_prefix in schedule
         .recursive_folds
         .iter()
@@ -193,22 +203,7 @@ where
         if setup.prefix_slots.get(&slot_id).is_some() {
             continue;
         }
-        let n_prefix = slot_id.n_prefix()?;
-        let slot = dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-            FF,
-            slot_id.d_setup(),
-            |D_SETUP| {
-                commit_setup_prefix::<FF, D_SETUP, CpuBackend>(
-                    &setup.expanded,
-                    backend,
-                    prepared,
-                    &slot_id.commitment_profile,
-                    n_prefix,
-                    slot_id.natural_len,
-                )
-            }
-        )?;
+        let slot = commit_setup_prefix(&setup.expanded, &executor, &slot_id)?;
         setup.prefix_slots.insert(slot)?;
     }
     Ok(())
@@ -406,12 +401,12 @@ macro_rules! generate_scalar_case {
         let t0 = Instant::now();
         let CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &prover_setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 GroupContext::scheduler_without_precommitted_groups(),
             )
         .map_err(|err| format!("{} commit: {err}", case))?;
@@ -723,12 +718,12 @@ fn run() -> Result<(), String> {
         let openings = vec![onehot_opening(&polys[0], pre_point)?];
         let CommitOutput {
             committed_group,
-            hint,
+            prover_state: hint,
         } = base_scheme
             .commit(
                 &prover_setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
@@ -749,12 +744,12 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("precommitted profile list: {err}"))?;
     let CommitOutput {
         committed_group: final_commitment,
-        hint: final_hint,
+        prover_state: final_hint,
     } = scheme
         .commit(
             &prover_setup,
             &final_polys,
-            &stack,
+            stack.commitment(),
             GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .map_err(|err| format!("final multi-group commit failed: {err}"))?;

@@ -1,8 +1,12 @@
 //! CPU compute backend and its prepared setup caches.
 
 mod commitment;
+mod commitment_stage;
+#[cfg(test)]
+mod commitment_tests;
 mod compression;
 mod compression_cache;
+mod compression_stage;
 mod cyclic_rows;
 mod digit_rows;
 mod exact_i16;
@@ -17,6 +21,8 @@ mod ring_switch;
 #[cfg(test)]
 mod streamed_tests;
 
+pub use commitment_stage::{CpuInnerCommitOperation, CpuOuterCommitOperation};
+pub use compression_stage::CpuCompressionOperation;
 pub use prepared::{CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 
 /// CPU backend using the existing Rust/Rayon kernels.

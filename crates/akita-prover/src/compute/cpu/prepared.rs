@@ -5,8 +5,8 @@ use crate::compute::requirements::RoutedNttRequirement;
 use crate::kernels::linear::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use akita_error::AkitaError;
 use akita_types::{
-    dispatch_for_field, planned_exact_ntt_cache_bytes, prepare_ntt_cache, AkitaExpandedSetup,
-    NttCacheKey, NttCacheMode, NttTransformDomain, PreparedNttCache,
+    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
+    NttTransformDomain, PreparedNttCache,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use std::any::Any;
@@ -215,59 +215,6 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
             (metric.key.ring_d, domain, metric.key.num_ring_elements)
         });
         Ok(metrics)
-    }
-
-    /// Planned resident bytes for max-joined exact base-profile cache keys.
-    pub fn planned_shared_ntt_cache_bytes(
-        &self,
-        keys: impl IntoIterator<Item = NttCacheKey>,
-    ) -> Result<usize, AkitaError> {
-        let mut joined = HashMap::<(usize, NttTransformDomain), usize>::new();
-        for key in keys {
-            if key.num_field_elements()? > self.expanded.shared_matrix.num_field_elements() {
-                return Err(AkitaError::InvalidSetup(
-                    "planned NTT prefix exceeds prepared public matrix".into(),
-                ));
-            }
-            joined
-                .entry((key.ring_d, key.domain))
-                .and_modify(|count| *count = (*count).max(key.num_ring_elements))
-                .or_insert(key.num_ring_elements);
-        }
-        joined
-            .into_iter()
-            .try_fold(0usize, |total, ((ring_d, domain), count)| {
-                let entry_bytes = match domain {
-                    NttTransformDomain::I16TailBothTransforms => count
-                        .checked_mul(ring_d)
-                        .and_then(|bytes| bytes.checked_mul(2 * core::mem::size_of::<i16>()))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("planned i16-tail bytes overflow".into())
-                        })?,
-                    NttTransformDomain::ExactNegacyclicI16 {
-                        width,
-                        rhs_abs_bound,
-                    } => dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
-                        planned_exact_ntt_cache_bytes::<F, RING_D>(count, width, rhs_abs_bound)
-                    })?,
-                    NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic => {
-                        let profile =
-                            dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
-                                selected_crt_i8_capacity_profile::<F, RING_D>()
-                            })?;
-                        count
-                            .checked_mul(ring_d)
-                            .and_then(|bytes| bytes.checked_mul(profile.num_primes))
-                            .and_then(|bytes| bytes.checked_mul(core::mem::size_of::<i32>()))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("planned NTT bytes overflow".into())
-                            })?
-                    }
-                };
-                total
-                    .checked_add(entry_bytes)
-                    .ok_or_else(|| AkitaError::InvalidSetup("planned NTT bytes overflow".into()))
-            })
     }
 
     /// In-memory byte footprint of exact-prefix compression NTT caches.
@@ -488,14 +435,6 @@ where
 
     fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
         prepared.drop_built_ntt_slots()
-    }
-
-    fn planned_ntt_cache_entry_bytes(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-    ) -> Result<usize, AkitaError> {
-        prepared.planned_shared_ntt_cache_bytes([key])
     }
 
     fn prepared_expanded_setup<'a>(

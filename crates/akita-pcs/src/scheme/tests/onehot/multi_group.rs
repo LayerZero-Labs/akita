@@ -99,12 +99,12 @@ where
             .collect();
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
@@ -174,12 +174,12 @@ where
             .expect("nonempty precommitted groups");
     let akita_prover::CommitOutput {
         committed_group: final_commitment,
-        hint: final_hint,
+        prover_state: final_hint,
     } = scheme
         .commit(
             &setup,
             &final_polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");

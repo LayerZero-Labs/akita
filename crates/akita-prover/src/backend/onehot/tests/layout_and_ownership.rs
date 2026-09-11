@@ -13,6 +13,7 @@ fn map_onehot_k_gt_d() {
     let num_live_blocks = 2;
     let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
+        .commitment_source()
         .materialize_block_range(d, 4, 0..num_live_blocks)
         .unwrap();
 
@@ -44,6 +45,7 @@ fn map_onehot_k_eq_d() {
     let num_live_blocks = 2;
     let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
+        .commitment_source()
         .materialize_block_range(d, 2, 0..num_live_blocks)
         .unwrap();
 
@@ -88,6 +90,7 @@ fn map_onehot_k_lt_d() {
     let num_live_blocks = 2;
     let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
+        .commitment_source()
         .materialize_block_range(d, 2, 0..num_live_blocks)
         .unwrap();
 
@@ -129,11 +132,13 @@ fn ranged_mapping_matches_full_mapping_for_both_dimension_orders() {
         let num_blocks = num_rings.div_ceil(num_positions_per_block);
         let poly = OneHotPoly::<F>::new(k, indices).unwrap();
         let full = poly
+            .commitment_source()
             .materialize_block_range(d, num_positions_per_block, 0..num_blocks)
             .unwrap();
 
         for block_idx in 0..num_blocks {
             let ranged = poly
+                .commitment_source()
                 .materialize_block_range(d, num_positions_per_block, block_idx..block_idx + 1)
                 .unwrap();
             assert_eq!(ranged.num_live_blocks(), 1);
@@ -166,6 +171,7 @@ fn empty_final_block_range_is_accepted() {
     let num_live_blocks = poly.num_live_blocks_for(8, 8).unwrap();
 
     let blocks = poly
+        .commitment_source()
         .materialize_block_range(8, 8, num_live_blocks..num_live_blocks)
         .unwrap();
 
@@ -209,7 +215,7 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
     )
     .unwrap();
 
-    let view = RootCommitSource::<F, D>::commit_view(&poly).unwrap();
+    let view = RootOpeningSource::<F, D>::opening_view(&poly).unwrap();
     assert_eq!(view.indices(), poly.indices());
     assert_eq!(view.onehot_k(), poly.onehot_k());
     assert_eq!(view.num_vars(), poly.num_vars);
@@ -223,7 +229,6 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
         vec![poly.num_vars]
     );
 
-    assert!(RootCommitSource::<F, BAD_D>::commit_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_batch(&[&poly]).is_err());
 }
@@ -256,12 +261,18 @@ fn onehot_poly_materializes_multiple_runtime_layouts() {
 
     for ring_d in [64, 128, 256, 512, 1024, 2048] {
         let count = poly.num_live_blocks_for(ring_d, 2).unwrap();
-        let blocks = poly.materialize_block_range(ring_d, 2, 0..count).unwrap();
+        let blocks = poly
+            .commitment_source()
+            .materialize_block_range(ring_d, 2, 0..count)
+            .unwrap();
         assert_eq!(blocks.num_live_blocks(), count);
     }
 
     assert!(poly.num_live_blocks_for(96, 2).is_err());
-    assert!(poly.materialize_block_range(96, 2, 0..1).is_err());
+    assert!(poly
+        .commitment_source()
+        .materialize_block_range(96, 2, 0..1)
+        .is_err());
 }
 
 #[test]
@@ -274,7 +285,13 @@ fn onehot_clone_owns_semantic_indices_independently() {
     assert_eq!(poly.indices[0], Some(0));
     assert_eq!(cloned.indices[0], None);
 
-    let original = poly.materialize_block_range(32, 2, 0..2).unwrap();
-    let changed = cloned.materialize_block_range(32, 2, 0..2).unwrap();
+    let original = poly
+        .commitment_source()
+        .materialize_block_range(32, 2, 0..2)
+        .unwrap();
+    let changed = cloned
+        .commitment_source()
+        .materialize_block_range(32, 2, 0..2)
+        .unwrap();
     assert_ne!(original.block(0), changed.block(0));
 }

@@ -27,34 +27,34 @@ fn batched_commit_matches_individual_commits() {
             scheme.commit::<_, _>(
                 &setup,
                 group,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
-        .map(|output| (output.committed_group, output.hint))
+        .map(|output| (output.committed_group, output.prover_state))
         .unzip();
     let akita_prover::CommitOutput {
         committed_group: commitment_a,
-        hint: hint_a,
+        prover_state: hint_a,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly_a),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
     let akita_prover::CommitOutput {
         committed_group: commitment_b,
-        hint: hint_b,
+        prover_state: hint_b,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly_b),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -89,7 +89,7 @@ fn commit_rejects_mixed_group_arity() {
         .commit(
             &setup,
             &[poly, smaller],
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect_err("one committed group must be homogeneous");

@@ -13,7 +13,10 @@
 use crate::common::load_workspace_scheme;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, UniformProverStack};
+use akita_prover::{
+    CommitmentSource, ComputeBackendSetup, CpuBackend, RuntimeCoefficientPackingBackendFor,
+    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, UniformProverStack,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -40,9 +43,9 @@ pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
 
 /// Single committed group, no precommits: commit `poly`, prove its opening at
 /// `point`, round-trip the proof through serialization, and verify `expected`.
-pub(super) fn single_group_roundtrip<Cfg>(
+pub(super) fn single_group_roundtrip<Cfg, P>(
     nv: usize,
-    poly: &MultilinearPolynomial<Cfg::Field, u8>,
+    poly: &P,
     point: Vec<Cfg::ExtField>,
     expected: Cfg::ExtField,
     label: &[u8],
@@ -73,6 +76,9 @@ where
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
+    P: CommitmentSource<Cfg::Field> + RuntimeRootProvePoly<Cfg::Field>,
+    CpuBackend: RuntimeOpeningProveBackendFor<Cfg::Field, P>
+        + RuntimeCoefficientPackingBackendFor<Cfg::Field, P, Cfg::ExtField>,
 {
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
@@ -84,12 +90,12 @@ where
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -113,7 +119,7 @@ where
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = scheme
-        .batched_prove::<_, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .batched_prove::<_, _, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
         .expect("prove");
 
     let shape = proof.shape();

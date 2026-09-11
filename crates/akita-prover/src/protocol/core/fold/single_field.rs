@@ -1,6 +1,7 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or tensor-projection symbols in scope.
 use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
+use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
@@ -16,9 +17,9 @@ use jolt_field::{Fold, Unreduced};
 ///
 /// This path never runs extension-opening reduction or tensor projection.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
-    block_claims: ProverOpeningData<'a, E, P, F>,
+pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, O, TS, R, SP>(
+    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
+    block_claims: ProverOpeningData<'a, E, P, F, S>,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
@@ -44,19 +45,20 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
-    C: ComputeBackendSetup<F>,
+    S: InnerRelationState<F> + OuterCompressionState<F>,
     O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    SP: CommitmentStatePolicy<F>,
 {
     let opening_batch = block_claims.opening_layout().clone();
-    let protocol_points: Vec<Vec<E>> = block_claims
+    let protocol_points = block_claims
         .opening_claims()
         .groups()
         .iter()
         .map(|group| group.point().to_vec())
-        .collect();
-    finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
+        .collect::<Vec<_>>();
+    finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,
         protocol_points: &protocol_points,

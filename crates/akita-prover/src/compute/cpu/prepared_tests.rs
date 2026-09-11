@@ -212,59 +212,6 @@ fn failed_growth_retains_smaller_cached_prefix() {
 }
 
 #[test]
-fn planned_cache_bytes_match_max_joined_resident_state() {
-    let prepared = prepared();
-    let keys = [
-        NttCacheKey {
-            ring_d: D,
-            num_ring_elements: 3,
-            domain: NttTransformDomain::Negacyclic,
-        },
-        NttCacheKey {
-            ring_d: D,
-            num_ring_elements: 8,
-            domain: NttTransformDomain::Negacyclic,
-        },
-        NttCacheKey {
-            ring_d: D,
-            num_ring_elements: 2,
-            domain: NttTransformDomain::Cyclic,
-        },
-    ];
-    let planned = prepared
-        .planned_shared_ntt_cache_bytes(keys)
-        .expect("planned bytes");
-    for key in keys {
-        CpuBackend::DEFAULT
-            .ensure_ntt_slot(&prepared, key)
-            .expect("prewarm exact requirement");
-    }
-
-    assert_eq!(prepared.shared_ntt_cache_bytes(), planned);
-    assert_eq!(prepared.shared_ntt_cache_metrics().unwrap().len(), 2);
-}
-
-#[test]
-fn planned_exact_cache_bytes_use_the_selected_representation() {
-    let prepared = prepared();
-    let key = NttCacheKey {
-        ring_d: D,
-        num_ring_elements: 2,
-        domain: NttTransformDomain::ExactNegacyclicI16 {
-            width: 2,
-            rhs_abs_bound: 1 << 15,
-        },
-    };
-    let planned = prepared
-        .planned_shared_ntt_cache_bytes([key])
-        .expect("planned exact bytes");
-    let selected = akita_types::planned_exact_ntt_cache_bytes::<F, D>(2, 2, 1 << 15)
-        .expect("selected representation bytes");
-
-    assert_eq!(planned, selected);
-}
-
-#[test]
 fn concurrent_prefix_growth_retains_only_the_maximum() {
     let prepared = prepared();
     std::thread::scope(|scope| {

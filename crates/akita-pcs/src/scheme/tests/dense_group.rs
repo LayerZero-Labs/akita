@@ -25,12 +25,12 @@ fn dense_group_commit_freezes_scalar_s_profile() {
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint: _hint,
+        prover_state: _hint,
     } = scheme
         .commit(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("dense group commit");
