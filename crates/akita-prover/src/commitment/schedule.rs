@@ -1,6 +1,6 @@
 use super::{
     CommitmentExecutionOutput, CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource,
-    CommitmentStateOutput, CommitmentStatePolicy,
+    CommitmentStatePolicy,
 };
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
@@ -29,7 +29,7 @@ where
     SP: CommitmentStatePolicy<F>,
 {
     inner_outer: String,
-    compression: String,
+    compression: Option<String>,
     executor: &'a CommitmentExecutor<'a, F, SP>,
 }
 
@@ -39,7 +39,7 @@ pub struct CommitmentRoundStep {
     round: usize,
     inner_outer: String,
     inner_outer_kind: InnerOuterRouteKind,
-    compression: String,
+    compression: Option<String>,
 }
 
 impl CommitmentRoundStep {
@@ -55,8 +55,8 @@ impl CommitmentRoundStep {
         self.inner_outer_kind
     }
 
-    pub fn compression(&self) -> &str {
-        &self.compression
+    pub fn compression(&self) -> Option<&str> {
+        self.compression.as_deref()
     }
 }
 
@@ -97,13 +97,22 @@ where
             .ok_or_else(|| AkitaError::InvalidInput("commitment round is outside the plan".into()))?
             .step
             .inner_outer_kind;
+        let compression = self.rounds[round].step.compression.is_some();
         let matches = match plan.mode() {
-            super::CommitmentExecutionMode::InnerOnly => kind == InnerOuterRouteKind::InnerOnly,
-            super::CommitmentExecutionMode::Full | super::CommitmentExecutionMode::Uncompressed => {
+            super::CommitmentExecutionMode::InnerOnly => {
+                kind == InnerOuterRouteKind::InnerOnly && !compression
+            }
+            super::CommitmentExecutionMode::Uncompressed => {
                 matches!(
                     kind,
                     InnerOuterRouteKind::Fused | InnerOuterRouteKind::Split
-                )
+                ) && !compression
+            }
+            super::CommitmentExecutionMode::Full => {
+                matches!(
+                    kind,
+                    InnerOuterRouteKind::Fused | InnerOuterRouteKind::Split
+                ) && compression
             }
         };
         if !matches {
@@ -167,7 +176,7 @@ where
         round: usize,
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
-    ) -> Result<CommitmentStateOutput<SP::State>, AkitaError> {
+    ) -> Result<SP::State, AkitaError> {
         self.validate_round_mode(round, plan)?;
         self.executor(round)?.execute_inner(plan, sources)
     }
@@ -185,7 +194,7 @@ where
 {
     round_count: usize,
     inner_outer: Vec<Option<InnerOuterSelection>>,
-    compression: Vec<Option<String>>,
+    compression: Vec<Option<Option<String>>>,
     executors: Vec<RegisteredExecutor<'a, F, SP>>,
 }
 
@@ -208,16 +217,16 @@ where
         })
     }
 
-    /// Register the executor implementing one named A/B-compression pair.
+    /// Register the executor implementing one named A/B route and optional compressor.
     pub fn register_executor(
         &mut self,
         inner_outer: impl Into<String>,
-        compression: impl Into<String>,
+        compression: Option<&str>,
         executor: &'a CommitmentExecutor<'a, F, SP>,
     ) -> Result<&mut Self, AkitaError> {
         let inner_outer = inner_outer.into();
-        let compression = compression.into();
-        if inner_outer.is_empty() || compression.is_empty() {
+        let compression = compression.map(str::to_owned);
+        if inner_outer.is_empty() || compression.as_ref().is_some_and(String::is_empty) {
             return Err(AkitaError::InvalidInput(
                 "commitment route names must be nonempty".into(),
             ));
@@ -269,14 +278,14 @@ where
         Ok(self)
     }
 
-    /// Assign one named compression operation to a half-open range of rounds.
+    /// Assign a named compressor, or explicit no-compression, to a round range.
     pub fn compression(
         &mut self,
         range: Range<usize>,
-        name: impl Into<String>,
+        name: Option<&str>,
     ) -> Result<&mut Self, AkitaError> {
-        let name = name.into();
-        Self::validate_range(self.round_count, &range, &name)?;
+        let name = name.map(str::to_owned);
+        Self::validate_range(self.round_count, &range, name.as_deref().unwrap_or("none"))?;
         if range.clone().any(|round| self.compression[round].is_some()) {
             return Err(AkitaError::InvalidInput(
                 "commitment compression round is assigned more than once".into(),
@@ -496,7 +505,7 @@ mod tests {
             ("cpu-split", "cpu", &split_cpu),
         ] {
             builder
-                .register_executor(inner_outer, compression, executor)
+                .register_executor(inner_outer, Some(compression), executor)
                 .unwrap();
         }
         builder
@@ -504,17 +513,17 @@ mod tests {
             .unwrap()
             .inner_outer(2..4, "cpu-split", InnerOuterRouteKind::Split)
             .unwrap()
-            .compression(0..1, "metal")
+            .compression(0..1, Some("metal"))
             .unwrap()
-            .compression(1..4, "cpu")
+            .compression(1..4, Some("cpu"))
             .unwrap();
         let schedule = builder.compile().unwrap();
         let steps = schedule.steps().cloned().collect::<Vec<_>>();
         assert_eq!(steps.len(), 4);
         assert_eq!(steps[0].inner_outer(), "fused");
-        assert_eq!(steps[0].compression(), "metal");
+        assert_eq!(steps[0].compression(), Some("metal"));
         assert_eq!(steps[1].inner_outer(), "fused");
-        assert_eq!(steps[1].compression(), "cpu");
+        assert_eq!(steps[1].compression(), Some("cpu"));
         assert_eq!(steps[2].inner_outer_kind(), InnerOuterRouteKind::Split);
         assert_eq!(steps[3].inner_outer(), "cpu-split");
         assert!(std::ptr::eq(schedule.executor(0).unwrap(), &fused_metal));
@@ -523,11 +532,11 @@ mod tests {
 
         let mut mismatch = CommitmentExecutionScheduleBuilder::new(1).unwrap();
         mismatch
-            .register_executor("declared-fused", "cpu", &split_cpu)
+            .register_executor("declared-fused", Some("cpu"), &split_cpu)
             .unwrap()
             .inner_outer(0..1, "declared-fused", InnerOuterRouteKind::Fused)
             .unwrap()
-            .compression(0..1, "cpu")
+            .compression(0..1, Some("cpu"))
             .unwrap();
         assert!(mismatch.compile().is_err());
 
@@ -540,7 +549,7 @@ mod tests {
                 ("split", "cpu", &split_cpu),
             ] {
                 boundaries
-                    .register_executor(inner_outer, compression, executor)
+                    .register_executor(inner_outer, Some(compression), executor)
                     .unwrap();
             }
             boundaries
@@ -548,9 +557,9 @@ mod tests {
                 .unwrap()
                 .inner_outer(i..4, "split", InnerOuterRouteKind::Split)
                 .unwrap()
-                .compression(0..j, "metal")
+                .compression(0..j, Some("metal"))
                 .unwrap()
-                .compression(j..4, "cpu")
+                .compression(j..4, Some("cpu"))
                 .unwrap();
             assert_eq!(boundaries.compile().unwrap().steps().len(), 4);
         }
@@ -572,19 +581,25 @@ mod tests {
         let executor = fused_executor(&backend, &prepared, setup.expanded.as_ref());
         let mut builder = CommitmentExecutionScheduleBuilder::new(2).unwrap();
         builder
-            .register_executor("hybrid", "cpu", &executor)
+            .register_executor("hybrid", Some("cpu"), &executor)
+            .unwrap()
+            .register_executor("hybrid", None, &executor)
             .unwrap()
             .inner_outer(0..1, "hybrid", InnerOuterRouteKind::Fused)
             .unwrap()
             .inner_outer(1..2, "hybrid", InnerOuterRouteKind::InnerOnly)
             .unwrap()
-            .compression(0..2, "cpu")
+            .compression(0..1, Some("cpu"))
+            .unwrap()
+            .compression(1..2, None)
             .unwrap();
 
         let schedule = builder.compile().unwrap();
         let steps = schedule.steps().collect::<Vec<_>>();
         assert_eq!(steps[0].inner_outer_kind(), InnerOuterRouteKind::Fused);
+        assert_eq!(steps[0].compression(), Some("cpu"));
         assert_eq!(steps[1].inner_outer_kind(), InnerOuterRouteKind::InnerOnly);
+        assert_eq!(steps[1].compression(), None);
     }
 
     #[test]
@@ -593,7 +608,7 @@ mod tests {
             CommitmentExecutionScheduleBuilder::<F, PortableStatePolicy>::new(2).unwrap();
         gaps.inner_outer(0..1, "fused", InnerOuterRouteKind::Fused)
             .unwrap();
-        gaps.compression(0..2, "cpu").unwrap();
+        gaps.compression(0..2, Some("cpu")).unwrap();
         assert!(gaps.compile().is_err());
 
         let mut overlap =

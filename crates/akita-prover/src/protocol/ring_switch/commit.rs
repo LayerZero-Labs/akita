@@ -117,7 +117,7 @@ where
     let witness = packed_witness.as_ref().unwrap_or(logical_w);
     let plan = CommitmentExecutionPlan::for_terminal(commit_params)?;
     let sources: [&dyn crate::commitment::CommitmentSource<Cfg::Field>; 1] = [witness];
-    let prover_state = executor.execute_inner(&plan, &sources)?.into_state();
+    let prover_state = executor.execute_inner(&plan, &sources)?;
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
         binding: NextWitnessState::TerminalInnerState,

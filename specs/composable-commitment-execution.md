@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Author | Omid Bodaghi |
-| Revised | 2026-09-10 |
+| Revised | 2026-09-11 |
 | Status | active |
 | PR | [#20](https://github.com/LayerZero-Labs/akita/pull/20) |
 | Scope | Prover-side commitment execution in `akita-prover`, direct callers, and downstream Jolt integration |
@@ -212,14 +212,12 @@ builder.register_compression(PreparedCompression::new(
 let executor = builder.build()?;
 ```
 
-An executor may contain split operations and a fused operation. Full and
-uncompressed plans use fused; inner-only plans use the registered split inner
-operation. The builder accepts the components needed by the modes the caller
-will use: inner alone supports inner-only, inner plus outer supports
-uncompressed, either A/B route plus compression supports full, and fused plus
-split inner supports fused nonterminal rounds followed by a terminal inner-only
-round. Missing mode dependencies are rejected during preflight before source
-materialization.
+An executor has exactly one A/B route: inner-only, split inner plus outer, or
+fused. A fused executor may additionally register one terminal inner operation,
+which supports fused nonterminal rounds followed by an inner-only terminal
+round without creating an unused outer operation. The builder rejects mixed
+fused and split-outer registrations. Compression is optional, and missing mode
+dependencies are rejected during preflight before source materialization.
 
 `CommitmentExecutor::cpu` is the standard CPU constructor. It registers the
 existing optimized CPU inner, outer, and compression implementations and
@@ -232,25 +230,31 @@ inner/outer route and compressor independently over round ranges:
 
 ```rust,ignore
 let mut schedule = CommitmentExecutionScheduleBuilder::new(round_count)?;
+let terminal_round = round_count - 1;
 
 schedule
-    .register_executor("gpu-fused", "metal", &gpu_fused_metal)?
-    .register_executor("gpu-fused", "cpu", &gpu_fused_cpu)?
-    .register_executor("cpu-split", "cpu", &cpu_split_cpu)?;
+    .register_executor("gpu-fused", Some("metal"), &gpu_fused_metal)?
+    .register_executor("gpu-fused", Some("cpu"), &gpu_fused_cpu)?
+    .register_executor("cpu-split", Some("cpu"), &cpu_split_cpu)?
+    .register_executor("terminal-inner", None, &terminal_inner)?;
 
 schedule
     .inner_outer(0..i, "gpu-fused", InnerOuterRouteKind::Fused)?
-    .inner_outer(i..round_count, "cpu-split", InnerOuterRouteKind::Split)?
-    .compression(0..j, "metal")?
-    .compression(j..round_count, "cpu")?;
+    .inner_outer(i..terminal_round, "cpu-split", InnerOuterRouteKind::Split)?
+    .inner_outer(terminal_round..round_count, "terminal-inner", InnerOuterRouteKind::InnerOnly)?
+    .compression(0..j, Some("metal"))?
+    .compression(j..terminal_round, Some("cpu"))?
+    .compression(terminal_round..round_count, None)?;
 
 let schedule = schedule.compile()?;
 ```
 
 When the scheduled range includes the terminal fold, assign that round
-`InnerOuterRouteKind::InnerOnly`. An executor that registers both fused and
-split-inner operations can therefore run fused nonterminal folds and the
-inner-only terminal fold without registering an unused outer operation.
+`InnerOuterRouteKind::InnerOnly` and assign `None` as its compression route.
+`None` is an explicit, inspectable no-compression decision; an unassigned range
+still fails schedule compilation. A fused executor may include its terminal
+inner operation, or the terminal round may select a separate inner-only
+executor.
 
 For four rounds with `i = 2` and `j = 1`, this resolves:
 
@@ -259,7 +263,7 @@ For four rounds with `i = 2` and `j = 1`, this resolves:
 | 0 | GPU fused | Metal |
 | 1 | GPU fused | CPU |
 | 2 | CPU split | CPU |
-| 3 | CPU split | CPU |
+| 3 | CPU inner only | None |
 
 The schedule is immutable after compilation. `steps()` exposes every decision
 for inspection. `preflight` validates the selected round's execution mode,

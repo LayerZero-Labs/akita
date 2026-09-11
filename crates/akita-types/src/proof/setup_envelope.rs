@@ -9,6 +9,46 @@ use crate::{
     SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
 
+/// Physical shape of one commitment matrix in the shared setup field stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommitmentSetupMatrixShape {
+    /// Matrix output rows.
+    pub rows: usize,
+    /// Matrix input columns.
+    pub columns: usize,
+    /// Base-field coefficients per ring entry.
+    pub ring_dimension: usize,
+}
+
+/// Largest shared-setup prefix touched by one commitment execution.
+pub fn commitment_execution_setup_field_elements(
+    inner: CommitmentSetupMatrixShape,
+    outer: Option<CommitmentSetupMatrixShape>,
+    compression: Option<&CompressionChainPlan>,
+) -> Result<usize, AkitaError> {
+    let mut required = 0;
+    include_matrix_field_elements(
+        &mut required,
+        inner.rows,
+        inner.columns,
+        inner.ring_dimension,
+        "commit inner setup",
+    )?;
+    if let Some(outer) = outer {
+        include_matrix_field_elements(
+            &mut required,
+            outer.rows,
+            outer.columns,
+            outer.ring_dimension,
+            "commit outer setup",
+        )?;
+    }
+    if let Some(compression) = compression {
+        required = required.max(compression.max_setup_field_elements()?);
+    }
+    Ok(required)
+}
+
 /// Compute the exact maximum reusable setup-matrix field prefix required by
 /// `schedule`.
 pub fn setup_matrix_capacity_for_schedule(
@@ -175,29 +215,27 @@ pub fn commit_only_setup_field_elements(
     outer_commit_matrix: &OuterCommitMatrixParams,
     outer_slice_count: CommitmentSliceCount,
 ) -> Result<usize, AkitaError> {
-    let mut max_field_elements = 0;
-    include_matrix_field_elements(
-        &mut max_field_elements,
-        inner_commit_matrix.output_rank(),
-        inner_commit_matrix.input_width(),
-        inner_commit_matrix.ring_dimension(),
-        "commit inner setup",
-    )?;
-    include_matrix_field_elements(
-        &mut max_field_elements,
+    let source_coefficients = outer_slice_count.complete_source_coefficients(
         outer_commit_matrix.output_rank(),
-        outer_commit_matrix.input_width(),
         outer_commit_matrix.ring_dimension(),
-        "commit outer setup",
     )?;
-    include_compression_setup(
-        &mut max_field_elements,
+    let compression = CompressionChainPlan::for_complete_source(
         outer_commit_matrix.sis_modulus_profile(),
-        outer_slice_count.logical_output_rows(outer_commit_matrix.output_rank())?,
-        outer_commit_matrix.ring_dimension(),
-        "commit outer compression setup",
+        source_coefficients,
     )?;
-    Ok(max_field_elements)
+    commitment_execution_setup_field_elements(
+        CommitmentSetupMatrixShape {
+            rows: inner_commit_matrix.output_rank(),
+            columns: inner_commit_matrix.input_width(),
+            ring_dimension: inner_commit_matrix.ring_dimension(),
+        },
+        Some(CommitmentSetupMatrixShape {
+            rows: outer_commit_matrix.output_rank(),
+            columns: outer_commit_matrix.input_width(),
+            ring_dimension: outer_commit_matrix.ring_dimension(),
+        }),
+        Some(&compression),
+    )
 }
 
 /// Extend a physical setup footprint with every compression map used by one

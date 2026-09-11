@@ -7,13 +7,12 @@ use crate::commitment::{
     ExternalInnerCommitmentOperation, ExternalOperationIdentity, FusedInnerOuterOperation,
     InnerImage, NoRetainedStatePolicy, PolynomialRepresentation, PolynomialType,
     PolynomialTypeSelection, PreparedCompression, PreparedExternalInnerCommitment,
-    PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
-    ResolvedCommitSource, StageDimensionCapabilities, StageResources, StateOwnerCapability,
-    UncompressedCommitPlan, UncompressedCommitmentOutput,
+    PreparedFusedCommitment, PreparedInnerCommitment, ResolvedCommitSource,
+    StageDimensionCapabilities, StageResources, StateOwnerCapability, UncompressedCommitPlan,
+    UncompressedCommitmentOutput,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
-    CpuOuterCommitOperation,
 };
 use crate::{AkitaProverSetup, CommitInnerWitness};
 use akita_challenges::SparseChallengeConfig;
@@ -214,11 +213,6 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
     let mut builder =
         CommitmentExecutorBuilder::new(setup.expanded.as_ref(), NoRetainedStatePolicy);
     let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
-    let outer = Arc::new(CpuOuterCommitOperation::new(
-        &backend,
-        &prepared,
-        inner.as_ref(),
-    ));
     let compression = Arc::new(
         CpuCompressionOperation::new(&backend, &prepared, setup.expanded.as_ref()).unwrap(),
     );
@@ -232,7 +226,6 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
             .unwrap()
     };
     let inner_context = no_resources("split-inner");
-    let outer_context = no_resources("split-outer");
     let compression_context = no_resources("compression");
     let fused_context = no_resources("fused");
     builder
@@ -250,14 +243,6 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
             )
             .unwrap(),
         )
-        .unwrap();
-    builder
-        .register_outer(PreparedOuterCommitment::new(
-            outer,
-            inner.owner().clone(),
-            outer_context,
-            StageDimensionCapabilities::new(vec![64]).unwrap(),
-        ))
         .unwrap();
     builder
         .register_compression(PreparedCompression::new(

@@ -112,10 +112,10 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     let source = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
 
-    let error = executor
-        .execute_inner(&plan, &sources)
-        .err()
-        .expect("rebound state must be rejected");
+    let error = match executor.execute_inner(&plan, &sources) {
+        Err(error) => error,
+        Ok(_) => panic!("rebound state must be rejected"),
+    };
     assert!(
         matches!(
             &error,
@@ -154,12 +154,10 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
             .unwrap(),
         )
         .unwrap();
-    let error = builder
-        .build()
-        .unwrap()
-        .execute_inner(&plan, &sources)
-        .err()
-        .expect("foreign state owner must be rejected");
+    let error = match builder.build().unwrap().execute_inner(&plan, &sources) {
+        Err(error) => error,
+        Ok(_) => panic!("foreign state owner must be rejected"),
+    };
     assert!(matches!(
         error,
         AkitaError::InvalidInput(message) if message.contains("different prepared implementation")

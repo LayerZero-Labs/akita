@@ -131,6 +131,30 @@ pub struct CommitmentExecutionPlan {
 }
 
 impl CommitmentExecutionPlan {
+    /// Largest shared-setup prefix touched by this exact execution mode.
+    pub fn max_setup_field_elements(&self) -> Result<usize, AkitaError> {
+        let inner = self.inner();
+        let inner_width = checked::product([inner.num_positions_per_block, inner.num_digits_inner])
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
+        let outer = self.uncompressed().map(|plan| {
+            let outer = plan.outer();
+            akita_types::CommitmentSetupMatrixShape {
+                rows: outer.n_b(),
+                columns: outer.geometry().physical_input_width(),
+                ring_dimension: outer.ring_dimension(),
+            }
+        });
+        akita_types::commitment_execution_setup_field_elements(
+            akita_types::CommitmentSetupMatrixShape {
+                rows: inner.n_a,
+                columns: inner_width,
+                ring_dimension: inner.ring_dimension,
+            },
+            outer,
+            self.compression(),
+        )
+    }
+
     /// Build a root plan from an already-resolved frozen commitment profile.
     pub fn for_root(profile: &GroupCommitPhaseParams) -> Result<Self, AkitaError> {
         Self::from_profile(

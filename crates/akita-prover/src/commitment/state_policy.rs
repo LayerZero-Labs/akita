@@ -759,36 +759,3 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
         (self.terminal_payload, self.prover_state)
     }
 }
-
-/// Policy-selected state output for an inner-only commitment route.
-pub struct CommitmentStateOutput<S> {
-    prover_state: S,
-}
-
-impl<S> CommitmentStateOutput<S> {
-    pub(super) fn from_inner<F: Field>(
-        image: BackendStateRef<InnerImage>,
-        policy: &impl CommitmentStatePolicy<F, State = S>,
-        exporters: CommitmentStateExporters<F>,
-    ) -> Result<Self, AkitaError> {
-        let components = CommitmentStateComponents::new(
-            CommitmentExecutionMode::InnerOnly,
-            image,
-            None,
-            exporters,
-        )?;
-        Ok(Self {
-            prover_state: policy.bind(components)?,
-        })
-    }
-
-    /// Policy-selected prover-private state.
-    pub const fn prover_state(&self) -> &S {
-        &self.prover_state
-    }
-
-    /// Consume the selected prover-private state.
-    pub fn into_state(self) -> S {
-        self.prover_state
-    }
-}

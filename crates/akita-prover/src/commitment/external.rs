@@ -3,6 +3,7 @@ use crate::CommitInnerWitness;
 use akita_error::AkitaError;
 use jolt_field::Field;
 use std::any::{Any, TypeId};
+use std::hash::{Hash, Hasher};
 
 use crate::compute::CpuPreparedSetup;
 
@@ -35,10 +36,24 @@ pub fn cpu_external_inner_prepared_setup<F: Field + 'static>(
 }
 
 /// Open, process-local backend family identity.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy)]
 pub struct BackendKindId {
     type_id: TypeId,
     name: &'static str,
+}
+
+impl PartialEq for BackendKindId {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id == other.type_id
+    }
+}
+
+impl Eq for BackendKindId {}
+
+impl Hash for BackendKindId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.type_id.hash(state);
+    }
 }
 
 impl BackendKindId {
@@ -90,13 +105,23 @@ impl ExternalOperationIdentity {
 }
 
 /// Side-effect-free external inner-operation declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct ExternalInnerCommitmentCapability {
     backend: BackendKindId,
     identity: ExternalOperationIdentity,
     diagnostic_name: &'static str,
     fused_command_context: Option<TypeId>,
 }
+
+impl PartialEq for ExternalInnerCommitmentCapability {
+    fn eq(&self, other: &Self) -> bool {
+        self.backend == other.backend
+            && self.identity == other.identity
+            && self.fused_command_context == other.fused_command_context
+    }
+}
+
+impl Eq for ExternalInnerCommitmentCapability {}
 
 impl ExternalInnerCommitmentCapability {
     /// Declare an ordinary external inner operation.
@@ -281,6 +306,7 @@ impl<'a, F: Field> PreparedExternalInnerCommitment<'a, F> {
 mod tests {
     use super::*;
     use jolt_field::Prime64Offset59;
+    use std::collections::HashSet;
 
     struct Family;
     struct OtherFamily;
@@ -289,8 +315,29 @@ mod tests {
     struct Context;
     struct Command;
     struct OtherCommand;
+    struct Backend;
 
     struct Operation;
+
+    #[test]
+    fn diagnostic_names_do_not_change_compatibility_identity() {
+        let first_backend = BackendKindId::of::<Backend>("first label").unwrap();
+        let second_backend = BackendKindId::of::<Backend>("second label").unwrap();
+        assert_eq!(first_backend, second_backend);
+        assert_eq!(HashSet::from([first_backend, second_backend]).len(), 1);
+
+        let first = ExternalInnerCommitmentCapability::new::<Family, Algorithm, Context>(
+            first_backend,
+            "first algorithm label",
+        )
+        .unwrap();
+        let second = ExternalInnerCommitmentCapability::new::<Family, Algorithm, Context>(
+            second_backend,
+            "second algorithm label",
+        )
+        .unwrap();
+        assert_eq!(first, second);
+    }
 
     impl ExternalInnerCommitmentOperation<Prime64Offset59> for Operation {
         fn identity(&self) -> ExternalOperationIdentity {

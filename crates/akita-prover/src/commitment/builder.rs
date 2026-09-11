@@ -1,3 +1,4 @@
+use super::executor::PreparedInnerOuterRoute;
 use super::{
     BackendInstanceId, CommitmentExecutor, CommitmentOperationContext, CommitmentStatePolicy,
     PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
@@ -127,19 +128,29 @@ where
 
     /// Finish after at least one executable route has been registered.
     pub fn build(self) -> Result<CommitmentExecutor<'a, F, SP>, AkitaError> {
-        let inner = self.inner;
-        let outer = self.outer;
-        let compression = self.compression;
-        match (&inner, &outer, &self.fused) {
-            (Some(inner), Some(outer), _) => {
+        let route = match (self.inner, self.outer, self.fused) {
+            (Some(_), Some(_), Some(_)) => {
+                return Err(AkitaError::InvalidSetup(
+                    "fused and split outer routes require separate commitment executors".into(),
+                ));
+            }
+            (Some(inner), Some(outer), None) => {
                 if !inner.owner.same_owner(&outer.owner) && inner.exporter.is_none() {
                     return Err(AkitaError::InvalidSetup(
                         "cross-owner outer route requires an inner-image exporter".into(),
                     ));
                 }
+                PreparedInnerOuterRoute::Split { inner, outer }
             }
-            (Some(_), None, _) => {}
-            (None, None, Some(_)) => {}
+            (Some(inner), None, Some(fused)) => PreparedInnerOuterRoute::Fused {
+                fused,
+                terminal_inner: Some(inner),
+            },
+            (Some(inner), None, None) => PreparedInnerOuterRoute::InnerOnly { inner },
+            (None, None, Some(fused)) => PreparedInnerOuterRoute::Fused {
+                fused,
+                terminal_inner: None,
+            },
             (None, None, None) => {
                 return Err(AkitaError::InvalidSetup(
                     "commitment executor has no inner or fused operation".into(),
@@ -150,13 +161,11 @@ where
                     "outer commitment registration requires a split inner operation".into(),
                 ));
             }
-        }
+        };
         Ok(CommitmentExecutor {
             setup: self.setup,
-            inner,
-            outer,
-            compression,
-            fused: self.fused,
+            route,
+            compression: self.compression,
             state_policy: self.state_policy,
         })
     }

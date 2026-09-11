@@ -65,10 +65,9 @@ pub use stages::{
     OuterCommitOperation, UncompressedCommitmentOutput,
 };
 pub use state_policy::{
-    CommitmentExecutionOutput, CommitmentStateComponents, CommitmentStateOutput,
-    CommitmentStatePolicy, InnerRelationState, InnerRelationStateMaterial,
-    IntoPortableCommitmentState, NoRetainedStatePolicy, OuterCompressionState,
-    PortableCommitmentState, PortableCompressionState, PortableCompressionStateExport,
-    PortableStatePolicy, ResidentCommitmentState, ResidentStatePolicy, TerminalBindingState,
-    TerminalTFieldsMessage,
+    CommitmentExecutionOutput, CommitmentStateComponents, CommitmentStatePolicy,
+    InnerRelationState, InnerRelationStateMaterial, IntoPortableCommitmentState,
+    NoRetainedStatePolicy, OuterCompressionState, PortableCommitmentState,
+    PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
+    ResidentCommitmentState, ResidentStatePolicy, TerminalBindingState, TerminalTFieldsMessage,
 };

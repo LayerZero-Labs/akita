@@ -1,10 +1,10 @@
 use super::{
     compile_commitment_request, BackendKindId, CommitmentExecutionOutput, CommitmentExecutionPlan,
     CommitmentExecutorBuilder, CommitmentRequestCapabilities, CommitmentSource,
-    CommitmentStateBinding, CommitmentStateOutput, CommitmentStatePolicy,
-    CompiledCommitmentRequest, CompressionOperationCapabilities, FullCommitmentOutput,
-    InnerCommitOutput, PolynomialType, PreparedCommitmentResources, PreparedCompression,
-    PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
+    CommitmentStateBinding, CommitmentStatePolicy, CompiledCommitmentRequest,
+    CompressionOperationCapabilities, FullCommitmentOutput, InnerCommitOutput, PolynomialType,
+    PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
+    PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
     StageDimensionCapabilities, StageResources, UncompressedCommitmentOutput,
 };
 use crate::compute::{
@@ -26,17 +26,73 @@ struct CpuInnerContext;
 /// Registrations keep each operation with its capabilities and explicit
 /// export edge. Stage outputs directly own their backend values, and the
 /// selected state policy assembles those values without a state registry.
+pub(super) enum PreparedInnerOuterRoute<'a, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    InnerOnly {
+        inner: PreparedInnerCommitment<'a, F>,
+    },
+    Split {
+        inner: PreparedInnerCommitment<'a, F>,
+        outer: PreparedOuterCommitment<'a, F>,
+    },
+    Fused {
+        fused: PreparedFusedCommitment<'a, F>,
+        terminal_inner: Option<PreparedInnerCommitment<'a, F>>,
+    },
+}
+
 pub struct CommitmentExecutor<
     'a,
     F: Field + CanonicalEncoding,
     SP: CommitmentStatePolicy<F> = ResidentStatePolicy,
 > {
     pub(super) setup: akita_types::AkitaSetupDescriptor,
-    pub(super) inner: Option<PreparedInnerCommitment<'a, F>>,
-    pub(super) outer: Option<PreparedOuterCommitment<'a, F>>,
+    pub(super) route: PreparedInnerOuterRoute<'a, F>,
     pub(super) compression: Option<PreparedCompression<'a, F>>,
-    pub(super) fused: Option<PreparedFusedCommitment<'a, F>>,
     pub(super) state_policy: SP,
+}
+
+impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
+where
+    F: Field + CanonicalEncoding,
+    SP: CommitmentStatePolicy<F>,
+{
+    pub(super) fn inner(&self) -> Option<&PreparedInnerCommitment<'a, F>> {
+        match &self.route {
+            PreparedInnerOuterRoute::InnerOnly { inner }
+            | PreparedInnerOuterRoute::Split { inner, .. } => Some(inner),
+            PreparedInnerOuterRoute::Fused { terminal_inner, .. } => terminal_inner.as_ref(),
+        }
+    }
+
+    pub(super) fn outer(&self) -> Option<&PreparedOuterCommitment<'a, F>> {
+        match &self.route {
+            PreparedInnerOuterRoute::Split { outer, .. } => Some(outer),
+            PreparedInnerOuterRoute::InnerOnly { .. } | PreparedInnerOuterRoute::Fused { .. } => {
+                None
+            }
+        }
+    }
+
+    pub(super) fn fused(&self) -> Option<&PreparedFusedCommitment<'a, F>> {
+        match &self.route {
+            PreparedInnerOuterRoute::Fused { fused, .. } => Some(fused),
+            PreparedInnerOuterRoute::InnerOnly { .. } | PreparedInnerOuterRoute::Split { .. } => {
+                None
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn inner_mut(&mut self) -> Option<&mut PreparedInnerCommitment<'a, F>> {
+        match &mut self.route {
+            PreparedInnerOuterRoute::InnerOnly { inner }
+            | PreparedInnerOuterRoute::Split { inner, .. } => Some(inner),
+            PreparedInnerOuterRoute::Fused { terminal_inner, .. } => terminal_inner.as_mut(),
+        }
+    }
 }
 
 impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
@@ -126,22 +182,22 @@ where
 
     pub(super) fn matches_inner_outer_kind(&self, kind: super::InnerOuterRouteKind) -> bool {
         match kind {
-            super::InnerOuterRouteKind::Fused => self.fused.is_some(),
+            super::InnerOuterRouteKind::Fused => self.fused().is_some(),
             super::InnerOuterRouteKind::Split => {
-                self.fused.is_none() && self.inner.is_some() && self.outer.is_some()
+                self.fused().is_none() && self.inner().is_some() && self.outer().is_some()
             }
-            super::InnerOuterRouteKind::InnerOnly => self.inner.is_some(),
+            super::InnerOuterRouteKind::InnerOnly => self.inner().is_some(),
         }
     }
 
     fn split_inner(&self) -> Result<&PreparedInnerCommitment<'a, F>, AkitaError> {
-        self.inner.as_ref().ok_or_else(|| {
+        self.inner().ok_or_else(|| {
             AkitaError::InvalidInput("commitment route has no split inner operation".into())
         })
     }
 
     fn split_outer(&self) -> Result<&PreparedOuterCommitment<'a, F>, AkitaError> {
-        self.outer.as_ref().ok_or_else(|| {
+        self.outer().ok_or_else(|| {
             AkitaError::InvalidInput("commitment route has no split outer operation".into())
         })
     }
@@ -180,7 +236,7 @@ where
         plan: &CommitmentExecutionPlan,
     ) -> Option<&PreparedFusedCommitment<'a, F>> {
         plan.uncompressed().is_some().then_some(())?;
-        self.fused.as_ref()
+        self.fused()
     }
 
     fn request_capabilities(
@@ -277,30 +333,7 @@ where
     }
 
     fn validate_setup_capacity(&self, plan: &CommitmentExecutionPlan) -> Result<(), AkitaError> {
-        let inner = plan.inner();
-        let inner_width =
-            akita_error::checked::product([inner.num_positions_per_block, inner.num_digits_inner])
-                .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
-        let mut required =
-            akita_error::checked::product([inner.n_a, inner_width, inner.ring_dimension])
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment A setup footprint overflow".into())
-                })?;
-        if let Some(uncompressed) = plan.uncompressed() {
-            let outer = uncompressed.outer();
-            let outer_required = akita_error::checked::product([
-                outer.n_b(),
-                outer.geometry().physical_input_width(),
-                outer.ring_dimension(),
-            ])
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("commitment B setup footprint overflow".into())
-            })?;
-            required = required.max(outer_required);
-        }
-        if let Some(compression) = plan.compression() {
-            required = required.max(compression.max_setup_field_elements()?);
-        }
+        let required = plan.max_setup_field_elements()?;
         if required > self.setup.num_field_elements {
             return Err(AkitaError::InvalidSetup(format!(
                 "commitment execution requires {required} setup field elements, but setup has {}",
@@ -399,16 +432,16 @@ where
     ) -> Result<usize, AkitaError> {
         let mut freed = 0usize;
         let mut registrations = Vec::with_capacity(4);
-        if let Some(inner) = &self.inner {
+        if let Some(inner) = self.inner() {
             registrations.push(&inner.stage.resources);
         }
-        if let Some(outer) = &self.outer {
+        if let Some(outer) = self.outer() {
             registrations.push(&outer.stage.resources);
         }
         if let Some(compression) = &self.compression {
             registrations.push(&compression.stage.resources);
         }
-        if let Some(fused) = &self.fused {
+        if let Some(fused) = self.fused() {
             registrations.push(&fused.stage.resources);
         }
         for resources in registrations {
@@ -459,7 +492,7 @@ where
         &self,
         plan: &CommitmentExecutionPlan,
         sources: &[&dyn CommitmentSource<F>],
-    ) -> Result<CommitmentStateOutput<SP::State>, AkitaError> {
+    ) -> Result<SP::State, AkitaError> {
         if plan.mode() != super::CommitmentExecutionMode::InnerOnly {
             return Err(AkitaError::InvalidInput(
                 "inner-only execution requires an inner-only commitment plan".into(),
@@ -467,11 +500,13 @@ where
         }
         self.trace_route(plan.mode());
         let inner = self.execute_inner_stages(plan, sources)?;
-        CommitmentStateOutput::from_inner(
+        let components = super::CommitmentStateComponents::new(
+            super::CommitmentExecutionMode::InnerOnly,
             inner.into_image(),
-            &self.state_policy,
+            None,
             self.state_exporters(plan)?,
-        )
+        )?;
+        self.state_policy.bind(components)
     }
 
     pub(crate) fn execute_uncompressed_stages(
@@ -609,9 +644,9 @@ where
     }
 
     fn trace_route(&self, mode: super::CommitmentExecutionMode) {
-        let fused = self.fused.as_ref();
-        let inner = self.inner.as_ref();
-        let outer = self.outer.as_ref();
+        let fused = self.fused();
+        let inner = self.inner();
+        let outer = self.outer();
         let compression = self.compression.as_ref();
         tracing::debug!(
             ?mode,
@@ -769,10 +804,10 @@ mod tests {
         };
         let sources: [&dyn CommitmentSource<F>; 1] = [&source];
 
-        let error = executor
-            .execute_inner(&plan, &sources)
-            .err()
-            .expect("undersized setup must fail before materialization");
+        let error = match executor.execute_inner(&plan, &sources) {
+            Err(error) => error,
+            Ok(_) => panic!("undersized setup must fail before materialization"),
+        };
         assert!(matches!(
             error,
             AkitaError::InvalidSetup(message) if message.contains("setup field elements")
@@ -801,7 +836,7 @@ mod tests {
             ResidentStatePolicy,
         )
         .unwrap();
-        executor.inner.as_mut().unwrap().dimensions =
+        executor.inner_mut().unwrap().dimensions =
             StageDimensionCapabilities::new(vec![128]).unwrap();
         let source = CountingDense {
             poly: DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap(),
@@ -1155,11 +1190,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            executor.inner.as_ref().unwrap().stage.backend_instance,
-            executor.outer.as_ref().unwrap().stage.backend_instance
+            executor.inner().unwrap().stage.backend_instance,
+            executor.outer().unwrap().stage.backend_instance
         );
         assert_eq!(
-            executor.outer.as_ref().unwrap().stage.backend_instance,
+            executor.outer().unwrap().stage.backend_instance,
             executor
                 .compression
                 .as_ref()
@@ -1168,37 +1203,19 @@ mod tests {
                 .backend_instance
         );
         assert_ne!(
-            executor.inner.as_ref().unwrap().stage.operation_id,
-            executor.outer.as_ref().unwrap().stage.operation_id
+            executor.inner().unwrap().stage.operation_id,
+            executor.outer().unwrap().stage.operation_id
         );
         assert_ne!(
-            executor.outer.as_ref().unwrap().stage.operation_id,
+            executor.outer().unwrap().stage.operation_id,
             executor.compression.as_ref().unwrap().stage.operation_id
         );
         assert_eq!(
-            executor
-                .inner
-                .as_ref()
-                .unwrap()
-                .stage
-                .resources
-                .cache_owner_id(),
-            executor
-                .outer
-                .as_ref()
-                .unwrap()
-                .stage
-                .resources
-                .cache_owner_id()
+            executor.inner().unwrap().stage.resources.cache_owner_id(),
+            executor.outer().unwrap().stage.resources.cache_owner_id()
         );
         assert_eq!(
-            executor
-                .outer
-                .as_ref()
-                .unwrap()
-                .stage
-                .resources
-                .cache_owner_id(),
+            executor.outer().unwrap().stage.resources.cache_owner_id(),
             executor
                 .compression
                 .as_ref()
@@ -1211,8 +1228,7 @@ mod tests {
         let sources: [&dyn CommitmentSource<F>; 1] = [&poly];
         let output = executor.execute_inner_stages(&plan, &sources).unwrap();
         let rows = executor
-            .inner
-            .as_ref()
+            .inner()
             .unwrap()
             .exporter
             .as_ref()
@@ -1225,7 +1241,7 @@ mod tests {
         drop(output);
 
         let output = executor.execute_inner(&plan, &sources).unwrap();
-        assert_eq!(output.prover_state().binding().relation_mode(), None);
+        assert_eq!(output.binding().relation_mode(), None);
         drop(output);
     }
 
@@ -1393,8 +1409,7 @@ mod tests {
             .execute_inner_stages(&plan, &sources)
             .unwrap();
         let expected_rows = portable_executor
-            .inner
-            .as_ref()
+            .inner()
             .unwrap()
             .exporter
             .as_ref()

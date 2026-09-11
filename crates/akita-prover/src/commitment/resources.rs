@@ -382,14 +382,13 @@ where
         stage: CommitmentNttStage,
     ) -> Result<&StageResources<'a, F>, AkitaError> {
         if route == CommitmentNttRoute::InnerOuter {
-            if let Some(fused) = &self.fused {
+            if let Some(fused) = self.fused() {
                 return Ok(&fused.stage.resources);
             }
         }
-        if self.inner.is_none() && self.outer.is_none() {
+        if self.inner().is_none() && self.outer().is_none() {
             return self
-                .fused
-                .as_ref()
+                .fused()
                 .map(|fused| &fused.stage.resources)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("commitment route has no A/B resources".into())
@@ -397,15 +396,13 @@ where
         }
         match stage {
             CommitmentNttStage::Inner => self
-                .inner
-                .as_ref()
+                .inner()
                 .map(|inner| &inner.stage.resources)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("commitment route has no inner resources".into())
                 }),
             CommitmentNttStage::Outer => self
-                .outer
-                .as_ref()
+                .outer()
                 .map(|outer| &outer.stage.resources)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("commitment route has no outer resources".into())

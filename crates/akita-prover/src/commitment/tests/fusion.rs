@@ -7,9 +7,9 @@ use crate::commitment::{
     InnerImageExportOperation, InnerImageInput, InnerRelationState, NoRetainedStatePolicy,
     OuterCommitOperation, OuterCompressionState, PolynomialType, PortableCompressionState,
     PortableCompressionStateExport, PortableStatePolicy, PreparedCommitmentResources,
-    PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
-    ResidentStatePolicy, ResolvedCommitSource, StageDimensionCapabilities, StageResources,
-    UncompressedCommitPlan, UncompressedCommitmentOutput,
+    PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, ResidentStatePolicy,
+    ResolvedCommitSource, StageDimensionCapabilities, StageResources, UncompressedCommitPlan,
+    UncompressedCommitmentOutput,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
@@ -226,11 +226,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         operation: inner.clone(),
         calls: split_inner_calls.clone(),
     });
-    let split_outer = Arc::new(CpuOuterCommitOperation::new(
-        &backend,
-        &prepared,
-        inner.as_ref(),
-    ));
     let compression = Arc::new(
         CpuCompressionOperation::new(&backend, &prepared, setup.expanded.as_ref()).unwrap(),
     );
@@ -251,7 +246,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         events: events.clone(),
     });
     let split_inner_ensures = Arc::new(AtomicUsize::new(0));
-    let split_outer_ensures = Arc::new(AtomicUsize::new(0));
     let compression_ensures = Arc::new(AtomicUsize::new(0));
     let fused_ensures = Arc::new(AtomicUsize::new(0));
     let split_instance = builder.issue_backend_instance();
@@ -265,18 +259,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
                 &prepared,
                 setup.expanded.as_ref(),
                 split_inner_ensures.clone(),
-            ),
-        )
-        .unwrap();
-    let outer_context = builder
-        .operation_context(
-            split_instance,
-            "split-outer",
-            counting_resources(
-                &backend,
-                &prepared,
-                setup.expanded.as_ref(),
-                split_outer_ensures.clone(),
             ),
         )
         .unwrap();
@@ -319,14 +301,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
             )
             .unwrap(),
         )
-        .unwrap();
-    builder
-        .register_outer(PreparedOuterCommitment::new(
-            split_outer,
-            inner.owner().clone(),
-            outer_context,
-            StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
-        ))
         .unwrap();
     builder
         .register_compression(PreparedCompression::new(
@@ -384,7 +358,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     fused_executor.prewarm_request(&plan, &sources).unwrap();
     assert_eq!(fused_ensures.load(Ordering::SeqCst), 2);
     assert_eq!(split_inner_ensures.load(Ordering::SeqCst), 0);
-    assert_eq!(split_outer_ensures.load(Ordering::SeqCst), 0);
     assert_eq!(compression_ensures.load(Ordering::SeqCst), 0);
 
     let expected_u = split.execute_uncompressed_stages(&plan, &sources).unwrap();
@@ -459,14 +432,8 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let actual_inner_state = fused_executor
         .execute_inner(&terminal_plan, &sources)
         .unwrap();
-    let expected_terminal_inner = expected_inner_state
-        .prover_state()
-        .inner_relation_material()
-        .unwrap();
-    let actual_terminal_inner = actual_inner_state
-        .prover_state()
-        .inner_relation_material()
-        .unwrap();
+    let expected_terminal_inner = expected_inner_state.inner_relation_material().unwrap();
+    let actual_terminal_inner = actual_inner_state.inner_relation_material().unwrap();
     assert_eq!(
         actual_terminal_inner.ring_dimension(),
         expected_terminal_inner.ring_dimension()
