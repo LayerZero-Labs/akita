@@ -1,8 +1,13 @@
 use super::*;
 use crate::EqPolynomial;
-use jolt_field::{Fp64, Ring, Zero};
+use jolt_field::{
+    Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,
+};
 
 type F = Fp64<4294967197>;
+type F32Ext = FpExt4<Prime32Offset99>;
+type F64Ext = Ext2<Prime64Offset59>;
+type F128 = Prime128OffsetA7F7;
 
 fn matrix_from_entries(entries: &[Vec<i8>]) -> TernaryProjectionMatrix {
     let rows = entries.len();
@@ -39,6 +44,71 @@ fn fixture() -> TernaryProjectionMatrix {
 
 fn field_from_i128(value: i128) -> F {
     F::from_i128(value)
+}
+
+fn reference_matrix_mle_from_eq<G: Field>(
+    matrix: &TernaryProjectionMatrix,
+    row_eq: &[G],
+    col_eq: &[G],
+) -> G {
+    let shape = matrix.shape();
+    let mut total = G::zero();
+    for (row, &row_weight) in row_eq.iter().take(shape.rows()).enumerate() {
+        let mut row_sum = G::zero();
+        for (col, &col_weight) in col_eq.iter().take(shape.cols()).enumerate() {
+            match matrix.entry(row, col).unwrap() {
+                -1 => row_sum -= col_weight,
+                1 => row_sum += col_weight,
+                _ => {}
+            }
+        }
+        total += row_weight * row_sum;
+    }
+    total
+}
+
+fn reference_column_weights<G: Field>(matrix: &TernaryProjectionMatrix, row_eq: &[G]) -> Vec<G> {
+    let shape = matrix.shape();
+    let mut weights = vec![G::zero(); shape.col_domain_len().unwrap()];
+    for (row, &row_weight) in row_eq.iter().take(shape.rows()).enumerate() {
+        for (col, output) in weights.iter_mut().take(shape.cols()).enumerate() {
+            match matrix.entry(row, col).unwrap() {
+                -1 => *output -= row_weight,
+                1 => *output += row_weight,
+                _ => {}
+            }
+        }
+    }
+    weights
+}
+
+fn check_mle_kernels_for_field<G: Field + std::fmt::Debug>(
+    matrix: &TernaryProjectionMatrix,
+    seed: u64,
+) {
+    let shape = matrix.shape();
+    let row_point: Vec<G> = (0..shape.row_num_vars().unwrap())
+        .map(|index| G::from_u64(seed.wrapping_add(index as u64 * 17)))
+        .collect();
+    let col_point: Vec<G> = (0..shape.col_num_vars().unwrap())
+        .map(|index| G::from_u64(seed.wrapping_add(index as u64 * 31 + 7)))
+        .collect();
+    let row_eq = EqPolynomial::evals(&row_point).unwrap();
+    let col_eq = EqPolynomial::evals(&col_point).unwrap();
+
+    let expected = reference_matrix_mle_from_eq(matrix, &row_eq, &col_eq);
+    assert_eq!(
+        eval_ternary_matrix_mle_from_eq_tables(matrix, &row_eq, &col_eq).unwrap(),
+        expected
+    );
+    assert_eq!(
+        eval_ternary_matrix_mle(matrix, &row_point, &col_point).unwrap(),
+        expected
+    );
+    assert_eq!(
+        build_ternary_column_weights(matrix, &row_point).unwrap(),
+        reference_column_weights(matrix, &row_eq)
+    );
 }
 
 #[test]
@@ -305,6 +375,60 @@ fn matrix_mle_matches_zero_padded_dense_evaluation() {
     );
     assert!(eval_ternary_matrix_mle_from_eq_tables(&matrix, &row_eq[..3], &col_eq).is_err());
     assert!(eval_ternary_matrix_mle(&matrix, &row_point[..1], &col_point).is_err());
+}
+
+#[test]
+fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
+    for (case, &(rows, cols)) in [(1, 1), (1, 3), (2, 4), (3, 5), (5, 7), (7, 9), (9, 15)]
+        .iter()
+        .enumerate()
+    {
+        let entries: Vec<Vec<i8>> = (0..rows)
+            .map(|row| {
+                (0..cols)
+                    .map(|col| match (row * 11 + col * 7 + row * col) % 3 {
+                        0 => -1,
+                        1 => 0,
+                        _ => 1,
+                    })
+                    .collect()
+            })
+            .collect();
+        let matrix = matrix_from_entries(&entries);
+        let seed = 0x1234_5678_u64.wrapping_add(case as u64);
+        check_mle_kernels_for_field::<F>(&matrix, seed);
+        check_mle_kernels_for_field::<F32Ext>(&matrix, seed);
+        check_mle_kernels_for_field::<F64Ext>(&matrix, seed);
+        check_mle_kernels_for_field::<F128>(&matrix, seed);
+    }
+}
+
+#[test]
+fn mle_lut_covers_every_paired_rademacher_selector() {
+    let shape = TernaryProjectionShape::new(2, 4).unwrap();
+    let row_eq = [F::from_u64(29), F::from_u64(31)];
+    let col_eq = [
+        F::from_u64(3),
+        F::from_u64(5),
+        F::from_u64(7),
+        F::from_u64(11),
+    ];
+
+    for first in 0u8..16 {
+        for second in 0u8..16 {
+            let matrix = TernaryProjectionMatrix::from_rademacher_bitplanes(
+                shape,
+                vec![first | (first << 4)],
+                vec![second | (second << 4)],
+            )
+            .unwrap();
+            assert_eq!(
+                eval_ternary_matrix_mle_from_eq_tables(&matrix, &row_eq, &col_eq).unwrap(),
+                reference_matrix_mle_from_eq(&matrix, &row_eq, &col_eq),
+                "first={first:04b}, second={second:04b}"
+            );
+        }
+    }
 }
 
 #[test]

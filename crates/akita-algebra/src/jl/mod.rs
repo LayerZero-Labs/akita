@@ -395,9 +395,7 @@ impl TernaryProjectionMatrix {
             });
         }
         let mut output = try_zeroed_vec(self.shape.rows(), F::zero())?;
-        for (row, value) in output.iter_mut().enumerate() {
-            *value = self.project_field_row(row, input);
-        }
+        mle::contract_columns_to_rows(self, input, &mut output)?;
         Ok(output)
     }
 
@@ -422,23 +420,13 @@ impl TernaryProjectionMatrix {
             let output_start = block.checked_mul(self.shape.rows()).ok_or_else(|| {
                 AkitaError::InvalidInput("block projection offset overflow".into())
             })?;
-            for row in 0..self.shape.rows() {
-                output[output_start + row] = self.project_field_row(row, block_input);
-            }
+            mle::contract_columns_to_rows(
+                self,
+                block_input,
+                &mut output[output_start..output_start + self.shape.rows()],
+            )?;
         }
         Ok(output)
-    }
-
-    fn project_field_row<F: Field>(&self, row: usize, input: &[F]) -> F {
-        let mut accumulator = F::zero();
-        for (col, &value) in input.iter().enumerate() {
-            match self.entry_unchecked(row, col) {
-                -1 => accumulator -= value,
-                1 => accumulator += value,
-                _ => {}
-            }
-        }
-        accumulator
     }
 
     pub(super) fn entry_unchecked(&self, row: usize, col: usize) -> i8 {
@@ -455,7 +443,6 @@ impl TernaryProjectionMatrix {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
     pub(super) fn sign_groups_unchecked(&self, group: usize) -> (&[u8], &[u8]) {
         let start = group * self.shape.row_pairs();
         let end = start + self.shape.row_pairs();
