@@ -176,7 +176,7 @@ impl PendingQueryEdge {
 /// Exact query usage above the current suffix, plus the incoming edge that is
 /// waiting for the suffix's first successor.
 #[derive(Clone)]
-struct QueryPrefix {
+pub(crate) struct QueryPrefix {
     finalized_query_count: u64,
     incoming: PendingQueryEdge,
 }
@@ -236,7 +236,7 @@ impl QueryPrefix {
 /// search used only when the memoized optimum does not fit that caller's
 /// transcript-query prefix.
 #[derive(Clone)]
-enum QuerySearch {
+pub(crate) enum QuerySearch {
     Unconstrained,
     Root,
     Restricted(QueryPrefix),

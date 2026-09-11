@@ -972,7 +972,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
         opening,
         log_basis_open: 3,
         n_prefix: 1 << 14,
-        num_chunks: 1,
+        num_chunks: 4,
         inner_ring_dimension: dimensions.d_a(),
         outer_ring_dimension: dimensions.d_b(),
         guide: None,
@@ -981,6 +981,12 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
     let reduced_groups = derive_setup_prefix_groups(&mut cache, request(reduced_packing)).unwrap();
     assert!(!trace_groups.is_empty() && !exact_groups.is_empty() && !reduced_groups.is_empty());
+    assert!(trace_groups
+        .iter()
+        .any(|group| group.profile.blocks.live_blocks == 16));
+    assert!(trace_groups
+        .iter()
+        .all(|group| group.profile.blocks.live_blocks != 8));
     assert!(trace_groups.iter().all(|group| {
         group.opening.opening_method == akita_types::OpeningMethod::EvaluationTrace
     }));

@@ -75,7 +75,7 @@ fn plan_candidate_children(
     } else if search.depth == MAX_RECURSION_DEPTH {
         Some(empty_suffix_result())
     } else {
-        Some(derive_selected_suffix_schedule_with_query_search(
+        Some(derive_selected_suffix_schedule(
             ctx,
             memo,
             SuffixState {
@@ -115,7 +115,7 @@ fn plan_candidate_children(
     )
     .filter(|_| guided_successor_is_offloaded != Some(false) && offload_search_enabled)
     .map(|topology| {
-        derive_selected_suffix_schedule_with_query_search(
+        derive_selected_suffix_schedule(
             ctx,
             memo,
             SuffixState {
@@ -343,15 +343,6 @@ pub(crate) fn derive_selected_suffix_schedule(
     memo: &mut ScheduleMemo,
     state: SuffixState,
     depth: usize,
-) -> Result<Arc<SuffixResult>, AkitaError> {
-    derive_selected_suffix_schedule_with_query_search(ctx, memo, state, depth, QuerySearch::Root)
-}
-
-fn derive_selected_suffix_schedule_with_query_search(
-    ctx: &SuffixCtx<'_>,
-    memo: &mut ScheduleMemo,
-    state: SuffixState,
-    depth: usize,
     query_search: QuerySearch,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
     if !adaptation_guide_allows_state(ctx, state) {
@@ -366,24 +357,11 @@ fn derive_selected_suffix_schedule_with_query_search(
     // Memo entries remain budget-independent objective optima. A restricted
     // caller reuses that result when it fits its exact root prefix; otherwise
     // it recomputes this state locally and never replaces the primary entry.
-    if matches!(query_search, QuerySearch::Restricted(_)) {
+    if let QuerySearch::Restricted(prefix) = &query_search {
         let cached = memo.get(&memo_key).cloned().map_or_else(
-            || {
-                derive_selected_suffix_schedule_with_query_search(
-                    ctx,
-                    memo,
-                    state,
-                    depth,
-                    QuerySearch::Unconstrained,
-                )
-            },
+            || derive_selected_suffix_schedule(ctx, memo, state, depth, QuerySearch::Unconstrained),
             Ok,
         )?;
-        let QuerySearch::Restricted(prefix) = &query_search else {
-            return Err(AkitaError::InvalidSetup(
-                "restricted suffix search lost its query prefix".into(),
-            ));
-        };
         if prefix.admits_result(policy, &cached)? {
             if let Some(diagnostics) = ctx.diagnostics {
                 diagnostics.record_memo_result(relation_phase, true);

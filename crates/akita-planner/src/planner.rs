@@ -826,7 +826,13 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(&suffix_ctx, &mut memo, initial_state, 0);
+    let suffix = derive_selected_suffix_schedule(
+        &suffix_ctx,
+        &mut memo,
+        initial_state,
+        0,
+        super::schedule_params::QuerySearch::Root,
+    );
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
         let (hits, misses) = memo.setup_prefix_cache_diagnostics();
