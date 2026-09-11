@@ -362,6 +362,203 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
         .expect("query rejection"));
 }
 
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn restricted_search_recovers_pruned_query_tradeoff() {
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+
+    let mut policy = policy_of::<OneHot>();
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 256,
+    };
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    let key = akita_types::AkitaScheduleLookupKey::single(
+        akita_types::PolynomialGroupLayout::singleton(14),
+    );
+    let root = crate::planner::find_schedule(
+        &key,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        &[],
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .unwrap()
+    .schedule
+    .root;
+    policy.inner_basis_range = (3, 3);
+    policy.opening_basis_range = (6, 6);
+    let ctx = super::SuffixCtx {
+        policy: &policy,
+        diagnostics: None,
+        ring_challenge_config: &OneHot::ring_challenge_config,
+        key: key.final_group,
+        setup_field_budget: None,
+        root_lookup_key: Some(&key),
+        root_main_constraint: None,
+        adaptation_guide: None,
+        root_honest_fold_policy: Some(akita_config::honest_fold_policy_of::<OneHot>()),
+        precommitted_honest_fold_policies: &[],
+        level_zero_is_root: true,
+        relation_traversal_order: super::RelationTraversalOrder::Canonical,
+        relation_mode_filter: super::RelationModeFilter::All,
+    };
+    let state = super::SuffixState {
+        level: 1,
+        current_witness_len: 215_104,
+        current_lb: 3,
+        source_moment: None,
+        dimension_ceiling: akita_types::CommitmentRingDims::uniform(256),
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+    };
+    let mut memo = super::ScheduleMemo::new();
+    let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
+    let generated = domain
+        .generate_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .unwrap();
+    let candidates =
+        super::attach_source_moments(&ctx, state, false, &domain.opening_layout, generated.folds)
+            .unwrap();
+    let coords = |candidate: &super::PlannedFoldCandidate| {
+        let params = &candidate.params;
+        [
+            akita_types::padded_setup_prefix_len(
+                akita_types::active_setup_field_len(params, &domain.opening_layout).unwrap(),
+            ),
+            super::level_setup_field_elements(params).unwrap(),
+            params
+                .outer_payload_geometry()
+                .unwrap()
+                .transmitted_coefficients(),
+            params.outer().matrix.output_rank() * params.role_dims().d_b(),
+            params.open().matrix.output_rank() * params.role_dims().d_d(),
+            candidate.opening_reduction_bytes,
+        ]
+    };
+    let find = |target| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.next_witness_len == 201_856 && coords(candidate) == target)
+            .unwrap()
+    };
+    let high_query = find([65_536, 65_536, 32, 256, 256, 0]);
+    let low_query = find([524_288, 327_680, 32, 256, 256, 0]);
+    let child_state = super::SuffixState {
+        level: 2,
+        current_witness_len: high_query.next_witness_len,
+        current_lb: 6,
+        source_moment: high_query.next_source_moment,
+        dimension_ceiling: high_query.params.role_dims(),
+        topology: state.topology.direct_successor(
+            high_query.params.payload_mode,
+            high_query.params.ring_relation_mode,
+        ),
+    };
+    let low_child_state = super::SuffixState {
+        level: 2,
+        current_witness_len: low_query.next_witness_len,
+        current_lb: 6,
+        source_moment: low_query.next_source_moment,
+        dimension_ceiling: low_query.params.role_dims(),
+        topology: state.topology.direct_successor(
+            low_query.params.payload_mode,
+            low_query.params.ring_relation_mode,
+        ),
+    };
+    assert_eq!(
+        child_state.memo_key(&policy),
+        low_child_state.memo_key(&policy)
+    );
+    let child = super::derive_selected_suffix_schedule(
+        &ctx,
+        &mut memo,
+        child_state,
+        2,
+        super::QuerySearch::Unconstrained,
+    )
+    .unwrap();
+    let child_candidate = child.payload_candidates().next().unwrap();
+    let edge_queries = |candidate: &super::PlannedFoldCandidate| {
+        super::PendingQueryEdge::new(
+            state,
+            &domain.opening_layout,
+            &candidate.params,
+            candidate.next_witness_len,
+        )
+        .unwrap()
+        .candidate_grinding_cost(&policy, child_candidate)
+        .unwrap()
+        .expanded_query_count
+    };
+    assert_eq!(
+        (edge_queries(high_query), edge_queries(low_query)),
+        (95, 85)
+    );
+    let incoming = super::PendingQueryEdge::new(
+        super::SuffixState { level: 0, ..state },
+        &key.opening_layout().unwrap(),
+        &root.params,
+        state.current_witness_len,
+    )
+    .unwrap();
+    let parent_queries = incoming
+        .grinding_cost(
+            &policy,
+            akita_types::FoldSuccessor::Recursive(&low_query.params),
+        )
+        .unwrap()
+        .expanded_query_count;
+    let prefix = super::QueryPrefix {
+        finalized_query_count: akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
+            - parent_queries
+            - edge_queries(low_query)
+            - child_candidate.cost.expanded_query_count()
+            - 1,
+        incoming,
+    };
+    let generated = super::candidates::GeneratedCandidates {
+        terminal: Vec::new(),
+        folds: [high_query, low_query]
+            .map(|candidate| super::candidates::RawFoldCandidate {
+                params: candidate.params.clone(),
+                next_witness_len: candidate.next_witness_len,
+                opening_reduction_bytes: candidate.opening_reduction_bytes,
+            })
+            .into(),
+    };
+    let mut frontiers = super::StateFrontiers::new();
+    super::search::process_candidate_batch(
+        &ctx,
+        &mut memo,
+        state,
+        1,
+        6,
+        &domain.opening_layout,
+        false,
+        false,
+        generated,
+        &mut frontiers,
+        &super::QuerySearch::Restricted(prefix.clone()),
+    )
+    .unwrap();
+    assert!(frontiers
+        .projected
+        .by_parent_cost
+        .values()
+        .flat_map(super::frontier::ProjectedObjectiveChoices::payload_candidates)
+        .any(|candidate| candidate.folds.first().is_some_and(|fold| {
+            fold.params.canonical_descriptor_bytes()
+                == low_query.params.canonical_descriptor_bytes()
+        })));
+    assert!(std::sync::Arc::ptr_eq(
+        memo.get(&child_state.memo_key(&policy)).unwrap(),
+        &child,
+    ));
+}
+
 #[test]
 fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();

@@ -269,7 +269,7 @@ fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> Su
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_candidate_batch(
+pub(super) fn process_candidate_batch(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     state: SuffixState,
