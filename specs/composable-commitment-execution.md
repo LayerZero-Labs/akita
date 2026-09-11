@@ -124,9 +124,12 @@ A source can translate itself into one or more Akita-owned representations:
 | `OneHotType` | Complete hot-position slice, chunk size, and variable count |
 
 Dense predecomposed digits remain distinct from packed short-norm coefficients.
-One-hot sources preserve their stored index width (`u8`, `u16`, `u32`, or
-`usize`) and use `None` for an all-zero chunk; the boundary does not widen or
-copy the position buffer.
+Selected packed short-norm representations are decoded once across their live
+extent during materialization. Their supplied positive and negative extrema
+must exactly match the decoded coefficients before those bounds may select a
+CPU kernel. One-hot sources preserve their stored index width (`u8`, `u16`,
+`u32`, or `usize`) and use `None` for an all-zero chunk; the boundary does not
+widen or copy the position buffer.
 
 Sources that can expose one of these representations reuse Akita's inner
 implementations. Concrete source types may also implement opening and tensor
@@ -320,6 +323,12 @@ Consuming export moves uniquely owned CPU rows and compression buffers; shared
 leases use the borrowed copying fallback. Resident routes do not pay that cost
 unless a later consumer requests export.
 
+The first resident inner-row export is checked against its request binding:
+ring dimension, source count, and the exact per-source coefficient length must
+all match. The validated rows are then frozen in the resident state so terminal
+transcript binding and later relation construction consume identical material
+even when a custom exporter is stateful.
+
 The direct ownership model has no global state slot table, pending deposit,
 generation counter, cleanup callback registry, CPU token map, or second
 composite dispatcher. CPU state directly owns its witness vectors and
@@ -350,9 +359,10 @@ Resource control exposes setup identity, exact NTT slot preparation,
 cached-versus-streamed policy, cache owner identity, release,
 and optional compression-cache accounting.
 
-`CommitmentNttRequirement` identifies the exact key, routing extent, and owning
-stage. Proof-wide routed requirements also identify whether the request is
-inner-only or A/B. A/B requirements use the fused registration when present;
+`CommitmentNttRequirement` identifies the exact key, routing extent, owning
+stage, and whether the request is inner-only or A/B. That route remains attached
+when the requirement reaches backend cache policy and prewarming. A/B
+requirements use the fused registration when present;
 terminal A requirements use split inner. The same resolved route controls
 prewarm, owner selection, and execution. Physical
 owners are deduplicated by `NttCacheOwnerId` when stages share prepared state.

@@ -1,17 +1,54 @@
 use super::*;
 use crate::commitment::{
-    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, NoRetainedStatePolicy,
-    ResolvedCommitSource, StateOwnerCapability,
+    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, InnerRelationStateMaterial,
+    NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{
-    CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
+    CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
 use jolt_field::{Prime64Offset59, Ring};
 use std::sync::Arc;
 
 type F = Prime64Offset59;
+
+#[test]
+fn inner_relation_material_rejects_incomplete_exported_rows() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q64Offset59,
+        64,
+        2,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(4, 8, 1, 2, 2)
+    .unwrap();
+    let plan =
+        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params))
+            .unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        9,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 128 * 64,
+        },
+    )
+    .unwrap();
+    let binding = CommitmentStateBinding::new(
+        setup.expanded.descriptor().clone(),
+        *plan.inner(),
+        1,
+        None,
+        None,
+    )
+    .unwrap();
+    let short_row = RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap();
+
+    assert!(InnerRelationStateMaterial::from_binding(&binding, vec![short_row]).is_err());
+}
 
 struct ReboundInner {
     owner: StateOwnerCapability<InnerImage>,

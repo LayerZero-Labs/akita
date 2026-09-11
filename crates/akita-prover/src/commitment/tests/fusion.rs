@@ -8,8 +8,8 @@ use crate::commitment::{
     OuterCommitOperation, OuterCompressionState, PolynomialType, PortableCompressionState,
     PortableCompressionStateExport, PortableStatePolicy, PreparedCommitmentResources,
     PreparedCompression, PreparedFusedCommitment, PreparedInnerCommitment, ResidentStatePolicy,
-    ResolvedCommitSource, StageDimensionCapabilities, StageResources, UncompressedCommitPlan,
-    UncompressedCommitmentOutput,
+    ResolvedCommitSource, StageDimensionCapabilities, StageResources, TerminalBindingState,
+    UncompressedCommitPlan, UncompressedCommitmentOutput,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
@@ -54,6 +54,7 @@ struct RecordingInner<'a> {
 struct CountingResources<'a> {
     inner: PreparedCommitmentResources<'a, F, CpuBackend>,
     ensures: Arc<AtomicUsize>,
+    routes: Arc<Mutex<Vec<CommitmentNttRoute>>>,
 }
 
 impl CommitmentResourceControl<F> for CountingResources<'_> {
@@ -63,6 +64,7 @@ impl CommitmentResourceControl<F> for CountingResources<'_> {
 
     fn ensure_ntt_slot(&self, requirement: CommitmentNttRequirement) -> Result<(), AkitaError> {
         self.ensures.fetch_add(1, Ordering::SeqCst);
+        self.routes.lock().unwrap().push(requirement.route());
         self.inner.ensure_ntt_slot(requirement)
     }
 
@@ -70,6 +72,7 @@ impl CommitmentResourceControl<F> for CountingResources<'_> {
         &self,
         requirement: CommitmentNttRequirement,
     ) -> Result<bool, AkitaError> {
+        self.routes.lock().unwrap().push(requirement.route());
         self.inner.requirement_is_cached(requirement)
     }
 
@@ -91,10 +94,12 @@ fn counting_resources<'a>(
     prepared: &'a CpuPreparedSetup<F>,
     expanded: &'a akita_types::AkitaExpandedSetup<F>,
     ensures: Arc<AtomicUsize>,
+    routes: Arc<Mutex<Vec<CommitmentNttRoute>>>,
 ) -> StageResources<'a, F> {
     StageResources::controlled(CountingResources {
         inner: PreparedCommitmentResources::new(backend, prepared, expanded).unwrap(),
         ensures,
+        routes,
     })
 }
 
@@ -248,6 +253,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let split_inner_ensures = Arc::new(AtomicUsize::new(0));
     let compression_ensures = Arc::new(AtomicUsize::new(0));
     let fused_ensures = Arc::new(AtomicUsize::new(0));
+    let split_inner_routes = Arc::new(Mutex::new(Vec::new()));
     let split_instance = builder.issue_backend_instance();
     let fused_instance = builder.issue_backend_instance();
     let inner_context = builder
@@ -259,6 +265,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
                 &prepared,
                 setup.expanded.as_ref(),
                 split_inner_ensures.clone(),
+                split_inner_routes.clone(),
             ),
         )
         .unwrap();
@@ -271,6 +278,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
                 &prepared,
                 setup.expanded.as_ref(),
                 compression_ensures.clone(),
+                Arc::new(Mutex::new(Vec::new())),
             ),
         )
         .unwrap();
@@ -283,6 +291,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
                 &prepared,
                 setup.expanded.as_ref(),
                 fused_ensures.clone(),
+                Arc::new(Mutex::new(Vec::new())),
             ),
         )
         .unwrap();
@@ -352,6 +361,20 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         .prewarm_routed_requirement(routed(CommitmentNttRoute::InnerOnly))
         .unwrap();
     assert_eq!(split_inner_ensures.load(Ordering::SeqCst), 1);
+    assert!(split_inner_routes
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|route| *route == CommitmentNttRoute::InnerOnly));
+    split_inner_routes.lock().unwrap().clear();
+    assert!(fused_executor
+        .retained_routed_requirement(routed(CommitmentNttRoute::InnerOnly))
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        split_inner_routes.lock().unwrap().as_slice(),
+        [CommitmentNttRoute::InnerOnly]
+    );
     fused_ensures.store(0, Ordering::SeqCst);
     split_inner_ensures.store(0, Ordering::SeqCst);
 
@@ -381,6 +404,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let actual = fused_executor.execute_full(&plan, &sources).unwrap();
     assert_eq!(actual.terminal_payload(), expected.terminal_payload());
     let expected_inner = expected.prover_state().inner_relation_material().unwrap();
+    actual.prover_state().terminal_t_fields_message().unwrap();
     let actual_inner = actual.prover_state().inner_relation_material().unwrap();
     assert_eq!(
         actual_inner.ring_dimension(),

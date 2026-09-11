@@ -429,6 +429,28 @@ impl<'a> PackedSignedDigitView<'a> {
             positive_max,
         };
         validate_bounds(bounds, bit_width)?;
+        let mut decoded_bounds = SignedDigitBounds {
+            negative_abs_max: 0,
+            positive_max: 0,
+        };
+        for index in 0..live_len {
+            let digit = scalar::decode_at_zero_padded(storage, index, bit_width);
+            if digit < 0 {
+                decoded_bounds.negative_abs_max =
+                    decoded_bounds.negative_abs_max.max(digit.unsigned_abs());
+            } else {
+                decoded_bounds.positive_max = decoded_bounds.positive_max.max(digit as u8);
+            }
+        }
+        if decoded_bounds != bounds {
+            return Err(AkitaError::InvalidInput(format!(
+                "packed signed-digit bounds [-{}, {}] disagree with decoded live bounds [-{}, {}]",
+                bounds.negative_abs_max,
+                bounds.positive_max,
+                decoded_bounds.negative_abs_max,
+                decoded_bounds.positive_max,
+            )));
+        }
         Ok(Self {
             storage,
             stored_len: represented_len.min(physical_len),
