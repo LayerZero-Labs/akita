@@ -252,8 +252,8 @@ impl XofCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::Shake256;
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+    use shake::Shake256;
 
     #[test]
     fn root_derivation_matches_sha3() {

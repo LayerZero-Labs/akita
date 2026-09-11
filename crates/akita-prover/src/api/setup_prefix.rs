@@ -77,7 +77,7 @@ where
     }
 
     let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, full_prefix_ring_slots)?;
-    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems);
+    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems)?;
     let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
     let witnesses = backend.commit_inner_group(
         prepared,
@@ -158,6 +158,7 @@ where
             id: (),
             plan,
             coefficients: raw_commitment.into_coeffs(),
+            relation_mode: akita_types::RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -170,10 +171,11 @@ where
         .ring_dimension();
     let commitment_payload =
         RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
+    let quotients = output.relation.into_quotient_lift()?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,
-        &output.quotients,
+        &quotients,
     )?;
     let id = SetupPrefixSlotId {
         natural_len,

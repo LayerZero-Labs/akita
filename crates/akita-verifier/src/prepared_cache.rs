@@ -51,12 +51,12 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     schedule_row_digest: ScheduleRowDigest,
 ) -> Result<Vec<u8>, AkitaError> {
     let requirement = terminal_ntt_cache_requirement(schedule)?;
-    let setup_seed_digest = setup_seed_digest(&setup.expanded.descriptor.setup_seed)
+    let setup_seed_digest = setup_seed_digest(&setup.expanded().descriptor.setup_seed)
         .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
         schedule_row_digest,
-        setup_field_elements: setup.expanded.descriptor.num_field_elements,
+        setup_field_elements: setup.expanded().descriptor.num_field_elements,
     };
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -64,7 +64,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
         requirement.ring_dimension,
         |D| {
             let matrix = setup
-                .expanded
+                .expanded()
                 .shared_matrix()
                 .ring_view::<D>(1, requirement.prefix_len)?;
             build_riscv64_scalar_q128_cache_artifact(
@@ -80,7 +80,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaScheduleLookupKey,
         AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
@@ -90,10 +90,23 @@ mod tests {
 
     #[test]
     fn terminal_builder_binds_the_resolved_schedule_and_installs() {
-        let row = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(15, 1),
-        ))
-        .expect("generated fp128 schedule");
+        std::thread::Builder::new()
+            .name("terminal-cache-builder-test".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(terminal_builder_binds_the_resolved_schedule_and_installs_inner)
+            .expect("spawn terminal cache builder test")
+            .join()
+            .expect("terminal cache builder test thread");
+    }
+
+    fn terminal_builder_binds_the_resolved_schedule_and_installs_inner() {
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
+            .expect("workspace schedule catalog");
+        let row = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                15, 1,
+            )))
+            .expect("workspace fp128 schedule");
         let selection = row.selection();
         let schedule = row.schedule();
         let requirement = terminal_ntt_cache_requirement(schedule).expect("terminal requirement");

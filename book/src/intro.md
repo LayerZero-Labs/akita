@@ -182,7 +182,7 @@ parameter checks.
 ## Built as a complete system
 
 Akita treats deployment engineering as part of the cryptographic design. The
-repository ships generated schedule tables, checked security parameters, a
+repository ships external schedule artifacts, checked security parameters, a
 separate verifier package, canonical proof encoding, and portable optimized
 arithmetic. The verifier rejects malformed public input with structured errors
 instead of panicking. The prover preserves sparse inputs and streams selected

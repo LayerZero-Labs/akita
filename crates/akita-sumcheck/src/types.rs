@@ -210,8 +210,9 @@ impl<E: Field> SumcheckProof<E> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the proof length does not match `num_rounds` or if any
-    /// per-round polynomial exceeds `degree_bound`.
+    /// Returns an error if the proof length does not match `num_rounds`, a round
+    /// message is empty, or its degree estimate exceeds `degree_bound`. Nonempty
+    /// proofs require a degree bound of at least one, including constant rounds.
     pub fn verify<F, T, S>(
         &self,
         mut claim: E,
@@ -226,23 +227,10 @@ impl<E: Field> SumcheckProof<E> {
         E: AkitaSerialize,
         S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
-        if self.round_polys.len() != num_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: num_rounds,
-                actual: self.round_polys.len(),
-            });
-        }
+        self.validate_round_messages(num_rounds, degree_bound)?;
 
         let mut r = Vec::with_capacity(num_rounds);
         for poly in &self.round_polys {
-            if poly.degree() > degree_bound {
-                return Err(AkitaError::InvalidInput(format!(
-                    "sumcheck round poly degree {} exceeds bound {}",
-                    poly.degree(),
-                    degree_bound
-                )));
-            }
-
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
             let r_i = sample_challenge(transcript)?;
             r.push(r_i);
@@ -251,6 +239,35 @@ impl<E: Field> SumcheckProof<E> {
         }
 
         Ok((claim, r))
+    }
+
+    /// Validate both standard drivers' messages before transcript replay.
+    /// Empty messages must be rejected: their evaluator ignores the incoming
+    /// claim and returns zero instead of reconstructing the linear coefficient.
+    pub(crate) fn validate_round_messages(
+        &self,
+        num_rounds: usize,
+        degree_bound: usize,
+    ) -> Result<(), AkitaError> {
+        if self.round_polys.len() != num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: num_rounds,
+                actual: self.round_polys.len(),
+            });
+        }
+        for poly in &self.round_polys {
+            if poly.coeffs_except_linear_term.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+            if poly.degree() > degree_bound {
+                return Err(AkitaError::InvalidInput(format!(
+                    "sumcheck round poly degree {} exceeds bound {}",
+                    poly.degree(),
+                    degree_bound
+                )));
+            }
+        }
+        Ok(())
     }
 }
 

@@ -1,6 +1,23 @@
 use super::*;
 use crate::sis::inner_coeff_linf_bounds;
 
+#[test]
+fn generated_cutoffs_exclude_cells_with_one_attempt_below_128_bits() {
+    // Independent probability regressions in akita-sis-estimator establish a
+    // beta=483 candidate costing 127.995 quantum bits at both old cutoffs.
+    for (dimension, bound, rank, old_width) in [(512, 1860, 1, 904), (32, 1, 3, 35_794)] {
+        let widths = sis_max_widths(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            dimension,
+            bound,
+        )
+        .unwrap();
+        assert!(widths[rank - 1] < old_width);
+    }
+}
+
 fn key(
     table_digest: SisTableDigest,
     modulus_profile: SisModulusProfileId,

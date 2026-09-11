@@ -1,5 +1,18 @@
 use super::*;
 
+fn intern_reduced_functional<E: Field>(
+    cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
+    dimension: usize,
+    prepare: impl FnOnce() -> Result<ReducedRoleCoefficientState<E>, AkitaError>,
+) -> Result<ReducedRoleCoefficientState<E>, AkitaError> {
+    if let Some((_, prepared)) = cache.iter().find(|(cached, _)| *cached == dimension) {
+        return Ok(prepared.clone());
+    }
+    let candidate = prepare()?;
+    cache.push((dimension, candidate.clone()));
+    Ok(candidate)
+}
+
 impl<E: Field> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
@@ -227,7 +240,6 @@ impl<E: Field> SetupContributionPlan<E> {
                         segments: Vec::new().into(),
                         a_row_weights,
                         fold_gadget,
-                        direct_scan_weights: None,
                         active_unit_ranges,
                         num_physical_units,
                         d_tensors: Vec::new(),
@@ -293,7 +305,7 @@ impl<E: Field> SetupContributionPlan<E> {
             relation_base_bridge_point,
             relation_address_geometry,
             projection_geometry,
-            direct_scan_alpha: None,
+            direct_scan_state: DirectScanState::Unprepared,
         };
         plan.setup_index_tensors = plan.prepare_setup_index_tensors(witness_layout)?;
         Ok(plan)
@@ -301,128 +313,204 @@ impl<E: Field> SetupContributionPlan<E> {
 
     /// Materialize the derived column-weight and scan caches used only by the
     /// direct setup scan.
-    pub fn materialize_direct_scan(&mut self, alpha: E) -> Result<(), AkitaError> {
-        if self
-            .direct_scan_alpha
-            .is_some_and(|prepared| prepared != alpha)
-        {
-            return Err(AkitaError::InvalidInput(
-                "direct setup weights were prepared for a different alpha".into(),
-            ));
-        }
-        self.direct_scan_alpha = Some(alpha);
-        for group_index in 0..self.groups.len() {
-            if self
-                .groups
-                .get(group_index)
-                .is_some_and(|group| group.direct_scan_weights.is_some())
+    pub fn materialize_direct_scan(
+        &mut self,
+        functional: PreparedCoefficientFunctional<E>,
+    ) -> Result<(), AkitaError> {
+        match (&self.direct_scan_state, &functional) {
+            (DirectScanState::Unprepared, _) => {}
+            (
+                DirectScanState::Lifted {
+                    alpha: prepared, ..
+                },
+                PreparedCoefficientFunctional::LiftedPower { alpha },
+            ) if prepared == alpha => return Ok(()),
+            (
+                DirectScanState::Reduced {
+                    alpha: prepared_alpha,
+                    coefficient_point: prepared_point,
+                    ..
+                },
+                PreparedCoefficientFunctional::ReducedEvaluation {
+                    alpha,
+                    coefficient_point,
+                },
+            ) if prepared_alpha == alpha
+                && prepared_point.as_ref() == coefficient_point.as_ref() =>
             {
-                continue;
+                return Ok(())
             }
-            let (e, t, z) = {
-                let group = self
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "direct setup weights were prepared for a different coefficient functional"
+                        .into(),
+                ));
+            }
+        }
+        let mut reduced_functional_cache = Vec::new();
+        let maximum_functionals = checked::product([self.groups.len(), 3]).ok_or_else(|| {
+            AkitaError::InvalidSetup("direct setup functional count overflow".into())
+        })?;
+        reduced_functional_cache
+            .try_reserve_exact(maximum_functionals)
+            .map_err(|_| AkitaError::InvalidSetup("too many direct setup functionals".into()))?;
+        let prepared_state = match functional {
+            PreparedCoefficientFunctional::LiftedPower { alpha } => {
+                let groups = self
                     .groups
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                // `materialize_role_tensor_weights` already gates its own
-                // parallelism on this threshold per output length, so forking
-                // on the largest of the three keeps the outer decision on the
-                // same policy: below it every job stays sequential and
-                // `rayon::join` would only add scheduling cost.
-                const PARALLEL_THRESHOLD: usize = 1 << 14;
-                let largest_output = group
-                    .d_col_range
-                    .len()
-                    .max(group.physical_b.logical_input_width())
-                    .max(group.z_cols);
-                if largest_output >= PARALLEL_THRESHOLD {
-                    // Shared reborrow alongside group's sub-borrow; both are &T so
-                    // NLL allows them to coexist for parallel closure capture.
-                    let plan: &Self = self;
-                    let (e_res, (t_res, z_res)) = cfg_join!(
-                        || {
-                            let _span =
-                                tracing::info_span!("setup_materialize_e_weights").entered();
-                            plan.materialize_role_tensor_weights(
-                                group.d_relation_ratio,
-                                &group.d_tensors,
-                                group.d_col_range.len(),
-                                alpha,
-                            )
-                        },
-                        || cfg_join!(
-                            || {
-                                let _span =
-                                    tracing::info_span!("setup_materialize_t_weights").entered();
-                                plan.materialize_role_tensor_weights(
-                                    group.b_relation_ratio,
-                                    &group.physical_b.relation_tensors,
-                                    group.physical_b.logical_input_width(),
-                                    alpha,
-                                )
-                            },
-                            || {
-                                let _span =
-                                    tracing::info_span!("setup_materialize_z_weights").entered();
-                                plan.materialize_role_tensor_weights(
-                                    group.a_relation_ratio,
-                                    &group.a_tensors,
-                                    group.z_cols,
-                                    alpha,
-                                )
-                            }
+                    .iter()
+                    .map(|group| self.materialize_lifted_direct_scan_weights(group, alpha))
+                    .collect::<Result<Vec<_>, _>>()?;
+                DirectScanState::Lifted { alpha, groups }
+            }
+            PreparedCoefficientFunctional::ReducedEvaluation {
+                alpha,
+                coefficient_point,
+            } => {
+                let groups = self
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        self.materialize_reduced_direct_scan_weights(
+                            group,
+                            alpha,
+                            &coefficient_point,
+                            &mut reduced_functional_cache,
                         )
-                    );
-                    (e_res?, t_res?, z_res?)
-                } else {
-                    let e = {
-                        let _span = tracing::info_span!("setup_materialize_e_weights").entered();
-                        self.materialize_role_tensor_weights(
-                            group.d_relation_ratio,
-                            &group.d_tensors,
-                            group.d_col_range.len(),
-                            alpha,
-                        )?
-                    };
-                    let t = {
-                        let _span = tracing::info_span!("setup_materialize_t_weights").entered();
-                        self.materialize_role_tensor_weights(
-                            group.b_relation_ratio,
-                            &group.physical_b.relation_tensors,
-                            group.physical_b.logical_input_width(),
-                            alpha,
-                        )?
-                    };
-                    let z = {
-                        let _span = tracing::info_span!("setup_materialize_z_weights").entered();
-                        self.materialize_role_tensor_weights(
-                            group.a_relation_ratio,
-                            &group.a_tensors,
-                            group.z_cols,
-                            alpha,
-                        )?
-                    };
-                    (e, t, z)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                DirectScanState::Reduced {
+                    alpha,
+                    coefficient_point,
+                    groups,
                 }
-            };
-            let group = self
-                .groups
-                .get_mut(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            group.direct_scan_weights = Some(DirectScanWeights { e, t, z });
+            }
+        };
+        for (group_index, group) in self.groups.iter_mut().enumerate() {
+            let weights = prepared_state
+                .weights(group_index)
+                .ok_or_else(|| AkitaError::InvalidSetup("direct setup group is missing".into()))?;
             {
                 let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
                 group.refresh_segments(
+                    weights,
                     &self.d_weights,
                     self.d_rows,
                     self.d_physical_cols,
-                    group.a_ratio,
-                    group.b_ratio,
-                    group.d_ratio,
                 )?;
             }
         }
+        self.direct_scan_state = prepared_state;
         Ok(())
+    }
+
+    fn materialize_reduced_direct_scan_weights(
+        &self,
+        group: &SetupContributionGroupPlan<E>,
+        alpha: E,
+        coefficient_point: &[E],
+        cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
+    ) -> Result<ReducedDirectScanWeights<E>, AkitaError> {
+        let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_a(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
+        let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_b(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
+        let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_d(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
+        let evaluate_e = || {
+            self.materialize_reduced_role_tensor_weights(
+                group.d_relation_ratio,
+                group.role_dims.d_d(),
+                &group.d_tensors,
+                group.d_col_range.len(),
+            )
+        };
+        let evaluate_t = || {
+            self.materialize_reduced_role_tensor_weights(
+                group.b_relation_ratio,
+                group.role_dims.d_b(),
+                &group.physical_b.relation_tensors,
+                group.physical_b.logical_input_width(),
+            )
+        };
+        let evaluate_z = || {
+            self.materialize_reduced_role_tensor_weights(
+                group.a_relation_ratio,
+                group.role_dims.d_a(),
+                &group.a_tensors,
+                group.z_cols,
+            )
+        };
+        let (e, t, z) = materialize_three_roles(
+            group.d_col_range.len(),
+            group.physical_b.logical_input_width(),
+            group.z_cols,
+            evaluate_e,
+            evaluate_t,
+            evaluate_z,
+        )?;
+        Ok(ReducedDirectScanWeights {
+            weights: DirectScanWeights { e, t, z },
+            roles: [a_role, b_role, d_role],
+        })
+    }
+
+    fn materialize_lifted_direct_scan_weights(
+        &self,
+        group: &SetupContributionGroupPlan<E>,
+        alpha: E,
+    ) -> Result<DirectScanWeights<E>, AkitaError> {
+        let evaluate_e = || {
+            let _span = tracing::info_span!("setup_materialize_e_weights").entered();
+            self.materialize_role_tensor_weights(
+                group.d_relation_ratio,
+                &group.d_tensors,
+                group.d_col_range.len(),
+                alpha,
+            )
+        };
+        let evaluate_t = || {
+            let _span = tracing::info_span!("setup_materialize_t_weights").entered();
+            self.materialize_role_tensor_weights(
+                group.b_relation_ratio,
+                &group.physical_b.relation_tensors,
+                group.physical_b.logical_input_width(),
+                alpha,
+            )
+        };
+        let evaluate_z = || {
+            let _span = tracing::info_span!("setup_materialize_z_weights").entered();
+            self.materialize_role_tensor_weights(
+                group.a_relation_ratio,
+                &group.a_tensors,
+                group.z_cols,
+                alpha,
+            )
+        };
+        let (e, t, z) = materialize_three_roles(
+            group.d_col_range.len(),
+            group.physical_b.logical_input_width(),
+            group.z_cols,
+            evaluate_e,
+            evaluate_t,
+            evaluate_z,
+        )?;
+        Ok(DirectScanWeights { e, t, z })
     }
 
     /// Common-base packed-scan footprint.
@@ -442,6 +530,30 @@ impl<E: Field> SetupContributionPlan<E> {
     #[must_use]
     pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
         self.relation_address_geometry
+    }
+}
+
+fn materialize_three_roles<A, B, C>(
+    e_len: usize,
+    t_len: usize,
+    z_len: usize,
+    evaluate_e: impl FnOnce() -> Result<A, AkitaError> + Send,
+    evaluate_t: impl FnOnce() -> Result<B, AkitaError> + Send,
+    evaluate_z: impl FnOnce() -> Result<C, AkitaError> + Send,
+) -> Result<(A, B, C), AkitaError>
+where
+    A: Send,
+    B: Send,
+    C: Send,
+{
+    // Each tensor materializer owns its internal parallel threshold. Fork the
+    // independent role preparations only once their largest output is large.
+    const PARALLEL_THRESHOLD: usize = 1 << 14;
+    if e_len.max(t_len).max(z_len) >= PARALLEL_THRESHOLD {
+        let (e, (t, z)) = cfg_join!(evaluate_e, || cfg_join!(evaluate_t, evaluate_z));
+        Ok((e?, t?, z?))
+    } else {
+        Ok((evaluate_e()?, evaluate_t()?, evaluate_z()?))
     }
 }
 

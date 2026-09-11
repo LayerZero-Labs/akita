@@ -743,7 +743,10 @@ fn compact_affine_unit_families<E: Field>(
     Ok(compact)
 }
 
-fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
+pub(super) fn role_tensors_are_aligned<E: Field>(
+    tensors: &[EqPairTensorFamily<E>],
+    ratio: usize,
+) -> bool {
     ratio.is_power_of_two()
         && tensors.iter().all(|tensor| {
             tensor.right_offset.is_multiple_of(ratio)
@@ -754,7 +757,7 @@ fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: 
         })
 }
 
-fn factor_aligned_role_tensors<E: Field>(
+pub(super) fn factor_aligned_role_tensors<E: Field>(
     tensors: &mut [EqPairTensorFamily<E>],
     ratio: usize,
 ) -> Result<(), AkitaError> {

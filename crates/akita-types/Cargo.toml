@@ -3,13 +3,6 @@ name = "akita-types"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Shared protocol data types for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -26,11 +19,13 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+serde = { version = "1", features = ["derive"] }
 rayon = { version = "1.10", optional = true }
-blake2 = "0.10.6"
+blake2 = "0.11.0"
 num-traits = "0.2"
 rand_core = "0.6"
-sha3 = "0.10.8"
+sha3 = "0.12.0"
+shake = "0.1.0"
 tracing = "0.1"
 
 [features]
@@ -50,7 +45,7 @@ parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]

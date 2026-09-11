@@ -3,35 +3,29 @@ name = "akita-challenges"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Challenge sampling for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-aes = "0.8.4"
+aes = "0.9.3"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra", default-features = false }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+serde = { version = "1", features = ["derive"] }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-ctr = "0.9.2"
+ctr = "0.10.1"
 keccak = { version = "0.1.6", features = ["asm"] }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 tracing = "0.1"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-sha3 = "0.10.8"
+criterion = { version = "0.8", features = ["html_reports"] }
+shake = "0.1.0"
 
 [[bench]]
 name = "sparse_challenge"

@@ -6,8 +6,8 @@ use crate::validate_role_dispatch;
 use crate::witness::WitnessLayout;
 use crate::FpExtEncoding;
 use crate::{
-    embed_ring_subfield_scalar, r_decomp_levels, CommittedGroupParams, OpeningFamily,
-    RingMultiplierOpeningPoint, RingVec, SubringCoefficientPackingGeometry,
+    embed_ring_subfield_scalar, CommittedGroupParams, OpeningFamily, RingMultiplierOpeningPoint,
+    RingVec, SubringCoefficientPackingGeometry,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -602,13 +602,12 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         }
         // `EvaluationTrace` is a logical relation row used by Stage 2. It is
         // not materialized in the quotient witness's shared `r` tail.
-        let r_levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
         let layout = WitnessLayout::new(
             lp,
             &self.opening_batch,
             &relation_geometry,
             num_chunks,
-            r_levels,
+            crate::RelationQuotientPlan::for_field_bits(lp, F::MODULUS_BITS)?,
         )?;
         if let Some(capacity) = witness_coeff_len {
             if layout.live_coeff_len() > capacity {

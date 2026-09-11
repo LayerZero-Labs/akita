@@ -43,7 +43,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        inputs.depth_fold().unwrap(),
+        crate::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
     )
     .unwrap();
     let relation_geometry = inputs
@@ -64,7 +64,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.groups[0].column_eq_slices().unwrap().2, expected);
+    assert_eq!(plan.group_column_eq_slices(0).unwrap().2, expected);
 }
 
 #[test]
@@ -115,7 +115,14 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     let joint_geometry =
         crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, &joint_geometry, 1, 2).unwrap();
+    let witness_layout = WitnessLayout::new(
+        &lp,
+        &opening_batch,
+        &joint_geometry,
+        1,
+        crate::RelationQuotientPlan::quotient_lift(2).unwrap(),
+    )
+    .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
     let eq_tau1 = (0..rows.next_power_of_two())
         .map(|idx| test_scalar(11 + idx as u128))
@@ -247,6 +254,7 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     let alpha = test_scalar(3);
     let expected = span_evaluators::structured_slice_reference(
         &direct.groups[0],
+        direct.direct_scan_state.weights(0).unwrap(),
         &block_challenges,
         &opening_a_evals,
         alpha,

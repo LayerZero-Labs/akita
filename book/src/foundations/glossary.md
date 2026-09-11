@@ -10,7 +10,7 @@ Book. Individual chapters introduce each idea in more detail.
 | **Polynomial commitment scheme (PCS)** | A protocol that commits to a polynomial and later proves a claimed evaluation without sending the whole polynomial. |
 | **Multilinear polynomial** | A polynomial that has degree at most one in each variable. Its values on the Boolean cube determine it everywhere. |
 | **Evaluation table** | The values of a multilinear polynomial at all Boolean inputs. A polynomial in $n$ variables has a table of length $2^n$. |
-| **Commitment** | A short value that fixes the polynomial while hiding the full evaluation table from the verifier. |
+| **Commitment** | A short public value that binds the polynomial for later opening checks. This does not promise hiding; see Akita's [current privacy boundary](../roadmap/zero-knowledge.md). |
 | **Opening** | A proof that a committed polynomial evaluates to a claimed value at a specified point. |
 | **Opening claim** | The polynomial identity being proved: a commitment, an opening point, and the claimed value. |
 | **Commitment group** | One or more related commitments that are opened together under one generated schedule. |
@@ -28,7 +28,7 @@ Book. Individual chapters introduce each idea in more detail.
 | **Extension field** | A larger field used for opening points, claimed evaluations, and transcript challenges in some configurations. |
 | **Cyclotomic ring** | The quotient ring in which Akita's lattice commitments and fast polynomial arithmetic operate. |
 | **Dense polynomial** | A polynomial whose table positions may each contain an arbitrary field element. |
-| **One-hot polynomial** | A polynomial whose table has a single nonzero entry. Akita can use smaller schedules for this structure. |
+| **One-hot polynomial** | A polynomial whose table has at most one `1` in each consecutive chunk of `onehot_k` entries; all other entries are zero. An all-zero chunk is allowed. Akita can use smaller schedules for this structure. |
 | **Gadget decomposition** | Writing a field or ring value as a short vector of bounded signed digits in a power-of-two base. |
 | **Module-SIS** | The lattice assumption used to bind Akita commitments. Informally, it says that finding a short nonzero relation among the public commitment columns is hard. |
 | **Sum-check** | An interactive reduction that turns a sum over a Boolean cube into one polynomial evaluation at a random point. |
@@ -38,7 +38,7 @@ Book. Individual chapters introduce each idea in more detail.
 
 ## Scalar and grouped catalog rows
 
-A generated catalog ships one row for each supported request shape.
+A trusted external catalog ships one row for each supported request shape.
 
 - A **scalar row** describes a polynomial group opened without precommitted
   groups. An independent commitment always uses this row, including a
@@ -48,8 +48,8 @@ A generated catalog ships one row for each supported request shape.
   this row.
 
 Each precommitted descriptor in a grouped row must equal the scalar-row profile
-under which that commitment was produced. The generated-catalog audit test
-`every_grouped_precommitted_descriptor_has_a_generated_producer` enforces this
+under which that commitment was produced. The external-catalog audit test
+`every_grouped_artifact_precommit_has_a_shipped_scalar_producer` enforces this
 invariant.
 
 ## Notation

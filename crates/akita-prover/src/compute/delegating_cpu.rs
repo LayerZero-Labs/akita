@@ -117,6 +117,14 @@ macro_rules! delegate_compression {
             ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError> {
                 CpuBackend::DEFAULT.compression_rows_products(prepared, digit_vectors)
             }
+
+            fn compression_negacyclic_rows<const D: usize>(
+                &self,
+                prepared: &Self::PreparedSetup,
+                digit_vectors: &[&[[i8; D]]],
+            ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+                CpuBackend::DEFAULT.compression_negacyclic_rows(prepared, digit_vectors)
+            }
         }
     };
 }

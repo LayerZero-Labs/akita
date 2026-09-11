@@ -13,7 +13,7 @@ use jolt_field::Field;
 /// This is commitment identity, not an opening policy. In particular, changing
 /// [`crate::OpeningMethod`] cannot reinterpret an existing commitment between
 /// these encodings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CommittedSourceEncoding {
     /// The source's canonical base-field coefficient table.
     CanonicalCoefficientTable,
@@ -80,7 +80,7 @@ impl CommittedSourceEncoding {
 }
 
 /// Root layout metadata frozen when a standalone commitment group is created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GroupCommitPhaseParams {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
@@ -371,7 +371,7 @@ impl GroupCommitPhaseParams {
 /// Openings without precommitted groups use an empty `precommitteds` vector and
 /// store their only group in `final_group`. Multi-group roots list earlier
 /// groups in `precommitteds` and the final group in `final_group`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
@@ -379,13 +379,16 @@ pub struct AkitaScheduleLookupKey {
     pub precommitteds: Vec<GroupCommitPhaseParams>,
 }
 
+/// Allocation-cached ordering key for deterministic schedule lookup and emission.
+pub type AkitaScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>);
+
 /// A non-empty ordered prefix of groups committed before a final group.
 ///
 /// The type is non-empty by construction, so a grouped commitment context
 /// cannot describe "no precommitted groups" — that state has its own spelling in
 /// `PrecommittedGroupContext::NoPrecommittedGroups`. Both constructors reject an empty
 /// input, which is why building a grouped context is infallible.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrecommittedGroupProfiles {
     profiles: Vec<GroupCommitPhaseParams>,
 }
@@ -447,6 +450,19 @@ impl AkitaScheduleLookupKey {
             descriptor.append_descriptor_bytes(&mut bytes);
         }
         bytes
+    }
+
+    /// Canonical ordering key, computed once before sorting or binary search.
+    pub fn canonical_order_key(&self) -> AkitaScheduleLookupOrderKey {
+        (
+            self.final_group.num_vars(),
+            self.final_group.num_polynomials(),
+            self.precommitteds.len(),
+            self.precommitteds
+                .iter()
+                .map(GroupCommitPhaseParams::canonical_descriptor_bytes)
+                .collect(),
+        )
     }
 
     /// Build a multi-group opening layout from this schedule lookup key.
@@ -587,7 +603,7 @@ mod source_encoding_tests {
 }
 
 /// Exact ordered committed profiles used to resolve a verifier-approved row.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CommittedGroupBatchProfile {
     /// Final/new commitment group.
     pub final_group: GroupCommitPhaseParams,

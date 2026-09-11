@@ -132,10 +132,11 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
     pub(super) fn with_compression_ntt<const D: usize, R>(
         &self,
         input_width: usize,
+        domains: super::compression_cache::CompressionNttDomains,
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         self.compression_ntt
-            .with_ntt(self.expanded.as_ref(), input_width, f)
+            .with_ntt(self.expanded.as_ref(), input_width, domains, f)
     }
 
     /// In-memory byte footprint of all shared setup NTT caches.

@@ -150,13 +150,18 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
 macro_rules! strict_decode_and_verify {
     ($blob:expr, $field:ty, $cfg:ty, $d:expr) => {{
         type CaseExt = <$cfg as CommitmentConfig>::ExtField;
-        let decoded = AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>($blob)
-            .map_err(|err| format!("strict input decode failed: {err}"))?;
+        let (schedules, inner_blob) =
+            akita_recursion_glue::split_schedule_catalog::<$cfg>($blob)
+                .map_err(|err| format!("trusted schedule catalog failed: {err}"))?;
+        let decoded =
+            AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>(inner_blob, &schedules)
+                .map_err(|err| format!("strict input decode failed: {err}"))?;
         let mut transcript =
             AkitaTranscript::<$field>::unbound_verifier(&decoded.transcript_domain);
         batched_verify::<$cfg, _>(
             &decoded.proof,
             &decoded.verifier_setup,
+            &schedules,
             &mut transcript,
             decoded
                 .verifier_statement()
@@ -164,14 +169,15 @@ macro_rules! strict_decode_and_verify {
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
-        decoded
+        (decoded, schedules)
     }};
 }
 
 macro_rules! strict_fp128_preflight {
     ($blob:expr, $cfg:ty) => {{
-        let decoded = strict_decode_and_verify!($blob, fp128::Field, $cfg, 512);
-        let resolved = <$cfg>::resolve_schedule_selection(decoded.schedule_selection)
+        let (decoded, schedules) = strict_decode_and_verify!($blob, fp128::Field, $cfg, 512);
+        let resolved = schedules
+            .resolve_selection(decoded.schedule_selection)
             .map_err(|err| format!("strict schedule resolution failed: {err}"))?;
         let cache = build_riscv64_terminal_ntt_cache(
             &decoded.verifier_setup,
@@ -191,6 +197,7 @@ macro_rules! strict_fp128_preflight {
         batched_verify::<$cfg, _>(
             &decoded.proof,
             &decoded.verifier_setup,
+            &schedules,
             &mut cached_transcript,
             decoded
                 .verifier_statement()
@@ -215,11 +222,13 @@ fn strict_host_preflight(case: AkitaJoltCase, blob: &[u8]) -> Result<Option<Vec<
     info!(%case, "strictly decoding and verifying verifier-input blob before benchmark replay");
     match case {
         AkitaJoltCase::OneHotFp32 => {
-            let _decoded = strict_decode_and_verify!(blob, fp32::Field, fp32::OneHot, 2048);
+            let (_decoded, _schedules) =
+                strict_decode_and_verify!(blob, fp32::Field, fp32::OneHot, 2048);
             Ok(None)
         }
         AkitaJoltCase::OneHotFp64 => {
-            let _decoded = strict_decode_and_verify!(blob, fp64::Field, fp64::OneHot, 512);
+            let (_decoded, _schedules) =
+                strict_decode_and_verify!(blob, fp64::Field, fp64::OneHot, 512);
             Ok(None)
         }
         AkitaJoltCase::OneHotFp128Direct => {

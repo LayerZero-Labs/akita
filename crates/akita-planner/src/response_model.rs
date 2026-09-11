@@ -14,7 +14,7 @@
 //! Markov interpretation once that envelope bounds the conditional mean.
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::{compute_num_digits_field_width, HonestFoldPolicySpec};
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -421,6 +421,7 @@ fn centered_residue(value: i64, basis: i64) -> i64 {
     }
 }
 
+#[cfg(test)]
 fn normal_cdf(value: f64) -> f64 {
     0.5 * (1.0 + libm::erf(value / core::f64::consts::SQRT_2))
 }
@@ -512,14 +513,18 @@ fn rounded_normal_digit_second_moment(sigma: f64, basis: i64) -> f64 {
 
     let radius = (8.0 * sigma + 0.5).ceil() as i64;
     let mut moment = 0.0;
-    let mut lower_cdf = normal_cdf((-radius as f64 - 0.5) / sigma);
-    for value in -radius..=radius {
-        let upper = (value as f64 + 0.5) / sigma;
-        let upper_cdf = normal_cdf(upper);
-        let probability = upper_cdf - lower_cdf;
+    // The rounded centered normal and squared balanced residue are both even.
+    // Walk only positive buckets and evaluate their combined two-sided mass
+    // with the upper tail. Besides halving the software-erf work, `erfc(a) -
+    // erfc(b)` avoids subtracting two values near one in the positive tail.
+    let tail_scale = sigma * core::f64::consts::SQRT_2;
+    let mut lower_tail = libm::erfc(0.5 / tail_scale);
+    for value in 1..=radius {
+        let upper_tail = libm::erfc((value as f64 + 0.5) / tail_scale);
+        let probability = lower_tail - upper_tail;
         let digit = centered_residue(value, basis) as f64;
         moment += probability * digit * digit;
-        lower_cdf = upper_cdf;
+        lower_tail = upper_tail;
     }
     moment
 }
@@ -670,6 +675,7 @@ pub(crate) fn root_group_source_moments(
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
     let field_bits = decomposition.field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
+    params.validate_opening_batch(opening_layout)?;
     if precommitted_policies.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
             "root response model requires one policy per precommitted group".into(),
@@ -678,7 +684,16 @@ pub(crate) fn root_group_source_moments(
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
     for group_index in 0..opening_layout.num_groups() {
         let group_layout = *opening_layout.group_layout(group_index)?;
-        let group_params = params.group_params_geometry(opening_layout, group_index)?;
+        // Validate the grouped batch once above, then resolve each source view
+        // directly. The public group accessor would revalidate every group for
+        // every root candidate.
+        let group_params = if group_index == final_group_index {
+            params.final_group()
+        } else {
+            *params
+                .preceding_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
         let policy = if group_index == final_group_index {
@@ -777,7 +792,6 @@ pub(crate) fn next_source_moment(
             "response source moments disagree with the opening groups".into(),
         ));
     }
-    let quotient_depth = compute_num_digits_field_width(field_bits, params.open().digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
@@ -785,13 +799,23 @@ pub(crate) fn next_source_moment(
         opening_layout,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        quotient_depth,
+        akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?,
     )?;
     let mut logical_components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
+    let final_group_index = opening_layout.root_final_group_index()?;
 
     for unit in layout.units() {
         let group_index = unit.group_index();
-        let group_params = params.group_params_geometry(opening_layout, group_index)?;
+        // Relation and witness geometry construction already validated the
+        // complete opening batch. Resolve the group directly here instead of
+        // repeating that validation for every group-and-chunk unit.
+        let group_params = if group_index == final_group_index {
+            params.final_group()
+        } else {
+            *params
+                .preceding_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let group_source = source_groups
             .get(group_index)
             .copied()
@@ -881,16 +905,18 @@ pub(crate) fn next_source_moment(
         }
     }
 
-    for row in layout.r_rows() {
-        let scalar_count = row.range().len() / quotient_depth;
-        if scalar_count != 0 {
-            let (energy, peak) = field_digit_moments(
-                scalar_count,
-                field_bits,
-                params.open().digits.log_basis,
-                quotient_depth,
-            )?;
-            checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;
+    if let Some(quotient_depth) = layout.quotient_depth() {
+        for row in layout.r_rows() {
+            let scalar_count = row.range().len() / quotient_depth;
+            if scalar_count != 0 {
+                let (energy, peak) = field_digit_moments(
+                    scalar_count,
+                    field_bits,
+                    params.open().digits.log_basis,
+                    quotient_depth,
+                )?;
+                checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;
+            }
         }
     }
 

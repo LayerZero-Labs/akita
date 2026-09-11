@@ -7,7 +7,9 @@ use akita_types::{
     golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
     wire_rice_low_bits, TailSegmentGroupLayout,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 const COORDINATES: usize = 1 << 14;
 const CAP: u128 = i16::MAX as u128;

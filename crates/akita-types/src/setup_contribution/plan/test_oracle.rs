@@ -22,8 +22,12 @@ impl<E: Field> SetupContributionPlan<E> {
                 setup
                     .shared_matrix
                     .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
-            for group in &self.groups {
-                let (e_eq_slice, _, _) = group.require_column_eq_slices()?;
+            for (group_index, group) in self.groups.iter().enumerate() {
+                let (e_eq_slice, _, _) = self
+                    .direct_scan_state
+                    .weights(group_index)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .slices();
                 for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
                         continue;
@@ -40,8 +44,12 @@ impl<E: Field> SetupContributionPlan<E> {
             }
         }
 
-        for group in &self.groups {
-            let (_, _t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
+        for (group_index, group) in self.groups.iter().enumerate() {
+            let direct = self
+                .direct_scan_state
+                .weights(group_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (_, _t_eq_slice, z_eq_slice) = direct.slices();
             let a_view = setup
                 .shared_matrix
                 .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
@@ -64,10 +72,6 @@ impl<E: Field> SetupContributionPlan<E> {
                 group.physical_b.physical_input_width(),
                 d_b,
             )?;
-            let direct = group
-                .direct_scan_weights
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?;
             let b_setup_weights = group
                 .physical_b
                 .contract_logical_column_weights(&direct.t)?;

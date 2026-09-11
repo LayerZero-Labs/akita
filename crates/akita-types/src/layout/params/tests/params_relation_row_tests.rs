@@ -120,8 +120,14 @@ fn relation_rhs_row_count_matches_level_params() {
             RelationRowFamily::CompressionH { map_index: 1, .. }
         ]
     ));
-    let witness_layout =
-        WitnessLayout::new(&lp, &batch, &joint_geometry, 1, 2).expect("witness layout");
+    let witness_layout = WitnessLayout::new(
+        &lp,
+        &batch,
+        &joint_geometry,
+        1,
+        crate::RelationQuotientPlan::quotient_lift(2).unwrap(),
+    )
+    .expect("witness layout");
     let relation_geometry = lp
         .relation_address_geometry(&batch, 1, lp.d_a(), witness_layout.live_coeff_len())
         .expect("A/B/D geometry");

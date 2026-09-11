@@ -1,13 +1,26 @@
 # Semantic relations in an Akita fold
 
-This page derives the four ring-valued semantic relation families proved by
-one non-terminal Akita fold. The presentation starts with one polynomial
-group, one opening claim, and one common ring dimension for the four source
-relations:
+This page derives the semantic relations proved by one non-terminal Akita
+fold. The central question is the second correctness obligation from the
+previous page: **are the method-selected partial evaluations consistent with
+the same incoming polynomial that is being folded?**
+
+The presentation starts with one polynomial group and one opening claim. The
+commitment relations use the ordinary source ring
 
 $$
 R=F[X]/(X^D+1).
 $$
+
+The opening-consistency relation has two method-dependent geometries:
+
+- `EvaluationTrace` keeps a full ring partial and proves the relation in $R$.
+- `SubringCoefficientPacking` keeps $s$ extension-field coefficients, proves
+  the corresponding relation in the challenge subring, and embeds the same
+  sparse challenge into $R$ for the source fold.
+
+The other three semantic roles—inner-commitment, outer-commitment, and
+opening-commitment consistency—are unchanged by that choice.
 
 The current implementation also supports more elaborate physical layouts.
 These include commitment groups, witness chunks, and different ordinary
@@ -19,20 +32,12 @@ The [raw and compressed realizations](./akita-fold-realizations.md) use the same
 semantic relations;
 the compression realization introduces its own smaller ring dimensions.
 
-The four equations below are the semantic source relations. The current
+The four families below are the semantic source relations. The current
 implementation realizes the $\mathbf B$ and $\mathbf D$ commitment relations
 either by transmitting their semantic commitments as raw payloads or by
 binding those commitments to smaller terminal payloads through compression
 relations. This choice changes their physical realization, not the four
 semantic constraints derived here.
-
-The opening method is an independent choice. The common-ring equations below
-describe the `EvaluationTrace` realization directly. A
-`SubringCoefficientPacking` fold expresses its consistency relation in the
-challenge subring with extension-coordinate planes and embeds the same sparse
-challenge into the A ring. See [Root fold and ring
-switch](./root-fold-ring-switch.md). This changes the relation geometry, not
-the commitment statements or the four semantic roles.
 
 The goal of the fold is to replace the current polynomial blocks by a smaller
 digit witness while proving that the new witness is consistent with:
@@ -43,9 +48,10 @@ digit witness while proving that the new witness is consistent with:
 
 These statements form the semantic core of the **physical ring relation**.
 The scalar evaluation claim from [Field-to-ring evaluation
-reduction](./field-ring-reduction.md) is a separate field-valued relation. It
-is fused with the physical rows later, but it is not one of the four
-ring-valued semantic relation families derived on this page.
+reduction](./field-ring-reduction.md) is a separate field-valued relation.
+Each opening method supplies its own public linear map from opening digits to
+that scalar. This page instead proves the source-consistency relation that
+justifies those digits. The scalar row and physical rows are fused later.
 
 ## Contents
 
@@ -292,12 +298,39 @@ $$
 
 Here $\mathbf D$ commits to the digit-decomposed partial evaluations.
 
-Equations (5) to (7) show the evaluation trace shape, where each partial is a
-full ring element. At packing levels, Akita first splits the ring coefficient
-index and contracts its low part. The resulting partial has `k s` base field
-coordinates instead of `d_A`. See
-[Subring coefficient packing](./root-fold-ring-switch.md#subring-coefficient-packing)
-for that layout and the relation that connects it to the folded source.
+Equations (5) to (7) show the `EvaluationTrace` shape, where each partial is a
+full ring element. With `SubringCoefficientPacking`, the previous page instead
+splits the source coefficient index as
+
+$$
+\ell=u+k\eta j,
+\qquad
+u\in[k\eta],
+\qquad
+j\in[s],
+$$
+
+contracts $u$, and retains $j$. The resulting partial is
+
+$$
+e_b(U)=\sum_{j=0}^{s-1}e_{b,j}U^j
+\in C:=E[U]/(U^s+1).
+$$
+
+Writing each $E$-coefficient in the canonical basis
+$\beta_0,\ldots,\beta_{k-1}$ gives $ks=D/\eta$ base-field coordinates:
+
+$$
+e_{b,j}=\sum_{t=0}^{k-1}\beta_t e_{b,t,j},
+\qquad
+e_{b,t,j}=\sum_dG_d^{\mathrm{open}}\hat e_{b,d,t,j}.
+$$
+
+Thus the two methods create different opening-digit layouts, but in both cases
+$\mathbf D\hat{\mathbf e}=\mathbf v_D$ binds the newly derived digits. The
+[scalar derivation](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
+already showed how the packed coordinates recombine into the original opening
+claim. The next subsection proves that they came from the folded source.
 
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
 the scalar opening target $v$ and its method-selected field relation. Equation
@@ -308,8 +341,12 @@ scalar evaluation claim.
 
 The semantic opening commitment $\mathbf v_D$ commits the prover to
 $\hat{\mathbf e}$. It does not by itself show that the corresponding partial
-evaluations were computed from the incoming polynomial blocks. For every block
-$b$, correctness requires
+evaluations were computed from the incoming polynomial blocks. That missing
+link is method-dependent.
+
+#### Evaluation-trace consistency
+
+For `EvaluationTrace`, correctness in every block $b$ requires
 
 $$
 \boxed{
@@ -387,10 +424,135 @@ random combination. Thus the challenges remove the block index while
 preserving the two links from the incoming witness: one to the partial
 evaluations created in this fold, and one to the commitment that entered it.
 
+#### Subring-coefficient-packing consistency
+
+Recall the coefficient-table index split
+
+$$
+\ell=u+k\eta j,
+\qquad
+u\in[k\eta],
+\qquad
+j\in[s].
+$$
+
+Here $\ell$ (read "ell") is only the flat coefficient index in the A ring:
+$u$ selects a column and $j$ selects a row. The packed partial has already
+taken the same weighted sum across the $u$ columns of every row. It keeps the
+$j$ rows, so the fold challenge must act on those rows without mixing the
+already-contracted column axis. This is why it is sampled from
+
+$$
+S=F[U]/(U^s+1).
+$$
+
+We use two linear maps. The first symbol below is $\iota$ (Greek "iota",
+not the index $\ell$). It embeds a row operation from $S$ into the source ring
+$R$:
+
+$$
+\iota:S\hookrightarrow R,
+\qquad
+\iota(U)=X^{k\eta}.
+$$
+
+The second map, $L$, is the public packing map from one source-block vector to
+$C=E[U]/(U^s+1)$. For any vector
+$\mathbf y=(y_{p,a})_{p,a}$ with the same shape as $\mathbf s_b$, define
+
+$$
+L(\mathbf y)(U)
+=
+\sum_{j=0}^{s-1}
+\left(
+\sum_{p,a,u}
+Q_pG_a^{\mathrm{in}}I_u^{\mathrm{pack}}
+[y_{p,a}]_{u+k\eta j}
+\right)U^j.
+$$
+
+Thus $L$ first recomposes the inner digits with $G_a^{\mathrm{in}}$, then
+contracts the position axis $p$ and the column axis $u$, while leaving one
+output coefficient for every row $j$. Together with the definition of $e_b$
+above, Equation (1) gives $L(\mathbf s_b)=e_b$. The intuition is now simple:
+$\iota$ moves rows, while $L$ compresses each row.
+For example, take $D=8$, $k=2$, $\eta=2$, and $s=2$. The source table has two
+rows of width four. In this picture, $a_u$ and $b_u$ already include the
+position sum over $p$ and the inner-digit recomposition over $a$:
+
+~~~text
+       u = 0   1   2   3       after applying L
+j = 0     a0  a1  a2  a3  ----------------------> e0
+j = 1     b0  b1  b2  b3  ----------------------> e1
+~~~
+
+Both rows use the same packing weights, so
+
+$$
+e_0=\sum_{u=0}^{3}I_u^{\mathrm{pack}}a_u,
+\qquad
+e_1=\sum_{u=0}^{3}I_u^{\mathrm{pack}}b_u.
+$$
+
+Since $\iota(U)=X^4$, multiplying in $R$ moves the first row to the second and
+wraps the second row back with a minus sign. Thus $(a,b)$ becomes $(-b,a)$.
+Applying $L$ after this move gives $-e_1+e_0U$. Applying $L$ first gives
+$e_0+e_1U$, and multiplying by $U$ in $C$ gives the same result because
+$U^2=-1$:
+
+$$
+L(\iota(U)\mathbf s)
+=
+-e_1+e_0U
+=
+U(e_0+e_1U)
+=
+UL(\mathbf s).
+$$
+
+Because any $c(U)\in S$ is a linear combination of these row shifts, the same
+commuting identity holds for every challenge:
+
+$$
+\boxed{
+L\!\left(\iota(c)\mathbf s\right)=cL(\mathbf s).
+}
+\tag{9c}
+$$
+
+The transcript draws one $c_b\in S$ per live block and the prover forms
+
+$$
+\mathbf z
+=
+\sum_b\iota(c_b)\mathbf s_b
+\tag{9d}
+$$
+
+Linearity and Equation (9c) then give the packed source-consistency identity
+
+$$
+\boxed{
+L(\mathbf z)
+=
+\sum_b c_be_b
+\quad\text{in }C.
+}
+\tag{9e}
+$$
+
+The same embedded challenges $\iota(c_b)$ are used in the inner-commitment
+identity $\sum_b\iota(c_b)\mathbf t_b=\mathbf A\mathbf z$. There is no
+second challenge draw for the A relation. This shared challenge is what makes
+the packed partial and the source fold describe the same random combination
+of blocks.
+
 This compression has an arithmetic cost: combining the blocks increases
 coefficient magnitudes. Let $\sigma_\infty$ bound the coefficient norm of
 every digit block $\mathbf s_b$, and let
-$\omega=\max_b\lVert c_b\rVert_1$. Negacyclic multiplication gives
+$\omega=\max_b\lVert c_b\rVert_1$, using $c_b$ itself for
+`EvaluationTrace` and its sparse embedding $\iota(c_b)$ for packing.
+Negacyclic multiplication gives
 
 $$
 \begin{aligned}
@@ -411,8 +573,8 @@ the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
 honest prover find a compact response; the range check on its committed digits
 is what certifies the bound in the protocol.
 
-Equations (9a) and (9b) are identities among the recomposed values; they do not
-yet use the opening digits $\hat{\mathbf e}$, the outer digits
+Equations (9a), (9b), and (9e) are identities among recomposed values; they do
+not yet use the opening digits $\hat{\mathbf e}$, the outer digits
 $\hat{\mathbf t}$, or bounded digits for $\mathbf z$. The next-level committed
 witness contains digit rings rather than $\mathbf z$ itself so that its
 shortness is certified for the Module-SIS binding argument. Akita therefore
@@ -448,28 +610,27 @@ They have different origins:
 
 Equation (11) specifies how the three digit segments are assembled, but it
 does not impose any algebraic relation among them. Substituting the balanced
-recompositions from Equations (3), (6), and (10) into the recomposed identities
-(9a) and (9b) gives two relations among the private witness segments.
-Equations (4) and (7) provide two additional relations that define the
-semantic commitments $\mathbf u$ and $\mathbf v_D$ computed by $\mathbf B$
-and $\mathbf D$, respectively. Together, these give four families of linear
-equations over
+recompositions into the identities above gives two relations among the private
+witness segments. Equations (4) and (7) provide two additional relations that
+define the semantic commitments $\mathbf u$ and $\mathbf v_D$ computed by
+$\mathbf B$ and $\mathbf D$, respectively. Together, these give four semantic
+roles. Three are ordinary ring relations over
 
 $$
 R=F[X]/(X^D+1).
 $$
 
-Every sum, product, and equality in this section is computed in $R$; vector
-equations are interpreted coordinatewise in $R$. The first two families
-connect the private witness segments to one another. The last two define the
-semantic commitments $\mathbf u$ and $\mathbf v_D$.
+The opening-consistency family is also over $R$ for `EvaluationTrace`; for
+packing, it is over $C=E[U]/(U^s+1)$ and is later realized through coordinate
+planes. Vector equations are interpreted coordinatewise in their stated ring.
+The first two families connect private witness segments to one another. The
+last two define the semantic commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
-Equation (9a) is the fold-evaluation identity among the recomposed values. To
-express it in terms of the next-fold witness, substitute the balanced digit
-representations of $E_b$ from Equation (6) and $\mathbf z$ from Equation (10).
-This gives the fold-evaluation consistency relation
+For `EvaluationTrace`, Equation (9a) is the fold-evaluation identity among the
+recomposed values. Substitute the balanced digit representations of $E_b$
+from Equation (6) and $\mathbf z$ from Equation (10) to obtain
 
 $$
 \boxed{
@@ -479,13 +640,51 @@ c_bG_h^{\mathrm{open}}\hat e_{b,h}
 \sum_{p,a,f}
 Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
-\tag{12}
+\tag{12a}
 $$
 
 This relation uses the random fold challenges $c_b$, not the block-opening weights
 $B_b$. The latter belong to the separate field-valued evaluation relation on
 $\hat{\mathbf e}$. In particular, this ring relation does not contain the
 scalar target $v_{\mathrm{tr}}$.
+
+For `SubringCoefficientPacking`, substitute the packed opening-digit
+recomposition and Equation (10) into Equation (9e):
+
+$$
+\boxed{
+\sum_b c_b(U)
+\sum_{j,t,d}\beta_tG_d^{\mathrm{open}}
+\hat e_{b,d,t,j}U^j
+=
+L\!\left(
+\left(
+\sum_fG_f^{\mathrm{fold}}
+\hat z_{p,a,f}
+\right)_{p,a}
+\right)(U).
+}
+\tag{12b}
+$$
+
+The outer $(\cdot)_{p,a}$ is essential: it reconstructs each coordinate
+$z_{p,a}$ separately before $L$ applies the position weights $Q_p$, the inner
+gadget weights $G_a^{\mathrm{in}}$, and the packing weights
+$I_u^{\mathrm{pack}}$. Equivalently, the right-hand side is
+
+$$
+\sum_{j,p,a,u,f}
+Q_pG_a^{\mathrm{in}}I_u^{\mathrm{pack}}G_f^{\mathrm{fold}}
+[\hat z_{p,a,f}]_{u+k\eta j}U^j.
+$$
+
+This is the same semantic obligation in the smaller geometry: the packed
+partials on the left and the packed folded source on the right must agree.
+The expression is one logical $C$-valued relation. Its physical realization
+uses $k$ extension-coordinate planes. The packed E/Q contributions enter the
+common relation-weight factorization, while the folded-source contribution is
+a separate packing-Z Stage-2 term. Together they realize one protocol claim,
+not $k$ independent claims.
 
 ### 2. Inner-commitment consistency
 
@@ -504,6 +703,10 @@ A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 }
 \tag{13}
 $$
+
+For packing, every $c_b$ in Equation (13) denotes the embedded element
+$\iota(c_b)\in R$. Thus Equations (12b) and (13) use the same
+transcript challenge in their respective native geometries.
 
 There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (13):
 $\mathbf A$ already acts on the inner digit vector $\mathbf s_b$, whose
@@ -567,4 +770,5 @@ but they do not yet determine which commitment values are transmitted, which
 additional witness segments are required, or which native-ring rows appear in
 the proved matrix relation. [Raw and compressed realizations of an Akita
 fold](./akita-fold-realizations.md) makes those choices explicit while
-preserving Equations (12)--(15) as their common semantic source.
+preserving the method-selected Equation (12a) or (12b) together with
+Equations (13)--(15) as their semantic source.

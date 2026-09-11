@@ -30,5 +30,39 @@ pub(crate) fn run_timings<S, P, F>(
             panic!("[{label}] {failure_context} {verify_mode} verification failed: {error}");
         }
         report_timing(label, &format!("verify {verify_mode} OK"), elapsed_s);
+
+        let (phase_result, measurements) = crate::relation_phase_timing::capture(|| {
+            let statement = prepare();
+            if single_threaded {
+                pools.in_verify_single(|| verify(statement))
+            } else {
+                pools.in_verify_multi(|| verify(statement))
+            }
+        });
+        if let Err(error) = phase_result {
+            panic!("[{label}] {failure_context} {verify_mode} phase replay failed: {error}");
+        }
+        assert!(
+            measurements
+                .iter()
+                .any(|measurement| measurement.phase == "complete_stage2"),
+            "[{label}] {verify_mode} phase replay produced no Stage-2 samples"
+        );
+        for measurement in measurements {
+            let mean_elapsed_nanos = measurement
+                .elapsed_nanos
+                .checked_div(measurement.calls)
+                .unwrap_or(0);
+            tracing::info!(
+                label,
+                verify_mode,
+                relation_mode = measurement.relation_mode,
+                phase = measurement.phase,
+                calls = measurement.calls,
+                mean_elapsed_nanos,
+                total_elapsed_nanos = measurement.elapsed_nanos,
+                "verifier relation phase timing"
+            );
+        }
     }
 }

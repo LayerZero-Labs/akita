@@ -355,7 +355,16 @@ where
     .into_iter()
     .map(E::lift_base)
     .collect::<Vec<_>>();
-    if quotient_gadget.len() != inputs.relation_plan.witness_layout().quotient_depth() {
+    let quotient_depth = inputs
+        .relation_plan
+        .witness_layout()
+        .quotient_depth()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "coefficient packing requires a quotient-lift witness layout".into(),
+            )
+        })?;
+    if quotient_gadget.len() != quotient_depth {
         return Err(AkitaError::InvalidSetup(
             "packing quotient depth disagrees with witness layout".into(),
         ));
@@ -457,11 +466,8 @@ where
         s.div_ceil(d_d),
     ])
     .ok_or_else(|| AkitaError::InvalidSetup("coefficient-packing E event count overflow".into()))?;
-    let q_event_capacity = checked::product([
-        inputs.relation_plan.witness_layout().quotient_depth(),
-        geometry.extension_degree(),
-    ])
-    .ok_or_else(|| {
+    let q_event_capacity = checked::product([quotient_gadget.len(), geometry.extension_degree()])
+        .ok_or_else(|| {
         AkitaError::InvalidSetup("coefficient-packing quotient event count overflow".into())
     })?;
     let event_capacity = e_event_capacity

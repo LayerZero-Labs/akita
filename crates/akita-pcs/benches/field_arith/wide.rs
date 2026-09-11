@@ -1,4 +1,6 @@
-use criterion::{black_box, Criterion};
+use std::hint::black_box;
+
+use criterion::Criterion;
 use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 

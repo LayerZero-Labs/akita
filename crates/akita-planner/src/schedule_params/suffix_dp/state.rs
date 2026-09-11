@@ -54,6 +54,7 @@ enum GrindingSuccessorKey {
     Terminal {
         d_a: usize,
         opening_vars: usize,
+        live_blocks: u64,
     },
 }
 
@@ -78,6 +79,11 @@ impl ParentObservableKey {
                 grinding_successor: GrindingSuccessorKey::Terminal {
                     d_a: terminal.d_a(),
                     opening_vars: terminal.recursive_opening_num_vars()?,
+                    live_blocks: u64::try_from(terminal.blocks.live_blocks).map_err(|_| {
+                        AkitaError::InvalidSetup(
+                            "terminal live-block count exceeds grinding query width".into(),
+                        )
+                    })?,
                 },
             });
         };
@@ -112,16 +118,15 @@ pub(super) struct ScheduleMemoKey {
     pub(super) current_witness_len: usize,
     pub(super) current_lb: u32,
     pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    pub(super) incoming_setup_prefix: Option<usize>,
     pub(super) d_a: usize,
     pub(super) d_b: usize,
     pub(super) d_d: usize,
-    pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(super) topology: SuffixTopology,
 }
 
 impl ScheduleMemoKey {
     const fn is_direct(self) -> bool {
-        self.incoming_setup_prefix.is_none()
+        self.topology.incoming_setup_prefix().is_none()
     }
 }
 
@@ -197,7 +202,12 @@ impl ScheduleMemo {
         })
     }
 
-    pub(super) fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
+    pub(super) fn insert(
+        &mut self,
+        key: ScheduleMemoKey,
+        result: Arc<SuffixResult>,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
+    ) {
         if let Entry::Occupied(mut existing) = self.entries.entry(key) {
             existing.insert(MemoEntry {
                 result,
@@ -227,6 +237,13 @@ impl ScheduleMemo {
                 referenced: false,
             },
         );
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_memo_occupancy(
+                self.entries.len(),
+                self.direct_insertion_order.len(),
+                self.prefixed_insertion_order.len(),
+            );
+        }
     }
 
     pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
@@ -254,9 +271,20 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    /// Optional exact main-group root selected by an earlier scalar plan.
+    ///
+    /// Adapted grouped planning keeps this root's own A/B geometry and opening
+    /// plan, while allowing the fold-owned shared D matrix and every successor
+    /// level to be rebuilt for the added groups.
+    pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
+    /// Approved scalar schedule whose structural suffix choices guide adapted
+    /// planning. All length-, rank-, and security-derived values are rebuilt.
+    pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
     pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
     pub(crate) level_zero_is_root: bool,
+    pub(crate) relation_traversal_order: RelationTraversalOrder,
+    pub(crate) relation_mode_filter: RelationModeFilter,
 }
 
 #[derive(Clone, Copy)]
@@ -265,9 +293,90 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_lb: u32,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    pub(crate) incoming_setup_prefix: Option<usize>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
-    pub(crate) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(crate) topology: SuffixTopology,
+}
+
+/// Complete suffix topology. Prefix-bearing states cannot also carry raw
+/// payload or reduced-relation phases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SuffixTopology {
+    Direct {
+        payload_phase: akita_types::CommitmentPayloadPhase,
+        relation_phase: RingRelationPhase,
+    },
+    SetupPrefixed {
+        natural_len: usize,
+    },
+}
+
+impl SuffixTopology {
+    #[must_use]
+    pub(crate) const fn incoming_setup_prefix(self) -> Option<usize> {
+        match self {
+            Self::Direct { .. } => None,
+            Self::SetupPrefixed { natural_len } => Some(natural_len),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn payload_phase(self) -> akita_types::CommitmentPayloadPhase {
+        match self {
+            Self::Direct { payload_phase, .. } => payload_phase,
+            Self::SetupPrefixed { .. } => akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        }
+    }
+
+    pub(crate) fn relation_domain(
+        self,
+        absolute_fold_level: usize,
+        opening: akita_types::OpeningMethod,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
+    ) -> Result<RelationSearchDomain, AkitaError> {
+        let (relation_phase, consumes_setup_prefix) = match self {
+            Self::Direct { relation_phase, .. } => (relation_phase, false),
+            Self::SetupPrefixed { .. } => (RingRelationPhase::QuotientPrefix, true),
+        };
+        RelationSearchDomain::for_topology(
+            relation_phase,
+            absolute_fold_level,
+            RelationCandidateTopology::new(consumes_setup_prefix, opening),
+            diagnostics,
+        )
+    }
+
+    #[must_use]
+    pub(crate) const fn relation_phase(self) -> RingRelationPhase {
+        match self {
+            Self::Direct { relation_phase, .. } => relation_phase,
+            Self::SetupPrefixed { .. } => RingRelationPhase::QuotientPrefix,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn direct_successor(
+        self,
+        payload_mode: akita_types::CommitmentPayloadMode,
+        transition: akita_types::RingRelationMode,
+    ) -> Self {
+        Self::Direct {
+            payload_phase: self.payload_phase().after(payload_mode),
+            relation_phase: self.relation_phase().after(transition),
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn offloaded_successor(
+        transition: akita_types::RingRelationMode,
+        payload_mode: akita_types::CommitmentPayloadMode,
+        natural_len: usize,
+    ) -> Option<Self> {
+        if !transition.is_reduced_evaluation() && payload_mode.is_compressed() {
+            Some(Self::SetupPrefixed { natural_len })
+        } else {
+            None
+        }
+    }
 }
 
 impl SuffixState {
@@ -291,11 +400,10 @@ impl SuffixState {
             current_witness_len: self.current_witness_len,
             current_lb: self.current_lb,
             source_moment: self.source_moment,
-            incoming_setup_prefix: self.incoming_setup_prefix,
             d_a: memo_dimensions.d_a(),
             d_b: memo_dimensions.d_b(),
             d_d: memo_dimensions.d_d(),
-            payload_phase: self.payload_phase,
+            topology: self.topology,
         }
     }
 }

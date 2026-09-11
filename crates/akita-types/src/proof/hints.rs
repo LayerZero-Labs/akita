@@ -4,6 +4,33 @@ use crate::{
     COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 
+fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
+    if matches!(stage_count, 0 | COMPRESSION_MAP_COUNT) {
+        Ok(())
+    } else {
+        Err(SerializationError::InvalidData(
+            "commitment hint must contain zero or exactly two compression stages".into(),
+        ))
+    }
+}
+
+fn validate_compression_component_counts(
+    stage_count: usize,
+    quotient_count: usize,
+) -> Result<(), SerializationError> {
+    validate_compression_stage_count(stage_count)?;
+    if matches!(
+        (stage_count, quotient_count),
+        (0, 0) | (COMPRESSION_MAP_COUNT, 0) | (COMPRESSION_MAP_COUNT, COMPRESSION_MAP_COUNT)
+    ) {
+        Ok(())
+    } else {
+        Err(SerializationError::InvalidData(
+            "commitment hint must contain zero or one quotient per compression stage".into(),
+        ))
+    }
+}
+
 /// Prover-side semantic inner rows for one commitment bundle.
 ///
 /// One entry belongs to each polynomial in claim order. Every entry stores
@@ -76,6 +103,27 @@ impl<F: Field> AkitaCommitmentHint<F> {
         )
     }
 
+    /// Construct a one-polynomial hint carrying reduced-mode compression
+    /// stages and no polynomial-modulus quotient images.
+    pub fn singleton_with_reduced_outer_compression(
+        inner_rows: RingVec<F>,
+        witness: &CompressionChainWitness,
+    ) -> Result<Self, AkitaError> {
+        let hint = Self {
+            ring_dim: inner_rows.ring_dim(),
+            inner_rows: vec![inner_rows],
+            outer_compression_stages: witness
+                .stages()
+                .iter()
+                .map(|stage| stage.bytes().to_vec())
+                .collect(),
+            outer_compression_quotients: Vec::new(),
+        };
+        hint.validate_shape()
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        Ok(hint)
+    }
+
     /// Shared A ring dimension.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
@@ -104,6 +152,20 @@ impl<F: Field> AkitaCommitmentHint<F> {
             .map(|(bytes, map)| PackedNegativeBinary::from_bytes(*map, bytes.clone()))
             .collect::<Result<Vec<_>, _>>()?;
         CompressionChainWitness::new(plan.clone(), stages)
+    }
+
+    /// Rebuild a reduced-mode compression witness and reject any retained
+    /// polynomial-modulus quotient images.
+    pub fn reduced_outer_compression_witness(
+        &self,
+        plan: &CompressionChainPlan,
+    ) -> Result<CompressionChainWitness, AkitaError> {
+        if !self.outer_compression_quotients.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "reduced commitment hint must not retain compression quotient rows".into(),
+            ));
+        }
+        self.outer_compression_witness(plan)
     }
 
     /// Recover the retained quotient rows under the derived compression plan.
@@ -150,19 +212,10 @@ impl<F: Field> AkitaCommitmentHint<F> {
             ));
         }
         checked_shape_len(self.inner_rows.len())?;
-        if !matches!(
+        validate_compression_component_counts(
             self.outer_compression_stages.len(),
-            0 | COMPRESSION_MAP_COUNT
-        ) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or exactly two compression stages".into(),
-            ));
-        }
-        if self.outer_compression_quotients.len() != self.outer_compression_stages.len() {
-            return Err(SerializationError::InvalidData(
-                "commitment hint compression stages and quotients must have equal counts".into(),
-            ));
-        }
+            self.outer_compression_quotients.len(),
+        )?;
         let mut packed_bytes = 0usize;
         for stage in &self.outer_compression_stages {
             packed_bytes = packed_bytes.checked_add(stage.len()).ok_or_else(|| {
@@ -392,11 +445,7 @@ where
 
         let compression_stage_count =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if !matches!(compression_stage_count, 0 | COMPRESSION_MAP_COUNT) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or exactly two compression stages".into(),
-            ));
-        }
+        validate_compression_stage_count(compression_stage_count)?;
         let mut outer_compression_stages = Vec::new();
         reserve_shape_len(&mut outer_compression_stages, compression_stage_count)?;
         let mut packed_bytes = 0usize;
@@ -419,11 +468,7 @@ where
 
         let compression_quotient_count =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if compression_quotient_count != compression_stage_count {
-            return Err(SerializationError::InvalidData(
-                "commitment hint compression stages and quotients must have equal counts".into(),
-            ));
-        }
+        validate_compression_component_counts(compression_stage_count, compression_quotient_count)?;
         let mut outer_compression_quotients = Vec::new();
         reserve_shape_len(&mut outer_compression_quotients, compression_quotient_count)?;
         let mut quotient_coefficients = 0usize;
@@ -583,6 +628,7 @@ mod tests {
             &quotients,
         )
         .unwrap();
+        assert!(hint.reduced_outer_compression_witness(&plan).is_err());
 
         let mut encoded = Vec::new();
         hint.serialize_uncompressed(&mut encoded).unwrap();
@@ -611,5 +657,34 @@ mod tests {
         let mut wrong_length = hint;
         wrong_length.outer_compression_stages[0].pop();
         assert!(wrong_length.outer_compression_witness(&plan).is_err());
+    }
+
+    #[test]
+    fn reduced_hint_round_trips_compression_stages_without_quotients() {
+        let plan =
+            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q32Offset99, 8).unwrap();
+        let stages = plan
+            .maps()
+            .iter()
+            .map(|map| PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()]))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let witness = CompressionChainWitness::new(plan.clone(), stages).unwrap();
+        let hint =
+            AkitaCommitmentHint::singleton_with_reduced_outer_compression(rows(10, 8, 4), &witness)
+                .unwrap();
+
+        let mut encoded = Vec::new();
+        hint.serialize_uncompressed(&mut encoded).unwrap();
+        let decoded =
+            AkitaCommitmentHint::<F>::deserialize_uncompressed(&encoded[..], &()).unwrap();
+
+        assert_eq!(decoded, hint);
+        assert_eq!(decoded.outer_compression_witness(&plan).unwrap(), witness);
+        assert_eq!(
+            decoded.reduced_outer_compression_witness(&plan).unwrap(),
+            witness
+        );
+        assert!(decoded.outer_compression_quotients(&plan).is_err());
     }
 }

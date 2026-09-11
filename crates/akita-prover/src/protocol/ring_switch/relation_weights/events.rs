@@ -22,6 +22,25 @@ pub struct RelationWeightFactorization<E: Field> {
 }
 
 impl<E: Field> RelationWeightFactorization<E> {
+    pub(crate) fn new(
+        common_alpha_factor: Vec<E>,
+        relation_lane_weights: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        if common_alpha_factor.is_empty()
+            || !common_alpha_factor.len().is_power_of_two()
+            || relation_lane_weights.is_empty()
+            || !relation_lane_weights.len().is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation factorization dimensions must be nonzero powers of two".into(),
+            ));
+        }
+        Ok(Self {
+            common_alpha_factor,
+            relation_lane_weights,
+        })
+    }
+
     /// Alpha powers on the low coefficient block shared by every role.
     #[must_use]
     pub fn common_alpha_factor(&self) -> &[E] {
@@ -34,10 +53,11 @@ impl<E: Field> RelationWeightFactorization<E> {
         &self.relation_lane_weights
     }
 
-    /// Consume the factorization without recomputing either component.
-    #[must_use]
-    pub fn into_common_alpha_factor_and_relation_lane_weights(self) -> (Vec<E>, Vec<E>) {
-        (self.common_alpha_factor, self.relation_lane_weights)
+    pub(crate) fn components_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
+        (
+            &mut self.common_alpha_factor,
+            &mut self.relation_lane_weights,
+        )
     }
 
     /// Expand this factorization over its complete padded flat domain.

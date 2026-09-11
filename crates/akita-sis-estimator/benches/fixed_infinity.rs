@@ -2,7 +2,9 @@ use akita_sis_estimator::{
     cost_infinity, scalar_sis_from_ring, AkitaModulusProfileId, EstimateConfig, OptimizerConfig,
     ReductionCostModel, ShapeModel,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::{
     env, fs,
     path::{Path, PathBuf},

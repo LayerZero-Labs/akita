@@ -65,7 +65,7 @@ def schedule_features(
         resolved_feature
         for resolved_crate, resolved_feature in resolve_feature(graph, crate, feature)
         if resolved_crate == "akita-schedules"
-        and resolved_feature not in {"default", "all-schedules", "schedules-default"}
+        and resolved_feature != "default"
     }
 
 

@@ -216,7 +216,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'z_coords=100 witness_linf_cap=4096 rice_low_bits_wire=10 rice_low_bits_cap=12 '
             'bits_per_coord_at_wire=12.5 bits_per_coord_packed=15.0 z_payload_bytes=200\n'
         )
-        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
+        summary = extract_summary(
+            log,
+            mode="onehot_fp128",
+            num_vars=24,
+            num_polys=1,
+            allow_legacy_relation_mode=True,
+        )
         self.assertEqual(summary["z_rice_low_bits_wire"], 10)
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
@@ -417,7 +423,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "packing_partial_width=Some(64) packing_quotient_width=Some(64) "
             "n_a=2 n_b=3 n_d=4 log_basis_inner=5 log_basis_outer=5 "
             "log_basis_open=5 num_digits_inner=4 num_digits_outer=5 "
-            "num_digits_open=5 num_digits_fold=6 challenge_l1_mass=23 "
+            "num_digits_open=5 num_digits_fold=6 relation_mode=quotient_lift "
+            "num_digits_quotient=26 challenge_l1_mass=23 "
             "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
             "num_positions_per_block=128 block_index_domain_size=8 "
             "setup_prefix_natural_field_elements=0 "
@@ -430,7 +437,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "packing_partial_width=Some(128) packing_quotient_width=Some(128) "
             "n_a=2 n_b=3 n_d=4 log_basis_inner=5 log_basis_outer=5 "
             "log_basis_open=5 num_digits_inner=4 num_digits_outer=5 "
-            "num_digits_open=5 num_digits_fold=6 challenge_l1_mass=23 "
+            "num_digits_open=5 num_digits_fold=6 relation_mode=quotient_lift "
+            "num_digits_quotient=26 challenge_l1_mass=23 "
             "num_live_ring_elements_per_claim=4 num_live_blocks=1 "
             "num_positions_per_block=4 block_index_domain_size=1 "
             "setup_prefix_natural_field_elements=0 "
@@ -447,7 +455,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "challenge_l1_mass=23 log_basis=5 position_index_bits=7 block_index_bits=3 "
             "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
             "block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 "
-            "delta_open=5 delta_fold=6 input_witness_len=1024 output_witness_len=2048 "
+            "delta_open=5 delta_fold=6 relation_mode=quotient_lift "
+            "num_digits_quotient=26 input_witness_len=1024 output_witness_len=2048 "
             "current_w_len=folded:1024 next_w_len=2048\n"
         )
 
@@ -501,7 +510,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
+        summary = extract_summary(
+            log,
+            mode="onehot_fp128",
+            num_vars=24,
+            num_polys=1,
+            allow_legacy_relation_mode=True,
+        )
 
         self.assertEqual(
             summary["planned_levels"][0],
@@ -536,6 +551,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
+                "relation_mode": "quotient_lift",
                 "num_digits_quotient": 26,
                 "input_witness_len": 1024,
                 # Legacy scalar `current_w_len` is not a group breakdown.
@@ -559,7 +575,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
             'num_positions_per_block=128 num_digits_inner=4 num_digits_outer=5 num_digits_open=5 '
-            'delta_fold=6 input_witness_len=1024 output_witness_len=2048 '
+            'delta_fold=6 relation_mode=quotient_lift num_digits_quotient=26 '
+            'input_witness_len=1024 output_witness_len=2048 '
             'current_w_len=pre0=512;final=512 next_w_len=2048 '
             'setup_prefix_natural_field_elements=100 setup_prefix_padded_field_elements=128\n'
         )
@@ -596,7 +613,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "setup_prefix_padded_field_elements=64\n"
         )
 
-        summary = extract_summary(log, "onehot_fp128", 32, 1)
+        summary = extract_summary(
+            log, "onehot_fp128", 32, 1, allow_legacy_relation_mode=True
+        )
 
         self.assertEqual(
             summary["warnings"],
@@ -613,7 +632,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
+        summary = extract_summary(
+            log,
+            mode="onehot_fp128",
+            num_vars=24,
+            num_polys=1,
+            allow_legacy_relation_mode=True,
+        )
         level = summary["planned_levels"][0]
 
         self.assertEqual(level["position_index_bits"], 7)
@@ -634,7 +659,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
-        summary = extract_summary(log, mode="onehot_fp128", num_vars=24, num_polys=1)
+        summary = extract_summary(
+            log,
+            mode="onehot_fp128",
+            num_vars=24,
+            num_polys=1,
+            allow_legacy_relation_mode=True,
+        )
         level = summary["planned_levels"][0]
 
         self.assertEqual(level["position_index_bits"], 7)
@@ -657,8 +688,20 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         baseline_log = current_log.replace("n_a=4", "n_a=2").replace(
             "level_bytes=4096", "level_bytes=2048"
         )
-        current = extract_summary(current_log, "onehot_fp128", 24, 1)["planned_levels"]
-        baseline = extract_summary(baseline_log, "onehot_fp128", 24, 1)["planned_levels"]
+        current = extract_summary(
+            current_log,
+            "onehot_fp128",
+            24,
+            1,
+            allow_legacy_relation_mode=True,
+        )["planned_levels"]
+        baseline = extract_summary(
+            baseline_log,
+            "onehot_fp128",
+            24,
+            1,
+            allow_legacy_relation_mode=True,
+        )["planned_levels"]
         proof_log = (
             'INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=20 '
             'fold_grind_nonce_bytes=4 stage1_range_image_evaluation_bytes=16 '
@@ -711,10 +754,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
             "block_index_domain_size=8 num_positions_per_block=128 "
             "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
-            "delta_fold=2 input_witness_len=4096 output_witness_len=2048 "
+            "delta_fold=2 relation_mode=quotient_lift num_digits_quotient=22 "
+            "input_witness_len=4096 output_witness_len=2048 "
             "current_w_len=final=4096 next_w_len=2048"
         )
-        current_log = common + " a_width=128 b_width=264 d_width=132 num_digits_quotient=22\n"
+        current_log = common + " a_width=128 b_width=264 d_width=132\n"
         baseline_log = common + "\n"
         proof_log = (
             "INFO proof fold level label=onehot_fp128 level=0 d=64 "
@@ -732,6 +776,149 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("input width 128", report)
         self.assertIn("r shared quotient: 22 digits", report)
         self.assertNotIn("<sub>Merge base</sub>", report)
+
+    def test_mixed_relation_schedule_reports_cutover_without_reduced_quotient_rows(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_fold_details
+
+        def level(index: int, relation_mode: str, quotient_digits: int) -> str:
+            return (
+                "INFO planned fold level label=onehot_fp128 "
+                f"level={index} d=64 d_a=64 d_b=64 d_d=64 "
+                "n_a=3 n_b=2 n_d=2 challenge_l1_mass=53 "
+                "log_basis_inner=5 log_basis_outer=6 log_basis_open=6 "
+                "position_index_bits=7 block_index_bits=3 "
+                "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+                "block_index_domain_size=8 num_positions_per_block=128 "
+                "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+                f"delta_fold=2 relation_mode={relation_mode} "
+                f"num_digits_quotient={quotient_digits} "
+                f"input_witness_len={4096 >> index} output_witness_len={2048 >> index} "
+                f"current_w_len=folded={4096 >> index} next_w_len={2048 >> index}"
+            )
+
+        summary = extract_summary(
+            "\n".join(
+                [
+                    level(0, "quotient_lift", 22),
+                    level(1, "quotient_lift", 22),
+                    level(2, "reduced_evaluation", 0),
+                ]
+            ),
+            "onehot_fp128",
+            24,
+            1,
+        )
+        planned = summary["planned_levels"]
+        self.assertEqual(
+            [entry["relation_mode"] for entry in planned],
+            ["quotient_lift", "quotient_lift", "reduced_evaluation"],
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(planned, [], None, None, None, None)
+        report = output.getvalue()
+
+        self.assertEqual(report.count("r shared quotient:"), 2)
+        self.assertIn("Ring relation: Quotient lift (shared R rows)", report)
+        self.assertIn("Ring relation: Reduced evaluation (no R rows)", report)
+
+    def test_current_relation_mode_parser_rejects_missing_and_unknown_values(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        common = (
+            "INFO planned fold level label=onehot_fp128 level=0 d=64 "
+            "d_a=64 d_b=64 d_d=64 n_a=3 n_b=2 n_d=2 "
+            "challenge_l1_mass=53 log_basis_inner=5 log_basis_outer=6 "
+            "log_basis_open=6 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 "
+            "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+            "delta_fold=2 num_digits_quotient=22 input_witness_len=4096 "
+            "output_witness_len=2048 current_w_len=final=4096 next_w_len=2048"
+        )
+        with self.assertRaisesRegex(ValueError, "missing relation_mode"):
+            extract_summary(common, "onehot_fp128", 24, 1)
+        with self.assertRaisesRegex(ValueError, "invalid relation_mode"):
+            extract_summary(
+                common + " relation_mode=quotient_typo", "onehot_fp128", 24, 1
+            )
+
+        legacy = extract_summary(
+            common,
+            "onehot_fp128",
+            24,
+            1,
+            allow_legacy_relation_mode=True,
+        )
+        self.assertEqual(legacy["planned_levels"][0]["relation_mode"], "quotient_lift")
+
+    def test_relation_mode_parser_rejects_nonzero_reduced_rows_and_group_mismatch(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        reduced_level = (
+            "INFO planned fold level label=onehot_fp128 level=0 d=64 "
+            "d_a=64 d_b=64 d_d=64 n_a=3 n_b=2 n_d=2 "
+            "challenge_l1_mass=53 log_basis_inner=5 log_basis_outer=6 "
+            "log_basis_open=6 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 "
+            "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+            "delta_fold=2 relation_mode=reduced_evaluation num_digits_quotient=22 "
+            "input_witness_len=4096 output_witness_len=2048 "
+            "current_w_len=final=4096 next_w_len=2048"
+        )
+        with self.assertRaisesRegex(ValueError, "num_digits_quotient=22"):
+            extract_summary(reduced_level, "onehot_fp128", 24, 1)
+
+        group = (
+            "INFO planned fold group label=onehot_fp128 level=0 group=final "
+            "group_role=final consumer_level=0 witness_field_elements=4096 "
+            "d_a=64 d_b=64 d_d=64 n_a=3 n_b=2 n_d=2 "
+            "log_basis_inner=5 log_basis_outer=6 log_basis_open=6 "
+            "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+            "num_digits_fold=2 relation_mode=reduced_evaluation "
+            "num_digits_quotient=0 challenge_l1_mass=53 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "num_positions_per_block=128 block_index_domain_size=8 "
+            "setup_prefix_natural_field_elements=0 "
+            "setup_prefix_padded_field_elements=0\n"
+        )
+        quotient_level = reduced_level.replace(
+            "relation_mode=reduced_evaluation num_digits_quotient=22",
+            "relation_mode=quotient_lift num_digits_quotient=22",
+        )
+        with self.assertRaisesRegex(ValueError, "expected 'quotient_lift'"):
+            extract_summary(group + quotient_level, "onehot_fp128", 24, 1)
+
+    def test_verifier_relation_phase_timings_are_parsed_and_rendered(self) -> None:
+        from scripts.profile_bench_report import (
+            extract_summary,
+            render_relation_phase_timings,
+        )
+
+        log = (
+            "INFO verifier relation phase timing label=onehot_fp128 "
+            "verify_mode=single_threaded relation_mode=reduced "
+            "phase=structured_groups calls=3 mean_elapsed_nanos=2000000 "
+            "total_elapsed_nanos=6000000\n"
+        )
+        summary = extract_summary(
+            log, "onehot_fp128", 24, 1, allow_legacy_relation_mode=True
+        )
+        summary["verify_single_total_s"] = 0.012
+        timing = summary["relation_phase_timings"][0]
+        self.assertEqual(timing["verify_mode"], "single threaded")
+        self.assertEqual(timing["relation_mode"], "reduced")
+        self.assertEqual(timing["total_elapsed_nanos"], 6_000_000)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_relation_phase_timings(summary)
+        report = output.getvalue()
+        self.assertIn("Reduced evaluation", report)
+        self.assertIn("Structured groups", report)
+        self.assertIn("single threaded `12.0ms`", report)
 
     def test_terminal_fold_reports_its_full_geometry(self) -> None:
         from scripts.profile_bench_report import (
@@ -773,7 +960,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "root_variant=terminal",
             ]
         )
-        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        summary = extract_summary(
+            log, "onehot_fp128", 24, 1, allow_legacy_relation_mode=True
+        )
         terminal = summary["terminal_plan"]
         self.assertEqual(terminal["level"], 1)
         self.assertEqual(terminal["d_a"], 64)
@@ -904,7 +1093,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "fold_grind_nonce_bytes=4 root_variant=terminal",
             ]
         )
-        summary = extract_summary(log, "onehot_fp128_multi_group_recursive", 32, 4)
+        summary = extract_summary(
+            log,
+            "onehot_fp128_multi_group_recursive",
+            32,
+            4,
+            allow_legacy_relation_mode=True,
+        )
         planned = summary["planned_levels"]
         proof = summary["proof_levels"]
         groups = planned[0]["groups"]
@@ -986,7 +1181,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048\n'
         )
-        planned = extract_summary(planned_log, "onehot_fp128", 24, 1)["planned_levels"]
+        planned = extract_summary(
+            planned_log,
+            "onehot_fp128",
+            24,
+            1,
+            allow_legacy_relation_mode=True,
+        )["planned_levels"]
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -1153,7 +1354,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 f"fold_grind_nonce_bytes=4 grind_nonce={nonce} grind_attempts={nonce + 1} "
                 f"response_l2_sq=Some({80 + run_index})\n"
             )
-            summary = extract_summary(planned + proof, "onehot_fp128_d64", 24, 1)
+            summary = extract_summary(
+                planned + proof,
+                "onehot_fp128_d64",
+                24,
+                1,
+                allow_legacy_relation_mode=True,
+            )
             summary["run_index"] = run_index
             summary["exit_code"] = 0
             summaries.append(summary)

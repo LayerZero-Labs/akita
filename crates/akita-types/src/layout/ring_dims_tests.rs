@@ -170,3 +170,54 @@ fn rejects_sub_d64_commitment_matrix_dimensions() {
         validate_role_dims(dims).expect_err("A/B/D dimensions below 64 must be rejected");
     }
 }
+
+#[test]
+fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
+    use jolt_field::{
+        Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+    };
+
+    fn check<F, E>(dimension: usize)
+    where
+        F: Field,
+        E: Field + ExtField<F>,
+    {
+        let coefficients = (0..dimension)
+            .map(|index| F::from_u64((index as u64).wrapping_mul(17).wrapping_add(11)))
+            .collect::<Vec<_>>();
+        let alpha = E::lift_base(F::from_u64(29));
+        let mut powers = Vec::with_capacity(dimension);
+        let mut power = E::one();
+        for _ in 0..dimension {
+            powers.push(power);
+            power *= alpha;
+        }
+        let expected = (0..dimension)
+            .map(|shift| {
+                coefficients
+                    .iter()
+                    .enumerate()
+                    .fold(E::zero(), |sum, (coefficient, &value)| {
+                        let exponent = coefficient + shift;
+                        let term = E::lift_base(value) * powers[exponent % dimension];
+                        if exponent < dimension {
+                            sum + term
+                        } else {
+                            sum - term
+                        }
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            akita_algebra::residue_kernel(&coefficients, alpha).unwrap(),
+            expected,
+            "residue kernel disagrees at admitted dimension {dimension}"
+        );
+    }
+
+    for dimension in SUPPORTED_COMMITMENT_RING_DIMS {
+        check::<Prime32Offset99, FpExt4<Prime32Offset99>>(dimension);
+        check::<Prime64Offset59, Ext2<Prime64Offset59>>(dimension);
+        check::<Prime128OffsetA7F7, Prime128OffsetA7F7>(dimension);
+    }
+}

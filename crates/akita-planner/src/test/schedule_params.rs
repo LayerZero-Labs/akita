@@ -1,5 +1,98 @@
 use super::*;
 
+fn exhaustive_parent_alignment_cmp(
+    left: PackedProofCost,
+    right: PackedProofCost,
+    compare: impl Fn(usize, usize) -> bool,
+) -> bool {
+    (0..8).all(|parent_remainder| {
+        left.checked_proof_bytes_with_parent_remainder(parent_remainder)
+            .zip(right.checked_proof_bytes_with_parent_remainder(parent_remainder))
+            .is_some_and(|(left, right)| compare(left, right))
+    })
+}
+
+#[test]
+fn packed_proof_cost_alignment_order_matches_exhaustive_comparison() {
+    let mut costs = Vec::new();
+    for payload_bytes in 0..=3 {
+        for nonce_bits in 0..=24 {
+            costs.push(PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap());
+        }
+    }
+    costs.push(PackedProofCost::new(usize::MAX, 0, 0).unwrap());
+
+    for &left in &costs {
+        for &right in &costs {
+            assert_eq!(
+                left.never_worse_for_every_parent(right),
+                exhaustive_parent_alignment_cmp(left, right, |left, right| left <= right),
+            );
+            assert_eq!(
+                left.strictly_better_for_every_parent(right),
+                exhaustive_parent_alignment_cmp(left, right, |left, right| left < right),
+            );
+        }
+    }
+}
+
+#[test]
+fn packed_proof_cost_tracks_query_budget_exhaustion() {
+    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let empty = PackedProofCost::new(0, 0, 0).unwrap();
+    assert!(!empty
+        .checked_prepend(0, 0, limit)
+        .unwrap()
+        .fits_query_limit());
+
+    let individually_valid_suffix = PackedProofCost::new(0, 0, limit - 2).unwrap();
+    assert!(!individually_valid_suffix
+        .checked_prepend(0, 0, 2)
+        .unwrap()
+        .fits_query_limit());
+    assert!(matches!(
+        individually_valid_suffix.checked_prepend(0, 0, u64::MAX),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+    assert!(matches!(
+        PackedProofCost::new(usize::MAX, 0, 0)
+            .unwrap()
+            .checked_prepend(1, 0, limit),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
+    let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
+    let suffix = PackedProofCost::new(0, 0, 0).unwrap();
+    let selected = [(10, limit), (20, 1)]
+        .into_iter()
+        .filter_map(|(payload_bytes, queries)| {
+            let cost = suffix.checked_prepend(payload_bytes, 0, queries).unwrap();
+            cost.fits_query_limit().then_some(cost)
+        })
+        .min_by_key(|cost| cost.proof_bytes());
+
+    assert_eq!(selected, Some(PackedProofCost::new(20, 0, 1).unwrap()));
+    assert!([limit, limit + 1].into_iter().all(|queries| {
+        !suffix
+            .checked_prepend(0, 0, queries)
+            .unwrap()
+            .fits_query_limit()
+    }));
+}
+
+#[test]
+fn unconstrained_packed_proof_cost_dominance_ignores_queries() {
+    let smaller_proof_more_queries = PackedProofCost::new(9, 0, 11).unwrap();
+    let larger_proof_fewer_queries = PackedProofCost::new(10, 0, 10).unwrap();
+
+    assert!(smaller_proof_more_queries.never_worse_for_every_parent(larger_proof_fewer_queries));
+    assert!(smaller_proof_more_queries.strictly_better_for_every_parent(larger_proof_fewer_queries));
+    assert!(!larger_proof_fewer_queries.never_worse_for_every_parent(smaller_proof_more_queries));
+}
+
 #[test]
 fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
     assert_eq!(
@@ -10,6 +103,10 @@ fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
         layout_candidate_score(100, 12, 4).unwrap(),
         (124, 100, 12, 0)
     );
+    assert_eq!(layout_candidate_score(100, 4, 8).unwrap(), (109, 100, 4, 1));
+    for (blocks, chunks) in [(0, 1), (8, 0), (8, 3), (8, 128)] {
+        assert!(layout_candidate_score(100, blocks, chunks).is_err());
+    }
 }
 
 #[test]
@@ -55,7 +152,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_types::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,

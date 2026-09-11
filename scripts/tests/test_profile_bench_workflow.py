@@ -33,17 +33,10 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
         linkage = self.step("Verify profile linkage isolation")
         self.assertIn("${{ matrix.group.profile_feature }}", linkage)
 
-    def test_generated_schedules_must_match_the_committed_tables(self) -> None:
+    def test_generated_artifacts_must_match_the_committed_files(self) -> None:
         ci = (self.repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("scripts/generate-schedule-tables.sh", ci)
-        self.assertIn("git diff --exit-code --", ci)
-        self.assertIn("crates/akita-schedules/src/generated", ci)
-        self.assertIn(
-            "specs/evidence/subring-coefficient-packing/head.tsv", ci
-        )
-        self.assertIn(
-            "specs/evidence/subring-coefficient-packing/comparison.tsv", ci
-        )
+        self.assertIn("gen_schedule_artifacts", ci)
+        self.assertIn("diff -ru artifacts/schedules", ci)
         self.assertIn('--partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
 
 

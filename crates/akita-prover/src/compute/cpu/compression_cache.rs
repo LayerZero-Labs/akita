@@ -2,7 +2,10 @@
 
 use super::prepared::ErasedCpuNttCache;
 use akita_error::AkitaError;
-use akita_types::{prepare_compression_ntt_cache, AkitaExpandedSetup, PreparedNttCache};
+use akita_types::{
+    prepare_compression_ntt_cache, prepare_reduced_compression_ntt_cache, AkitaExpandedSetup,
+    PreparedNttCache,
+};
 use jolt_field::{CanonicalEncoding, Field};
 use std::any::Any;
 use std::collections::HashMap;
@@ -16,6 +19,13 @@ type CompressionSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 struct CompressionNttCacheKey {
     ring_d: usize,
     input_width: usize,
+    domains: CompressionNttDomains,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) enum CompressionNttDomains {
+    Negacyclic,
+    Both,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +40,7 @@ impl CompressionNttCache {
         &self,
         expanded: &AkitaExpandedSetup<F>,
         input_width: usize,
+        domains: CompressionNttDomains,
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError>
     where
@@ -38,6 +49,7 @@ impl CompressionNttCache {
         let key = CompressionNttCacheKey {
             ring_d: D,
             input_width,
+            domains,
         };
         let entry = {
             let mut slots = self.slots.lock().map_err(|_| {
@@ -52,7 +64,7 @@ impl CompressionNttCache {
         let build_result = entry.get_or_init(|| {
             #[cfg(test)]
             self.slot_build_count.fetch_add(1, Ordering::Relaxed);
-            build_slot::<F, D>(expanded, input_width).map(Arc::new)
+            build_slot::<F, D>(expanded, input_width, domains).map(Arc::new)
         });
         let slot = build_result.as_ref().map_err(Clone::clone)?;
         if slot.ring_d != D {
@@ -98,12 +110,18 @@ impl CompressionNttCache {
 fn build_slot<F: Field + CanonicalEncoding, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     input_width: usize,
+    domains: CompressionNttDomains,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
     let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
-    let cache = Arc::new(prepare_compression_ntt_cache(view)?);
-    if !cache.has_cyclic() {
+    let cache = Arc::new(match domains {
+        CompressionNttDomains::Negacyclic => prepare_reduced_compression_ntt_cache(view)?,
+        CompressionNttDomains::Both => prepare_compression_ntt_cache(view)?,
+    });
+    if !cache.has_negacyclic()
+        || cache.has_cyclic() != matches!(domains, CompressionNttDomains::Both)
+    {
         return Err(AkitaError::InvalidSetup(
-            "compression NTT cache is missing its cyclic transform".into(),
+            "compression NTT cache domains disagree with the requested relation mode".into(),
         ));
     }
     Ok(ErasedCpuNttCache {
@@ -116,6 +134,7 @@ fn build_slot<F: Field + CanonicalEncoding, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::super::{CpuBackend, CpuPreparedSetup};
+    use super::CompressionNttDomains;
     use crate::compute::{
         CompressionComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     };
@@ -152,11 +171,32 @@ mod tests {
         assert_eq!(prepared.compression_ntt_cache_bytes(), expected_bytes);
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         prepared
-            .with_compression_ntt::<D, _>(3, |cache| {
+            .with_compression_ntt::<D, _>(3, CompressionNttDomains::Both, |cache| {
                 assert!(cache.has_cyclic());
                 Ok(())
             })
             .expect("typed compression cache");
+    }
+
+    #[test]
+    fn reduced_cache_is_exact_prefix_and_negacyclic_only() {
+        let prepared = empty_prepared();
+        let vectors = [vec![[0i8; D]; 3], vec![[-1i8; D]; 3]];
+        let views = vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
+
+        CpuBackend::DEFAULT
+            .compression_negacyclic_rows::<D>(&prepared, &views)
+            .expect("reduced compression rows");
+
+        let expected_bytes = 3 * D * 3 * core::mem::size_of::<i32>();
+        assert_eq!(prepared.compression_ntt_cache_bytes(), expected_bytes);
+        prepared
+            .with_compression_ntt::<D, _>(3, CompressionNttDomains::Negacyclic, |cache| {
+                assert!(cache.has_negacyclic());
+                assert!(!cache.has_cyclic());
+                Ok(())
+            })
+            .expect("typed reduced compression cache");
     }
 
     #[test]

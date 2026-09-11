@@ -3,13 +3,6 @@ name = "akita-verifier"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Verifier-facing API surface for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -37,7 +30,7 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-default = ["schedules-default", "transcript-blake2b"]
+default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -53,7 +46,6 @@ transcript-keccak = [
   "akita-types/transcript-keccak",
 ]
 benchmark-support = []
-schedules-default = ["akita-config/schedules-default"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -67,10 +59,8 @@ workspace = true
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
-  "schedules-fp128-dense",
-  "schedules-fp128-onehot",
 ] }
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "relation_evaluator"

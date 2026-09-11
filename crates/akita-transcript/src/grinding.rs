@@ -169,6 +169,21 @@ mod tests {
     }
 
     #[test]
+    fn search_accepts_maximum_canonical_width() {
+        let preview = FixedPreview {
+            predicate: [0; GRINDING_PREDICATE_LEN],
+            calls: Cell::new(0),
+        };
+        let nonce_bits = MAX_GRINDING_BITS + GRINDING_NONCE_SLACK_BITS;
+        assert_eq!(nonce_bits, u32::BITS as u8);
+        assert_eq!(
+            search_grinding_nonce(&preview, MAX_GRINDING_BITS, nonce_bits),
+            Some(0)
+        );
+        assert_eq!(preview.calls.get(), 1);
+    }
+
+    #[test]
     fn search_rejects_noncanonical_widths() {
         let preview = FixedPreview {
             predicate: [0; GRINDING_PREDICATE_LEN],

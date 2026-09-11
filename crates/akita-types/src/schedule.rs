@@ -12,8 +12,8 @@ mod sis_occurrences;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
-    GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile,
+    CommittedSourceEncoding, GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
@@ -34,7 +34,7 @@ pub struct AkitaScheduleInputs {
 /// This is schedule-owned because the same intermediate proof body may either
 /// recurse through an outer commitment or hand its witness to the final
 /// suffix fold as a public inner `t` state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NextWitnessBindingPolicy {
     /// Bind the terminal compressed commitment payload and recurse.
     OuterPayload,
@@ -63,7 +63,7 @@ pub enum NextWitnessBindingPolicy {
 /// identical fields. What separates them stays a validated constraint, as it
 /// already was: `FoldSchedule` names the three positions, so no role is inferred
 /// from an array index.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldParams {
     /// This fold's own parameters, including its final/new group, its
     /// precommitted groups, the shared D matrix, and any incoming setup prefix.
@@ -118,7 +118,7 @@ impl FoldParams {
 /// commitment matrix. It also retains the terminal fold basis and digit count
 /// needed to audit a calibrated L2 route. It has no outer/open commitment
 /// matrix and no outer/open response decomposition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalFoldParams {
     /// Exact `(N, M, B)` block split of the terminal source.
     pub blocks: crate::BlockGeometry,
@@ -341,7 +341,7 @@ impl FoldSuccessor<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
@@ -389,7 +389,13 @@ impl FoldSchedule {
                 "root fold payload must be compressed".into(),
             ));
         }
+        if root_commitment.ring_relation_mode != crate::RingRelationMode::QuotientLift {
+            return Err(AkitaError::InvalidSetup(
+                "nonterminal level 0 requires quotient-lift ring relations".into(),
+            ));
+        }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
+        let mut relation_phase = crate::RingRelationPhase::QuotientPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             step.params.validate_group_topology()?;
             if !step.params.precommitted_groups().is_empty() {
@@ -399,6 +405,22 @@ impl FoldSchedule {
             }
             step.params.validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.setup_prefix().is_some();
+            let absolute_level = index + 1;
+            if !relation_phase
+                .candidate_modes(
+                    absolute_level,
+                    crate::RelationCandidateTopology::new(
+                        consumes_setup_prefix,
+                        step.params.opening_method(),
+                    ),
+                )
+                .contains(&step.params.ring_relation_mode)
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "nonterminal level {absolute_level} ring relation mode disagrees with the reduced-evaluation suffix policy"
+                )));
+            }
+            relation_phase = relation_phase.after(step.params.ring_relation_mode);
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"

@@ -9,8 +9,12 @@ opening method for each nonterminal fold.
 | `EvaluationTrace` | Later nonterminal folds and the terminal path | required only when the claim field is a proper extension |
 
 See [base-field coefficients vs extension evaluation points](../../foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points).
-For the coefficient layout and the exact partial evaluation size reduction, see
-[Subring coefficient packing](./root-fold-ring-switch.md#subring-coefficient-packing).
+For the packing path, read the three obligations in order: the [direct scalar
+opening](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials),
+the [source/fold consistency
+identity](./akita-fold.md#subring-coefficient-packing-consistency), and the
+[physical quotient and ring
+switch](./root-fold-ring-switch.md#subring-coefficient-packing).
 
 The extension degree fixes the number of field coordinates in one claim. It
 does not select the opening method. In particular, an fp128 schedule may use

@@ -1,17 +1,16 @@
 //! Feature-gated fixtures for benchmarking the production relation evaluator.
 
-use super::{FlatRelationContext, RelationMatrixEvaluator, RelationMatrixGroupEvaluator};
-use akita_algebra::eq_poly::EqPolynomial;
-use akita_challenges::SparseChallengeConfig;
+use super::{prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay};
+use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupDescriptor,
+    relation_rhs_coeff_len, AkitaExpandedSetup, AkitaSetupDescriptor, ChunkedWitnessCfg,
     CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
-    RelationAddressGeometry, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, RelationWitnessGeometry,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingRelationInstance,
+    RingRelationMode, RingVec, SisModulusProfileId,
 };
 use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
-use std::sync::Arc;
 
 /// Inputs for one exact production relation-evaluator benchmark cell.
 pub struct RelationEvaluatorBenchmarkCase {
@@ -25,16 +24,59 @@ pub struct RelationEvaluatorBenchmarkCase {
     pub alpha: Prime128OffsetA7F7,
 }
 
+/// One production-prepared relation evaluation used for isolated phase timing.
+pub struct PreparedRelationEvaluatorBenchmark<'a> {
+    prepared: super::relation_evaluation::PreparedDirectRelation<'a, Prime128OffsetA7F7>,
+}
+
+impl RelationEvaluatorBenchmarkCase {
+    /// Prepare the production relation point and setup-contribution plan.
+    pub fn prepare(&self) -> Result<PreparedRelationEvaluatorBenchmark<'_>, AkitaError> {
+        let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<
+            Prime128OffsetA7F7,
+        >(&self.evaluator, &self.point, self.alpha)?;
+        prepared.materialize_setup()?;
+        Ok(PreparedRelationEvaluatorBenchmark { prepared })
+    }
+}
+
+impl PreparedRelationEvaluatorBenchmark<'_> {
+    /// Materialize setup weights and scan the active setup exactly once.
+    pub fn setup_scan(
+        self,
+        setup: &AkitaExpandedSetup<Prime128OffsetA7F7>,
+    ) -> Result<Prime128OffsetA7F7, AkitaError> {
+        self.prepared.evaluate_setup::<Prime128OffsetA7F7>(setup)
+    }
+
+    /// Materialize setup weights, then evaluate only the non-setup relation weight.
+    pub fn relation_weight(self) -> Result<Prime128OffsetA7F7, AkitaError> {
+        self.prepared
+            .evaluate_relation_weight::<Prime128OffsetA7F7>()
+    }
+
+    /// Evaluate the structured group contribution only.
+    pub fn structured_groups(self) -> Result<Prime128OffsetA7F7, AkitaError> {
+        self.prepared.evaluate_structured::<Prime128OffsetA7F7>()
+    }
+
+    /// Evaluate the quotient-tail contribution, identically zero in reduced mode.
+    pub fn quotient_tail(self) -> Result<Prime128OffsetA7F7, AkitaError> {
+        self.prepared.evaluate_quotient_tail::<Prime128OffsetA7F7>()
+    }
+}
+
 /// Build one U/L/M benchmark cell with identical semantic workload dimensions.
 ///
 /// # Errors
 ///
 /// Returns an error if the requested role or outgoing geometry is invalid.
 pub fn relation_evaluator_benchmark_case(
+    mode: RingRelationMode,
     role_dims: CommitmentRingDims,
     outgoing_ring_dimension: usize,
 ) -> Result<RelationEvaluatorBenchmarkCase, AkitaError> {
-    relation_evaluator_benchmark_case_with_chunks(role_dims, outgoing_ring_dimension, 1)
+    relation_evaluator_benchmark_case_with_chunks(mode, role_dims, outgoing_ring_dimension, 1)
 }
 
 /// Build one U/L/M benchmark cell with a selected physical chunk count.
@@ -44,6 +86,7 @@ pub fn relation_evaluator_benchmark_case(
 /// Returns an error if the requested role, outgoing, or chunk geometry is
 /// invalid.
 pub fn relation_evaluator_benchmark_case_with_chunks(
+    mode: RingRelationMode,
     role_dims: CommitmentRingDims,
     outgoing_ring_dimension: usize,
     witness_chunks: usize,
@@ -82,18 +125,23 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         DEPTH_OPEN,
         DEPTH_OPEN,
     )?;
-    let inner = &level_params.inner.matrix;
-    level_params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+    level_params.ring_relation_mode = mode;
+    let inner = level_params.inner().matrix;
+    let inner_table_digest = inner
+        .sis_table_key()
+        .ok_or_else(|| AkitaError::InvalidSetup("missing benchmark inner SIS key".into()))?
+        .table_digest;
+    level_params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner_table_digest,
         inner.sis_modulus_profile(),
         N_A,
         NUM_POSITIONS_PER_BLOCK * DEPTH_COMMIT,
-        inner.coeff_linf_bound().max(1),
+        inner.coeff_linf_bound().unwrap_or(1).max(1),
         role_dims.d_a(),
     );
-    let outer = &level_params.outer.matrix;
-    level_params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = level_params.outer().matrix;
+    level_params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -102,8 +150,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         outer.coeff_linf_bound().max(1),
         role_dims.d_b(),
     );
-    let open = &level_params.open.matrix;
-    level_params.open.matrix = OpenCommitMatrixParams::new_unchecked(
+    let open = level_params.open().matrix;
+    level_params.open_matrix = OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -113,66 +161,106 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         role_dims.d_d(),
     );
 
+    level_params.witness_chunk = if witness_chunks == 1 {
+        ChunkedWitnessCfg::default_non_chunked()
+    } else {
+        ChunkedWitnessCfg {
+            num_chunks: witness_chunks,
+            num_activated_levels: 1,
+        }
+    };
+    level_params.witness_chunk.validate()?;
+
     let opening_batch = OpeningClaimsLayout::new(0, NUM_CLAIMS)?;
-    let rows = level_params.relation_matrix_row_count(opening_batch.num_groups())?;
-    let quotient_depth = r_decomp_levels::<F>(LOG_BASIS);
-    let witness_layout = WitnessLayout::new(
-        &level_params,
-        &opening_batch,
-        witness_chunks,
-        quotient_depth,
+    let challenges = Challenges::from_sparse(
+        (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
+            .map(|index| SparseChallenge {
+                positions: vec![(index % A_D) as u32].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        NUM_LIVE_BLOCKS,
+        NUM_CLAIMS,
     )?;
-    let relation_address_geometry = RelationAddressGeometry::new(
-        role_dims,
-        outgoing_ring_dimension,
-        witness_layout.live_coeff_len(),
-    )?;
-    let alpha = scalar(3);
-    let point = (0..relation_address_geometry.relation_point_variable_count())
-        .map(|index| scalar(101 + index as u128))
+    let opening = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+        position_weights: (0..NUM_POSITIONS_PER_BLOCK)
+            .map(|index| scalar(401 + index as u128))
+            .collect(),
+        live_block_weights: vec![F::default(); NUM_LIVE_BLOCKS],
+    });
+    let gamma = (0..NUM_CLAIMS)
+        .map(|index| scalar(307 + index as u128))
         .collect::<Vec<_>>();
-    let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
-    let tau1 = (0..tau1_bits)
+    let row_coefficient_rings = gamma
+        .iter()
+        .flat_map(|coefficient| {
+            let mut ring = vec![F::default(); A_D];
+            ring[0] = *coefficient;
+            ring
+        })
+        .collect();
+    let relation_geometry =
+        RelationWitnessGeometry::for_evaluation_trace_execution(&level_params, &opening_batch)?;
+    let relation = RingRelationInstance::new(
+        vec![RingRelationGroupOpening::evaluation_trace(
+            challenges, opening,
+        )],
+        1,
+        opening_batch,
+        gamma,
+        RingVec::from_coeffs_with_ring_dim(row_coefficient_rings, A_D)?,
+        RingVec::from_coeffs(vec![
+            F::default();
+            relation_rhs_coeff_len(relation_geometry.rhs_layout())?
+        ]),
+        RingVec::from_coeffs(Vec::new()),
+        role_dims,
+    )?;
+    let witness_layout = relation.segment_layout(&level_params, None)?;
+    if outgoing_ring_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "relation benchmark outgoing ring dimension must be nonzero".into(),
+        ));
+    }
+    let opening_source_len = witness_layout
+        .live_coeff_len()
+        .div_ceil(outgoing_ring_dimension);
+    let placeholder_setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: NUM_CLAIMS,
+            num_field_elements: 1,
+            setup_seed: [7; 32].into(),
+        },
+        FlatMatrix::from_flat_data(vec![F::default()]),
+    );
+    let row_coefficients = (0..NUM_CLAIMS)
+        .map(|index| scalar(601 + index as u128))
+        .collect::<Vec<_>>();
+    let rows = level_params.relation_matrix_row_count(relation.opening_batch().num_groups())?;
+    let tau1 = (0..rows.next_power_of_two().trailing_zeros() as usize)
         .map(|index| scalar(211 + index as u128))
         .collect::<Vec<_>>();
-    let eq_tau1: Arc<[F]> = EqPolynomial::evals_prefix(&tau1, rows)?.into();
-    let depth_fold = level_params.num_digits_fold();
-    let evaluator = RelationMatrixEvaluator {
-        relation_address_geometry,
-        groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
-                .map(|index| scalar(307 + index as u128))
-                .collect(),
-            opening_a_evals: (0..NUM_POSITIONS_PER_BLOCK)
-                .map(|index| scalar(401 + index as u128))
-                .collect(),
-            group_id: 0,
-            num_claims: NUM_CLAIMS,
-            depth_fold,
-            a_row_start: 1,
-            b_row_start: 1 + N_A,
-        }],
-        log_basis: LOG_BASIS,
-        eq_tau1,
-        flat_context: Some(FlatRelationContext {
-            level_params,
-            opening_batch,
-            witness_layout: Arc::new(witness_layout),
-            extension_degree: 1,
-        }),
-        setup_plan_cache: Default::default(),
+    let alpha = scalar(3);
+    let replay = RingSwitchReplay {
+        setup: &placeholder_setup,
+        relation: &relation,
+        row_coefficients: &row_coefficients,
+        lp: &level_params,
+        opening_source_len,
+        opening_ring_dim: outgoing_ring_dimension,
     };
-    let coefficient_bits = relation_address_geometry.relation_coefficient_variable_count();
-    let relation_address = PreparedRelationAddress::new(
-        point
-            .get(coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?,
+    let evaluator = prepare_relation_matrix_evaluator::<F, F>(&replay, alpha, &tau1, None)?;
+    let point = (0..evaluator
+        .relation_address_geometry
+        .relation_point_variable_count())
+        .map(|index| scalar(101 + index as u128))
+        .collect::<Vec<_>>();
+    let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<F>(
+        &evaluator, &point, alpha,
     )?;
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, LOG_BASIS);
-    let mut plan: SetupContributionPlan<F> =
-        evaluator.setup_contribution_plan::<F>(relation_address, Some(&fold_gadget))?;
-    plan.materialize_direct_scan(alpha)?;
-    let setup_field_elements = plan.projection_geometry().natural_field_len();
+    prepared.materialize_setup()?;
+    let setup_field_elements = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
             max_num_vars: 0,

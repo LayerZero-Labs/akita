@@ -1,15 +1,21 @@
-//! Succinct prepared relation evaluation for every role geometry.
+//! Mode-bound prepared relation evaluation for every role geometry.
 //!
-//! The common low alpha coordinates are factored once. The setup plan then
-//! selects contiguous q=1 or projected-lane q>1 kernels without changing the
-//! verifier formula or control flow.
+//! Quotient lifting factors the common low alpha coordinates and evaluates its
+//! explicit quotient tail. Reduced evaluation prepares exact terminal
+//! coefficient functionals, performs the same structured/direct setup work,
+//! and returns that already-complete flat MLE without either lifted-only step.
 
-use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
+use super::{
+    prepared_relation_point::{PreparedLiftedRelationPoint, PreparedReducedRelationPoint},
+    PreparedRelationGroups, QuotientRelationMultipliers, ReducedRelationMultipliers,
+    RelationMatrixEvaluator, RelationMatrixGroupEvaluator,
+};
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
-    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry,
+    PreparedRelationAddress, RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily,
+    RelationWitnessGeometry, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -18,118 +24,303 @@ pub(super) fn evaluate_relation_at_point<F, E>(
     point: &[E],
     setup: &AkitaExpandedSetup<F>,
     alpha: E,
-    deferred_setup_claim: Option<E>,
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
-    let context = evaluator
-        .flat_context
-        .as_ref()
-        .ok_or(AkitaError::InvalidProof)?;
-    let relation_geometry = RelationWitnessGeometry::for_level(
-        &context.level_params,
-        &context.opening_batch,
-        context.extension_degree,
-    )?;
-    let row_families = relation_geometry.rhs_layout().row_families()?;
-    let quotient_row_dims = row_families
-        .iter()
-        .filter(|family| {
-            !matches!(
-                family,
-                RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
-            )
-        })
-        .map(|family| family.geometry().polynomial_modulus_dimension())
-        .collect::<Vec<_>>();
-    let prepared_point = PreparedRelationPoint::new(
-        point,
-        alpha,
-        evaluator.relation_address_geometry,
-        &quotient_row_dims,
-    )?;
-    if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
-        return Err(AkitaError::InvalidProof);
-    }
-    // The setup projection and flat relation point use the same common base of
-    // the current commitment roles. Outgoing witness packaging affects only
-    // the checked flat live length. The same plan therefore owns the mixed
-    // E/T/Z contraction, direct setup scan, and deferred Stage-3 geometry.
+    let prepared = {
+        let _span = tracing::info_span!("relation_coefficient_functional_preparation").entered();
+        let mut prepared = PreparedDirectRelation::prepare::<F>(evaluator, point, alpha)?;
+        prepared.materialize_setup()?;
+        prepared
+    };
+    prepared.evaluate_materialized_direct::<F>(setup)
+}
+
+pub(super) fn evaluate_quotient_relation_with_deferred_setup<F, E>(
+    evaluator: &RelationMatrixEvaluator<E>,
+    point: &[E],
+    _setup: &AkitaExpandedSetup<F>,
+    alpha: E,
+    setup_claim: E,
+) -> Result<E, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
+{
+    let prepared = {
+        let _span = tracing::info_span!("relation_coefficient_functional_preparation").entered();
+        PreparedDirectRelation::prepare::<F>(evaluator, point, alpha)?
+    };
+    prepared.evaluate_deferred::<F>(setup_claim)
+}
+
+fn prepare_setup_plan<F, E>(
+    evaluator: &RelationMatrixEvaluator<E>,
+    address: &PreparedRelationAddress<E>,
+) -> Result<SetupContributionPlan<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
+{
     let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
-    let mut plan = {
+    let plan = {
         let _span = tracing::info_span!("relation_setup_plan").entered();
         let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
         evaluator.setup_contribution_plan::<F>(
-            prepared_point.relation_address().clone(),
+            address.clone(),
             (!fold_gadget.is_empty()).then_some(fold_gadget),
         )?
     };
-    if deferred_setup_claim.is_none() {
-        let _span =
-            tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
-        plan.materialize_direct_scan(alpha)?;
-    }
+    Ok(plan)
+}
 
-    let mut structured_evaluation = E::zero();
+pub(super) enum PreparedDirectRelation<'a, E: Field> {
+    Quotient {
+        evaluator: &'a RelationMatrixEvaluator<E>,
+        groups: &'a [RelationMatrixGroupEvaluator<QuotientRelationMultipliers<E>>],
+        point: PreparedLiftedRelationPoint<E>,
+        row_families: Vec<RelationRowFamily>,
+        plan: SetupContributionPlan<E>,
+    },
+    Reduced {
+        groups: &'a [RelationMatrixGroupEvaluator<ReducedRelationMultipliers<E>>],
+        point: PreparedReducedRelationPoint<E>,
+        plan: SetupContributionPlan<E>,
+    },
+}
+
+impl<'a, E: Field> PreparedDirectRelation<'a, E> {
+    pub(super) fn prepare<F>(
+        evaluator: &'a RelationMatrixEvaluator<E>,
+        point: &[E],
+        alpha: E,
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
     {
-        let _span = tracing::info_span!("relation_structured_groups").entered();
-        for group in &evaluator.groups {
-            structured_evaluation += plan
-                .evaluate_structured_group::<F>(
-                    group.group_id,
-                    &group.c_alphas,
-                    &group.opening_a_evals,
+        let context = &evaluator.flat_context;
+        match &evaluator.groups {
+            PreparedRelationGroups::QuotientLift(groups) => {
+                if !matches!(
+                    context.witness_layout.relation_quotient_layout(),
+                    RelationQuotientLayout::QuotientLift { .. }
+                ) || context
+                    .level_params
+                    .ring_relation_mode
+                    .is_reduced_evaluation()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "quotient evaluator disagrees with the authenticated layout".into(),
+                    ));
+                }
+                let row_families = RelationWitnessGeometry::for_level(
+                    &context.level_params,
+                    &context.opening_batch,
+                    context.extension_degree,
+                )?
+                .rhs_layout()
+                .row_families()?;
+                let quotient_row_dims = row_families
+                    .iter()
+                    .filter(|family| {
+                        !matches!(
+                            family,
+                            RelationRowFamily::CompressionF { .. }
+                                | RelationRowFamily::CompressionH { .. }
+                        )
+                    })
+                    .map(|family| family.geometry().polynomial_modulus_dimension())
+                    .collect::<Vec<_>>();
+                let point = PreparedLiftedRelationPoint::new(
+                    point,
                     alpha,
-                )
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "relation group {} contraction failed: {error:?}",
-                        group.group_id
-                    ))
-                })?;
+                    evaluator.relation_address_geometry,
+                    &quotient_row_dims,
+                )?;
+                let plan = prepare_setup_plan::<F, E>(evaluator, point.relation_address())?;
+                Ok(Self::Quotient {
+                    evaluator,
+                    groups,
+                    point,
+                    row_families,
+                    plan,
+                })
+            }
+            PreparedRelationGroups::ReducedEvaluation(groups) => {
+                if !matches!(
+                    context.witness_layout.relation_quotient_layout(),
+                    RelationQuotientLayout::ReducedEvaluation
+                ) || !context
+                    .level_params
+                    .ring_relation_mode
+                    .is_reduced_evaluation()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "reduced evaluator disagrees with the authenticated layout".into(),
+                    ));
+                }
+                let point = PreparedReducedRelationPoint::new(
+                    point,
+                    alpha,
+                    evaluator.relation_address_geometry,
+                )?;
+                let plan = prepare_setup_plan::<F, E>(evaluator, point.relation_address())?;
+                Ok(Self::Reduced {
+                    groups,
+                    point,
+                    plan,
+                })
+            }
         }
     }
 
-    let setup_evaluation = if let Some(claim) = deferred_setup_claim {
-        claim
-    } else {
-        let _span =
-            tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
-        plan.evaluate_direct::<F>(
-            setup,
-            prepared_point.inner().powers.as_ref(),
-            prepared_point.outer().powers.as_ref(),
-            prepared_point.opening().powers.as_ref(),
-        )?
-    };
-    let quotient_evaluation =
-        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families).map_err(
-            |error| AkitaError::InvalidInput(format!("relation quotient failed: {error:?}")),
-        )?;
-
-    let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
-    if deferred_setup_claim.is_some() {
-        evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    pub(super) fn materialize_setup(&mut self) -> Result<(), AkitaError> {
+        let _span = tracing::info_span!("relation_setup_weights").entered();
+        match self {
+            Self::Quotient { point, plan, .. } => {
+                plan.materialize_direct_scan(point.coefficient_functional())
+            }
+            Self::Reduced { point, plan, .. } => {
+                plan.materialize_direct_scan(point.coefficient_functional())
+            }
+        }
     }
-    Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
+
+    #[cfg(any(test, feature = "benchmark-support"))]
+    pub(super) fn setup_field_len(&self) -> usize {
+        match self {
+            Self::Quotient { plan, .. } | Self::Reduced { plan, .. } => {
+                plan.projection_geometry().natural_field_len()
+            }
+        }
+    }
+
+    pub(super) fn evaluate_setup<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let _span = tracing::info_span!("relation_setup_scan").entered();
+        match self {
+            Self::Quotient { point, plan, .. } => {
+                Ok(point.common_alpha_evaluation() * plan.evaluate_direct::<F>(setup)?)
+            }
+            Self::Reduced { plan, .. } => plan.evaluate_direct::<F>(setup),
+        }
+    }
+
+    pub(super) fn evaluate_structured<F>(&self) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F>,
+    {
+        let _span = tracing::info_span!("relation_structured_groups").entered();
+        match self {
+            Self::Quotient {
+                groups,
+                point,
+                plan,
+                ..
+            } => {
+                let structured = groups.iter().try_fold(E::zero(), |sum, group| {
+                    Ok::<_, AkitaError>(
+                        sum + plan.evaluate_structured_group::<F>(
+                            group.group_id,
+                            &group.multipliers.c_alphas,
+                            &group.multipliers.opening_a_evals,
+                            point.alpha(),
+                        )?,
+                    )
+                })?;
+                Ok(point.common_alpha_evaluation() * structured)
+            }
+            Self::Reduced { groups, plan, .. } => {
+                groups.iter().try_fold(E::zero(), |sum, group| {
+                    Ok(sum
+                        + plan.evaluate_reduced_structured_group::<F>(
+                            group.group_id,
+                            &group.multipliers.challenges,
+                            &group.multipliers.opening,
+                        )?)
+                })
+            }
+        }
+    }
+
+    pub(super) fn evaluate_quotient_tail<F>(&self) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F>,
+    {
+        match self {
+            Self::Quotient {
+                evaluator,
+                point,
+                row_families,
+                ..
+            } => {
+                let _span = tracing::info_span!("relation_quotient_tail").entered();
+                Ok(point.common_alpha_evaluation()
+                    * evaluate_quotient_tail::<F, E>(evaluator, point, row_families)?)
+            }
+            Self::Reduced { .. } => Ok(E::zero()),
+        }
+    }
+
+    pub(super) fn evaluate_relation_weight<F>(&self) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F>,
+    {
+        Ok(self.evaluate_structured::<F>()? + self.evaluate_quotient_tail::<F>()?)
+    }
+
+    fn evaluate_materialized_direct<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
+    {
+        Ok(self.evaluate_relation_weight::<F>()? + self.evaluate_setup::<F>(setup)?)
+    }
+
+    fn evaluate_deferred<F>(self, setup_claim: E) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F>,
+    {
+        let result = self.evaluate_relation_weight::<F>()?;
+        let Self::Quotient {
+            evaluator,
+            point,
+            plan,
+            ..
+        } = self
+        else {
+            return Err(AkitaError::InvalidProof);
+        };
+        let result = result + point.common_alpha_evaluation() * setup_claim;
+        evaluator.cache_setup_contribution_plan(point.address_point(), plan)?;
+        Ok(result)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
-    prepared_point: &PreparedRelationPoint<E>,
+    prepared_point: &PreparedLiftedRelationPoint<E>,
     row_families: &[RelationRowFamily],
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
-    let context = evaluator
-        .flat_context
-        .as_ref()
-        .ok_or(AkitaError::InvalidProof)?;
+    let context = &evaluator.flat_context;
     let rows = row_families.len();
     if rows
         != context

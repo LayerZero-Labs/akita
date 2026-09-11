@@ -104,6 +104,7 @@ impl CommittedGroupParams {
         payload_mode: crate::CommitmentPayloadMode,
     ) {
         bytes.push(payload_mode.tag());
+        bytes.push(self.ring_relation_mode.tag());
         self.source_encoding.append_descriptor_bytes(bytes);
         self.opening_method().append_descriptor_bytes(bytes);
         push_u32(bytes, self.inner().digits.log_basis);

@@ -10,8 +10,8 @@ use akita_serialization::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use rand_core::{CryptoRng, RngCore};
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -116,12 +116,33 @@ pub struct AkitaExpandedSetup<F: Field> {
 }
 
 /// Verifier setup artifact derived from prover setup.
+///
+/// Semantic state is immutable so clones can safely share prepared matrix
+/// caches. To replace a setup, construct a new value with [`Self::from_parts`].
+///
+/// ```compile_fail
+/// use akita_types::AkitaVerifierSetup;
+/// use jolt_field::Prime32Offset99;
+/// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
+///            other: AkitaVerifierSetup<Prime32Offset99>) {
+///     setup.expanded = other.expanded;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use akita_types::AkitaVerifierSetup;
+/// use jolt_field::Prime32Offset99;
+/// fn replace(setup: &mut AkitaVerifierSetup<Prime32Offset99>,
+///            other: AkitaVerifierSetup<Prime32Offset99>) {
+///     setup.prefix_slots = other.prefix_slots;
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
-    pub expanded: Arc<AkitaExpandedSetup<F>>,
+    expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
-    pub prefix_slots: SetupPrefixVerifierRegistry<F>,
+    prefix_slots: SetupPrefixVerifierRegistry<F>,
     /// Locally derived, negacyclic-only matrix prefixes for direct verifier checks.
     /// This performance cache is neither serialized nor part of setup identity.
     verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
@@ -136,6 +157,16 @@ impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
 impl<F: Field> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: Field> AkitaVerifierSetup<F> {
+    /// Borrow the immutable expanded matrix stage.
+    pub fn expanded(&self) -> &Arc<AkitaExpandedSetup<F>> {
+        &self.expanded
+    }
+
+    /// Borrow the public setup-prefix commitment metadata.
+    pub fn prefix_slots(&self) -> &SetupPrefixVerifierRegistry<F> {
+        &self.prefix_slots
+    }
+
     /// Construct verifier setup state from expanded setup and structurally checked prefix metadata.
     ///
     /// This constructor binds the registry to the public matrix identity. It

@@ -10,7 +10,9 @@ use akita_types::{
     BasisMode, FpExtEncoding, PreparedSubringCoefficientPackingPoint,
     SubringCoefficientPackingGeometry,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 use std::time::Duration;
 
@@ -59,7 +61,7 @@ fn bench_dense_shape<F, E, const D: usize>(
             }))
         })
         .collect();
-    let poly = DensePoly::from_ring_coeffs(rings);
+    let poly = DensePoly::from_ring_coeffs(rings).unwrap();
     let refs = [&poly];
     let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&refs).unwrap();
     let plan = SubringCoefficientPackingPlan { point: &point };

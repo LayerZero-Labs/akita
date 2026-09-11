@@ -51,9 +51,17 @@ certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
 
+The infinity estimator evaluates Gaussian probabilities in log space, using
+the complementary error-function tail when the coordinate probability is
+close to one. Numerical allowances are applied toward greater attack success
+before combining coordinates, so rounding uncertainty favors a cheaper
+attack. Independent high-precision power-series fixtures check the probability
+calculation and integer repetition thresholds. These checks cover numerical
+regressions; they do not certify all floating-point lattice simulation steps.
+
 The estimator hardening described above changes the acceptance model. The
 checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
-and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+and wire tag `1`; evaluator revision `akita-infinity-width-v4`, the regenerated
 table digest, and dependent catalog identities bind the corrected semantics.
 The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
 uses `2^44 - 1`. Within those guards, the audited A cells are the exact
@@ -269,8 +277,8 @@ A smaller bound is a smaller accepted witness space, not a weaker commitment. Th
 A-role collision bounds above are computed from the same digit envelope the
 verifier admits, so a bounded family is priced for exactly what it accepts. The
 unit one-hot class has a separate structural admission check. The declared bound
-is inside `DecompositionParams`, which is hashed into the generated catalog
-identity and serialized into the instance descriptor, so a proof cannot be
+is inside `DecompositionParams`, which is hashed into the external artifact's
+policy identity and serialized into the instance descriptor, so a proof cannot be
 replayed against a family with a different bound.
 
 The obligation the smaller space creates is on the *producer*, and it has two
@@ -285,6 +293,39 @@ The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
 is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
 [Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
+
+## Reduced ring-relation soundness
+
+Quotient lifting and reduced evaluation enforce the same native-ring
+relations through different witness geometries. For one physical row of native
+dimension $d$, reduced evaluation forms the residual
+
+$$
+Z(X)
+=
+\left(\sum_c A_c(X)W_c(X)-Y(X)\right)
+\bmod (X^d+1).
+$$
+
+The protocol checks $Z(\alpha)$ at the existing ring-switch challenge
+$\alpha$. If the row relation is false, $Z$ is a nonzero polynomial of degree
+less than $d$, so random evaluation over the extension challenge field has the
+usual Schwartz--Zippel bound. The existing $\tau_1$ challenge batches the
+canonically ordered physical rows after each has been reduced in its own native
+ring dimension.
+
+The schedule, witness layout, relation mode, public statement, commitments,
+and outgoing witness are bound before $\alpha$ is sampled. Consequently the
+prover cannot choose the relation realization or its witness after seeing the
+evaluation point. `RingRelationMode` is part of the instance descriptor and
+effective schedule digest, not a proof field.
+
+Reduced evaluation never divides by $\alpha^d+1$. An evaluation point that is
+a root of the cyclotomic modulus therefore needs no special rejection: the
+signed-wrap residue recurrence and terminal verifier kernel remain defined.
+Removing quotient spans also does not change the A-role SIS binding argument,
+the digit-range proof, or the scheduled `L∞`/`L2` response cap. It only removes
+coordinates that existed to witness polynomial divisibility.
 
 ## Subring coefficient packing
 

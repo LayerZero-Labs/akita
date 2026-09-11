@@ -29,9 +29,9 @@ use crate::{
     sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
     CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingVec, SisModulusProfileId,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof, TerminalResponse,
-    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingRelationMode, RingVec,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -48,6 +48,8 @@ mod execution_admission;
 mod group_topology;
 #[path = "schedule_tests/proof_shapes.rs"]
 mod proof_shapes;
+#[path = "schedule_tests/relation_mode.rs"]
+mod relation_mode;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
 type F = Prime128OffsetA7F7;

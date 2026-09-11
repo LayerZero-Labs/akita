@@ -1,6 +1,8 @@
 use super::*;
 use crate::api::commitment::commit_outer_slices;
-use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
+use crate::compute::compression::{
+    execute_compression_chains, CompressionExecutionInput, CompressionRelationOutput,
+};
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
@@ -147,6 +149,7 @@ where
                                 id: (),
                                 plan,
                                 coefficients: source.into_coeffs(),
+                                relation_mode: commit_params.ring_relation_mode,
                             }],
                         )?;
                         let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -165,7 +168,7 @@ where
                             packed_witness,
                             inner.into_inner_rows(),
                             payload,
-                            Some((output.witness, output.quotients)),
+                            Some((output.witness, output.relation)),
                         ))
                     }
                 }
@@ -173,11 +176,17 @@ where
         }
     )?;
     let hint = match compression_witness {
-        Some((compression_witness, compression_quotients)) => {
+        Some((compression_witness, CompressionRelationOutput::QuotientLift { quotients })) => {
             AkitaCommitmentHint::singleton_with_outer_compression(
                 inner_rows,
                 &compression_witness,
-                &compression_quotients,
+                &quotients,
+            )?
+        }
+        Some((compression_witness, CompressionRelationOutput::ReducedEvaluation)) => {
+            AkitaCommitmentHint::singleton_with_reduced_outer_compression(
+                inner_rows,
+                &compression_witness,
             )?
         }
         None => AkitaCommitmentHint::singleton(inner_rows)?,

@@ -4,7 +4,7 @@ use super::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
-    CompressionTerminalPayload, PackedNegativeBinary, RingVec,
+    CompressionTerminalPayload, PackedNegativeBinary, RingRelationMode, RingVec,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
@@ -18,21 +18,51 @@ pub(crate) struct CompressionExecutionInput<Id, F> {
     pub(crate) id: Id,
     pub(crate) plan: CompressionChainPlan,
     pub(crate) coefficients: Vec<F>,
+    pub(crate) relation_mode: RingRelationMode,
+}
+
+/// Relation-owned data retained from one compression chain.
+pub(crate) enum CompressionRelationOutput<F: Field> {
+    /// Quotient-lift mode retains one quotient image per map.
+    QuotientLift { quotients: Vec<RingVec<F>> },
+    /// Reduced-evaluation mode retains no quotient image.
+    ReducedEvaluation,
+}
+
+impl<F: Field> CompressionRelationOutput<F> {
+    #[cfg(test)]
+    pub(crate) fn quotient_lift(&self) -> Result<&[RingVec<F>], AkitaError> {
+        match self {
+            Self::QuotientLift { quotients } => Ok(quotients),
+            Self::ReducedEvaluation => Err(AkitaError::InvalidSetup(
+                "reduced compression output has no quotient rows".into(),
+            )),
+        }
+    }
+
+    pub(crate) fn into_quotient_lift(self) -> Result<Vec<RingVec<F>>, AkitaError> {
+        match self {
+            Self::QuotientLift { quotients } => Ok(quotients),
+            Self::ReducedEvaluation => Err(AkitaError::InvalidSetup(
+                "reduced compression output has no quotient rows".into(),
+            )),
+        }
+    }
 }
 
 /// One source's persistent compression result.
-pub(crate) struct CompressionExecutionOutput<Id, F> {
+pub(crate) struct CompressionExecutionOutput<Id, F: Field> {
     pub(crate) id: Id,
     pub(crate) witness: CompressionChainWitness,
     pub(crate) terminal: CompressionTerminalPayload<F>,
-    /// One native-ring quotient image per compression map.
-    pub(crate) quotients: Vec<RingVec<F>>,
+    pub(crate) relation: CompressionRelationOutput<F>,
 }
 
 /// Measurements for one bounded exact-shape kernel batch.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CompressionBatchReport {
     pub(crate) map_index: usize,
+    pub(crate) relation_mode: RingRelationMode,
     pub(crate) ring_dimension: usize,
     pub(crate) input_width: usize,
     pub(crate) batch_size: usize,
@@ -63,12 +93,16 @@ pub(crate) struct CompressionExecutionReport {
     pub(crate) kernel_including_prepare: Duration,
     pub(crate) elapsed: Duration,
     pub(crate) batches: Vec<CompressionBatchReport>,
+    pub(crate) quotient_lift_batches: usize,
+    pub(crate) reduced_evaluation_batches: usize,
+    pub(crate) quotient_rows: usize,
 }
 
 struct WorkItem<Id, F> {
     id: Id,
     plan: CompressionChainPlan,
     coefficients: Vec<F>,
+    relation_mode: RingRelationMode,
     stages: Vec<PackedNegativeBinary>,
     quotients: Vec<RingVec<F>>,
 }
@@ -129,13 +163,15 @@ where
         .and_then(|item| item.plan.maps().get(map_index))
         .copied()
         .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+    let relation_mode = items[item_indices[0]].relation_mode;
     if first_map.ring_dimension() != D
         || item_indices.iter().any(|&item_index| {
             items
                 .get(item_index)
                 .and_then(|item| item.plan.maps().get(map_index))
                 .is_none_or(|map| {
-                    map.modulus_profile() != first_map.modulus_profile()
+                    items[item_index].relation_mode != relation_mode
+                        || map.modulus_profile() != first_map.modulus_profile()
                         || map.ring_dimension() != first_map.ring_dimension()
                         || map.input_width() != first_map.input_width()
                         || map.output_rank() != first_map.output_rank()
@@ -189,29 +225,58 @@ where
     let views = expanded.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     let kernel_started = Instant::now();
-    let outputs = ctx
-        .backend()
-        .compression_rows_products(ctx.prepared(), &views)?;
+    let (negacyclic_outputs, cyclic_outputs) = match relation_mode {
+        RingRelationMode::QuotientLift => {
+            let products = ctx
+                .backend()
+                .compression_rows_products(ctx.prepared(), &views)?;
+            let (negacyclic, cyclic): (Vec<_>, Vec<_>) = products
+                .into_iter()
+                .map(|products| (products.negacyclic, products.cyclic))
+                .unzip();
+            (negacyclic, Some(cyclic))
+        }
+        RingRelationMode::ReducedEvaluation => (
+            ctx.backend()
+                .compression_negacyclic_rows(ctx.prepared(), &views)?,
+            None,
+        ),
+    };
     let kernel_including_prepare = kernel_started.elapsed();
-    if outputs.len() != item_indices.len() {
+    if negacyclic_outputs.len() != item_indices.len()
+        || cyclic_outputs
+            .as_ref()
+            .is_some_and(|outputs| outputs.len() != item_indices.len())
+    {
         return Err(AkitaError::InvalidSetup(
             "compression backend returned the wrong batch length".into(),
         ));
     }
-    for (((&item_index, products), packed_digits), _) in
-        item_indices.iter().zip(outputs).zip(packed).zip(expanded)
+    for (batch_index, ((&item_index, packed_digits), _)) in
+        item_indices.iter().zip(packed).zip(expanded).enumerate()
     {
-        if products.negacyclic.len() != first_map.output_rank()
-            || products.cyclic.len() != first_map.output_rank()
-        {
+        let negacyclic = negacyclic_outputs
+            .get(batch_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if negacyclic.len() != first_map.output_rank() {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong output rank".into(),
             ));
         }
-        let quotient = quotient_from_products(&products.cyclic, &products.negacyclic)?;
-        let negacyclic_image = RingVec::from_ring_elems(&products.negacyclic)
-            .coeffs()
-            .to_vec();
+        if let Some(cyclic_outputs) = &cyclic_outputs {
+            let cyclic = cyclic_outputs
+                .get(batch_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if cyclic.len() != first_map.output_rank() {
+                return Err(AkitaError::InvalidSetup(
+                    "compression backend returned the wrong output rank".into(),
+                ));
+            }
+            items[item_index]
+                .quotients
+                .push(quotient_from_products(cyclic, negacyclic)?);
+        }
+        let negacyclic_image = RingVec::from_ring_elems(negacyclic).coeffs().to_vec();
         if negacyclic_image.len() != first_map.output_coefficients() {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong image length".into(),
@@ -219,7 +284,6 @@ where
         }
         items[item_index].coefficients = negacyclic_image;
         items[item_index].stages.push(packed_digits);
-        items[item_index].quotients.push(quotient);
     }
     let output_bytes = checked_sum_bytes(
         item_indices
@@ -230,6 +294,7 @@ where
     )?;
     Ok(CompressionBatchReport {
         map_index,
+        relation_mode,
         ring_dimension: D,
         input_width: first_map.input_width(),
         batch_size: item_indices.len(),
@@ -251,17 +316,22 @@ where
     F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
-    let mut groups = BTreeMap::<(usize, usize, usize), Vec<usize>>::new();
+    let mut groups = BTreeMap::<(RingRelationMode, usize, usize, usize), Vec<usize>>::new();
     for (item_index, item) in items.iter().enumerate() {
         if let Some(map) = item.plan.maps().get(map_index) {
             groups
-                .entry((map.ring_dimension(), map.input_width(), map.output_rank()))
+                .entry((
+                    item.relation_mode,
+                    map.ring_dimension(),
+                    map.input_width(),
+                    map.output_rank(),
+                ))
                 .or_default()
                 .push(item_index);
         }
     }
     let mut reports = Vec::new();
-    for ((ring_dimension, _, _), item_indices) in groups {
+    for ((_, ring_dimension, _, _), item_indices) in groups {
         for chunk in item_indices.chunks(MAX_COMPRESSION_RHS_BATCH) {
             let report = dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Compression,
@@ -313,6 +383,7 @@ where
             id: input.id,
             plan: input.plan,
             coefficients: input.coefficients,
+            relation_mode: input.relation_mode,
             stages: Vec::new(),
             quotients: Vec::new(),
         });
@@ -355,6 +426,10 @@ where
         })?;
         report.max_current_image_bytes = report.max_current_image_bytes.max(current_image_bytes);
         for batch in execute_stage(ctx, &mut items, map_index)? {
+            match batch.relation_mode {
+                RingRelationMode::QuotientLift => report.quotient_lift_batches += 1,
+                RingRelationMode::ReducedEvaluation => report.reduced_evaluation_batches += 1,
+            }
             report.digitization += batch.digitization;
             report.kernel_including_prepare += batch.kernel_including_prepare;
             report.max_expanded_rhs_bytes =
@@ -397,11 +472,30 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("compression terminal byte total overflow".into())
             })?;
+        let relation = match item.relation_mode {
+            RingRelationMode::QuotientLift => {
+                report.quotient_rows = report
+                    .quotient_rows
+                    .checked_add(item.quotients.len())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression quotient row count overflow".into())
+                    })?;
+                CompressionRelationOutput::QuotientLift {
+                    quotients: item.quotients,
+                }
+            }
+            RingRelationMode::ReducedEvaluation => {
+                if !item.quotients.is_empty() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                CompressionRelationOutput::ReducedEvaluation
+            }
+        };
         outputs.push(CompressionExecutionOutput {
             id: item.id,
             witness,
             terminal,
-            quotients: item.quotients,
+            relation,
         });
     }
     report.cache_bytes_after = ctx.backend().compression_cache_bytes(ctx.prepared());
@@ -461,6 +555,7 @@ mod tests {
             coefficients: (0..coefficients)
                 .map(|index| F::from_u64(index as u64 * 17 + id as u64 + 1))
                 .collect(),
+            relation_mode: RingRelationMode::QuotientLift,
         }
     }
 
@@ -483,10 +578,16 @@ mod tests {
             batched[1].terminal.coefficients(),
             second[0].terminal.coefficients()
         );
-        assert_eq!(batched[0].quotients, first[0].quotients);
-        assert_eq!(batched[1].quotients, second[0].quotients);
         assert_eq!(
-            batched[0].quotients.len(),
+            batched[0].relation.quotient_lift().unwrap(),
+            first[0].relation.quotient_lift().unwrap()
+        );
+        assert_eq!(
+            batched[1].relation.quotient_lift().unwrap(),
+            second[0].relation.quotient_lift().unwrap()
+        );
+        assert_eq!(
+            batched[0].relation.quotient_lift().unwrap().len(),
             akita_types::COMPRESSION_MAP_COUNT
         );
         assert_eq!(report.batches.len(), 2);
@@ -513,6 +614,27 @@ mod tests {
             report.equivalent_i8_witness_bytes,
             report.retained_packed_witness_bytes * 8
         );
+    }
+
+    #[test]
+    fn reduced_execution_builds_no_quotients_or_paired_compression_cache() {
+        let (setup, prepared) = prepared_context(64);
+        let ctx =
+            OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
+        let mut reduced = input(0, 64);
+        reduced.relation_mode = RingRelationMode::ReducedEvaluation;
+
+        let (outputs, report) = execute_compression_chains(&ctx, vec![reduced]).unwrap();
+
+        assert!(matches!(
+            outputs[0].relation,
+            CompressionRelationOutput::ReducedEvaluation
+        ));
+        assert_eq!(report.quotient_lift_batches, 0);
+        assert_eq!(report.reduced_evaluation_batches, report.maps);
+        assert_eq!(report.quotient_rows, 0);
+        assert!(prepared.compression_ntt_cache_bytes() > 0);
+        assert!(prepared.ntt_cache_bytes().unwrap() > 0);
     }
 
     /// Run with:

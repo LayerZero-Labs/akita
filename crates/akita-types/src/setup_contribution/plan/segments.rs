@@ -28,16 +28,11 @@ pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 impl<E: Field> SetupContributionGroupPlan<E> {
     pub(crate) fn refresh_segments(
         &mut self,
+        weights: &DirectScanWeights<E>,
         d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
-        a_ratio: usize,
-        b_ratio: usize,
-        d_ratio: usize,
     ) -> Result<(), AkitaError> {
-        let weights = self.direct_scan_weights.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
-        })?;
         if d_weights.len() != d_rows {
             return Err(AkitaError::InvalidSize {
                 expected: d_rows,
@@ -50,17 +45,17 @@ impl<E: Field> SetupContributionGroupPlan<E> {
                 active_cols: weights.e.len(),
                 physical_cols: d_physical_cols,
                 row_weights: d_weights,
-                ratio: d_ratio,
+                ratio: self.d_ratio,
             },
             PackedBLayout {
                 segments: self.physical_b.weight_segments(),
                 physical_footprint: self.physical_b.physical_footprint()?,
-                ratio: b_ratio,
+                ratio: self.b_ratio,
             },
             PackedALayout {
                 cols: self.z_cols,
                 row_weights: &self.a_row_weights,
-                ratio: a_ratio,
+                ratio: self.a_ratio,
             },
         )?;
         self.required = required;

@@ -5,6 +5,7 @@ mod support;
 
 use super::*;
 use crate::layout::GroupOpenPhaseParams;
+use crate::r_decomp_levels;
 use crate::DigitBlocks;
 use crate::{
     emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,
@@ -233,7 +234,7 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     assert_eq!(unit.e_range().start, unit.z_range().end);
     assert_eq!(unit.t_range().start, unit.e_range().end);
     // The shared r tail follows the unit's compact z, e, and t ranges.
-    assert_eq!(resolved.r_range().start, unit.t_range().end);
+    assert_eq!(resolved.tail_range().start, unit.t_range().end);
     assert_eq!(unit.global_block_start(), 0);
     assert_eq!(unit.num_live_blocks(), lp.blocks().live_blocks);
 }
@@ -289,7 +290,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
             assert_eq!(unit.t_range().start, unit.e_range().end);
             assert_eq!(unit.global_block_start(), j * blocks_per_chunk);
         }
-        assert_eq!(layout.r_range().start, w * stride);
+        assert_eq!(layout.tail_range().start, w * stride);
         // Block windows tile [0, num_live_blocks).
         assert_eq!(
             layout.units().last().unwrap().global_block_start() + blocks_per_chunk,
@@ -379,7 +380,7 @@ fn relation_segment_layout_uses_same_axis_contract() {
     assert_eq!(unit.z_range().start, 0);
     assert_eq!(unit.e_range().start, unit.z_range().end);
     assert_eq!(unit.t_range().start, unit.e_range().end);
-    assert_eq!(layout.r_range().start, unit.t_range().end);
+    assert_eq!(layout.tail_range().start, unit.t_range().end);
     instance
         .check_v_shape_for_level(&lp)
         .expect("v rows match layout");
@@ -490,8 +491,8 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
         assert_eq!(unit.e_range().start, base + z_g);
         assert_eq!(unit.t_range().start, base + z_g + e_g);
         if p + 1 == num_groups {
-            assert_eq!(layout.r_range().start, base + z_g + e_g + t_g);
-            assert!(layout.r_range().len() >= quotient_coeff_len);
+            assert_eq!(layout.tail_range().start, base + z_g + e_g + t_g);
+            assert!(layout.tail_range().len() >= quotient_coeff_len);
         }
         base += z_g + e_g + t_g;
     }
@@ -556,7 +557,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
     }
     assert_eq!(
         layout.units().last().expect("last unit").t_range().end,
-        layout.r_range().start
+        layout.tail_range().start
     );
 
     // Independent dense emitter oracle: each physical range must contain

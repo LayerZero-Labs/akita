@@ -17,9 +17,8 @@ AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
 ```
 
 This build contains only the adaptive fp128 one hot profile and its required
-protocol features. A narrow build keeps unrelated schedule tables and profile
-modes out of the binary, which makes build size and run comparisons easier to
-interpret.
+protocol features. Schedule rows are loaded from the external artifact, while a
+narrow build keeps unrelated profile-mode monomorphizations out of the binary.
 
 The harness requires `--release`. Set `AKITA_ALLOW_DEBUG_PROFILE=1` only when
 debugging the harness itself.
@@ -35,9 +34,9 @@ prover representation that lets Akita skip zero work. A host constraint system
 can prove the one hot property separately when its application needs that
 claim.
 
-Generated tables choose the ring dimensions for the root and every later fold.
-The report prints the selected sequence. The application does not choose a
-fixed ring dimension for this run.
+The admitted row from the external schedule artifact chooses the ring
+dimensions for the root and every later fold. The report prints the selected
+sequence. The application does not choose a fixed ring dimension for this run.
 
 ## Read the main phases
 

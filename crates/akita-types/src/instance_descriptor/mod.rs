@@ -34,7 +34,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 3;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 4;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];

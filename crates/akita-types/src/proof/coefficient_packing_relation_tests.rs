@@ -92,7 +92,10 @@ where
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<Base>(params.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<Base>(
+            params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let relation_address_geometry = RelationAddressGeometry::for_relation(
@@ -460,6 +463,26 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         );
         assert_compact_factors_match_dense(&h4);
     }
+    let recursive_role_subcolumns = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        512,
+        64,
+        512,
+        6,
+        4,
+        12,
+        2,
+        2,
+    );
+    assert_compact_factors_match_dense(&recursive_role_subcolumns);
+    let compact = prepare_compact(&recursive_role_subcolumns, Prime128OffsetA7F7::from_u64(19));
+    let role_stride = recursive_role_subcolumns.params.open().digits.num_digits * 64;
+    let direct_families = &compact.compact_factors().direct_opening_families;
+    assert!(direct_families
+        .iter()
+        .any(|family| family.axes.iter().any(|axis| axis.len == 8
+            && axis.left_stride == 64
+            && axis.right_stride == role_stride)));
 }
 
 #[test]
@@ -704,7 +727,11 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     );
 
     let depth_open = fixture.params.open().digits.num_digits;
-    let quotient_depth = fixture.relation_plan.witness_layout().quotient_depth();
+    let quotient_depth = fixture
+        .relation_plan
+        .witness_layout()
+        .quotient_depth()
+        .expect("quotient-lift fixture");
     let extension_degree = <E as ExtField<F>>::DEGREE;
     let expected_e_events = 2 * 2 * depth_open * extension_degree;
     let expected_q_events = quotient_depth * extension_degree;
@@ -764,7 +791,11 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     );
     let denominator = alpha_powers.last().copied().unwrap() * alpha + E::one();
     let quotient_gadget = gadget_row_scalars::<F>(
-        fixture.relation_plan.witness_layout().quotient_depth(),
+        fixture
+            .relation_plan
+            .witness_layout()
+            .quotient_depth()
+            .expect("quotient-lift fixture"),
         fixture.params.open().digits.log_basis,
     );
     assert_eq!(
@@ -1070,7 +1101,11 @@ fn semantic_events_match_an_independent_dense_accumulation() {
     }
     let denominator = powers.last().copied().unwrap() * alpha + E::one();
     let quotient_gadget = gadget_row_scalars::<F>(
-        fixture.relation_plan.witness_layout().quotient_depth(),
+        fixture
+            .relation_plan
+            .witness_layout()
+            .quotient_depth()
+            .expect("quotient-lift fixture"),
         fixture.params.open().digits.log_basis,
     );
     let row = fixture.relation_plan.consistency_row_index(0).unwrap();
@@ -1445,7 +1480,12 @@ fn production_extension_degrees_include_exact_overlap_and_h_greater_than_one() {
     let four_plane_semantics = prepare(&four_planes, E4::from_u64(31));
     assert_eq!(four_plane_semantics.geometry().extension_degree(), 4);
     assert_eq!(four_plane_semantics.geometry().packing_factor(), 4);
-    let q_events = four_planes.relation_plan.witness_layout().quotient_depth() * 4;
+    let q_events = four_planes
+        .relation_plan
+        .witness_layout()
+        .quotient_depth()
+        .expect("quotient-lift fixture")
+        * 4;
     let events = four_plane_semantics.relation_events().events();
     for event in &events[events.len() - q_events..] {
         assert_eq!(event.physical_coefficients().len(), 64);

@@ -95,7 +95,7 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         structured,
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
 
     let mut optimized_claim = optimized.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -166,7 +166,7 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
     assert!(!direct.can_use_deferred_compact_prefix());
 
     let mut prover_claim = prover.input_claim();
@@ -326,7 +326,10 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let mut expected_trace =
         PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_lane_count, coeff_count);
     expected_trace.fold_two_coefficients(r0, r1);
-    let expected_relation_lane_weights = prover.relation_lane_weights.clone();
+    let expected_relation_lane_weights = prover
+        .relation_lane_weights()
+        .expect("quotient test state")
+        .to_vec();
 
     let mut expected = new_stage2_test_prover_with_trace(
         F::from_u64(101),
@@ -348,10 +351,10 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
-    expected.common_alpha_factor = expected_alpha_round2.clone();
+    expected.replace_common_alpha_factor(expected_alpha_round2.clone());
     expected.linear_terms = expected_trace;
     expected.rounds_completed = 2;
-    expected.relation_lane_weights = expected_relation_lane_weights.clone();
+    expected.replace_relation_lane_weights(expected_relation_lane_weights.clone());
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -362,7 +365,10 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
             panic!("expected fused trace transition to enter the folded suffix")
         }
     }
-    assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
+    assert_eq!(
+        prover.common_alpha_factor().expect("quotient test state"),
+        expected_alpha_round2
+    );
     let expected_trace_round2 = trace_compact
         .chunks_exact(4)
         .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
@@ -372,6 +378,9 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         expected_trace_round2,
         "two-round handoff must preserve the folded trace"
     );
-    assert_eq!(prover.relation_lane_weights, expected_relation_lane_weights);
+    assert_eq!(
+        prover.relation_lane_weights().expect("quotient test state"),
+        expected_relation_lane_weights
+    );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }

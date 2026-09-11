@@ -37,12 +37,11 @@ use akita_types::{
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::relation_row_weight, recover_ring_subfield_inner_product, reduction_table_len,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    root_input_witness_len, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-    AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
-    Commitment, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldParams, FoldSchedule, NegativeBinarySupport, OpeningClaimsLayout,
-    PolynomialGroupLayout, PreparedOpeningPoint, RelationWitnessGeometry,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
+    AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
+    CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
+    FoldParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, RingVec, SetupContributionMode, SetupPrefixProverRegistry,
     SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
 };
@@ -75,14 +74,14 @@ pub(in crate::protocol::core) use fold::{
     PreparedFold,
 };
 pub(in crate::protocol::core) use fold_kernels::*;
-pub use prove::{batched_prove, prove};
+pub use prove::batched_prove;
 use root_fold::prove_root;
 #[allow(unused_imports)]
 pub(crate) use root_group::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
     RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
 };
-pub use suffix::{prove_suffix, SuffixProverState};
+pub use suffix::SuffixProverState;
 
 /// Output from a single prove level, used to extend proof wire data and state.
 pub struct ProveLevelOutput<F: Field, E: Field> {

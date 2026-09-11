@@ -1,6 +1,7 @@
 use akita_algebra::jl::TernaryProjectionShape;
 use akita_challenges::expand_balanced_ternary_matrix;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 
 const DEFAULT_LOG_WIDTHS: &str = "12,13,14,15,16";
 const MAX_LOG_WIDTH: u32 = 16;

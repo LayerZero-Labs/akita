@@ -188,17 +188,17 @@ where
     F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
-    let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
+    let selected_prefix = next_fold_level_params.setup_prefix().ok_or_else(|| {
         AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
     })?;
-    let slot = setup
-        .prefix_slots
-        .get(&selected_slot_id.slot_id().expect("setup prefix group"))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "planned setup-prefix slot is missing from verifier setup".to_string(),
-            )
-        })?;
+    let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
+        AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
+    })?;
+    let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from verifier setup".to_string(),
+        )
+    })?;
     let setup_eval_len = setup_prefix_coverage_eval_len(
         None,
         &slot.id,
@@ -297,7 +297,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
+    use akita_config::proof_optimized::fp128::Dense;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, scheduled_setup_prefix,
@@ -401,14 +401,17 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(16),
-        ))
-        .expect("scalar schedule")
-        .schedule()
-        .root
-        .params
-        .clone();
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Dense>()
+            .expect("workspace schedule catalog");
+        let level_params = catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(16),
+            ))
+            .expect("scalar schedule")
+            .schedule()
+            .root
+            .params
+            .clone();
         let natural_field_len = level_params
             .inner()
             .matrix
@@ -420,7 +423,7 @@ mod tests {
         let (setup, offloaded_params) =
             verifier_setup_with_unaligned_matrix(level_params.clone(), natural_field_len);
         assert!(!setup
-            .expanded
+            .expanded()
             .shared_matrix()
             .num_field_elements()
             .is_multiple_of(RING_D));

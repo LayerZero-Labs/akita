@@ -61,13 +61,17 @@ impl PlannerCostModelId {
     }
 }
 
-/// Deterministic schedule-selection policy bound into generated catalogs.
+/// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick proof bytes, then physical setup fields, then canonical descriptor.
-    MinEstimatedProofPayload,
-    /// Pick first direct setup, proof bytes, total setup, then descriptor.
-    MinFirstDirectSetupThenPayload,
+    /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
+    MinEstimatedProofPayloadV2,
+    /// Pick first direct setup, proof bytes, total setup, root output witness,
+    /// then descriptor.
+    MinFirstDirectSetupThenPayloadV2,
+    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
+    /// bytes, first direct output witness, then descriptor.
+    MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3,
 }
 
 impl SelectionPolicyId {
@@ -76,33 +80,38 @@ impl SelectionPolicyId {
         recursive_setup_planning: bool,
         ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
-        if recursive_setup_planning
-            || matches!(
-                ring_dimension_schedule_mode,
-                RingDimensionScheduleMode::AdaptiveDimension { .. }
-            )
-        {
-            Self::MinFirstDirectSetupThenPayload
+        if recursive_setup_planning {
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        } else if matches!(
+            ring_dimension_schedule_mode,
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
+        ) {
+            Self::MinFirstDirectSetupThenPayloadV2
         } else {
-            Self::MinEstimatedProofPayload
+            Self::MinEstimatedProofPayloadV2
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayload => 2,
-            // Tag 3 belonged to the retired setup-envelope-first policy and
-            // must never be reused.
+            Self::MinEstimatedProofPayloadV2 => 4,
+            Self::MinFirstDirectSetupThenPayloadV2 => 5,
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
+            // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
+            // belonged to the retired setup-envelope-first policy. Never reuse
+            // an objective tag: trusted catalog admission depends on it.
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
+            Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
+            Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+                "MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3"
+            }
         }
     }
 }
@@ -215,7 +224,7 @@ impl RingDimensionScheduleMode {
 /// Runtime schedule validation policy.
 ///
 /// The compatibility name stays `PlannerPolicy` during the migration because
-/// generated catalog identities already embed these fields. Runtime code must
+/// trusted catalog identities already embed these fields. Runtime code must
 /// only use this as validation policy; search remains in `akita-planner`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
@@ -509,6 +518,15 @@ pub struct CandidateTerminalResponse {
     pub estimated_payload_bytes: usize,
 }
 
+/// Cached planner costs checked against the materialized schedule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CandidateMaterializationCost {
+    pub proof_bytes: usize,
+    pub grinding: akita_types::TranscriptGrindingCost,
+    pub num_setup_field_elements: usize,
+    pub first_direct_setup_field_len: Option<usize>,
+}
+
 fn fold_schedule_from_candidate_parts(
     folds: &[CandidateFoldStep],
     terminal_response: &CandidateTerminalResponse,
@@ -543,14 +561,14 @@ fn fold_schedule_from_candidate_parts(
 
 /// Price the canonical grinding plan for one complete schedule candidate.
 #[doc(hidden)]
-pub fn candidate_grinding_nonce_bits(
+pub fn candidate_grinding_cost(
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     folds: &[CandidateFoldStep],
     terminal_response: &CandidateTerminalResponse,
-) -> Result<usize, AkitaError> {
+) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
     let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
-    akita_types::transcript_grinding_nonce_bits_for_planner_candidate(
+    akita_types::transcript_grinding_cost_for_planner_candidate(
         &schedule,
         root_layout,
         policy.decomposition.field_bits(),
@@ -584,13 +602,21 @@ pub fn stage3_payload_bytes_for_successor(
 }
 
 #[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NonterminalLevelPayloadBytes {
+    pub direct: usize,
+    pub stage3: usize,
+    pub relation_geometry: akita_types::RelationAddressGeometry,
+}
+
+#[doc(hidden)]
 pub fn nonterminal_level_payload_bytes(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
     output_witness_len: usize,
-) -> Result<(usize, usize), AkitaError> {
+) -> Result<NonterminalLevelPayloadBytes, AkitaError> {
     let challenge_field_bits = policy.challenge_field_bits()?;
     let next_outer_payload = match successor {
         FoldSuccessor::Recursive(params) => Some(params),
@@ -625,17 +651,18 @@ pub fn nonterminal_level_payload_bytes(
     let direct = direct
         .checked_add(eor)
         .ok_or_else(|| AkitaError::InvalidSetup("level proof payload size overflow".into()))?;
-    Ok((
+    Ok(NonterminalLevelPayloadBytes {
         direct,
-        stage3_payload_bytes_for_successor(policy, successor)?,
-    ))
+        stage3: stage3_payload_bytes_for_successor(policy, successor)?,
+        relation_geometry,
+    })
 }
 
 /// Recompute the exact serialized proof payload for one expanded schedule.
 ///
-/// This is the non-leaking reporting counterpart to generated-row replay. It
+/// This is the non-leaking reporting counterpart to artifact validation. It
 /// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact generated row or planner candidate is constructed.
+/// no compact intermediate row or planner candidate is constructed.
 pub fn expanded_schedule_proof_payload_bytes(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
@@ -670,26 +697,17 @@ pub fn expanded_schedule_proof_payload_bytes(
             || FoldSuccessor::Terminal(&schedule.terminal),
             |fold| FoldSuccessor::Recursive(&fold.params),
         );
-        let (direct, stage3) = nonterminal_level_payload_bytes(
+        let payload = nonterminal_level_payload_bytes(
             policy,
             params,
             &opening_layout,
             successor,
             output_witness_len,
         )?;
-        predecessor_rounds = Some(
-            params
-                .relation_address_geometry(
-                    &opening_layout,
-                    policy.claim_ext_degree,
-                    successor.ring_dimension(),
-                    output_witness_len,
-                )?
-                .relation_point_variable_count(),
-        );
+        predecessor_rounds = Some(payload.relation_geometry.relation_point_variable_count());
         total = total
-            .checked_add(direct)
-            .and_then(|value| value.checked_add(stage3))
+            .checked_add(payload.direct)
+            .and_then(|value| value.checked_add(payload.stage3))
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }
 
@@ -723,16 +741,20 @@ pub fn expanded_schedule_proof_payload_bytes(
 
 /// Materialize and validate the schedule shared by offline search and generated replay.
 ///
-/// `cached_num_setup_field_elements` is the exact shared flat setup capacity.
+/// `cached.num_setup_field_elements` is the exact shared flat setup capacity.
 pub fn materialize_candidate_schedule(
-    cached_total: usize,
-    cached_num_setup_field_elements: usize,
-    cached_first_direct_setup_field_len: Option<usize>,
+    cached: CandidateMaterializationCost,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    let CandidateMaterializationCost {
+        proof_bytes: cached_total,
+        grinding: cached_grinding_cost,
+        num_setup_field_elements: cached_num_setup_field_elements,
+        first_direct_setup_field_len: cached_first_direct_setup_field_len,
+    } = cached;
     let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
     let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
         AkitaError::UnsupportedSchedule(
@@ -766,6 +788,17 @@ pub fn materialize_candidate_schedule(
         policy.decomposition.field_bits(),
         policy.claim_ext_degree,
     )?;
+    if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
+        || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached grinding cost ({} nonce bits, {} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            cached_grinding_cost.total_nonce_bits,
+            cached_grinding_cost.expanded_query_count,
+            grinding_plan.total_nonce_bits(),
+            grinding_plan.expanded_query_count(),
+        )));
+    }
     estimate.nonce_stream_bytes =
         akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
             .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
@@ -776,8 +809,9 @@ pub fn materialize_candidate_schedule(
         )));
     }
     let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedProofPayload => None,
-        SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(
+        SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
         ),
     };
@@ -873,23 +907,20 @@ pub fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let quotient_depth = akita_types::sis::compute_num_digits_field_width(
-        field_bits,
-        params.open().digits.log_basis,
-    );
+    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?;
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     if params.setup_prefix().is_none() {
-        return WitnessLayout::try_scalar_live_coeff_len(
+        return Ok(Some(WitnessLayout::scalar_live_coeff_len(
             params,
             &opening_batch,
             &relation_geometry,
             num_chunks,
-            quotient_depth,
-        );
+            quotient_plan,
+        )?));
     }
     Ok(Some(
         WitnessLayout::new(
@@ -897,7 +928,7 @@ pub fn planned_next_witness_len(
             &opening_batch,
             &relation_geometry,
             num_chunks,
-            quotient_depth,
+            quotient_plan,
         )?
         .live_coeff_len(),
     ))
@@ -919,7 +950,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -957,6 +988,19 @@ mod tests {
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(0));
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(1));
         assert!(!RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(2));
+    }
+
+    #[test]
+    fn recursive_and_adaptive_direct_policies_use_distinct_setup_objectives() {
+        let adaptive = adaptive_policy().ring_dimension_schedule_mode;
+        assert_eq!(
+            SelectionPolicyId::for_policy(false, adaptive),
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+        );
+        assert_eq!(
+            SelectionPolicyId::for_policy(true, adaptive),
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        );
     }
 
     #[test]

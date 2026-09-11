@@ -9,7 +9,8 @@ use crate::protocol::ring_relation::{
     RelationQuotientOutput,
 };
 use crate::protocol::ring_relation_witness::{
-    FoldChunkCoefficients, GroupFoldedOpening, RingRelationGroupWitness, RingRelationWitness,
+    FoldChunkCoefficients, GroupFoldedOpening, RelationDQuotientWitness, RingRelationGroupWitness,
+    RingRelationWitness,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
@@ -21,6 +22,7 @@ use akita_types::{
     RingVec, WitnessLayout, WitnessUnitLayout,
 };
 use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 
 pub(crate) struct PreparedRingSwitchGroup<F: Field> {
     pub(crate) params: akita_types::GroupOpenPhaseParams,
@@ -73,6 +75,26 @@ enum WitnessTailEvent {
         source: CompressionSourceId,
         map_index: usize,
     },
+}
+
+enum PreparedWitnessTail<F: Field> {
+    QuotientLift(RelationQuotientOutput<F>),
+    ReducedEvaluation,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static QUOTIENT_DECOMPOSITION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_quotient_decomposition_calls() {
+    QUOTIENT_DECOMPOSITION_CALLS.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn quotient_decomposition_calls() -> usize {
+    QUOTIENT_DECOMPOSITION_CALLS.get()
 }
 
 #[cfg(feature = "response-model-diagnostics")]
@@ -462,20 +484,32 @@ where
     // Relation quotient `r`: each group owns a native consistency/A/B
     // block, while the level owns the shared D tail. One trailing witness
     // segment carries all quotient rows in canonical relation order.
-    let r = compute_multi_group_relation_quotient::<F, B>(
-        ring_switch_ctx,
-        lp,
-        opening_batch,
-        &owned,
-        instance.group_openings(),
-        instance.extension_degree(),
-        &d_quotients,
-        instance.rhs(),
-        compression.as_ref(),
-    )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
-    })?;
+    let tail = match (lp.ring_relation_mode, d_quotients) {
+        (
+            akita_types::RingRelationMode::QuotientLift,
+            RelationDQuotientWitness::QuotientLift(d_quotients),
+        ) => PreparedWitnessTail::QuotientLift(
+            compute_multi_group_relation_quotient::<F, B>(
+                ring_switch_ctx,
+                lp,
+                opening_batch,
+                &owned,
+                instance.group_openings(),
+                instance.extension_degree(),
+                &d_quotients,
+                instance.rhs(),
+                compression.as_ref(),
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
+            })?,
+        ),
+        (
+            akita_types::RingRelationMode::ReducedEvaluation,
+            RelationDQuotientWitness::ReducedEvaluation,
+        ) => PreparedWitnessTail::ReducedEvaluation,
+        _ => return Err(AkitaError::InvalidProof),
+    };
 
     // Every segment of the generated witness is balanced, but grouped roots
     // may mix decomposition bases. Z and the quotient tail use the opening
@@ -516,17 +550,21 @@ where
             witness_layout.num_chunks_for_group(group_index),
         )?;
     }
-    let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
     {
         let _span = tracing::info_span!("ring_switch_emit_tail").entered();
-        emit_witness_tail(
-            &mut out,
-            &witness_layout,
-            &r,
-            levels,
-            lp.open().digits.log_basis,
-            compression.as_ref(),
-        )?;
+        match tail {
+            PreparedWitnessTail::QuotientLift(r) => emit_witness_tail(
+                &mut out,
+                &witness_layout,
+                &r,
+                r_decomp_levels::<F>(lp.open().digits.log_basis),
+                lp.open().digits.log_basis,
+                compression.as_ref(),
+            )?,
+            PreparedWitnessTail::ReducedEvaluation => {
+                emit_reduced_witness_tail(&mut out, &witness_layout, compression.as_ref())?
+            }
+        }
     }
     let expected = witness_layout.live_coeff_len();
     if out.position() > expected {
@@ -605,7 +643,7 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     log_basis: u32,
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<(), AkitaError> {
-    if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
+    if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != Some(levels) {
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one())
@@ -644,6 +682,8 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     for (_, event) in events {
         match event {
             WitnessTailEvent::Quotient { row_index } => {
+                #[cfg(test)]
+                QUOTIENT_DECOMPOSITION_CALLS.with(|calls| calls.set(calls.get() + 1));
                 let row = r.rows().get(row_index).ok_or(AkitaError::InvalidProof)?;
                 let row_layout = layout
                     .r_rows()
@@ -677,28 +717,75 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
                 out.write_at(range.start, &digits)?;
             }
             WitnessTailEvent::Compression { source, map_index } => {
-                let compression = compression.ok_or(AkitaError::InvalidProof)?;
-                let layer = layout
-                    .compression_layers()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let span = match source {
-                    CompressionSourceId::Outer { group_index } => layer
-                        .f_spans()
-                        .iter()
-                        .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-                        .ok_or(AkitaError::InvalidProof)?,
-                    CompressionSourceId::Opening => layer.h_span(),
-                };
-                let packed = compression
-                    .source(source)?
-                    .witness
-                    .stages()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                emit_packed_negative_binary(out, span, packed)?;
+                emit_compression_witness_event(
+                    out,
+                    layout,
+                    compression.ok_or(AkitaError::InvalidProof)?,
+                    source,
+                    map_index,
+                )?;
             }
         }
+    }
+    Ok(())
+}
+
+fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
+    out: &mut PackedSignedDigitWriter,
+    layout: &WitnessLayout,
+    compression: &CompressionWitnessMaterialization<F>,
+    source: CompressionSourceId,
+    map_index: usize,
+) -> Result<(), AkitaError> {
+    let layer = layout
+        .compression_layers()
+        .get(map_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    let span = match source {
+        CompressionSourceId::Outer { group_index } => layer
+            .f_spans()
+            .iter()
+            .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+            .ok_or(AkitaError::InvalidProof)?,
+        CompressionSourceId::Opening => layer.h_span(),
+    };
+    let packed = compression
+        .source(source)?
+        .witness
+        .stages()
+        .get(map_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    emit_packed_negative_binary(out, span, packed)
+}
+
+fn emit_reduced_witness_tail<F: Field + CanonicalEncoding>(
+    out: &mut PackedSignedDigitWriter,
+    layout: &WitnessLayout,
+    compression: Option<&CompressionWitnessMaterialization<F>>,
+) -> Result<(), AkitaError> {
+    if !layout.r_rows().is_empty() || layout.quotient_depth().is_some() {
+        return Err(AkitaError::InvalidProof);
+    }
+    for layer in layout.compression_layers() {
+        let compression = compression.ok_or(AkitaError::InvalidProof)?;
+        for (group_index, _) in layer.f_spans() {
+            emit_compression_witness_event(
+                out,
+                layout,
+                compression,
+                CompressionSourceId::Outer {
+                    group_index: *group_index,
+                },
+                layer.map_index(),
+            )?;
+        }
+        emit_compression_witness_event(
+            out,
+            layout,
+            compression,
+            CompressionSourceId::Opening,
+            layer.map_index(),
+        )?;
     }
     Ok(())
 }

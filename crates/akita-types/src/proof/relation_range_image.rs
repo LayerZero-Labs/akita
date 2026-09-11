@@ -507,24 +507,28 @@ impl RelationRangeImagePlan {
             }
         }
 
-        if witness_layout.r_range().start != witness_cursor
-            || witness_layout.r_range().end != witness_layout.live_coeff_len()
+        if witness_layout.tail_range().start != witness_cursor
+            || witness_layout.tail_range().end != witness_layout.live_coeff_len()
         {
             return Err(AkitaError::InvalidSetup(
-                "witness layout does not end in one shared quotient range".into(),
+                "witness layout tail disagrees with its chunk-major body".into(),
             ));
         }
         let row_geometries = relation_witness_geometry.rhs_layout().row_geometries()?;
-        if witness_layout.r_rows().len() != row_geometries.len()
-            || witness_layout
-                .r_rows()
-                .iter()
-                .zip(row_geometries)
-                .any(|(row, geometry)| row.geometry() != geometry)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "witness quotient rows disagree with relation geometry".into(),
-            ));
+        match witness_layout.relation_quotient_layout() {
+            crate::RelationQuotientLayout::QuotientLift { rows, .. } => {
+                if rows.len() != row_geometries.len()
+                    || rows
+                        .iter()
+                        .zip(row_geometries)
+                        .any(|(row, geometry)| row.geometry() != geometry)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "witness quotient rows disagree with relation geometry".into(),
+                    ));
+                }
+            }
+            crate::RelationQuotientLayout::ReducedEvaluation => {}
         }
 
         Ok(Self {
@@ -832,7 +836,9 @@ mod tests {
         let malformed = WitnessLayout::new_for_test(
             reversed_units,
             witness_layout.r_rows().to_vec(),
-            witness_layout.quotient_depth(),
+            witness_layout
+                .quotient_depth()
+                .expect("quotient-lift fixture"),
         );
         let geometry =
             RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 64, live_len).unwrap();
@@ -867,7 +873,9 @@ mod tests {
         let malformed = WitnessLayout::new_for_test(
             witness_layout.units().to_vec(),
             wrong_rows,
-            witness_layout.quotient_depth(),
+            witness_layout
+                .quotient_depth()
+                .expect("quotient-lift fixture"),
         );
         assert!(RelationRangeImagePlan::new(
             relation_geometry.clone(),
@@ -886,7 +894,9 @@ mod tests {
         let malformed = WitnessLayout::new_for_test(
             witness_layout.units().to_vec(),
             duplicated_rows,
-            witness_layout.quotient_depth(),
+            witness_layout
+                .quotient_depth()
+                .expect("quotient-lift fixture"),
         );
         assert!(RelationRangeImagePlan::new(
             relation_geometry.clone(),
@@ -912,7 +922,9 @@ mod tests {
         let malformed = WitnessLayout::new_for_test(
             wrong_units,
             witness_layout.r_rows().to_vec(),
-            witness_layout.quotient_depth(),
+            witness_layout
+                .quotient_depth()
+                .expect("quotient-lift fixture"),
         );
         assert!(RelationRangeImagePlan::new(
             relation_geometry,

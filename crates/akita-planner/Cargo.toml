@@ -4,13 +4,6 @@ autobins = false
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Offline schedule planner for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -40,15 +33,18 @@ transcript-keccak = [
   "akita-types/transcript-keccak",
 ]
 catalog-gen = ["dep:akita-config"]
-catalog-check = ["catalog-gen", "akita-config/all-schedules"]
+catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
+test-support = []
 
 [dev-dependencies]
-akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+] }
 
 [[bin]]
-name = "gen_schedule_tables"
-path = "src/bin/gen_schedule_tables.rs"
+name = "gen_schedule_artifacts"
+path = "src/bin/gen_schedule_artifacts.rs"
 required-features = ["catalog-gen"]
 
 [[example]]

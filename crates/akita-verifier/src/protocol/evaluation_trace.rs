@@ -622,10 +622,9 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
     use akita_types::{
-        basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-        CommittedGroupParams, DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint,
-        RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint,
-        SisModulusProfileId, WitnessLayout,
+        basis_weights_prefix, ring_opening_point_from_field, BasisMode, CommittedGroupParams,
+        DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
+        RelationRangeImagePlan, RingMultiplierOpeningPoint, SisModulusProfileId, WitnessLayout,
     };
     use jolt_field::Zero;
 
@@ -781,7 +780,8 @@ mod tests {
             &opening_batch,
             &relation_witness_geometry,
             2,
-            r_decomp_levels::<F>(level_params.open().digits.log_basis),
+            akita_types::RelationQuotientPlan::for_field_bits(&level_params, F::MODULUS_BITS)
+                .expect("relation quotient plan"),
         )
         .expect("two-chunk witness layout");
         let live_len = witness_layout.live_coeff_len();

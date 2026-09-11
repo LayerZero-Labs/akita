@@ -14,6 +14,7 @@ pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::{DigitRangeProver, LowBasisRangeCheckProver};
 pub(crate) use relation_range_image::AdditionalRelationTerms;
 pub use relation_range_image::RelationRangeImageProver;
+pub(crate) use relation_range_image::{DenseRelationWeights, RelationWeightOracle};
 
 // --- Shared helpers ------------------------------------------------------
 

@@ -8,11 +8,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_compact_partial_lane_coefficient_round_terms(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
+        weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             compact_witness.len(),
-            self.live_lane_count * self.common_alpha_factor.len()
+            self.live_lane_count * weights.common_alpha_factor().len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -20,8 +21,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let first_bits = num_first.trailing_zeros() as usize;
         let current_coefficient_half = 1usize << (self.current_coefficient_width() - 1);
         let block_size = num_first.min(current_coefficient_half);
-        let common_alpha_factor = &self.common_alpha_factor;
-        let relation_lane_weights = &self.relation_lane_weights;
+        let common_alpha_factor = weights.common_alpha_factor();
+        let relation_lane_weights = weights.relation_lane_weights();
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
 
         if self.can_skip_norm_linear_coeff() {
@@ -191,11 +192,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_folded_partial_lane_coefficient_round_terms(
         &self,
         folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             folded_witness.len(),
-            self.live_lane_count * self.common_alpha_factor.len()
+            self.live_lane_count * weights.common_alpha_factor().len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -203,8 +205,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let first_bits = num_first.trailing_zeros() as usize;
         let current_coefficient_half = 1usize << (self.current_coefficient_width() - 1);
         let block_size = num_first.min(current_coefficient_half);
-        let common_alpha_factor = &self.common_alpha_factor;
-        let relation_lane_weights = &self.relation_lane_weights;
+        let common_alpha_factor = weights.common_alpha_factor();
+        let relation_lane_weights = weights.relation_lane_weights();
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
 
         if self.can_skip_norm_linear_coeff() {

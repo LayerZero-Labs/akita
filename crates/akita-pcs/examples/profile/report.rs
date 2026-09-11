@@ -9,8 +9,9 @@ use akita_types::{
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
     CommittedSourceEncoding, FoldLevelProof, FoldSchedule, GrindingPlan, GrindingQueryKind,
     GrindingSite, GroupOpenPhaseParams, InnerCommitSecurityRoute, NttTransformDomain,
-    OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout, SetupSumcheckProof,
-    SisModulusProfileId, SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
+    OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout, RingRelationMode,
+    SetupSumcheckProof, SisModulusProfileId, SubringCoefficientPackingGeometry, TerminalLevelProof,
+    ZFoldEncodingStats,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
@@ -626,8 +627,13 @@ impl PlannedGroupReport {
         })
     }
 
-    fn emit(&self, label: &str, level: usize, field_bits: u32) {
-        let num_digits_quotient = compute_num_digits_field_width(field_bits, self.log_basis_open);
+    fn emit(&self, label: &str, level: usize, field_bits: u32, relation_mode: RingRelationMode) {
+        let num_digits_quotient = match relation_mode {
+            RingRelationMode::QuotientLift => {
+                compute_num_digits_field_width(field_bits, self.log_basis_open)
+            }
+            RingRelationMode::ReducedEvaluation => 0,
+        };
         tracing::info!(
             label,
             level,
@@ -664,6 +670,7 @@ impl PlannedGroupReport {
             num_digits_outer = self.num_digits_outer,
             num_digits_open = self.num_digits_open,
             num_digits_fold = self.num_digits_fold,
+            relation_mode = relation_mode.as_str(),
             num_digits_quotient,
             challenge_l1_mass = self.challenge_l1_mass,
             challenge_count_pm1 = self.challenge_count_pm1,
@@ -736,7 +743,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             None,
             extension_degree,
         )?
-        .emit(label, 0, field_bits);
+        .emit(
+            label,
+            0,
+            field_bits,
+            schedule.root.params.ring_relation_mode,
+        );
     }
     PlannedGroupReport::committed(
         "final".to_string(),
@@ -747,7 +759,12 @@ pub(crate) fn emit_runtime_schedule_summary(
         &schedule.root.params,
         extension_degree,
     )?
-    .emit(label, 0, field_bits);
+    .emit(
+        label,
+        0,
+        field_bits,
+        schedule.root.params.ring_relation_mode,
+    );
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         PlannedGroupReport::committed(
             "folded".to_string(),
@@ -758,7 +775,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             &fold.params,
             extension_degree,
         )?
-        .emit(label, index + 1, field_bits);
+        .emit(label, index + 1, field_bits, fold.params.ring_relation_mode);
         if let Some(prefix) = &fold.params.setup_prefix() {
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
@@ -772,7 +789,7 @@ pub(crate) fn emit_runtime_schedule_summary(
                 )),
                 extension_degree,
             )?
-            .emit(label, index, field_bits);
+            .emit(label, index, field_bits, fold.params.ring_relation_mode);
         }
     }
     let nonterminal = std::iter::once((
@@ -856,6 +873,13 @@ pub(crate) fn emit_runtime_schedule_summary(
             role_dims.d_b(),
             lp.outer().matrix.sis_modulus_profile(),
         )?;
+        let relation_mode = lp.ring_relation_mode;
+        let num_digits_quotient = match relation_mode {
+            RingRelationMode::QuotientLift => {
+                compute_num_digits_field_width(field_bits, lp.open().digits.log_basis)
+            }
+            RingRelationMode::ReducedEvaluation => 0,
+        };
         tracing::info!(
             label,
             level = level_idx,
@@ -911,7 +935,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_outer = lp.outer().digits.num_digits,
             num_digits_open = lp.open().digits.num_digits,
             delta_fold = lp.num_digits_fold(),
-            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.open().digits.log_basis),
+            relation_mode = relation_mode.as_str(),
+            num_digits_quotient,
             input_witness_len,
             output_witness_len,
             current_w_len,

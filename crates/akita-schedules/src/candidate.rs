@@ -21,7 +21,7 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub fold_challenge_config: &'a SparseChallengeConfig,
-    /// Planner-frozen response cap. Generated schedule expansion and resolved
+    /// Planner-frozen response cap. Artifact validation and resolved
     /// schedule audit replay this exact public value instead of rerunning an
     /// offline response model.
     pub response_l2_sq_cap: Option<u128>,
@@ -157,7 +157,7 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy: SelectionPolicyId::MinEstimatedProofPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -211,7 +211,7 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy: SelectionPolicyId::MinEstimatedProofPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,

@@ -6,6 +6,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
     pub(super) fn evaluate_base_ring_direct<F, const BASE_D: usize>(
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
+        weights: &DirectScanWeights<E>,
         base_pows: &[E],
         d_weights: &[E],
         a_projection: &RoleProjection<E>,
@@ -19,9 +20,6 @@ impl<E: Field> SetupContributionGroupPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_flat = setup_view.as_slice();
-        let weights = self.direct_scan_weights.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
-        })?;
         let (e_eq_slice, t_eq_slice, z_eq_slice) = (&weights.e[..], &weights.t[..], &weights.z[..]);
         if self.required > setup_flat.len() {
             return Err(AkitaError::InvalidSetup(

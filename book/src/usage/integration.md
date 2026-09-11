@@ -15,14 +15,15 @@ runtime planner.
 A complete host follows this order:
 
 1. Choose a configuration for the host field and polynomial representation.
-2. Build prover setup for the largest supported workload.
-3. Prepare the compute backend and keep it warm across proofs.
-4. Commit to each polynomial group and retain its private hint.
-5. Assemble the ordered opening claims for one proof.
-6. Let Akita select the exact generated schedule for that batch.
-7. Produce and encode the proof.
-8. Send the public statement, proof, and verifier setup to the verifier.
-9. Decode under an expected shape and verify with a fresh transcript.
+2. Load and validate the approved external schedule artifact.
+3. Build prover setup for the largest supported workload from that catalog.
+4. Prepare the compute backend and keep it warm across proofs.
+5. Commit to each polynomial group and retain its private hint.
+6. Assemble the ordered opening claims for one proof.
+7. Let the catalog select the exact trusted row for that batch.
+8. Produce and encode the proof.
+9. Send the catalog identity, public statement, proof, and verifier setup.
+10. Restore the same approved catalog, decode under its expected shape, and verify.
 
 The [first proof](./quickstart.md) runs this lifecycle with one polynomial. The
 chapters below explain how to turn that example into an application boundary.
@@ -36,15 +37,16 @@ Akita keeps the data split explicit.
 | Original polynomials | Prover | Source data for commitment and opening |
 | Commitment hints | Prover | Private data that connects each polynomial group to its commitment |
 | Prepared compute state | Prover | Reusable transforms and backend resources |
+| Trusted schedule catalog | Both | Approved external parameters used by setup, proving, and verification |
 | Verifier setup | Public | Public matrix data and setup prefix commitments needed by verification |
 | Commitments | Public | Values that fix the committed polynomial groups |
 | Opening points and values | Public | The claims being proved |
-| Schedule selection | Public | Identity of the approved generated row used by the batch |
+| Schedule selection | Public | Identity of the approved catalog row used by the batch |
 | Proof bytes | Public | Encoded evidence checked by the verifier |
 
 The verifier never needs the original polynomial or the private commitment
 hint. The prover never chooses unchecked cryptographic parameters. Both sides
-use the same public configuration and generated catalog.
+use the same public configuration and trusted catalog identity.
 
 ## Four contracts to preserve
 

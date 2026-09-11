@@ -28,6 +28,9 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'effective_batched_schedule'
+  'trusted_setup_matrix_capacity'
+  'setup_prefix_slot_ids_from_catalog'
   'akita-scheme'
   'akita-cfg'
   'akita-derive'
@@ -78,6 +81,10 @@ dead_patterns=(
   'get_params_for_batched_commitment'
   'runtime_schedule\b'
   'committed_group_profile'
+  'resolve_catalog_row_for_key\b'
+  'resolve_catalog_row_for_profiles\b'
+  'resolve_schedule_selection\b'
+  'GeneratedFrozenGroup\b'
   'resolve_generated_precommitted_group_profile'
   'resolve_group_batch_schedule'
   'plan_standalone_precommit'
@@ -126,11 +133,16 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 # only these live design records unless --all.
 live_specs=(
   specs/akita-compute-backend-metal.md
+  specs/quotient-free-tail-ring-relations.md
+  specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
+  specs/external-schedule-catalog-ownership.md
+  specs/guided-schedule-adaptation.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
   specs/heterogeneous-group-source-contracts.md
   specs/iterated-jl-shortness.md
+  specs/jolt-field-unification.md
   specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
   specs/role-native-projected-digit-layout.md

@@ -199,6 +199,23 @@ The types `UniPoly` and `CompressedUniPoly` in
 the verifier derives each expected coefficient count from the proof shape
 rather than trusting a length supplied by the proof.
 
+Every ordinary round message must retain at least its constant coefficient.
+The prover compresses the zero polynomial to `[0]`, including when its full
+coefficient vector is empty. An empty compressed message is malformed: the
+verifier cannot use it to reconstruct the linear coefficient from the incoming
+claim. Both ordinary sum-check drivers check the round count, nonempty messages,
+and degree bounds before absorbing any data in their own replay. A caller may
+already have absorbed the public statement or batching data before entering a
+driver.
+
+A single stored coefficient can still represent a linear polynomial, so its
+degree estimate is one. Ordinary rounds require a degree bound of at least one,
+even for constant polynomials. A zero-round proof instead has no messages and
+leaves the input claim for the final oracle check. These rules differ from
+[equality-factored sum-check](./eq-factored-sumcheck.md), where a valid constant
+inner polynomial has an empty message and its constant term is recovered from
+the normalized claim.
+
 ## Batching several claims
 
 Akita often needs several sum-checks at the same point in the protocol. Running

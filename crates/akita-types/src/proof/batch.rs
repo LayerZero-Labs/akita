@@ -1,11 +1,12 @@
 //! Shared batching and root-opening helper types.
 
+mod ring_multiplier;
 mod subfield;
 
 use crate::{
     basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, RingOpeningPoint, RingVec,
+    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
@@ -14,6 +15,7 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
+pub use ring_multiplier::{PreparedRingMultiplier, RingMultiplierOpeningPoint};
 pub use subfield::SubfieldMultiplierOpeningPoint;
 
 /// Recursive opening point prepared for ring-level replay.
@@ -89,196 +91,6 @@ impl<F: Field, E: Field> PreparedOpeningPoint<F, E> {
     pub fn packed_inner_owned<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
         self.packed_inner_point.try_to_single::<D>()
-    }
-}
-
-/// Ring-level opening point whose outer weights act by ring multiplication.
-///
-/// Proper-extension weights remain in their canonical `K`-coordinate subfield
-/// representation. Verifier kernels consume those coordinates directly;
-/// prover kernels may materialize typed rings at their operation boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RingMultiplierOpeningPoint<F: Field> {
-    /// Degree-one openings, where multipliers are ordinary base scalars.
-    Base(RingOpeningPoint<F>),
-    /// Validated ring-subfield coordinates used by extension-valued openings.
-    Subfield(SubfieldMultiplierOpeningPoint<F>),
-}
-
-impl<F: Field> RingMultiplierOpeningPoint<F> {
-    /// Keep base-field scalar weights in their compact scalar form.
-    pub fn from_base(point: &RingOpeningPoint<F>) -> Self {
-        Self::Base(point.clone())
-    }
-
-    /// Stored ring dimension for the [`Self::Subfield`] variant, or zero for [`Self::Base`].
-    pub fn ring_dim(&self) -> usize {
-        match self {
-            Self::Base(_) => 0,
-            Self::Subfield(point) => point.ring_dim(),
-        }
-    }
-
-    /// # Errors
-    ///
-    /// Returns an error if the requested ring dimension does not match storage.
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        match self {
-            Self::Base(_) => Ok(()),
-            Self::Subfield(point) => point.ensure_ring_dim::<D>(),
-        }
-    }
-
-    /// Borrow the compact base opening point, when this is the degree-one case.
-    pub fn as_base(&self) -> Option<&RingOpeningPoint<F>> {
-        match self {
-            Self::Base(point) => Some(point),
-            Self::Subfield(_) => None,
-        }
-    }
-
-    /// Borrow the validated compact opening point, when this is a proper extension.
-    pub fn as_subfield(&self) -> Option<&SubfieldMultiplierOpeningPoint<F>> {
-        match self {
-            Self::Base(_) => None,
-            Self::Subfield(point) => Some(point),
-        }
-    }
-
-    /// Materialize the position multipliers for a prover ring kernel.
-    pub fn materialize_position_rings<const D: usize>(
-        &self,
-    ) -> Result<Option<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        match self {
-            Self::Base(_) => Ok(None),
-            Self::Subfield(point) => point.materialize_position_rings::<D>().map(Some),
-        }
-    }
-
-    /// Materialize the live-block multipliers for a prover ring kernel.
-    pub fn materialize_fold_rings<const D: usize>(
-        &self,
-    ) -> Result<Option<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        match self {
-            Self::Base(_) => Ok(None),
-            Self::Subfield(point) => point.materialize_fold_rings::<D>().map(Some),
-        }
-    }
-
-    /// Length of the evaluation vector.
-    pub fn position_len(&self) -> usize {
-        match self {
-            Self::Base(point) => point.position_weights.len(),
-            Self::Subfield(point) => point.position_len(),
-        }
-    }
-
-    /// Length of the block-select vector.
-    pub fn fold_len(&self) -> usize {
-        match self {
-            Self::Base(point) => point.live_block_weights.len(),
-            Self::Subfield(point) => point.fold_len(),
-        }
-    }
-
-    /// Return whether every multiplier is a constant ring.
-    pub fn is_constant(&self) -> bool {
-        match self {
-            Self::Base(_) => true,
-            Self::Subfield(point) => point.is_constant(),
-        }
-    }
-
-    /// Evaluate the `a[idx]` multiplier at the supplied ring powers.
-    ///
-    /// # Errors
-    ///
-    /// Returns an invalid proof error if `idx` is out of range.
-    pub fn eval_position_at<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        match self {
-            Self::Base(point) => point
-                .position_weights
-                .get(idx)
-                .copied()
-                .map(E::lift_base)
-                .ok_or(AkitaError::InvalidProof),
-            Self::Subfield(point) => point.eval_position_at(idx, alpha_pows),
-        }
-    }
-
-    /// Decode one live-block multiplier directly into its extension field.
-    pub fn fold_subfield_value<E>(&self, idx: usize) -> Result<Option<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        match self {
-            Self::Base(_) => Ok(None),
-            Self::Subfield(point) => point.fold_subfield_value(idx).map(Some),
-        }
-    }
-
-    /// Add `position[idx] * rhs` to `output` without expanding the multiplier.
-    pub fn accumulate_position_product<const D: usize>(
-        &self,
-        idx: usize,
-        rhs: &CyclotomicRing<F, D>,
-        output: &mut CyclotomicRing<F, D>,
-    ) -> Result<(), AkitaError> {
-        match self {
-            Self::Base(point) => {
-                let scalar = point
-                    .position_weights
-                    .get(idx)
-                    .ok_or(AkitaError::InvalidProof)?;
-                *output += rhs.scale(scalar);
-                Ok(())
-            }
-            Self::Subfield(point) => point.accumulate_position_product(idx, rhs, output),
-        }
-    }
-
-    /// Add the high half of the ordinary polynomial product
-    /// `position[idx] * rhs` to `output` without expanding the multiplier.
-    ///
-    /// The returned coefficients are the terms of degrees `D..2D - 2`, shifted
-    /// down by `D`. Base-field multipliers are constant polynomials and hence
-    /// have no high-half contribution.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `idx` is out of range, `output.len() != D`, or the
-    /// stored subfield multiplier uses a different ring dimension.
-    pub fn accumulate_position_product_high_half<const D: usize>(
-        &self,
-        idx: usize,
-        rhs: &CyclotomicRing<F, D>,
-        output: &mut [F],
-    ) -> Result<(), AkitaError> {
-        if output.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: output.len(),
-            });
-        }
-        match self {
-            Self::Base(point) => point
-                .position_weights
-                .get(idx)
-                .map(|_| ())
-                .ok_or(AkitaError::InvalidProof),
-            Self::Subfield(point) => point.accumulate_position_product_high_half(idx, rhs, output),
-        }
-    }
-
-    /// Constant coefficient of `b[idx]`, if it is known to be constant.
-    pub fn fold_constant_coeff(&self, idx: usize) -> Option<F> {
-        match self {
-            Self::Base(point) => point.live_block_weights.get(idx).copied(),
-            Self::Subfield(point) => point.fold_constant_coeff(idx),
-        }
     }
 }
 

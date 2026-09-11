@@ -1,5 +1,7 @@
 # Contributing
 
+See [AUTHORS.md](AUTHORS.md) for maintainers and contributors.
+
 Akita uses a lightweight spec-driven workflow for major features and architectural changes.
 
 ## When To Write A Spec

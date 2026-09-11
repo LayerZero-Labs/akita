@@ -18,6 +18,8 @@ mod modes;
 mod monitor;
 mod ntt_prewarm;
 mod parallel;
+#[path = "../../benches/support/relation_phase_timing.rs"]
+mod relation_phase_timing;
 mod report;
 mod trace_report;
 mod verifier;
@@ -26,6 +28,8 @@ mod verifier;
     allow(dead_code)
 )]
 mod workload;
+#[path = "../support/workspace_schedules.rs"]
+mod workspace_schedules;
 
 use akita_prover::CpuBackend;
 use std::env;
@@ -105,12 +109,16 @@ fn main() {
             .build();
         tracing_subscriber::registry()
             .with(fmt_layer)
+            .with(relation_phase_timing::RelationPhaseTimingLayer)
             .with(chrome_layer.with_filter(EnvFilter::new("trace")))
             .init();
         tracing::info!(trace_file = %trace_file, "Perfetto trace");
         Some(guard)
     } else {
-        tracing_subscriber::registry().with(fmt_layer).init();
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(relation_phase_timing::RelationPhaseTimingLayer)
+            .init();
         tracing::info!("Perfetto trace disabled");
         None
     };

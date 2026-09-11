@@ -35,7 +35,14 @@ fn layout() -> TraceWeightLayout {
     let relation_geometry =
         crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, &relation_geometry, 1, 1).unwrap();
+    let witness_layout = WitnessLayout::new(
+        &lp,
+        &opening_batch,
+        &relation_geometry,
+        1,
+        crate::RelationQuotientPlan::quotient_lift(1).unwrap(),
+    )
+    .unwrap();
     let opening_source_len = witness_layout.live_coeff_len() / D;
     TraceWeightLayout {
         ring_bits: 3,

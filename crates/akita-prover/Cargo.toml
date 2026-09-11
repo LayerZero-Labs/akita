@@ -3,13 +3,6 @@ name = "akita-prover"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-authors = [
-  "Markos Georghiades <mgeorghiades@a16z.com>",
-  "Quang Dao <qvd@andrew.cmu.edu>",
-  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-  "Omid Bodaghi <omibo@layerzero.foundation>",
-  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
-]
 license = "Apache-2.0 OR MIT"
 description = "Prover-facing APIs for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -28,11 +21,11 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
-aes = "0.8.4"
-ctr = "0.9.2"
+aes = "0.9.3"
+ctr = "0.10.1"
 rand_core = "0.6"
 rayon = { version = "1.10", optional = true }
-sha3 = "0.10.8"
+shake = "0.1.0"
 tracing = "0.1"
 
 [dev-dependencies]
@@ -45,7 +38,7 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 ] }
 
 [features]
-default = ["schedules-default", "transcript-blake2b"]
+default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -60,7 +53,6 @@ transcript-keccak = [
   "akita-transcript/transcript-keccak",
   "akita-types/transcript-keccak",
 ]
-schedules-default = ["akita-config/schedules-default"]
 logging-transcript = [
   "akita-challenges/logging-transcript",
   "akita-transcript/logging-transcript",

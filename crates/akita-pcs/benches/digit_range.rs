@@ -4,7 +4,9 @@ use akita_types::{
     VerifierGrindingTranscript,
 };
 use akita_verifier::AkitaStage1Verifier;
-use criterion::{black_box, criterion_group, BatchSize, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion, Throughput};
 
 #[path = "digit_range/cases.rs"]
 mod cases;

@@ -19,6 +19,35 @@ fn security_route_signature(value: akita_types::InnerCommitSecurityRoute) -> &'s
     }
 }
 
+fn relation_mode_signature(value: akita_types::RingRelationMode) -> &'static str {
+    match value {
+        akita_types::RingRelationMode::QuotientLift => "quotient",
+        akita_types::RingRelationMode::ReducedEvaluation => "reduced-evaluation",
+    }
+}
+
+fn removed_quotient_coefficients(
+    spec: &EmitSpec,
+    params: &akita_types::CommittedGroupParams,
+    input_witness_len: usize,
+) -> Result<(usize, usize), String> {
+    if !params.ring_relation_mode.is_reduced_evaluation() {
+        return Ok((0, 0));
+    }
+    let final_group = akita_types::PolynomialGroupLayout::singleton(
+        akita_types::padded_boolean_opening_vars(input_witness_len)
+            .map_err(|error| format!("derive quotient-report group: {error}"))?,
+    );
+    let breakdown = akita_types::QuotientCoefficientBreakdown::for_reduced_counterfactual(
+        params,
+        final_group,
+        spec.policy.claim_ext_degree,
+        spec.policy.decomposition.field_bits(),
+    )
+    .map_err(|error| format!("derive quotient-report counterfactual: {error}"))?;
+    Ok((breakdown.ordinary, breakdown.compression))
+}
+
 fn opening_policy_signature(
     opening_method: akita_types::OpeningMethod,
     source_encoding: akita_types::CommittedSourceEncoding,
@@ -62,6 +91,15 @@ pub(super) fn catalog_policy_signature(
     use std::fmt::Write as _;
 
     let mut signature = String::new();
+    let cutover = std::iter::once(&schedule.root.params)
+        .chain(schedule.recursive_folds.iter().map(|fold| &fold.params))
+        .position(|params| params.ring_relation_mode.is_reduced_evaluation());
+    write!(
+        signature,
+        "cutover={};",
+        cutover.map_or_else(|| "none".to_string(), |level| format!("L{level}"))
+    )
+    .map_err(|error| format!("write catalog relation cutover: {error}"))?;
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params,
@@ -83,6 +121,8 @@ pub(super) fn catalog_policy_signature(
             }),
     );
     for (level, params, input_witness_len, output_witness_len) in nonterminal {
+        let (ordinary_quotient_coefficients_removed, compression_quotient_coefficients_removed) =
+            removed_quotient_coefficients(spec, params, input_witness_len)?;
         let eor = if matches!(
             params.opening_method(),
             akita_types::OpeningMethod::EvaluationTrace
@@ -111,9 +151,10 @@ pub(super) fn catalog_policy_signature(
         }
         write!(
             signature,
-            "L{level}[chunks={}@{},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
+            "L{level}[chunks={}@{},rel={},qrm={ordinary_quotient_coefficients_removed},cqrm={compression_quotient_coefficients_removed},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
             params.witness_chunk.num_chunks,
             params.witness_chunk.num_activated_levels,
+            relation_mode_signature(params.ring_relation_mode),
             opening_policy_signature(
                 params.opening_method(),
                 params.source_encoding,

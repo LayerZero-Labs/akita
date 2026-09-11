@@ -16,6 +16,11 @@
 //! `relation_lane_weight(lane) = sum_i eq(tau1, i) * M_alpha(i, lane)`.
 //!
 //! The table stored in `relation_lane_weights` is exactly this lane weight.
+//! This is the quotient-lift oracle. Reduced evaluation instead compiles the
+//! complete ordinary-plus-compression relation weight `p(address)` over the
+//! padded flat domain. The sumcheck engine folds either representation through
+//! `RelationWeightOracle` while the witness and structured-linear terms keep
+//! the same coefficient/lane geometry.
 //!
 //! If
 //!
@@ -27,9 +32,7 @@
 //! then the linear relation claim over physical quotient rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
-//! `               = sum_address digit_witness(address)`
-//! `                   * common_alpha(coeff_within_common_block(address))`
-//! `                   * relation_lane_weight(relation_lane(address))`.
+//! `               = sum_address digit_witness(address) * p(address)`.
 //!
 //! There is no public-output `y_ring` row: the fold-opening trace check is
 //! internalized as the `EvaluationTrace` relation row (last padded logical row),
@@ -61,17 +64,14 @@
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_address [ gamma * eq(stage1_point, address)`
 //! `                  * digit_witness(address) * (digit_witness(address) + 1)`
-//! `           + digit_witness(address)`
-//! `               * common_alpha(coeff_within_common_block(address))`
-//! `               * relation_lane_weight(relation_lane(address))`
+//! `           + digit_witness(address) * p(address)`
 //! `           + eq(tau1, EvaluationTrace_row_index)`
 //! `               * digit_witness(address) * TraceWeight(address) ]`.
 //!
 //! After all rounds, at the complete flat point `r_stage2`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * common_alpha(common_point)`
-//! `      * relation_lane_weight(lane_point)`
+//! `  + w(r_stage2) * p(r_stage2)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
@@ -102,15 +102,36 @@ use std::time::Instant;
 use crate::backend::packed_digits::{
     PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
 };
+use crate::protocol::ring_switch::RelationWeightFactorization;
 
 enum WitnessState<E: Field> {
     CompactPrefix(PackedSignedDigits),
     FoldedSuffix(Vec<E>),
 }
 
-struct TwoRoundCompactPrefix<E: Field> {
+struct DeferredCompactPrefix<E: Field> {
     skip_state: Stage2BivariateSkipState<E>,
-    first_challenge: Option<E>,
+    phase: DeferredCompactPrefixPhase<E>,
+}
+
+enum DeferredCompactPrefixPhase<E: Field> {
+    Round0,
+    Round1 { first_challenge: E },
+}
+
+enum QuotientPrefixState<E: Field> {
+    Disabled,
+    Deferred(DeferredCompactPrefix<E>),
+}
+
+enum RelationRoundState<E: Field> {
+    QuotientFactored {
+        weights: RelationWeightFactorization<E>,
+        prefix: QuotientPrefixState<E>,
+    },
+    ReducedDense {
+        weights: DenseRelationWeights<E>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -233,23 +254,17 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
 pub struct RelationRangeImageProver<E: Field> {
     witness_state: WitnessState<E>,
     b: usize,
-    batching_coeff: E,
-    range_image_evaluation: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    common_alpha_factor: Vec<E>,
-    relation_lane_weights: Vec<E>,
+    relation_state: RelationRoundState<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
     lane_bits: usize,
     num_vars: usize,
-    relation_linear_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
-    compact_prefix_stage1_point: Option<Vec<E>>,
-    deferred_compact_prefix: Option<TwoRoundCompactPrefix<E>>,
     cached_round_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
@@ -268,6 +283,7 @@ mod lane_prefix;
 mod lifecycle;
 mod prepared_linear_lane;
 mod round_flow;
+mod weight_oracle;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
 pub(in crate::protocol) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
@@ -277,8 +293,46 @@ pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
+pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    #[cfg(test)]
+    #[inline]
+    fn common_alpha_factor(&self) -> Option<&[E]> {
+        self.quotient_weights()
+            .map(RelationWeightFactorization::common_alpha_factor)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn relation_lane_weights(&self) -> Option<&[E]> {
+        self.quotient_weights()
+            .map(RelationWeightFactorization::relation_lane_weights)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
+        match &self.relation_state {
+            RelationRoundState::QuotientFactored { weights, .. } => Some(weights),
+            RelationRoundState::ReducedDense { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn replace_common_alpha_factor(&mut self, replacement: Vec<E>) {
+        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
+            *weights.components_mut().0 = replacement;
+        }
+    }
+
+    #[cfg(test)]
+    fn replace_relation_lane_weights(&mut self, replacement: Vec<E>) {
+        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
+            *weights.components_mut().1 = replacement;
+        }
+    }
+
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).
@@ -294,10 +348,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p0: E,
         p1: E,
     ) {
-        let coeff_count = self.common_alpha_factor.len();
-        let (t0, t1) = self
-            .linear_terms
-            .pair_from_flat_index(witness_idx0, coeff_count);
+        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
         accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
@@ -312,10 +363,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p0: E,
         p1: E,
     ) {
-        let coeff_count = self.common_alpha_factor.len();
-        let (t0, t1) = self
-            .linear_terms
-            .pair_from_flat_index(witness_idx0, coeff_count);
+        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
         accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 

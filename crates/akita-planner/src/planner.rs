@@ -15,16 +15,119 @@ use akita_types::{
 };
 
 use akita_schedules::planner_support::projected_collision_role_price;
+use akita_schedules::ResolvedScheduleRow;
 
 use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
-    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn, ScheduleMemo,
-    SuffixCtx, SuffixState,
+    AbCommitmentCandidateRequest, CandidateMaterializationCost, PlannerOpeningCandidate,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
+#[cfg(test)]
+#[path = "test/adapted_schedule.rs"]
+mod adapted_schedule_tests;
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/root_candidates.rs"]
+mod root_candidates;
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
+
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
+
+/// Maximum number of precommitted producers accepted by guided adaptation.
+///
+/// This limit also bounds the number of canonical precommit-opening
+/// assignments considered at the adapted root.
+pub const MAX_ADAPTED_PRECOMMIT_WIDTH: usize = 256;
+
+#[derive(Clone, Copy)]
+pub(crate) struct ScheduleSearchOptions<'a> {
+    pub(crate) relation_traversal_order: super::schedule_params::RelationTraversalOrder,
+    pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
+    pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
+    pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
+    #[cfg(test)]
+    pub(crate) query_prefix_count: u64,
+}
+
+impl ScheduleSearchOptions<'_> {
+    const fn canonical() -> Self {
+        Self {
+            relation_traversal_order: super::schedule_params::RelationTraversalOrder::Canonical,
+            relation_mode_filter: super::schedule_params::RelationModeFilter::All,
+            root_main_constraint: None,
+            adaptation_guide: None,
+            #[cfg(test)]
+            query_prefix_count: 0,
+        }
+    }
+}
+
+/// Partition precommitted groups whose opening choices may be permuted without
+/// changing feasibility or any numeric planner objective.
+pub(crate) fn precommitted_group_equivalence_classes(
+    profiles: &[GroupCommitPhaseParams],
+    honest_fold_policies: &[HonestFoldPolicySpec],
+) -> Result<Vec<Vec<usize>>, AkitaError> {
+    if profiles.len() != honest_fold_policies.len() {
+        return Err(AkitaError::InvalidSetup(
+            "group-batch planning requires one honest fold policy per precommitted profile"
+                .to_string(),
+        ));
+    }
+    let mut classes: Vec<Vec<usize>> = Vec::new();
+    for index in 0..profiles.len() {
+        if let Some(indices) = classes.iter_mut().find(|indices| {
+            let representative = indices[0];
+            profiles[representative] == profiles[index]
+                && honest_fold_policies[representative] == honest_fold_policies[index]
+        }) {
+            indices.push(index);
+        } else {
+            classes.push(vec![index]);
+        }
+    }
+    Ok(classes)
+}
+
+fn canonicalize_interchangeable_precommitted_groups(
+    groups: &mut [GroupOpenPhaseParams],
+    equivalence_classes: &[Vec<usize>],
+) -> Result<(), AkitaError> {
+    for indices in equivalence_classes {
+        let mut canonical = indices
+            .iter()
+            .map(|&index| {
+                let group = groups[index];
+                (group.canonical_descriptor_bytes(), group)
+            })
+            .collect::<Vec<_>>();
+        let Some(descriptor_len) = canonical.first().map(|(descriptor, _)| descriptor.len()) else {
+            continue;
+        };
+        // Equal profiles and the root's shared opening method make every
+        // descriptor in one class the same width. The earliest class slot at
+        // which two representatives differ therefore decides the complete
+        // schedule descriptor even when the class indices are non-adjacent.
+        // Reject future variable-width encodings instead of applying a local
+        // comparator that cannot account for bytes between those indices.
+        if canonical
+            .iter()
+            .any(|(descriptor, _)| descriptor.len() != descriptor_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "interchangeable precommitted group descriptors must have one width".into(),
+            ));
+        }
+        canonical.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (&index, (_, group)) in indices.iter().zip(canonical) {
+            groups[index] = group;
+        }
+    }
+    Ok(())
+}
 
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,
@@ -138,6 +241,7 @@ struct RootFinalGroupCandidateInput<'a> {
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
     openings: &[PlannerOpeningCandidate],
+    equivalence_classes: &[Vec<usize>],
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
@@ -156,6 +260,7 @@ fn precommitted_groups_for_open_basis(
         };
         groups.push(materialized);
     }
+    canonicalize_interchangeable_precommitted_groups(&mut groups, equivalence_classes)?;
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
@@ -192,6 +297,7 @@ pub(crate) fn root_level_candidates_for_basis(
     precommitted_openings: &[PlannerOpeningCandidate],
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
+    guide: Option<crate::schedule_params::CandidateLayoutGuide>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
@@ -202,12 +308,10 @@ pub(crate) fn root_level_candidates_for_basis(
         return Ok(Vec::new());
     }
 
-    if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
-        return Err(AkitaError::InvalidSetup(
-            "group-batch planning requires one honest fold policy per precommitted profile"
-                .to_string(),
-        ));
-    }
+    let equivalence_classes = precommitted_group_equivalence_classes(
+        &key.precommitteds,
+        precommitted_honest_fold_policies,
+    )?;
     if precommitted_openings.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(
             "root precommit opening candidate count mismatch".into(),
@@ -250,15 +354,22 @@ pub(crate) fn root_level_candidates_for_basis(
         log_basis: candidate_log_basis_open,
         ..policy.decomposition
     });
-    let mut split_domain = recursive_split_search_domain(
-        policy.recursive_split_search_policy,
-        num_ring_elems,
-        reduced_vars,
-        delta_commit,
-        delta_open,
-        policy.chunks_at_level(0),
-    );
-    if min_block_index_bits == 0 {
+    let mut split_domain = if let Some(guide) = guide {
+        reduced_vars
+            .checked_sub(guide.position_index_bits)
+            .into_iter()
+            .collect()
+    } else {
+        recursive_split_search_domain(
+            policy.recursive_split_search_policy,
+            num_ring_elems,
+            reduced_vars,
+            delta_commit,
+            delta_open,
+            policy.chunks_at_level(0),
+        )
+    };
+    if guide.is_none() && min_block_index_bits == 0 {
         split_domain.push(0);
     }
     split_domain.retain(|&split| min_block_index_bits <= split && split <= max_block_index_bits);
@@ -277,6 +388,7 @@ pub(crate) fn root_level_candidates_for_basis(
         precommitted_groups_for_open_basis(
             &precommitted_groups,
             precommitted_openings,
+            &equivalence_classes,
             policy,
             shared_opening_ring_dimension,
             candidate_log_basis_open,
@@ -289,6 +401,9 @@ pub(crate) fn root_level_candidates_for_basis(
         let num_live_blocks = 1usize << block_index_bits;
         let mut slice_candidates = Vec::new();
         for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if guide.is_some_and(|guide| outer_slice_count != guide.outer_slice_count) {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     0,
@@ -482,6 +597,7 @@ fn root_final_group_level_params_candidate(
         groups,
         open_commit_matrix,
         akita_types::CommitmentPayloadMode::Compressed,
+        akita_types::RingRelationMode::QuotientLift,
         akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,
@@ -505,6 +621,152 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        ScheduleSearchOptions::canonical(),
+    )
+}
+
+/// Adapt a validated scalar main row to an exact grouped-root key.
+///
+/// The main row's root A/B geometry and opening plan are frozen. Its recursive
+/// depth, per-level dimensions, block split, slicing, bases, opening family,
+/// payload/relation phases, and direct-vs-offloaded edges form a fail-closed
+/// guide. The grouped root's shared D matrix and every length-, setup-, rank-,
+/// response-, and relation-derived suffix value are rebuilt under `policy`.
+/// Adaptation fails when that frozen skeleton is no longer feasible. This is a
+/// conditional search, not the globally optimal search performed by
+/// [`find_schedule`].
+/// Adaptation accepts at most [`MAX_ADAPTED_PRECOMMIT_WIDTH`] precommitted
+/// producers and the same number of canonical precommit-opening assignments,
+/// so producer-controlled group counts cannot create unbounded allocation or
+/// recreate an unbounded Cartesian product.
+///
+/// The supplied row is expected to come from a caller-approved
+/// [`akita_schedules::ValidatedScheduleCatalog`]. The resulting expanded row must
+/// still be admitted into the caller's final trusted catalog before runtime
+/// proving or verification.
+pub fn find_adapted_schedule(
+    main_row: &ResolvedScheduleRow,
+    request: &crate::emit::GroupedGenerationRequest,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    let producer_count = request.precommitted_producers().len();
+    if producer_count > MAX_ADAPTED_PRECOMMIT_WIDTH {
+        return Err(AkitaError::UnsupportedSchedule(format!(
+            "adapted planning supports at most {MAX_ADAPTED_PRECOMMIT_WIDTH} precommitted producers, got {producer_count}"
+        )));
+    }
+    let key = request.key();
+    let precommitted_honest_fold_policies = request.fold_policies();
+    find_adapted_schedule_for_key(
+        main_row,
+        &key,
+        final_honest_fold_policy,
+        &precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+    )
+}
+
+fn find_adapted_schedule_for_key(
+    main_row: &ResolvedScheduleRow,
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    akita_schedules::planner_support::validate_policy(policy)?;
+    key.validate(policy.decomposition.field_bits())?;
+    if key.precommitteds.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "adapted planning requires at least one precommitted group".into(),
+        ));
+    }
+    if key.precommitteds.len() != precommitted_honest_fold_policies.len() {
+        return Err(AkitaError::InvalidInput(
+            "adapted planning requires one honest fold policy per precommitted group".into(),
+        ));
+    }
+    if !main_row.profiles().precommitteds.is_empty()
+        || !main_row
+            .schedule()
+            .root
+            .params
+            .precommitted_groups()
+            .is_empty()
+    {
+        return Err(AkitaError::InvalidInput(
+            "adapted planning requires a scalar main-group-only row".into(),
+        ));
+    }
+    if key.final_group != main_row.profiles().final_group.group {
+        return Err(AkitaError::InvalidInput(
+            "adapted final-group layout does not match the main row".into(),
+        ));
+    }
+    // Re-audit the baseline under the caller's current policy. Adaptation never
+    // treats a row produced for another policy epoch as a geometry hint.
+    ResolvedScheduleRow::try_new(
+        main_row.profiles().clone(),
+        main_row.schedule().clone(),
+        policy,
+    )?;
+
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        ScheduleSearchOptions {
+            root_main_constraint: Some(&main_row.schedule().root.params),
+            adaptation_guide: Some(main_row.schedule()),
+            ..ScheduleSearchOptions::canonical()
+        },
+    )
+}
+
+/// Build a schedule under a test-only relation-mode restriction.
+#[cfg(feature = "test-support")]
+pub fn find_schedule_for_test_relation_mode(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    relation_mode_filter: super::schedule_params::TestRelationModeFilter,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        ScheduleSearchOptions {
+            relation_mode_filter: relation_mode_filter.into(),
+            ..ScheduleSearchOptions::canonical()
+        },
+    )
+}
+
+/// Canonical schedule search with an internal traversal-order seam used to
+/// prove that candidate enumeration does not affect selection.
+pub(crate) fn find_schedule_in_relation_order(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    options: ScheduleSearchOptions<'_>,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     let diagnostics = crate::diagnostics::active();
     let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
@@ -520,9 +782,11 @@ pub fn find_schedule(
     } else {
         policy
     };
-    let setup_field_budget = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
-    {
+    let setup_field_budget = if matches!(
+        active_policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+    ) {
         active_policy.setup_field_budget
     } else {
         None
@@ -544,9 +808,13 @@ pub fn find_schedule(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
+        root_main_constraint: options.root_main_constraint,
+        adaptation_guide: options.adaptation_guide,
         root_honest_fold_policy: Some(final_honest_fold_policy),
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
+        relation_traversal_order: options.relation_traversal_order,
+        relation_mode_filter: options.relation_mode_filter,
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
     let initial_state = SuffixState {
@@ -554,13 +822,25 @@ pub fn find_schedule(
         current_witness_len: root_input_witness_len,
         current_lb: 0,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::schedule_params::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
+        },
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(&suffix_ctx, &mut memo, initial_state, 0);
+    #[cfg(test)]
+    let query_prefix_count = options.query_prefix_count;
+    #[cfg(not(test))]
+    let query_prefix_count = 0;
+    let suffix = derive_selected_suffix_schedule(
+        &suffix_ctx,
+        &mut memo,
+        initial_state,
+        0,
+        super::schedule_params::QuerySearch::Root(query_prefix_count),
+    );
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
         let (hits, misses) = memo.setup_prefix_cache_diagnostics();
@@ -568,10 +848,13 @@ pub fn find_schedule(
     }
     let suffix = suffix?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
+            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
@@ -594,9 +877,11 @@ pub fn find_schedule(
             key.final_group.num_vars()
         )));
     };
-    let first_direct_setup_field_len = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
-    {
+    let first_direct_setup_field_len = if matches!(
+        active_policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+    ) {
         Some(
             best.first_direct_setup_field_len
                 .ok_or_else(|| {
@@ -611,24 +896,35 @@ pub fn find_schedule(
     };
     if let Some(diagnostics) = diagnostics {
         let metrics = best.metrics();
+        let folds = best.folds.to_vec();
+        let root_output_witness_len = folds
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("selected schedule is missing its root fold".into())
+            })?
+            .output_witness_len;
         diagnostics.record_selected(
             active_policy.selection_policy,
-            metrics.proof_bytes(),
-            metrics.setup_field_elements,
-            metrics.first_direct_setup_capacity.field_elements(),
-            best.folds
-                .to_vec()
+            metrics,
+            root_output_witness_len,
+            folds
                 .iter()
-                .map(|fold| fold.params.role_dims())
+                .map(|fold| crate::diagnostics::SelectedFoldDiagnostics {
+                    dimensions: fold.params.role_dims(),
+                    relation_mode: fold.params.ring_relation_mode,
+                })
                 .collect(),
         );
     }
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.cost.proof_bytes(),
-        best.setup_field_elements,
-        first_direct_setup_field_len,
+        CandidateMaterializationCost {
+            proof_bytes: best.cost.proof_bytes(),
+            grinding: best.cost.grinding_cost(),
+            num_setup_field_elements: best.setup_field_elements,
+            first_direct_setup_field_len,
+        },
         active_policy,
         &root_layout,
         best.folds.to_vec(),
