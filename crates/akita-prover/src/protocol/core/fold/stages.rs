@@ -13,7 +13,7 @@ pub(super) enum Stage2Compression<E: Field> {
     },
 }
 
-pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
+pub(super) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     level: u32,
     rs: &mut RingSwitchOutput<E>,
@@ -91,12 +91,12 @@ where
             None
         }
     };
-    Ok((
-        stage1_proof,
-        stage1_point,
+    Ok(Stage1ProveOutput {
+        proof: stage1_proof,
+        point: stage1_point,
         range_image_evaluation,
         physical_l2,
-    ))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,7 +113,7 @@ pub(super) fn prove_stage2<F, E, T>(
     linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
-) -> Result<RelationRangeImageProveResult<E>, AkitaError>
+) -> Result<Stage2ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
@@ -228,11 +228,15 @@ where
             "stage-2 prover final claim disagrees with its folded oracle".into(),
         ));
     }
-    Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
+    Ok(Stage2ProveOutput {
+        proof: stage2_sumcheck_proof,
+        challenges: sumcheck_challenges,
+        prover: stage2_prover,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
+pub(super) fn prove_stage3<F, E, T>(
     level: usize,
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,

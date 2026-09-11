@@ -1,5 +1,5 @@
 use super::super::*;
-use super::{finish_prepared_fold, FinishFoldArgs, PreparedFold};
+use super::{prepare_fold_relation, PreparedFold};
 use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
@@ -100,17 +100,17 @@ where
         (protocol_points, None)
     };
 
-    finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
+    prepare_fold_relation::<F, E, T, P, S, O, TS, R, SP>(
         stack,
         block_claims,
-        protocol_points: &protocol_points,
+        &protocol_points,
         reduction,
-        trace_opening_batch: &opening_batch,
+        &opening_batch,
         level,
         level_params,
         basis,
         pad_base_evals,
         transcript,
-    })
+    )
     .map_err(|err| AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}")))
 }
