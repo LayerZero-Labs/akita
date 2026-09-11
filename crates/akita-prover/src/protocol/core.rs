@@ -50,12 +50,12 @@ use jolt_field::{Fold, Unreduced};
 
 use std::sync::Arc;
 
-pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: Field> {
-    pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
+pub(in crate::protocol) struct ExtensionOpeningReduction<E: Field> {
+    pub(in crate::protocol) proof: ExtensionOpeningReductionProof<E>,
     /// One transparent factor evaluation per opening group. The application
     /// batches the proof's terminal claims only after the complete opening
     /// payload is fixed.
-    pub(in crate::protocol::core) final_factors: Vec<E>,
+    pub(in crate::protocol) final_factors: Vec<E>,
 }
 
 mod extension_opening_reduction;
@@ -68,14 +68,21 @@ mod suffix;
 #[cfg(test)]
 mod tests;
 
+/// Stateless coordinator for the proving stages that share one stack selector.
+///
+/// The transcript, setup, schedule, and all protocol progress stay explicit in
+/// method arguments and return values.
+struct ProverExecutor<'stack, Stacks: ?Sized> {
+    stacks: &'stack Stacks,
+}
+
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
     prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, ExtensionOpeningSource,
     PreparedFold,
 };
-pub(in crate::protocol::core) use fold_kernels::*;
+pub(in crate::protocol) use fold_kernels::*;
 pub use prove::batched_prove;
-use root_fold::prove_root;
 #[allow(unused_imports)]
 pub(crate) use root_group::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
@@ -101,9 +108,6 @@ pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     /// terminal level.
     pub num_levels: usize,
 }
-
-pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
-    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: Field> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,

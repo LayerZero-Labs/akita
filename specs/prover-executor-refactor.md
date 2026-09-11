@@ -1,10 +1,10 @@
-# Spec: Prover orchestration with a transcript-owning executor
+# Spec: Prover orchestration with explicit stages
 
 | Field | Value |
 |-------|-------|
 | Author(s) | Codex, for maintainer review |
 | Created | 2026-09-10 |
-| Status | proposed |
+| Status | implemented |
 | PR | Not opened |
 | Supersedes | None |
 | Superseded-by | None |
@@ -12,479 +12,380 @@
 
 ## Summary
 
-Introduce an internal, per-proof `ProverExecutor` that owns the grinding
-transcript and borrows the level stack selector while exposing meaningful prover
-stages. Keep all other protocol progress in local variables and stage return
-values. The executor has no current level, pending witness, optional result slots,
-or state machine. Transcript mutation is the one intentional evolving field: it
-is the protocol's ordered Fiat-Shamir channel, not a store for stage results.
+Refactor proving into a short sequence of named stages coordinated by an internal
+`ProverExecutor`. The executor borrows the existing level stack selector. The
+transcript, expanded setup, prefix slots, parameters, and intermediate results are
+explicit method arguments. Each stage performs a coherent piece of protocol work
+and returns the values needed downstream.
 
-The largest benefit comes from simplifying fold preparation and `prove_fold`,
-not merely wrapping the existing top-level functions. Move orchestration into
-canonical stage implementations, remove the functions they replace, and keep
-the existing arithmetic and backend kernels. Favor straightforward ownership
-and inexpensive metadata copies; preserve fused work and large-buffer lifetimes.
+The goal is simpler, more readable orchestration with the same computational
+efficiency. Small metadata copies are acceptable when they simplify ownership.
+Large witnesses and partial tables must move or remain borrowed, and accepted
+fold responses must be reused. This is an internal refactor: protocol rules,
+proof encoding, and supported configurations remain unchanged.
 
-This is a design proposal only. No Rust implementation or performance measurement
-is included. The review is based on `feat/backend-commit-simplified` at
-`759c60682fbf760afc4a2ac2f3965d0aa6551539`; the working branch is
-`refactor/prover`.
+## Architecture and scope
 
-## Current code review
+The design follows three useful patterns in Jolt's prover: a top-level function
+that shows protocol order, named stage results that distinguish proof fields from
+downstream data, and canonical protocol helpers shared wherever ordering or
+geometry must agree. Jolt keeps one transcript local and passes it explicitly to
+its stages. Akita will use the same ownership pattern.
 
-The reviewed path runs from public batched proving through root preparation,
-relation construction, ring switching, sumchecks, recursive folds, and terminal
-response construction. Backend and sumcheck internals were inspected for their
-interfaces and ownership constraints; this is not an exhaustive arithmetic or
-security audit.
+The scope includes batched admission, root and recursive preparation, relation
+construction, ring switching, sumcheck orchestration, terminal proving, and proof
+assembly. Existing arithmetic engines, commitment execution, source views, and
+backend interfaces remain in place. Backend support, registries, sessions,
+device management, code generation, new proof modes, and kernel optimization are
+outside this refactor. The design introduces no general stage framework or
+typestate machine.
 
-| Current owner | What it does | Refactoring opportunity |
+The reviewed Akita base is `feat/backend-commit-simplified` at
+`b22c41e0a6818740c015f6f94d42b181698dfa26`. The architectural reference is Jolt at
+`e99577c48fcaee46af0578ec955ffed280ec56c4`, specifically its
+`crates/jolt-prover/src/akita/prover.rs`,
+`crates/jolt-prover/src/stages/stage1.rs`,
+`crates/jolt-prover/src/stages/stage6b.rs`, and
+`crates/jolt-prover/src/driver.rs`. These are source references from the reviewed
+checkout, not dependencies or implementation requirements for Akita.
+
+## Implemented structure
+
+| Current owner | Responsibility | Proposed change |
 |---|---|---|
-| [`core/prove.rs`](../crates/akita-prover/src/protocol/core/prove.rs): `batched_prove` | Resolves the trusted schedule, validates schedule/setup/state consumers, prewarms NTT resources, binds the instance descriptor, selects the root successor, owns the grinding transcript, invokes root and suffix, releases root resources, and assembles the proof | It is now the single top-level orchestration target. Separate admission, resource preparation, transcript setup, and proof execution while retaining their visible order |
-| [`types/opening_data.rs`](../crates/akita-prover/src/types/opening_data.rs): `ProverOpeningData` | Constructors validate claim, point, source, state, and stored-layout alignment; private fields preserve it. Root commitment row shape is checked when claims are appended to the transcript against scheduled geometry | Treat construction as the claim-shape boundary. Do not recreate those checks in executor stages; keep schedule-dependent commitment validation coupled to its canonical transcript encoding |
-| [`core/root_fold.rs`](../crates/akita-prover/src/protocol/core/root_fold.rs) | Absorbs validated root claims, prepares the root with the canonical single-field fold path, and invokes the common fold | Keep this short flow, remove repeated resource arguments, and make the transition from claim binding to fold preparation explicit |
-| [`core/fold/mod.rs`](../crates/akita-prover/src/protocol/core/fold/mod.rs): `finish_prepared_fold` | Validates points, computes group partial openings, binds evaluations, invokes relation construction through a callback, assembles `PreparedFold` | Split at actual transcript and ownership boundaries; eliminate `FinishFoldArgs` and the callback when the stages own this work |
-| Same file: `prove_fold` | Builds/aligns the next witness, commits and binds it, finalizes ring switching, runs stages 1–3, assembles proof and suffix state | Main orchestration target: extract coherent stages with explicit results |
-| [`ring_relation.rs`](../crates/akita-prover/src/protocol/ring_relation.rs): `RingRelationProver::new` | Recovers retained state, materializes opening digits and payload, calls back into claim batching, grinds folds, constructs relation instance/witness | Constructor name hides an entire protocol; expose payload preparation, accepted-fold sampling, and relation assembly in execution order |
-| [`core/suffix.rs`](../crates/akita-prover/src/protocol/core/suffix.rs) | Walks scheduled folds, creates recursive sources, handles optional setup-prefix claims and extension reduction, executes a distinct terminal path | Keep the loop and terminal branch explicit; keep source owners local while their borrowed views are used |
-| [`core/fold/stages.rs`](../crates/akita-prover/src/protocol/core/fold/stages.rs) | Implements digit-range, relation/range-image, and setup sumchecks | Existing useful stage boundaries; move their orchestration bodies where helpful without adding forwarding methods |
+| [core/prove.rs](../crates/akita-prover/src/protocol/core/prove.rs): `batched_prove` | Admission, prewarming, transcript setup, root/suffix execution, resource lifecycle, proof assembly | Construct the executor at the public entry and express the body as named executor stages |
+| [types/opening_data.rs](../crates/akita-prover/src/types/opening_data.rs) | Constructor validation and stored opening layout; scheduled commitment shape checking during claim binding | Preserve these validation boundaries and use the borrowed layout accessor |
+| [core/root_fold.rs](../crates/akita-prover/src/protocol/core/root_fold.rs) | Bind root claims, prepare the opening, execute a fold | Keep a short root-specific front feeding shared fold stages |
+| [core/fold/mod.rs](../crates/akita-prover/src/protocol/core/fold/mod.rs): `prepare_fold_relation` | Native group opening preparation and `PreparedFold` assembly | Keep the shared root/recursive preparation boundary explicit and pass transcript dependencies directly |
+| [ring_relation.rs](../crates/akita-prover/src/protocol/ring_relation.rs): `RingRelationProver::prepare` | Retained material, opening payload, late claim binding, fold grinding, relation instance and witness | Preserve these ordered phases in one ownership-safe operation and return a named result; the former late-batching callback is removed |
+| `core/fold/mod.rs`: `prove_fold` | Build and commit next witness, ring switching, stages 1–3, proof and suffix-state assembly | Split into named operations with explicit outputs and required successor inputs |
+| [core/suffix.rs](../crates/akita-prover/src/protocol/core/suffix.rs) | Recursive source preparation, schedule loop, terminal proof | Keep the loop and terminal path explicit; pass carried values between levels |
+| [core/fold/stages.rs](../crates/akita-prover/src/protocol/core/fold/stages.rs) | Three sumcheck stages | Reuse these meaningful boundaries; move orchestration bodies without adding forwarding layers |
 
-The updated base already completed several useful simplifications: it removed the
-separate public `prove` and `prove_suffix` orchestration exports, deleted the
-duplicate root preparation/checking layer, removed the local opening-family
-resolver, and made `ProverOpeningData` construction the alignment boundary. This
-proposal treats those changes as the starting point and does not recreate the
-removed layers inside `ProverExecutor`.
+The base already validates claim/source alignment in `ProverOpeningData`
+constructors, provides a borrowed `opening_layout()`, and exposes only
+`batched_prove` as the public orchestration entry. Preserve those simplifications.
+Repeated field bounds can be deduplicated and shared on impl blocks where useful.
 
-Concrete cleanup opportunities accompany this structural change:
+## Executor and ownership
 
-- Repeated field bounds (`Field`, `ExtField`, `FpExtEncoding`) obscure signatures.
-  Deduplicate them and put genuinely shared bounds on executor impl blocks.
-- `batched_prove` now has the right validation ownership but combines admission,
-  resource preparation, transcript creation, root/suffix execution, lifecycle,
-  and proof assembly. Preserve the consolidated boundary while separating these
-  operations into readable executor stages.
-- `ProverOpeningData::opening_layout()` is now a cheap borrowed accessor because
-  constructors establish alignment. Read it from the admitted claims as needed
-  rather than storing a second copy or revalidating claim/source geometry.
-- Schedule geometry and opening-family decisions are still rebuilt within fold
-  preparation. Resolve reusable geometry once per fold, while retaining checks at
-  the schedule-dependent transcript and backend boundaries that enforce them.
-- `prove_fold` accepts optional successor parameters, expected length, and binding
-  policy, although its root and suffix callers supply all three. Require a
-  successor and expected length. Derive binding from the existing recursive vs
-  terminal successor variant, after checking agreement with the schedule contract.
-- The stage-1 proof is wrapped in `Some` and later immediately required again.
-  Keep it required throughout a nonterminal fold.
-- The stage-1 result is a positional tuple with an optional L2 replay. Give it
-  named fields so the next stage reads as protocol data flow.
-
-These are simplifications, not evidence that the existing proof is incorrect.
-
-## Proposed executor
-
-Use one internal executor per proof. It holds only the resources that every
-transcript-sensitive stage shares. Schematic Rust, with trait bounds omitted:
+The executor has one field:
 
 ```rust,ignore
-struct ProverExecutor<'transcript, 'plan, 'stacks, T, Stacks> {
-    stacks: &'stacks Stacks,
-    transcript: ProverGrindingTranscript<'transcript, 'plan, T>,
+struct ProverExecutor<'a, Stacks> {
+    stacks: &'a Stacks,
 }
 ```
 
-`expanded` setup and `prefix_slots` are deliberately not fields. They are needed
-by only part of proving and remain explicit arguments to `prove` and to the root,
-setup-sumcheck, recursive-preparation, and terminal stages that consume them. This
-keeps the executor from becoming a bag of every available dependency. The catalog,
-selected schedule, basis, level, witnesses, and stage outputs also remain arguments
-or local values.
+This field removes repeated stack-selector arguments from root, recursive, and
+commitment orchestration. It does not introduce a new backend abstraction.
+Executor methods use `&self`; the executor contains no transcript, setup, prefix
+registry, current level, witness, cached stage result, or mutable progress.
 
-The executor owns `ProverGrindingTranscript` after the public entry has bound the
-instance descriptor and created the grinding wrapper. Stage methods that absorb or
-sample take `&mut self` and access `self.transcript`; callers cannot accidentally
-thread a different transcript into one stage. Methods that do not touch the
-transcript take `&self` or remain free functions. The executor is consumed by
-`prove`, which finishes the transcript and returns its nonce stream with the proof.
-Backend caches remain owned by the supplied stack selector.
+Transcript-sensitive stages receive `&mut T` explicitly. Pure preparation and
+assembly functions receive no transcript. The same transcript is passed through
+the complete proof, with the grinding wrapper created and finished locally in
+`prove`. Its plan and the caller's underlying transcript remain local borrows,
+so no extra lifetime coupling or interior mutability is needed on the executor.
 
-Calling a canonical kernel directly is clearer than adding an executor method that
-only forwards. Executor methods must own an orchestration boundary, transcript
-event, or nontrivial result transformation.
+Expanded setup and prefix slots are passed only where needed, including admission,
+ring-switch finalization, setup sumcheck, and recursive setup-prefix preparation.
+Do not add them to argument bundles that merely hide repeated dependencies.
 
-Keep the executor private initially. Preserve a small public `batched_prove`
-entry boundary that constructs the executor and invokes it. The updated base has
-already removed the separate public `prove` and `prove_suffix` exports; preserve
-that single entry boundary instead of restoring low-level aliases. Do not broaden
-this into a redesign of commitment registration or public statement construction.
+Use an executor method when it owns a real stage. Keep mathematical functions and
+existing canonical operations callable directly. Move replaced orchestration
+bodies and delete the old versions; an additional method that only forwards to
+the same function would not simplify the implementation.
 
-### Top-level flow
+## Top-level proving
 
-The admitted entry path should visibly perform these steps:
+Keep public `batched_prove` as the single API and orchestration boundary. It
+constructs the executor and invokes its stages directly, avoiding a second
+pass-through entry point with duplicate generic bounds.
 
-```rust,ignore
-let admitted = ProverExecutor::validate_params(stacks, schedules, opening)?;
-ProverExecutor::prepare_resources(stacks, &admitted)?;
-let grinding_plan = bind_transcript_instance_descriptor(/* admitted inputs */, transcript)?;
-let transcript = ProverGrindingTranscript::new(transcript, &grinding_plan)?;
-ProverExecutor::new(stacks, transcript).prove(
-    expanded,
-    prefix_slots,
-    admitted,
-    basis,
-)
-```
-
-`validate_params` consumes the already-constructed `ProverOpeningData`, resolves
-the catalog selection, validates the stored opening layout against the selected
-row, checks schedule/setup compatibility, and preflights retained-state consumers.
-It does not repeat point, evaluation, polynomial, state, or layout-alignment checks
-owned by `ProverOpeningData` constructors. Schedule-dependent commitment shape
-continues to be checked by the canonical claim transcript encoder when the root
-stage binds those claims. The result carries the claims, selected schedule
-reference, and selection identity; downstream stages obtain the already-validated
-layout through `claims.opening_layout()`. It is ordinary validated input, not
-executor state; keep its fields private if that prevents accidental bypass of
-admission.
-
-`prepare_resources` performs the existing NTT requirement calculation and prewarm.
-It stays before descriptor binding as in the current batched path. It does not
-create another cache owner or rebuild prepared setup per stage. These pre-executor
-operations can be associated functions or canonical free functions: neither needs
-the grinding transcript, and inventing a partially initialized executor would make
-the lifecycle less clear.
+The intended shape is below. All snippets in this spec are control-flow sketches;
+generic bounds and detailed stage argument lists are omitted.
 
 ```rust,ignore
-fn prove(
-    mut self,
-    expanded: &Arc<AkitaExpandedSetup<F>>,
-    prefix_slots: &SetupPrefixProverRegistry<F>,
-    admitted: AdmittedProverInput<'_>,
-    basis: BasisMode,
-) -> Result<Proof, Error> {
-    let root = self.prove_root(expanded, prefix_slots, &admitted, basis)?;
-    self.stacks.after_root_fold()?;
-    let suffix = self.prove_suffix(
-        expanded,
-        prefix_slots,
-        root.next_state,
-        admitted.schedule,
+fn batched_prove(expanded, prefix_slots, schedules, stacks, opening, basis, transcript) {
+    let executor = ProverExecutor { stacks };
+    let admitted = executor.validate_params(expanded, schedules, opening)?;
+    executor.prepare_resources(admitted.schedule)?;
+    let plan = bind_transcript_instance_descriptor(
+        expanded, admitted.claims.opening_layout(), admitted.selection,
+        admitted.schedule, basis, transcript,
     )?;
-    let nonce_stream = self.transcript.finish()?;
-    Ok(assemble_proof(root.level_proof, suffix, nonce_stream))
+    let mut transcript = ProverGrindingTranscript::new(transcript, &plan)?;
+    let schedule = admitted.schedule;
+    let root = executor.prove_root(
+        expanded, prefix_slots, admitted.claims, schedule, basis, &mut transcript,
+    )?;
+    stacks.after_root_fold()?;
+    let suffix = executor.prove_suffix(
+        expanded, prefix_slots, root.next_state, schedule, &mut transcript,
+    )?;
+    let nonce_stream = transcript.finish()?;
+    Ok(AkitaBatchedProof {
+        nonce_stream,
+        root: root.level_proof,
+        recursive_folds: suffix.recursive_folds,
+        terminal: suffix.terminal,
+    })
 }
 ```
 
-The snippets describe control flow, not proposed compilable signatures. Proof
-assembly can stay an inline struct literal instead of becoming a single-use helper.
-Passing setup and prefix slots once to `prove` keeps the public call compact; their
-use remains visible in the smaller internal stages instead of being hidden as
-executor-wide ambient context.
+`validate_params` resolves the trusted catalog selection, validates its agreement
+with the stored opening layout, checks execution/setup compatibility, and
+preflights retained-state consumers against the exact root commitment plan. Inner
+state validation receives the planned inner operation and group source count;
+compressed outer state validation receives the group compression plan and ring
+relation mode. It returns claims, selection identity, and the selected schedule
+reference in a private ordinary input struct. Read the layout from the claims; do
+not store a duplicate or a reference into an owned field of that struct.
 
-### Fold preparation: make the hidden ordering visible
+Claim point arity, evaluation count, and source/layout alignment remain constructor
+checks. Scheduled root commitment row shape remains checked by
+`ProverOpeningData::append_to_transcript`. Admission must not reimplement these
+checks. Setup identity is validated when compute stacks and commitment executors
+are constructed. State-consumer and routing preflight still occurs before
+prewarming and descriptor binding.
 
-Root preparation validates and absorbs scheduled commitment rows through
-`ProverOpeningData::append_to_transcript`. Recursive preparation binds the
-recursive commitment and builds source views, including the optional setup-prefix
-source. Both then use the shared preparation stages below. Recursive
-extension-opening reduction remains conditional on opening method and extension
-degree; the root currently uses the canonical single-field preparation path even
-when the claim field is an extension field.
+`prepare_resources` calculates the current NTT requirements and prewarms the
+supplied resources. Preserve `after_root_fold` at the root/suffix boundary and
+preserve all stack-selection indexes. No stage creates a second cache owner.
+
+## Stage results and dependencies
+
+As in Jolt, each stage returns named values that make its consumers visible.
+Akita already has useful examples: `ProveLevelOutput` separates `level_proof`
+from `next_state`, and `PreparedFold` owns a relation instance and witness along
+with opening material. Retain these concepts rather than inventing a generic
+result framework.
+
+Replace positional multi-value tuples with named results at meaningful boundaries.
+For example, the stage-1 result should name its proof, sumcheck point, range-image
+evaluation, and optional physical-L2 replay. Keep the stage-1 proof required;
+remove its current `Some` followed by an immediate requirement that it be present.
+
+Proof fields survive until assembly. Downstream data survives only until its last
+consumer. Destructure results to move large fields into the next operation and
+drop scratch promptly. A result struct must not extend every intermediate's
+lifetime to the end of the proof or duplicate a large buffer into both proof and
+execution fields. An `Option` represents a real protocol alternative, such as
+extension reduction or setup-prefix opening, rather than incomplete execution.
+
+Document each stage's inputs, outputs, transcript position, and heavy allocations
+at its implementation. Existing canonical point derivation, claim checking, and
+transcript encoders remain the authority. Jolt's shared driver motivates this
+single-source rule; introducing its generated driver machinery is unnecessary.
+
+## Fold preparation
+
+Root preparation binds root claims and enters the existing preparation path that
+does not perform extension-opening reduction. Recursive preparation binds the
+carried commitment, creates witness and optional setup-prefix sources, and runs
+extension reduction when the opening method and extension degree require it.
+Both feed the same subsequent relation-preparation sequence. The implementation
+keeps source borrows and large opening material within the canonical relation
+operation, while exposing the surrounding stages explicitly:
 
 ```rust,ignore
-let params = resolve_fold_geometry(level_params, opening_layout)?;
-let openings = self.compute_partial_openings(&params, sources, points)?;
-let payload = self.prepare_opening_payload(&params, claims, openings)?;
-let batching = self.bind_evaluation_claims(/* payload-bound openings */)?;
-let accepted = self.sample_accepted_fold(/* sources */)?;
-let prepared = self.assemble_fold_relation(params, payload, batching, accepted)?;
+let prepared = prepare_fold_relation(
+    stack, claims, protocol_points, reduction, opening_batch,
+    level, level_params, basis, pad_base_evals, transcript,
+)?;
 ```
 
-Use precise names such as `compute_partial_openings` rather than a vague
-`compute_partial_params`: deriving a layout is cheap, evaluating polynomial
-partials can dominate runtime. `resolve_fold_geometry` denotes a proposed real
-aggregation of reused group geometry; implement it only where it eliminates
-repeated derivation. It must call canonical parameter/layout methods rather than
-reimplement their arithmetic.
-
-| Stage | Work moved into it | Result and ownership |
-|---|---|---|
-| Compute partial openings | Group point validation, native-dimension dispatch, partial evaluations and scalar openings from `finish_prepared_fold` | Own prepared group openings; borrow polynomial sources. Use the executor transcript for recursive point absorbs and preserve scalar-claim binding order |
-| Prepare opening payload | Retained inner/outer material acquisition, opening digit materialization, D-role rows, compression, opening-payload absorb from `RingRelationProver::new` | Own material required for relation assembly; retain metadata/scalar openings for late batching; no copy of source polynomials; mutate the executor transcript for the payload absorb |
-| Bind evaluation claims | Existing `prepare_evaluation_trace_claim` and row-coefficient construction | Named small batching result; call after the complete opening payload is bound, removing `bind_claims_after_payload` callback inversion |
-| Sample accepted fold | Existing joint fold-grinding implementation | Return the accepted witness, chunk coefficients, and challenges together; consume them in the next stage |
-| Assemble fold relation | Group opening products, relation RHS/quotients, witness and instance assembly, `PreparedFold` construction | Move accepted witnesses and payload material into the existing result; release preparation-only scratch |
-
-Do not add a separate `sample_challenges()` followed by recomputing
-`compute_folded_witness()`. The acceptance test in
-[`fold_grind.rs`](../crates/akita-prover/src/protocol/fold_grind.rs) needs the
-candidate witness. It searches the first jointly accepted nonce and retains the
-accepted outputs. A stage named `sample_fold_response` would be truthful if the
-existing function is renamed, but the implementation must remain canonical and
-return both challenges and witness. Keep preview/live replay and all acceptance
-bounds intact.
-
-### Nonterminal fold execution
-
-After preparation, the executor should read approximately as follows:
-
-```rust,ignore
-let next = self.commit_next_witness(level, successor, expected_len, prepared)?;
-let relation = ring_switch_finalize(/* metadata */, &mut self.transcript)?;
-let range = self.prove_range_image(/* relation */)?;
-let stage2 = self.prepare_stage2(/* relation, range, openings */)?;
-let opening = self.prove_relation_sumcheck(stage2)?;
-let setup = self.prove_setup_sumcheck(expanded, prefix_slots, /* successor and opening */)?;
-// Assemble FoldLevelProof and SuffixProverState by moving these outputs.
-```
-
-`commit_next_witness` combines existing witness construction, scheduled length
-checking, alignment, recursive/terminal commitment dispatch, and binding absorb.
-It returns the logical witness and commitment output along with the remaining
-relation metadata needed by finalization. It calls `ring_switch_build_w`,
-`commit_w`, and `commit_terminal_w` directly. It does not duplicate their kernels.
-
-`prove_range_image` owns the existing stage-1 body and the immediate range-image
-evaluation absorb. `prepare_stage2` owns the current L2 replay batching,
-compression batching, stage-2 batching, and opening-family-specific linear-term
-preparation. This removes a large inline branch from the fold driver.
-`prove_relation_sumcheck` owns the current stage-2 body and next-w evaluation
-absorb. `prove_setup_sumcheck` owns the current stage-3 orchestration, conditional
-on the recursive successor and setup contribution mode. Every transcript-sensitive
-method above mutates `self.transcript`; the transcript is omitted from signatures
-to make the single ordered channel structural. Setup and prefix slots appear only
-on the stages that need them.
-
-Move these bodies; do not retain `prove_stage1/2/3` as additional forwarding layers.
-Keep standalone sumcheck engines and mathematical helpers in their current modules.
-Every stage result should answer what the next stage consumes. Prefer a few named
-results for existing tuples/multi-value boundaries over a new type per statement.
-
-### Recursive and terminal paths
-
-The suffix remains a simple loop over the schedule: check carried witness length,
-prepare this level, execute the common nonterminal fold, move its next state.
-Then check terminal length and call a separate terminal method. Preserve stack
-selection indexes and the root/suffix cache-release hook exactly.
-
-The terminal method should visibly bind terminal inner state, prepare its opening
-(including extension reduction when required), bind terminal opening rows, sample
-the accepted terminal response, and build/absorb that response. It does not run
-the ordinary three sumchecks or fabricate a successor to reuse the nonterminal
-driver. Keep `SuffixProverState`: it represents real data carried between folds,
-not mutable progress stored on the executor.
-
-In recursive preparation, keep the `Arc` source owners in the local scope that
-invokes the shared stages. Do not return a struct containing both owned sources
-and references into those sources. Moving code into a method must not require
-self-referential structures, unsafe code, or polynomial clones.
-
-## Protocol invariants
-
-Stage names are not permission to reorder the transcript. Preserve the complete
-event stream, encoded bytes, labels, challenge draw counts, grinding sites and
-nonces for identical deterministic inputs. In particular:
-
-1. Bind the selected instance descriptor before proving; preserve root claim and
-   recursive commitment encoding and ordering.
-2. Keep extension-opening reduction's own transcript sequence in its canonical
-   implementation. Its earlier internal batching and later application batching
-   have different purposes; do not merge them.
-3. Bind all opening payload digits through the D/compression payload before late
-   evaluation batching, then perform fold-response grinding.
-4. Bind the next witness before ring-switch challenges. Terminal inner-state and
-   recursive outer-payload bindings remain distinct encodings.
-5. After stage 1, absorb the range-image evaluation, then sample optional L2
-   virtual batching, optional compression batching, and stage-2 batching in the
-   current order. Preserve grinding calls before their challenge draws.
-6. Absorb the stage-2 next-w evaluation before any stage-3 work. Finish the
-   grinding transcript only after the terminal proof is complete.
-
-Preserve root-group ordering, group-specific ring dimensions and packing geometry,
-both relation modes, raw/compressed payload distinctions, setup-prefix openings,
-and the distinction between logical and committed witnesses. All sizes and
-security bounds continue to come from shared canonical geometry and checked
-arithmetic. No new verifier-reachable panics, unchecked indexing, or unchecked
-allocation are introduced. Validation must not be removed simply because a stage
-now receives an executor reference.
-
-## Efficiency and ownership rules
-
-| Data/work | Rule |
+| Stage | Work and ownership |
 |---|---|
-| Scalar parameters, small points, handles | Copy or clone where it simplifies code; no elaborate borrowing solely to avoid a small copy |
-| Parameter/layout structures with vectors | Borrow by default or clone deliberately; do not assume an arbitrary `Clone` implementation is constant-cost |
-| Partial tables, digit blocks, folded witnesses, NTT tables | Move or borrow; no new deep clones to cross stage boundaries |
-| Accepted fold candidate | Reuse its witness and coefficients; never redo accepted decompose/fold work |
-| Fused batches, compact sumcheck inputs, streamed sources | Preserve current kernels, source views and execution plans; no eager dense materialization |
-| Logical and packed next witness | Preserve the current optional dual representation; do not always retain two witnesses |
-| Scratch and caches | Drop preparation-only data promptly; keep `after_root_fold` and existing backend ownership/lifecycle semantics |
+| Compute partial openings | Validate protocol-point dimensions where required, dispatch each group at its native ring dimension, and compute partials and scalar openings. Borrow polynomial sources and own the outputs. Preserve recursive point absorbs and scalar-claim binding order |
+| Prepare opening payload | Acquire retained inner/outer material, materialize opening digits, compute D-role rows and compression, and bind the complete opening payload. Own material needed for relation assembly while leaving source views available for grinding |
+| Bind evaluation claims | Call canonical evaluation batching and row-coefficient construction after payload binding. Return the trace claim and coefficients as named values |
+| Sample accepted fold response | Run the existing joint grinding routine, returning accepted challenges, folded witnesses, and chunk coefficients together |
+| Assemble fold relation | Consume the payload and accepted responses to build group products, relation RHS and quotients, the witness, and `PreparedFold`; release preparation-only material |
 
-Avoid one giant result that retains every intermediate until proof assembly.
-Destructure and consume results as soon as their large fields become unnecessary.
-Preserve existing tracing spans so measurements remain comparable. Do not change
-dispatch, SIMD, Rayon, NTT cache policies, or sumcheck algorithms in this refactor.
+This structure removes `bind_claims_after_payload`, `FinishFoldArgs`, and
+`RingRelationProver::new`. `RingRelationProver::prepare` binds the complete
+payload before calling the canonical evaluation-claim helper, then reuses the
+accepted fold response while assembling the relation. Group geometry derivation
+remains canonical. Avoid a `get_params` wrapper that merely forwards to an
+existing parameter method.
 
-Efficiency is an acceptance condition, not a claim established by this document.
-Before implementation, record release-mode baselines using the canonical
-[profiling harness](../book/src/usage/profiling.md) at the base commit, then repeat
-with the same schedules, inputs, machine, feature sets, worker count, and cache
-conditions. Include dense and one-hot workloads, multiple groups, a recursive
-setup-prefix case, and a large case exposing peak memory. Record prove time,
-stage spans, peak RSS, proof bytes, and grinding attempts. Use repeated runs and
-investigate a reproducible median prove-time increase above 3% or peak-RSS increase
-above 5%; these are proposed review thresholds, not permission to add large copies.
-Any extra full-witness pass or allocation requires explanation even below those
-thresholds. Small metadata-copy costs within measurement noise are acceptable.
+Challenge sampling and folded-witness computation are coupled: acceptance requires
+computing the candidate witness. The current joint grind retains the first jointly
+accepted candidate and replays its challenges on the live transcript. Preserve
+that behavior, including all rejection bounds. Separating it into “sample
+challenges” and “compute witness” must not recompute the accepted witness. Call
+the existing grinding function directly unless its actual body is moved.
 
-## Implementation sequence and validation
+## Nonterminal fold execution
 
-1. Capture deterministic proof/transcript and performance baselines before moving
-   code. Use existing end-to-end fixtures; add missing boundary regression cases.
-2. Introduce the per-proof transcript-owning executor and move root/suffix
-   orchestration. Consolidate validation ownership and repeated bounds without
-   changing kernels.
-3. Extract nonterminal stages and named results. Make successor requirements
-   explicit, remove the stage-1 optional round trip, and check memory lifetimes.
-4. Split relation preparation at payload binding and accepted-fold sampling;
-   remove the callback and replaced constructor/argument bundle. This is the
-   most sensitive change and deserves its own transcript comparison.
-5. Simplify terminal orchestration and delete remaining replaced helpers. Run the
-   complete validation and repeat performance comparisons.
+The common fold driver performs the same stages for root and recursive inputs:
 
-Existing regression evidence includes:
+```rust,ignore
+let next = self.commit_next_witness(level, successor, expected_len, prepared, transcript)?;
+let relation = ring_switch_finalize(expanded, /* next and relation inputs */, transcript)?;
+let range = self.prove_range_image(/* relation inputs */, transcript)?;
+let inputs = self.prepare_relation_sumcheck(/* relation, range, openings */, transcript)?;
+let opening = self.prove_relation_sumcheck(inputs, transcript)?;
+let setup = self.prove_setup_sumcheck(
+    expanded, prefix_slots, /* successor and opening inputs */, transcript,
+)?;
+// Move proof fields into FoldLevelProof and downstream values into SuffixProverState.
+```
 
-- [`orchestration_dim.rs`](../crates/akita-prover/tests/orchestration_dim.rs),
-  [`dispatch_dim.rs`](../crates/akita-prover/tests/dispatch_dim.rs), and
-  [`external_commitment_backend.rs`](../crates/akita-prover/tests/external_commitment_backend.rs)
-  for schedule/backend boundaries.
-- [`akita_fp128_e2e.rs`](../crates/akita-pcs/tests/akita_fp128_e2e.rs),
-  [`akita_small_field_e2e.rs`](../crates/akita-pcs/tests/akita_small_field_e2e.rs), and
-  [`recursive_setup_e2e.rs`](../crates/akita-pcs/tests/recursive_setup_e2e.rs)
-  for full proof/verification paths.
-- [`fold_linf.rs`](../crates/akita-pcs/tests/fold_linf.rs), fold-grind unit tests,
-  and selective-L2 cases for acceptance rules and chunk responses.
-- [`protocol_soundness.rs`](../crates/akita-pcs/tests/protocol_soundness.rs),
-  [`transcript_hardening.rs`](../crates/akita-pcs/tests/transcript_hardening.rs),
-  and the suffix tests `non_zk_eor_mismatch_is_rejected` and
-  `late_application_batch_rejects_beta_orthogonal_terminal_error` for rejection
-  and late-batching behavior.
+`commit_next_witness` builds the logical witness, checks its scheduled live length,
+aligns it for the successor commitment, commits it, and absorbs the binding.
+It calls `ring_switch_build_w`, `commit_w`, or `commit_terminal_w` directly.
+Require successor parameters and expected output length in this driver; its
+current callers always provide them. Derive recursive outer-payload versus
+terminal inner-state binding from the successor variant and preserve schedule
+consistency checks.
 
-Existing label tests alone do not establish full prover transcript equivalence.
-Add deterministic comparisons of serialized proof bytes and logged transcript
-events against the captured baseline, including challenged values and nonce
-stream. Cover root-to-terminal directly and a recursive chain; extension and
-degree-one claims; supported opening families, payload/relation modes, heterogeneous
-groups, setup-prefix use, and terminal binding. Use valid admitted combinations;
-do not create an artificial full Cartesian product of unsupported schedules.
-Exercise malformed public claim/source alignment at construction, malformed root
-commitment rows at scheduled claim binding, and unsupported state consumers before
-expensive witness work.
+`prove_range_image` owns the current stage-1 body and the following range-image
+evaluation absorb. `prepare_relation_sumcheck` owns optional L2 replay batching,
+optional compression batching, stage-2 batching, and opening-family-specific
+linear-term preparation, in that order. `prove_relation_sumcheck` owns the current
+stage-2 body and the following next-w evaluation absorb. `prove_setup_sumcheck`
+owns the stage-3 orchestration when required by the recursive successor and setup
+contribution mode.
 
-Run repository preflight gates from [AGENTS.md](../AGENTS.md) before compilation.
-During implementation use scoped `rtk cargo` / `rtk cargo nextest` runs. Final
-validation must use the current test-pass invocation and sharding from
+Move these orchestration bodies instead of retaining `prove_stage1/2/3` as
+forwarding aliases. Preserve the standalone sumcheck engines, canonical relation
+helpers, and their optimized data representations.
+
+## Recursive and terminal execution
+
+The suffix is an explicit schedule loop: check carried witness length, prepare
+the level, execute the common nonterminal fold, and move its returned state into
+the next iteration. After the loop, check the terminal input length and call the
+terminal stage. `SuffixProverState` remains an ordinary value carried between
+levels, outside the executor.
+
+Keep recursive source owners local while borrowed source views are used. Preserve
+the distinction between logical and committed witnesses and the optional
+setup-prefix source. Avoid self-referential result structs or polynomial clones
+introduced solely to satisfy a new stage boundary.
+
+Terminal proving has its own sequence: bind terminal inner state, prepare its
+opening with extension reduction when required, bind terminal opening rows,
+sample the accepted terminal response, and construct and absorb that response.
+It uses the same transcript passed through the suffix. It does not run the
+ordinary three sumchecks or require a fictitious successor.
+
+## Protocol and performance invariants
+
+For identical deterministic inputs, preserve serialized proof bytes, transcript
+events and encodings, labels, challenge draw counts, grinding sites, and nonces.
+Each stage documents its entry/exit transcript boundary. In particular:
+
+1. Bind the selected instance descriptor before root proving, retaining root
+   claim and recursive commitment order.
+2. Preserve extension-opening reduction's internal batching and its distinct
+   later application batching.
+3. Bind the complete D/compression opening payload before late evaluation
+   batching, then sample the accepted fold response.
+4. Bind the next witness before ring-switch challenges, preserving the distinct
+   recursive outer-payload and terminal inner-state encodings.
+5. Absorb the range-image evaluation after stage 1, then perform optional L2
+   batching, optional compression batching, and stage-2 batching. Preserve each
+   grinding call before its challenge draw.
+6. Absorb the stage-2 next-w evaluation before stage 3. Finish the grinding
+   transcript only after terminal proving.
+
+Preserve group order, heterogeneous ring dimensions, opening families, both
+relation modes, raw/compressed payloads, and setup-prefix semantics. Security
+bounds and sizing use canonical geometry and `akita_error::checked` primitives.
+Do not weaken malformed-input rejection or introduce verifier-reachable panics,
+unchecked indexing, or unchecked allocation.
+
+Clone small parameters, points, or handles when that makes the code clearer.
+Inspect vector-bearing types before treating their clone as cheap. Move or borrow
+partial tables, digit blocks, witnesses, and NTT tables. Preserve fused batching,
+streamed source access, compact sumcheck inputs, accepted candidate reuse, and
+the existing optional dual logical/packed witness representation. No extra full
+witness pass or eager dense materialization may be introduced by a stage split.
+
+Retain tracing spans and resource-release points so performance remains comparable.
+For future changes to the arithmetic or allocation strategy, capture release-mode
+baselines with the
+[profiling harness](../book/src/usage/profiling.md). Compare repeated runs on the
+same machine, inputs, schedules, features, worker count, and cache conditions.
+Cover dense and one-hot inputs, multiple groups, a recursive setup-prefix case,
+and a large workload exposing peak memory. Record prove time, stage timings, peak
+RSS, proof size, and grinding attempts. Investigate reproducible median prove-time
+increases above 3% or peak-RSS increases above 5%; these are proposed review
+thresholds, not permission to add large copies. Small metadata-copy costs within
+measurement noise are acceptable.
+
+## Implementation and validation
+
+The implementation was organized in these reviewable steps:
+
+1. Introduce the executor and move admission/root/suffix orchestration, retaining
+   explicit transcript, setup, and prefix-slot arguments.
+2. Extract nonterminal stages, named outputs, and required successor inputs.
+3. Make payload-before-claim ordering direct in relation preparation; remove the
+   callback and obsolete argument bundle.
+4. Keep terminal proving as its distinct final stage and complete validation.
+
+Keep related methods in focused protocol modules rather than one large executor
+file. Use semantic names such as opening preparation, fold response, and relation
+sumcheck. Avoid a stage trait or macro solely to make unlike phases look uniform.
+
+Regression coverage includes the prover's
+[orchestration_dim.rs](../crates/akita-prover/tests/orchestration_dim.rs),
+[dispatch_dim.rs](../crates/akita-prover/tests/dispatch_dim.rs), and
+[external_commitment_backend.rs](../crates/akita-prover/tests/external_commitment_backend.rs),
+plus PCS tests for
+[fp128](../crates/akita-pcs/tests/akita_fp128_e2e.rs),
+[small fields](../crates/akita-pcs/tests/akita_small_field_e2e.rs),
+[recursive setup](../crates/akita-pcs/tests/recursive_setup_e2e.rs),
+[fold bounds](../crates/akita-pcs/tests/fold_linf.rs),
+[soundness](../crates/akita-pcs/tests/protocol_soundness.rs), and
+[transcript hardening](../crates/akita-pcs/tests/transcript_hardening.rs).
+Preserve fold-grind acceptance tests and the suffix tests
+`non_zk_eor_mismatch_is_rejected` and
+`late_application_batch_rejects_beta_orthogonal_terminal_error`.
+
+Add deterministic comparisons against the captured base for serialized proof bytes,
+logged transcript events, challenges, and nonce streams. Cover direct
+root-to-terminal and recursive schedules, degree-one and extension claims,
+supported opening/relation/payload modes, heterogeneous groups, setup-prefix use,
+and terminal binding. Use admitted combinations rather than unsupported products
+of independent feature choices. Preserve rejection at claim construction,
+scheduled commitment binding, and state-consumer preflight. Successful verification
+or label-only tests alone do not establish full transcript equivalence.
+
+Run cheap repository preflight gates from [AGENTS.md](../AGENTS.md) before expensive
+compilation. Use scoped `rtk cargo` and `rtk cargo nextest` during implementation.
+Final validation uses the current test-pass command and sharding from
 [CI](../.github/workflows/ci.yml), all three mandated Clippy feature graphs, and
-any path-triggered portability/Jolt workflows. This documentation-only proposal
-requires documentation guardrails; it does not claim those implementation tests
-or benchmarks have already run.
+applicable path-triggered workflows. This refactor moves orchestration and small
+metadata only: arithmetic kernels, accepted witness reuse, NTT ownership, and
+large-buffer representations remain unchanged.
 
-### Acceptance criteria
+## Acceptance criteria
 
-- [ ] `prove` exposes entry/root/suffix/finish ordering in a short body, with
-  similarly readable fold preparation and execution drivers.
-- [ ] The executor fields are exactly the level stack selector and one grinding
-  transcript. Setup, prefix slots, schedule, basis, level, witnesses, and stage
-  outputs are not stored on it.
-- [ ] Transcript-sensitive stage methods mutate the executor's single transcript;
-  no stage accepts an alternative transcript and finishing consumes the executor.
-- [ ] Relation construction no longer calls back into its caller for late batching;
-  payload-before-batching ordering is explicit and regression-tested.
-- [ ] Accepted fold witnesses are reused and heavy kernels remain canonical.
-- [ ] Replaced orchestration helpers are deleted; no wrapper-only executor methods,
-  duplicate geometry formulas, or compatibility aliases are introduced.
-- [ ] Root, recursive, terminal, and independent entry validation remain correct;
-  transcript/proof equivalence and existing verification tests pass.
-- [ ] Performance and peak-memory comparisons meet the agreed thresholds with
-  recorded evidence; there are no unexplained extra witness passes or deep copies.
-- [ ] Required CI checks pass and the owning Book pages describe the implemented
-  architecture before this spec is marked implemented and later archived.
+- [x] `batched_prove`, fold preparation, nonterminal execution, and terminal execution
+  read as short sequences of meaningful stages.
+- [x] `ProverExecutor` stores only the existing stack selector; transcript,
+  expanded setup, prefix slots, and all proof progress remain explicit values.
+- [x] Executor stage methods use `&self`; transcript-sensitive operations receive
+  the same `&mut T`, with local grinding-wrapper creation and finalization.
+- [x] Stage results name proof fields and downstream data, without extending
+  heavy-buffer lifetimes or introducing deep copies.
+- [x] Late batching is visibly after payload binding, and accepted fold witnesses
+  are reused without recomputation.
+- [x] Replaced functions and argument bundles are deleted; there are no forwarding
+  aliases, duplicate protocol formulas, new backend interfaces, or stage frameworks.
+- [x] Prover and PCS regression coverage, transcript-hardening tests, all required
+  Clippy feature graphs, and repository guardrails pass.
+- [ ] The implemented architecture is folded into the owning Book pages before
+  the spec is archived according to the documentation policy.
 
-## Alternatives and review decisions
-
-An executor with optional stage-result fields would shorten call sites but hide
-dependencies, permit invalid call order, and retain large buffers too long. A
-typestate chain would make ordering explicit but add generic types and ownership
-machinery without enough benefit here. Merely wrapping existing functions would
-leave the callback, repeated checks, and long fold body intact. Rewriting backend
-traits or kernels alongside orchestration would expand the review and obscure
-performance attribution. The proposed transcript-owning executor with ordinary
-stage results avoids these costs.
-
-The recommendation is to approve the full orchestration scope, including splitting
-`RingRelationProver::new`, while keeping kernel optimization separate. Reviewers
-should confirm the proposed performance thresholds. The updated base already
-removed the low-level prover exports, so this refactor should keep `batched_prove`
-as the sole public orchestration boundary.
-
-## Appendix: Jolt prover architecture review
-
-This appendix reviews the local Jolt checkout at
-`/Users/omid.bodaghi/Desktop/a16z/jolt`, branch
-`codex/stage7-akita-executor-latest`, commit
-`e99577c48fcaee46af0578ec955ffed280ec56c4`. The relevant implementation is in
-`crates/jolt-prover/src/akita/prover.rs`, `crates/jolt-prover/src/dory/prover.rs`,
-`crates/jolt-prover/src/akita/stage0.rs`, `crates/jolt-prover/src/stages/`, and
-`crates/jolt-prover/src/driver.rs`. The associated design rationale is in
-`specs/prover-stage-drivers.md` and `specs/clean-slate-prover.md` in that checkout.
-This records the inspected revision because Jolt is evolving independently.
-
-Jolt's strongest architectural feature is its top-level `prove`: after stage 0,
-the function is a literal protocol outline. It invokes `prove_stage1` through
-`prove_stage8` in order and assembles the final proof from their outputs. Each
-stage has a named output struct. For example, `Stage1ProverOutput` separates the
-wire proofs and claims from `Stage1ClearOutput`, the typed carrier later stages
-consume. Dependencies are visible as references to earlier carriers rather than
-hidden in one mutable protocol-state object.
-
-Akita should borrow that shape with semantic stage names:
-
-| Jolt idea | Application to this proposal |
-|---|---|
-| A short top-level protocol outline | Keep `ProverExecutor::prove` as root, resource-boundary, suffix, transcript-finish, and proof assembly. Keep the per-fold driver as a similarly direct sequence of preparation, witness commitment, ring switch, and sumcheck stages |
-| Named stage output carriers | Replace positional tuples and optional-then-required values with a small number of named results that contain wire material and the exact downstream carry |
-| Explicit upstream inputs | Pass prior stage results into the stage that consumes them. Do not place them on `ProverExecutor` or create getters for ambient mutable state |
-| One canonical common driver | Keep shared fold and sumcheck mechanics in one implementation, with root/recursive fronts preparing their distinct inputs. Delete old entry points after moving their bodies |
-| Shared transcript-sensitive protocol helpers | Continue using canonical transcript labels, encoders, grinding routines, and verifier-shared geometry. Where practical, have prover and verifier call the same ordering helper rather than maintain parallel sequences |
-| Proof assembly at the end | Let stage results retain proof fields until final assembly while moving or dropping heavy computation buffers at the earliest safe boundary |
-| Stage-local modules | Organize around protocol phases such as `opening`, `fold_response`, `ring_switch`, and `sumcheck`, rather than large catch-all files or numeric stages that are not meaningful in Akita |
-
-Jolt keeps its transcript as a local variable and passes `&mut transcript` to
-each stage. This proposal intentionally adapts that choice: Akita's
-`ProverExecutor` owns the one grinding transcript, and its stage methods mutate
-that field. The architectural lesson retained from Jolt is a single ordered
-transcript across a linear stage sequence. Keeping it on the executor makes that
-single-channel rule structural and matches the requested Akita API.
-
-Jolt also separates stage-level hand choreography from a common generated
-sumcheck driver. Akita does not need Jolt's code generation in this refactor, but
-it should apply the underlying rule: stage methods own protocol-specific ordering,
-while arithmetic engines and kernels remain canonical lower-level functions. A
-stage method should not duplicate challenge derivation, round loops, point
-derivation, or claim validation already owned by a shared primitive.
-
-The Jolt backend registry, proof session, kernel preparation traits, recorder
-modes, device residency, and backend-specific lifecycle are intentionally not
-adopted here. They are relevant to a future backend architecture, but adding them
-to this PR would combine orchestration cleanup with a new compute abstraction and
-make correctness and performance changes harder to attribute. This PR should only
-choose stage boundaries and result types that do not obstruct such a future: pass
-sources and canonical values across stages, avoid embedding CPU-specific types in
-the executor, and preserve the existing stack/backend interfaces unchanged.
-
-After implementation, update the owning proving page and the relevant
+Update the [proving overview](../book/src/how/proving/proving.md),
 [root/ring-switch](../book/src/how/proving/root-fold-ring-switch.md),
-[fold-path](../book/src/how/proving/fold-path.md), and
-[sumcheck](../book/src/how/proving/sumcheck-stages.md) explanations. This proposal
-does not change Book descriptions of current behavior, wire formats, planner
-policy, or the verifier.
+[fold path](../book/src/how/proving/fold-path.md), and
+[sumcheck stages](../book/src/how/proving/sumcheck-stages.md) before this live
+implementation record is archived.

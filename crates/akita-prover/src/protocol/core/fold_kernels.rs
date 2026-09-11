@@ -15,9 +15,9 @@ pub(in crate::protocol::core) struct TraceTarget<E: Field> {
 }
 
 /// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
-pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: Field> {
-    pub(in crate::protocol::core) claimed_evaluation: E,
-    pub(in crate::protocol::core) claim_coefficients: Vec<E>,
+pub(in crate::protocol) struct PreparedEvaluationTraceClaim<E: Field> {
+    pub(in crate::protocol) claimed_evaluation: E,
+    pub(in crate::protocol) claim_coefficients: Vec<E>,
 }
 
 fn resolve_evaluation_trace_claim<E: Field>(
@@ -303,7 +303,7 @@ where
     recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
 }
 
-pub(in crate::protocol::core) fn row_coefficient_rings<F, E, const D: usize>(
+pub(in crate::protocol) fn row_coefficient_rings<F, E, const D: usize>(
     coefficients: &[E],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -324,7 +324,7 @@ where
         .collect()
 }
 
-pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
+pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E, T>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,

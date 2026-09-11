@@ -81,6 +81,12 @@ pub(crate) struct PreparedRingRelation<F: Field, E: Field> {
     pub(crate) groups: Vec<PreparedRelationGroup<F, E>>,
 }
 
+pub(in crate::protocol) struct PreparedRingRelationOutput<F: Field, E: Field> {
+    pub(in crate::protocol) relation: PreparedRingRelation<F, E>,
+    pub(in crate::protocol) trace_claim: crate::protocol::core::PreparedEvaluationTraceClaim<E>,
+    pub(in crate::protocol) row_coefficients: Vec<E>,
+}
+
 impl<F: Field, E: Field> PreparedRelationGroup<F, E> {
     pub(crate) const fn kind(
         &self,
@@ -370,8 +376,8 @@ pub(super) fn window_sparse_challenges(
 pub struct RingRelationProver;
 
 impl RingRelationProver {
-    /// Root-level constructor for one or more group-local opening points and
-    /// polynomial slots.
+    /// Prepare the relation for one or more group-local opening points and
+    /// polynomial slots, preserving payload-before-claim transcript order.
     ///
     /// `group_ring_multiplier_points` contains one prepared entry per ordered claim group.
     /// For the trivial single-claim case use `polys = &[poly]` and
@@ -389,11 +395,11 @@ impl RingRelationProver {
     /// invariants hold by construction for well-formed inputs accepted by the
     /// error checks above and are therefore treated as internal programming
     /// errors rather than recoverable failures.
-    #[allow(clippy::too_many_arguments, clippy::new_ret_no_self)]
+    #[allow(clippy::too_many_arguments)]
     #[allow(private_bounds)]
-    #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
+    #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(crate) fn new<'a, F, PointF, T, P, S, OB, RB, BindClaims, BoundClaims>(
+    pub(in crate::protocol) fn prepare<'a, F, PointF, T, P, S, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
@@ -401,8 +407,10 @@ impl RingRelationProver {
         lp: CommittedGroupParams,
         transcript: &mut T,
         level: u32,
-        bind_claims_after_payload: BindClaims,
-    ) -> Result<(PreparedRingRelation<F, PointF>, BoundClaims), AkitaError>
+        reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
+        scalar_openings: &[PointF],
+        trace_opening_batch: &akita_types::OpeningClaimsLayout,
+    ) -> Result<PreparedRingRelationOutput<F, PointF>, AkitaError>
     where
         F: Field
             + CanonicalEncoding
@@ -421,7 +429,6 @@ impl RingRelationProver {
         S: InnerRelationState<F> + OuterCompressionState<F>,
         OB: DigitRowsComputeBackend<F>,
         RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
-        BindClaims: FnOnce(&mut T) -> Result<(RingVec<F>, BoundClaims), AkitaError>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(
@@ -785,7 +792,35 @@ impl RingRelationProver {
         // opening digit has been bound through the complete D/H payload above.
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
-        let (row_coefficient_rings, bound_claims) = bind_claims_after_payload(transcript)?;
+        let (trace_claim, row_coefficients) =
+            crate::protocol::core::prepare_evaluation_trace_claim::<F, PointF, T>(
+                reduction,
+                scalar_openings,
+                trace_opening_batch,
+                transcript,
+                level,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
+            })?;
+        let row_coefficient_rings = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            lp.role_dims().d_a(),
+            |D| {
+                let rings =
+                    crate::protocol::core::row_coefficient_rings::<F, PointF, D>(&row_coefficients)
+                        .map_err(|err| {
+                            AkitaError::InvalidInput(format!(
+                                "row coefficient rings failed: {err:?}"
+                            ))
+                        })?;
+                Ok::<_, AkitaError>(RingVec::from_ring_elems(&rings))
+            }
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
+        })?;
         if !row_coefficient_rings.can_decode_vec(dims.d_a())
             || row_coefficient_rings.coeff_len() / dims.d_a() != num_claims
         {
@@ -955,14 +990,15 @@ impl RingRelationProver {
             &instance,
         )?;
         drop(witness_span);
-        Ok((
-            PreparedRingRelation {
+        Ok(PreparedRingRelationOutput {
+            relation: PreparedRingRelation {
                 instance,
                 witness,
                 groups: prepared_relation_groups,
             },
-            bound_claims,
-        ))
+            trace_claim,
+            row_coefficients,
+        })
     }
 }
 
