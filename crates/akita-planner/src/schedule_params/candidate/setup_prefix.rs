@@ -205,6 +205,8 @@ fn setup_prefix_slice_counts(
         })
 }
 
+/// Defines the setup-prefix domain by physical-width/setup Pareto pruning;
+/// restricted query search intentionally reuses it without query tradeoffs.
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
     request: SetupPrefixSearchRequest<'_>,

@@ -245,6 +245,9 @@ pub(crate) fn select_complete_candidate<'a>(
 ) -> Result<Option<&'a ScheduleCandidate>, AkitaError> {
     let mut best = None;
     for candidate in candidates {
+        if !candidate.cost.fits_query_limit() {
+            continue;
+        }
         let score = complete_schedule_score(policy, candidate, diagnostics)?;
         if best
             .as_ref()

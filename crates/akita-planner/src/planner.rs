@@ -20,8 +20,8 @@ use akita_schedules::ResolvedScheduleRow;
 use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
-    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn, ScheduleMemo,
-    SuffixCtx, SuffixState,
+    AbCommitmentCandidateRequest, CandidateMaterializationCost, PlannerOpeningCandidate,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -48,6 +48,8 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
+    #[cfg(test)]
+    pub(crate) query_prefix_count: u64,
 }
 
 impl ScheduleSearchOptions<'_> {
@@ -57,6 +59,8 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            #[cfg(test)]
+            query_prefix_count: 0,
         }
     }
 }
@@ -826,7 +830,17 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(&suffix_ctx, &mut memo, initial_state, 0);
+    #[cfg(test)]
+    let query_prefix_count = options.query_prefix_count;
+    #[cfg(not(test))]
+    let query_prefix_count = 0;
+    let suffix = derive_selected_suffix_schedule(
+        &suffix_ctx,
+        &mut memo,
+        initial_state,
+        0,
+        super::schedule_params::QuerySearch::Root(query_prefix_count),
+    );
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
         let (hits, misses) = memo.setup_prefix_cache_diagnostics();
@@ -905,9 +919,12 @@ pub(crate) fn find_schedule_in_relation_order(
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.cost.proof_bytes(),
-        best.setup_field_elements,
-        first_direct_setup_field_len,
+        CandidateMaterializationCost {
+            proof_bytes: best.cost.proof_bytes(),
+            grinding: best.cost.grinding_cost(),
+            num_setup_field_elements: best.setup_field_elements,
+            first_direct_setup_field_len,
+        },
         active_policy,
         &root_layout,
         best.folds.to_vec(),

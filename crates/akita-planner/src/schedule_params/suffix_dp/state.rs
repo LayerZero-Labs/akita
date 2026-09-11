@@ -54,6 +54,7 @@ enum GrindingSuccessorKey {
     Terminal {
         d_a: usize,
         opening_vars: usize,
+        live_blocks: u64,
     },
 }
 
@@ -78,6 +79,11 @@ impl ParentObservableKey {
                 grinding_successor: GrindingSuccessorKey::Terminal {
                     d_a: terminal.d_a(),
                     opening_vars: terminal.recursive_opening_num_vars()?,
+                    live_blocks: u64::try_from(terminal.blocks.live_blocks).map_err(|_| {
+                        AkitaError::InvalidSetup(
+                            "terminal live-block count exceeds grinding query width".into(),
+                        )
+                    })?,
                 },
             });
         };
