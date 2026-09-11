@@ -596,7 +596,7 @@ impl GrindingPlan {
         let cost = accumulator.cost();
         if cost.expanded_query_count >= TRANSCRIPT_GRINDING_QUERY_LIMIT {
             return Err(AkitaError::InvalidSetup(
-                "grinding plan query count must be less than 2^32".into(),
+                "grinding plan query count must be less than u32::MAX".into(),
             ));
         }
         Ok(Self {

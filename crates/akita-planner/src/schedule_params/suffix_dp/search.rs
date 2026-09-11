@@ -304,7 +304,7 @@ fn process_candidate_batch(
     // Complete-root candidates are traversed in exact lower-bound order.
     // Recursive states do not have that global admission rule and retain
     // local Pareto pruning.
-    let candidates = if is_root_level {
+    let candidates = if is_root_level || matches!(query_search, QuerySearch::Restricted(_)) {
         candidates_with_source
     } else {
         prune::level_candidates(opening_layout, candidates_with_source)?

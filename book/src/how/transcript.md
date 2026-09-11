@@ -223,6 +223,12 @@ headerless proof. A decoder does not obtain a new nonce count or policy from
 untrusted proof bytes. Reading the stream checks the expected sites in order,
 with no truncation, leftover bits, or nonzero tail padding.
 
+The planner accepts only complete schedules whose expanded grinding query
+count is less than `u32::MAX`. If the objective-best candidate exceeds that
+capacity, planning treats it as an infeasible path and continues within the
+configured candidate domain. It returns `UnsupportedSchedule` only when no
+complete candidate in that domain fits the query capacity.
+
 Proof-of-work and fold-response search share this packed storage, but they
 serve different purposes.
 
