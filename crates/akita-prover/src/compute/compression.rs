@@ -39,15 +39,6 @@ impl<F: Field> CompressionRelationOutput<F> {
             )),
         }
     }
-
-    pub(crate) fn into_quotient_lift(self) -> Result<Vec<RingVec<F>>, AkitaError> {
-        match self {
-            Self::QuotientLift { quotients } => Ok(quotients),
-            Self::ReducedEvaluation => Err(AkitaError::InvalidSetup(
-                "reduced compression output has no quotient rows".into(),
-            )),
-        }
-    }
 }
 
 /// One source's persistent compression result.

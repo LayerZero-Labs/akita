@@ -13,8 +13,7 @@ use crate::report::{
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
-    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootProvePoly,
+    RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor, RuntimeRootProvePoly,
 };
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
@@ -39,7 +38,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RuntimeRootProvePoly<FF> + RuntimeCommitSource<FF>,
+    P: RuntimeRootProvePoly<FF> + akita_prover::CommitmentSource<FF>,
 >(
     label: &str,
     scheme: &AkitaCommitmentScheme<Cfg>,
@@ -73,8 +72,7 @@ fn run_prove<
         + 'static,
     <FF as Unreduced>::Wide: From<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + ExtField<FF> + Unreduced + Fold + AkitaSerialize + Valid,
-    CpuBackend: RuntimeCommitBackendFor<FF, P>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField>
+    CpuBackend: RecursiveProveBackend<FF, P, Cfg::ExtField>
         + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
 {
     let pools = ProfileThreadPools::get();
@@ -92,12 +90,12 @@ fn run_prove<
         let t0 = Instant::now();
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 setup,
                 std::slice::from_ref(poly),
-                stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();

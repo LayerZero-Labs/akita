@@ -40,12 +40,12 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("L2 commitment");
@@ -58,9 +58,9 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
-            selected_prover_data::<L2Cfg, _>(
+            selected_prover_data::<L2Cfg, _, _>(
                 &scheme,
                 OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
                 vec![hint],

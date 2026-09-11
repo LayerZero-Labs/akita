@@ -98,6 +98,19 @@ impl<F: Field> DensePoly<F> {
         self.coeffs.coeffs()
     }
 
+    pub(crate) fn cached_digit_parts(
+        &self,
+        ring_dimension: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<&[i8]> {
+        let cache = self.digit_cache.get()?;
+        (cache.ring_d == ring_dimension
+            && cache.num_digits == num_digits
+            && cache.log_basis == log_basis)
+            .then_some(cache.planes.as_slice())
+    }
+
     /// Ring-element count viewed at dimension `ring_d`.
     #[inline]
     pub(super) fn num_ring_elems_at(&self, ring_d: usize) -> usize {

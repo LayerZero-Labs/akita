@@ -1,10 +1,10 @@
 use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::operation_plans::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::compute::plans::RingSwitchRelationRows;
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
@@ -17,29 +17,6 @@ pub enum BatchDecomposeFoldOutcome<F: Field, const D: usize> {
     FallbackPerPoly,
     /// Batch shape or challenge plan is not supported.
     Unsupported,
-}
-
-/// Inner Ajtai commit kernel over a borrowed commit source view `S`.
-///
-/// `S` is the extensibility hook: a downstream crate defines its own commit
-/// view and implements `RootCommitKernel<MyCommitView<'_>, F, D>` for a backend
-/// (for example `CpuBackend`) without touching an Akita-owned enum. Built-in
-/// Akita views reduce to the standard `*_commit_rows` helpers above.
-pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
-where
-    F: Field + CanonicalEncoding,
-{
-    /// Inner commitments for a same-shape group of sources.
-    ///
-    /// Every source of a committed group multiplies the same commit matrix,
-    /// so kernels can stream the matrix once for the whole group. Results are
-    /// returned per source in input order.
-    fn commit_inner_group(
-        &self,
-        prepared: &Self::PreparedSetup,
-        sources: Vec<S>,
-        plan: CommitInnerPlan,
-    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>;
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.

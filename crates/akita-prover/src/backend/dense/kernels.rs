@@ -5,43 +5,14 @@ use crate::backend::coefficient_packing::{
     coefficient_packing_partials_from_position_source, FusedPackingWeights,
 };
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, RootPolyMeta, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyMeta,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan,
 };
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
-
-impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
-where
-    F: Field + CanonicalEncoding,
-{
-    fn commit_inner_group(
-        &self,
-        prepared: &Self::PreparedSetup,
-        sources: Vec<DenseView<'_, F, D>>,
-        plan: CommitInnerPlan,
-    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
-        cfg_into_iter!(sources)
-            .map(|source| {
-                source
-                    .poly
-                    .commit_rows::<D>(
-                        self,
-                        prepared,
-                        plan.n_a,
-                        plan.num_positions_per_block,
-                        plan.num_digits_inner,
-                        plan.log_basis_inner,
-                    )
-                    .map(CommitInnerWitness::from_rows)
-            })
-            .collect()
-    }
-}
 
 impl<F, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where

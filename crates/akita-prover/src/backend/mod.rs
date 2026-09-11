@@ -4,7 +4,6 @@ mod coefficient_packing;
 mod dense;
 mod field_reduction;
 pub(crate) mod flat_blocks;
-mod multilinear_polynomial;
 pub(crate) mod onehot;
 pub(crate) mod packed_digits;
 #[doc(hidden)]
@@ -16,10 +15,8 @@ pub(crate) mod sparse_ring;
 
 pub use dense::{DenseBatchView, DensePoly, DenseView};
 pub use field_reduction::tensor_pack_recursive_witness;
-pub use multilinear_polynomial::{
-    MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
-};
-pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView};
+pub(crate) use onehot::commit_onehot_sources;
+pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotSource, OneHotView};
 pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };

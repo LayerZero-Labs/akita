@@ -67,19 +67,19 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
             &stack,
@@ -339,12 +339,12 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 std::slice::from_ref(&poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -352,7 +352,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &point,

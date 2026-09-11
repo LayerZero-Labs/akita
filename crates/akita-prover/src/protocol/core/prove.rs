@@ -1,10 +1,14 @@
 use super::*;
-use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
+use crate::backend::RecursiveFoldSource;
+use crate::commitment::{
+    CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
+    TerminalBindingState,
+};
 use crate::compute::{
     prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::SelectedProverOpeningData;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
@@ -21,19 +25,19 @@ use jolt_field::{AdditiveGroup, CanonicalEncoding};
 /// Returns an error if claim preparation, schedule selection, transcript
 /// binding, or folded proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
+pub fn batched_prove<'a, Cfg, T, P, S, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
-        Commit = C,
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
+        CommitmentStatePolicy = SP,
     >,
-    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, S>,
     transcript: &mut T,
     basis: BasisMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -57,9 +61,11 @@ where
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
-    C: ComputeBackendSetup<Cfg::Field>
-        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
-        + 'a,
+    S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+    SP::State: InnerRelationState<Cfg::Field>
+        + OuterCompressionState<Cfg::Field>
+        + TerminalBindingState<Cfg::Field>,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -77,7 +83,6 @@ where
         + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
@@ -89,6 +94,46 @@ where
     let schedule = resolved.schedule();
     schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, opening_batch)?;
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        &schedule.root.params,
+        opening_batch,
+        Cfg::EXT_DEGREE,
+    )?;
+    for group_index in 0..claims.opening_claims().num_groups() {
+        let state = claims.group_state(group_index)?;
+        let group = schedule
+            .root
+            .params
+            .group_params(opening_batch, group_index)?;
+        let plan = CommitmentExecutionPlan::for_root(&group.profile)?;
+        state.preflight_inner_relation(
+            plan.inner(),
+            opening_batch.group_layout(group_index)?.num_polynomials(),
+        )?;
+        if schedule.root.params.payload_mode.is_compressed() {
+            state.preflight_outer_compression(
+                relation_geometry
+                    .rhs_layout()
+                    .compression_plan_for_group(group_index)?,
+                schedule.root.params.ring_relation_mode,
+            )?;
+        }
+    }
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        let fold_level = index
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?;
+        let plan = CommitmentExecutionPlan::for_recursive(&step.params, fold_level, 1)?;
+        stacks
+            .prove_stack_at_level(index)
+            .commitment()
+            .preflight_prover_state_consumers(&plan)?;
+    }
+    let terminal_plan = CommitmentExecutionPlan::for_terminal(&schedule.terminal)?;
+    stacks
+        .prove_stack_at_level(schedule.recursive_folds.len())
+        .commitment()
+        .preflight_prover_state_consumers(&terminal_plan)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
     let grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
@@ -115,7 +160,7 @@ where
 
     let mut grinding_transcript =
         akita_types::ProverGrindingTranscript::<T>::new(transcript, &grinding_plan)?;
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, S, O, TS, R, _, Cfg>(
         expanded,
         prefix_slots,
         stacks,
@@ -135,7 +180,7 @@ where
     // at this exact root/suffix boundary through the lifecycle hook.
     stacks.after_root_fold()?;
 
-    let suffix = super::suffix::prove_suffix::<Cfg, _, C, O, TS, R>(
+    let suffix = super::suffix::prove_suffix::<Cfg, _, O, TS, R, _>(
         expanded,
         prefix_slots,
         stacks,

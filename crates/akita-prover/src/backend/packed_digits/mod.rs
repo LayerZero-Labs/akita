@@ -136,7 +136,6 @@ impl PackedSignedDigits {
         self.len == 0
     }
 
-    #[cfg(test)]
     pub(crate) fn bit_width(&self) -> u8 {
         self.bit_width
     }
@@ -145,7 +144,6 @@ impl PackedSignedDigits {
         self.bounds
     }
 
-    #[cfg(test)]
     pub(crate) fn encoded_bytes(&self) -> &[u8] {
         &self.storage[..self.encoded_len]
     }
@@ -160,7 +158,11 @@ impl PackedSignedDigits {
 
     pub(crate) fn view(&self) -> PackedSignedDigitView<'_> {
         PackedSignedDigitView {
-            digits: self,
+            storage: &self.storage,
+            stored_len: self.len,
+            bit_width: self.bit_width,
+            bounds: self.bounds,
+            vector_safe: true,
             start: 0,
             len: self.len,
         }
@@ -174,7 +176,11 @@ impl PackedSignedDigits {
             });
         }
         Ok(PackedSignedDigitView {
-            digits: self,
+            storage: &self.storage,
+            stored_len: self.len,
+            bit_width: self.bit_width,
+            bounds: self.bounds,
+            vector_safe: true,
             start: 0,
             len,
         })
@@ -375,12 +381,65 @@ impl akita_types::WitnessCoefficientSink for PackedSignedDigitWriter {
 /// A logical zero-padded view without a second allocation of the witness.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedSignedDigitView<'a> {
-    digits: &'a PackedSignedDigits,
+    storage: &'a [u8],
+    stored_len: usize,
+    bit_width: u8,
+    bounds: SignedDigitBounds,
+    vector_safe: bool,
     start: usize,
     len: usize,
 }
 
 impl<'a> PackedSignedDigitView<'a> {
+    #[inline]
+    fn decode_stored(self, index: usize) -> i8 {
+        if self.vector_safe {
+            scalar::decode_at(self.storage, index, self.bit_width)
+        } else {
+            scalar::decode_at_zero_padded(self.storage, index, self.bit_width)
+        }
+    }
+
+    pub(crate) fn from_encoded(
+        storage: &'a [u8],
+        live_len: usize,
+        physical_len: usize,
+        bit_width: u8,
+        negative_abs_max: u8,
+        positive_max: u8,
+    ) -> Result<Self, AkitaError> {
+        validate_bit_width(bit_width)?;
+        if live_len == 0 || live_len > physical_len {
+            return Err(AkitaError::InvalidInput(
+                "packed signed-digit view has inconsistent extents".into(),
+            ));
+        }
+        let represented_bits = checked::product([storage.len(), 8]).ok_or_else(|| {
+            AkitaError::InvalidInput("packed signed-digit represented length overflow".into())
+        })?;
+        let represented_len = represented_bits / usize::from(bit_width);
+        if represented_len < live_len {
+            return Err(AkitaError::InvalidSize {
+                expected: live_len,
+                actual: represented_len,
+            });
+        }
+        let bounds = SignedDigitBounds {
+            negative_abs_max,
+            positive_max,
+        };
+        validate_bounds(bounds, bit_width)?;
+        Ok(Self {
+            storage,
+            stored_len: represented_len.min(physical_len),
+            bit_width,
+            bounds,
+            vector_safe: false,
+            start: 0,
+            len: physical_len,
+        })
+    }
+
     pub(crate) fn len(self) -> usize {
         self.len
     }
@@ -391,14 +450,19 @@ impl<'a> PackedSignedDigitView<'a> {
     }
 
     pub(crate) fn bounds(self) -> SignedDigitBounds {
-        self.digits.bounds
+        self.bounds
     }
 
     pub(crate) fn get(self, index: usize) -> Option<i8> {
         if index >= self.len {
             return None;
         }
-        Some(self.digits.get(self.start + index).unwrap_or(0))
+        let source_index = self.start + index;
+        Some(if source_index < self.stored_len {
+            self.decode_stored(source_index)
+        } else {
+            0
+        })
     }
 
     #[inline(always)]
@@ -414,7 +478,11 @@ impl<'a> PackedSignedDigitView<'a> {
             });
         }
         Ok(Self {
-            digits: self.digits,
+            storage: self.storage,
+            stored_len: self.stored_len,
+            bit_width: self.bit_width,
+            bounds: self.bounds,
+            vector_safe: self.vector_safe,
             start: self.start + range.start,
             len: range.len(),
         })
@@ -463,7 +531,7 @@ impl<'a> PackedSignedDigitView<'a> {
         output.fill(0);
         let source_start = self.start + start;
         let source_end = self.start + end;
-        let live_end = self.digits.len.min(source_end);
+        let live_end = self.stored_len.min(source_end);
         if source_start >= live_end {
             return Ok(0);
         }
@@ -471,11 +539,7 @@ impl<'a> PackedSignedDigitView<'a> {
         let scalar_prefix =
             (DIGITS_PER_BLOCK - source_start % DIGITS_PER_BLOCK).min(live) % DIGITS_PER_BLOCK;
         for (offset, slot) in output.iter_mut().take(scalar_prefix).enumerate() {
-            *slot = scalar::decode_at(
-                &self.digits.storage,
-                source_start + offset,
-                self.digits.bit_width,
-            );
+            *slot = self.decode_stored(source_start + offset);
         }
         let block_start = source_start + scalar_prefix;
         let full_blocks = (live - scalar_prefix) / DIGITS_PER_BLOCK;
@@ -484,8 +548,10 @@ impl<'a> PackedSignedDigitView<'a> {
             .take(full_blocks)
             .enumerate()
         {
-            decode_full_block(
-                self.digits,
+            decode_full_block_view(
+                self.storage,
+                self.bit_width,
+                self.vector_safe,
                 block_start / DIGITS_PER_BLOCK + offset,
                 block.try_into().expect("exact packed decode block"),
             );
@@ -497,11 +563,7 @@ impl<'a> PackedSignedDigitView<'a> {
             .take(live - decoded)
             .enumerate()
         {
-            *slot = scalar::decode_at(
-                &self.digits.storage,
-                source_start + decoded + offset,
-                self.digits.bit_width,
-            );
+            *slot = self.decode_stored(source_start + decoded + offset);
         }
         Ok(live)
     }
@@ -627,24 +689,39 @@ fn decode_full_block(
     block_index: usize,
     output: &mut [i8; DIGITS_PER_BLOCK],
 ) {
-    let byte_offset = block_index * usize::from(digits.bit_width) * 8;
-    let encoded = &digits.storage[byte_offset..];
-    debug_assert!(encoded.len() >= usize::from(digits.bit_width) * 8 + VECTOR_LOAD_PADDING);
+    decode_full_block_view(&digits.storage, digits.bit_width, true, block_index, output);
+}
+
+#[inline]
+fn decode_full_block_view(
+    storage: &[u8],
+    bit_width: u8,
+    vector_safe: bool,
+    block_index: usize,
+    output: &mut [i8; DIGITS_PER_BLOCK],
+) {
+    let byte_offset = block_index * usize::from(bit_width) * 8;
+    let encoded = &storage[byte_offset..];
+    if !vector_safe {
+        scalar::decode_full_block_zero_padded(encoded, bit_width, output);
+        return;
+    }
+    debug_assert!(encoded.len() >= usize::from(bit_width) * 8 + VECTOR_LOAD_PADDING);
 
     #[cfg(target_arch = "x86_64")]
-    if x86_64::try_decode_full_block(encoded, digits.bit_width, output) {
+    if x86_64::try_decode_full_block(encoded, bit_width, output) {
         return;
     }
     #[cfg(target_arch = "aarch64")]
     {
         // NEON is part of the baseline AArch64 architecture.
-        unsafe { aarch64::decode_full_block(encoded, digits.bit_width, output) };
+        unsafe { aarch64::decode_full_block(encoded, bit_width, output) };
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    scalar::decode_full_block(encoded, digits.bit_width, output);
+    scalar::decode_full_block(encoded, bit_width, output);
 
     #[cfg(target_arch = "x86_64")]
-    scalar::decode_full_block(encoded, digits.bit_width, output);
+    scalar::decode_full_block(encoded, bit_width, output);
 }
 
 fn encoded_byte_len(len: usize, bit_width: u8) -> Result<usize, AkitaError> {

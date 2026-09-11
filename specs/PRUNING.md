@@ -50,11 +50,10 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
-The current set temporarily contains 20. The active external-catalog record,
-the paired quotient-free tail-ring design and implementation records, and the
-Jolt field-unification and guided-adaptation records account for the five-record
-overage. Each record returns to the archive after its durable contract is folded
-into the Book.
+The current set temporarily contains 21. The active commitment-execution,
+external-catalog, paired quotient-free tail-ring, Jolt field-unification, and
+guided-adaptation records account for the six-record overage. Each record
+returns to the archive after its durable contract is folded into the Book.
 
 ## Status transitions (required actions)
 
@@ -84,28 +83,29 @@ The root live set is deliberately small and is synchronized with
 `book/src/foundations/spec-index.md` and `scripts/check-spec-references.sh`:
 
 1. `akita-compute-backend-metal.md`
-2. `quotient-free-tail-ring-relations.md`
-3. `quotient-free-tail-ring-relations-implementation.md`
-4. `dyadic-chunk-partition.md`
-5. `external-schedule-catalog-ownership.md`
-6. `flat-public-matrix-and-exact-ntt-cache.md`
-7. `fold-linf-rejection.md`
-8. `heterogeneous-group-source-contracts.md`
-9. `jolt-field-unification.md`
-10. `iterated-jl-shortness.md`
-11. `large-digit-ntt-infrastructure.md`
-12. `packed-sumcheck.md`
-13. `role-native-projected-digit-layout.md`
-14. `runtime-ring-cutover.md`
-15. `selective-l2-fold-security-sizing.md`
-16. `setup-offloading-planner.md`
-17. `sis-quantum128-scalar-n-table.md`
-18. `structured-e-term.md`
-19. `subring-coefficient-packing.md`
-20. `transcript-grinding.md`
-21. `guided-schedule-adaptation.md`
+2. `composable-commitment-execution.md`
+3. `quotient-free-tail-ring-relations.md`
+4. `quotient-free-tail-ring-relations-implementation.md`
+5. `dyadic-chunk-partition.md`
+6. `external-schedule-catalog-ownership.md`
+7. `flat-public-matrix-and-exact-ntt-cache.md`
+8. `fold-linf-rejection.md`
+9. `heterogeneous-group-source-contracts.md`
+10. `jolt-field-unification.md`
+11. `iterated-jl-shortness.md`
+12. `large-digit-ntt-infrastructure.md`
+13. `packed-sumcheck.md`
+14. `role-native-projected-digit-layout.md`
+15. `runtime-ring-cutover.md`
+16. `selective-l2-fold-security-sizing.md`
+17. `setup-offloading-planner.md`
+18. `sis-quantum128-scalar-n-table.md`
+19. `structured-e-term.md`
+20. `subring-coefficient-packing.md`
+21. `transcript-grinding.md`
+22. `guided-schedule-adaptation.md`
 
-All 21 current live specifications must pass the default dead-symbol scan. A record
+All 22 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

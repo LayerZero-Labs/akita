@@ -285,6 +285,30 @@ fn architecture_decoder_matches_scalar_blocks() {
 }
 
 #[test]
+fn borrowed_encoded_view_matches_owned_view_without_load_padding() {
+    let digits = (0..197)
+        .map(|index| (index % 16) as i8 - 8)
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 5).unwrap();
+    let bounds = packed.bounds();
+    let borrowed = PackedSignedDigitView::from_encoded(
+        packed.encoded_bytes(),
+        digits.len(),
+        256,
+        packed.bit_width(),
+        bounds.negative_abs_max(),
+        bounds.positive_max(),
+    )
+    .unwrap();
+    let owned = packed.zero_padded(256).unwrap();
+
+    assert_eq!(
+        borrowed.iter().collect::<Vec<_>>(),
+        owned.iter().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 #[ignore = "diagnostic microbenchmark; run explicitly with --release --ignored --nocapture"]
 fn decode_microbenchmark() {
     const LEN: usize = 1 << 22;

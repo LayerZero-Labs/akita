@@ -911,7 +911,7 @@ page.
 
 1. **Create and retain the commitment-side material.** The standalone/root
    commitment paths in
-   [`commitment.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/api/commitment.rs)
+   [`commitment API`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/commitment/api.rs)
    compute the semantic outer commitment
    $\mathbf u=\mathbf B\hat{\mathbf t}$ and compress it. The recursive
    [`commit_w`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/commit.rs)

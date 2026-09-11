@@ -1,44 +1,39 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::commit_outer_slices;
-use crate::backend::{DensePoly, DenseView};
-use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{
-    CommitInnerPlan, DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource,
+use crate::backend::DensePoly;
+use crate::commitment::{
+    CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
+    IntoPortableCommitmentState,
 };
-use crate::kernels::linear::decompose_commit_blocks_into;
+#[cfg(test)]
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{
-    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CompressionChainPlan,
-    GroupCommitPhaseParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId,
+    AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
 ///
 /// The witness is the coefficient form of `S^flat[0..n_prefix]`. The caller
-/// must supply `level_params` whose inner
-/// witness shape satisfies `num_live_blocks * num_positions_per_block == n_prefix / D`.
+/// supplies the checked slot identity whose profile commits that exact prefix.
 ///
 /// # Errors
 ///
 /// Returns an error if shapes overflow, the prefix does not fit the setup matrix,
 /// or backend commitment fails.
-#[allow(clippy::too_many_arguments)]
-pub fn commit_setup_prefix<F, const D: usize, B>(
+pub fn commit_setup_prefix<F, SP>(
     expanded: &AkitaExpandedSetup<F>,
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    commitment_profile: &GroupCommitPhaseParams,
-    n_prefix: usize,
-    natural_len: usize,
+    executor: &CommitmentExecutor<'_, F, SP>,
+    id: &SetupPrefixSlotId,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
-    F: Field + CanonicalEncoding,
-    B: DigitRowsComputeBackend<F> + for<'a> RootCommitKernel<DenseView<'a, F, D>, F, D>,
+    F: Field + CanonicalEncoding + 'static,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: IntoPortableCommitmentState<F>,
 {
+    executor.validate_setup(expanded)?;
+    let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile
             .inner
@@ -46,16 +41,18 @@ where
             .sis_modulus_profile()
             .field_bits(),
     )?;
-    commitment_profile.validate_setup_prefix_geometry(natural_len)?;
+    commitment_profile.validate_setup_prefix_geometry(id.natural_len)?;
+    let n_prefix = id.n_prefix()?;
+    let ring_dimension = commitment_profile.inner.matrix.ring_dimension();
     let committed_n_prefix = 1usize
         .checked_shl(commitment_profile.group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
-    if committed_n_prefix != n_prefix || !n_prefix.is_multiple_of(D) {
+    if committed_n_prefix != n_prefix || !n_prefix.is_multiple_of(ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "requested setup prefix does not match the full committed domain".to_string(),
         ));
     }
-    let full_prefix_ring_slots = n_prefix / D;
+    let full_prefix_ring_slots = n_prefix / ring_dimension;
     let witness_ring_slots = commitment_profile
         .blocks
         .live_blocks
@@ -76,113 +73,33 @@ where
         ));
     }
 
-    let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, full_prefix_ring_slots)?;
-    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems)?;
-    let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
-    let witnesses = backend.commit_inner_group(
-        prepared,
-        vec![view],
-        CommitInnerPlan::from_profile(commitment_profile),
-    )?;
-    let [witness] = witnesses.try_into().map_err(|witnesses: Vec<_>| {
-        AkitaError::InvalidSetup(format!(
-            "dense setup-prefix commit returned {} witnesses, expected one",
-            witnesses.len()
-        ))
-    })?;
-    let n_a = commitment_profile.inner.matrix.output_rank();
-    let recomposed_inner_rows = (0..commitment_profile.blocks.live_blocks)
-        .map(|block| {
-            witness
-                .block_rows::<D>(block, n_a)
-                .map(|rows| rows.to_vec())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let n_b = commitment_profile.outer.matrix.output_rank();
-    let d_b = commitment_profile.outer.matrix.ring_dimension();
-    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
-        commitment_profile.outer_slice_count,
-        commitment_profile.blocks.live_blocks,
-        1,
-        n_a,
-        commitment_profile.outer.digits.num_digits,
-        D,
-        d_b,
-    )?;
-    let raw_commitment =
-        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
-            let blocks = recomposed_inner_rows
-                .iter()
-                .map(Vec::as_slice)
-                .collect::<Vec<_>>();
-            let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
-                &blocks,
-                commitment_profile.outer.digits.num_digits,
-                commitment_profile.outer.digits.log_basis,
-            )?;
-            let u = commit_outer_slices::<F, _, D_B>(
-                backend,
-                prepared,
-                n_b,
-                std::iter::once(&decomposed_inner_rows),
-                &slice_geometry,
-                commitment_profile.outer.digits.log_basis,
-            )?;
-            Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
-        })?;
-    let inner_coefficient_count = recomposed_inner_rows
-        .iter()
-        .map(Vec::len)
-        .sum::<usize>()
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix inner rows overflow".into()))?;
-    let mut inner_coefficients = Vec::with_capacity(inner_coefficient_count);
-    for block in recomposed_inner_rows {
-        for row in block {
-            inner_coefficients.extend_from_slice(row.coefficients());
-        }
-    }
-    let plan = CompressionChainPlan::for_complete_source(
-        commitment_profile
-            .outer
-            .matrix
-            .sis_table_key()
-            .modulus_profile,
-        raw_commitment.coeff_len(),
-    )?;
-    let ctx = OperationCtx::new(backend, prepared, expanded)?;
-    let (mut outputs, _) = execute_compression_chains(
-        &ctx,
-        vec![CompressionExecutionInput {
-            id: (),
-            plan,
-            coefficients: raw_commitment.into_coeffs(),
-            relation_mode: akita_types::RingRelationMode::QuotientLift,
-        }],
-    )?;
-    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
-    let terminal_ring_dim = output
-        .witness
-        .plan()
+    let source_coefficients = expanded
+        .shared_matrix()
+        .as_field_slice()
+        .get(..n_prefix)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix length exceeds shared matrix capacity".into())
+        })?
+        .to_vec();
+    let source =
+        DensePoly::from_field_evals(commitment_profile.group.num_vars(), source_coefficients)?;
+    let plan = CommitmentExecutionPlan::for_setup_prefix(id)?;
+    let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+    executor.preflight_portable_export(&plan, &sources)?;
+    let output = executor.execute_full(&plan, &sources)?;
+    let (terminal_payload, prover_state) = output.into_parts();
+    let terminal_ring_dim = plan
+        .compression()
+        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix plan omitted compression".into()))?
         .maps()
         .last()
         .ok_or(AkitaError::InvalidProof)?
         .ring_dimension();
     let commitment_payload =
-        RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
-    let quotients = output.relation.into_quotient_lift()?;
-    let hint = AkitaCommitmentHint::singleton_with_outer_compression(
-        RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
-        &output.witness,
-        &quotients,
-    )?;
-    let id = SetupPrefixSlotId {
-        natural_len,
-        commitment_profile: *commitment_profile,
-    };
+        RingVec::from_coeffs_with_ring_dim(terminal_payload.into_coeffs(), terminal_ring_dim)?;
+    let hint = prover_state.into_portable_hint()?;
     Ok(SetupPrefixSlot {
-        id,
+        id: id.clone(),
         commitment: SetupPrefixPublicCommitment {
             rows: vec![commitment_payload],
         },
@@ -190,6 +107,7 @@ where
     })
 }
 
+#[cfg(test)]
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     full_prefix_ring_slots: usize,
@@ -220,15 +138,32 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{ComputeBackendSetup, CpuBackend};
+    use crate::commitment::{
+        BackendKindId, CommitmentExecutorBuilder, CommitmentRequestCapabilities,
+        CompressionOperationCapabilities, DenseType, PolynomialType, PortableStatePolicy,
+        PreparedCompression, PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
+        StageDimensionCapabilities, StageResources,
+    };
+    use crate::compute::{
+        ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
+        CpuOuterCommitOperation, NttExecutionRequirements,
+    };
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
+    use akita_serialization::AkitaSerialize;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
-        SisModulusProfileId, SisTableKey,
+        CompressionChainPlan, InnerCommitMatrixParams, OpeningClaimsLayout,
+        OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId, SisTableKey,
     };
     use jolt_field::Prime128OffsetA7F7 as F;
+    use std::sync::Arc;
+
+    type MissingExportExecutor<'a> = (
+        CommitmentExecutor<'a, F, ResidentStatePolicy>,
+        Arc<CpuInnerCommitOperation<'a, F>>,
+        Arc<CpuCompressionOperation<'a, F>>,
+    );
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(
@@ -342,6 +277,103 @@ mod tests {
         .expect("setup")
     }
 
+    fn portable_executor<'a>(
+        setup: &'a AkitaProverSetup<F>,
+        backend: &'a CpuBackend,
+        prepared: &'a crate::compute::CpuPreparedSetup<F>,
+    ) -> CommitmentExecutor<'a, F, PortableStatePolicy> {
+        CommitmentExecutor::cpu(
+            backend,
+            prepared,
+            &setup.expanded,
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+            PortableStatePolicy,
+        )
+        .expect("setup-prefix executor")
+    }
+
+    fn resident_executor<'a>(
+        setup: &'a AkitaProverSetup<F>,
+        backend: &'a CpuBackend,
+        prepared: &'a crate::compute::CpuPreparedSetup<F>,
+    ) -> CommitmentExecutor<'a, F, ResidentStatePolicy> {
+        CommitmentExecutor::cpu(
+            backend,
+            prepared,
+            &setup.expanded,
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+            ResidentStatePolicy,
+        )
+        .expect("resident setup-prefix executor")
+    }
+
+    fn executor_without_portable_export<'a>(
+        setup: &'a AkitaProverSetup<F>,
+        backend: &'a CpuBackend,
+        prepared: &'a crate::compute::CpuPreparedSetup<F>,
+    ) -> MissingExportExecutor<'a> {
+        struct MissingExportRoute;
+
+        let mut builder = CommitmentExecutorBuilder::new(&setup.expanded, ResidentStatePolicy);
+        let capabilities = CommitmentRequestCapabilities::split::<MissingExportRoute>(
+            BackendKindId::of::<MissingExportRoute>("missing-export-route").unwrap(),
+            vec![PolynomialType::Dense(DenseType::Coefficients)],
+        );
+        let inner = Arc::new(CpuInnerCommitOperation::new(backend, prepared));
+        let outer = Arc::new(CpuOuterCommitOperation::new(
+            backend,
+            prepared,
+            inner.as_ref(),
+        ));
+        let compression =
+            Arc::new(CpuCompressionOperation::new(backend, prepared, &setup.expanded).unwrap());
+        let instance = builder.issue_backend_instance();
+        let inner_context = builder
+            .operation_context(instance, "missing-export-inner", StageResources::none())
+            .unwrap();
+        let outer_context = builder
+            .operation_context(instance, "missing-export-outer", StageResources::none())
+            .unwrap();
+        let compression_context = builder
+            .operation_context(
+                instance,
+                "missing-export-compression",
+                StageResources::none(),
+            )
+            .unwrap();
+        builder
+            .register_inner(
+                PreparedInnerCommitment::new(
+                    inner.clone(),
+                    inner.owner().clone(),
+                    inner_context,
+                    capabilities,
+                    StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        builder
+            .register_outer(PreparedOuterCommitment::new(
+                outer,
+                inner.owner().clone(),
+                outer_context,
+                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Outer),
+            ))
+            .unwrap();
+        builder
+            .register_compression(PreparedCompression::new(
+                compression.clone(),
+                compression.owner().clone(),
+                compression_context,
+                CompressionOperationCapabilities::cpu::<F>(),
+                None,
+            ))
+            .unwrap();
+        (builder.build().unwrap(), inner, compression)
+    }
+
     #[test]
     fn setup_prefix_extraction_preserves_actual_tail() {
         let padded_ring_slots = 4usize;
@@ -392,17 +424,15 @@ mod tests {
 
         let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let error = commit_setup_prefix::<F, 64, _>(
-            &setup.expanded,
-            &backend,
-            &prepared,
-            &prefix_params.profile,
-            n_prefix,
+        let id = SetupPrefixSlotId {
             natural_len,
-        )
-        .expect_err("full-prefix source must be resident");
+            commitment_profile: prefix_params.profile,
+        };
+        let error = commit_setup_prefix(&setup.expanded, &executor, &id)
+            .expect_err("full-prefix source must be resident");
         assert!(
             error.to_string().contains("shared matrix capacity"),
             "unexpected error: {error}"
@@ -424,19 +454,17 @@ mod tests {
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let slot = commit_setup_prefix::<F, D, _>(
-            &setup.expanded,
-            &backend,
-            &prepared,
-            &prefix_params.profile,
-            n_prefix,
+        let id = SetupPrefixSlotId {
             natural_len,
-        )
-        .expect("commit prefix");
+            commitment_profile: prefix_params.profile,
+        };
+        let slot = commit_setup_prefix(&setup.expanded, &executor, &id).expect("commit prefix");
         assert_eq!(slot.id.natural_len, natural_len);
         assert_eq!(slot.id.n_prefix().expect("full prefix len"), n_prefix);
+        drop(executor);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
@@ -444,6 +472,144 @@ mod tests {
     #[test]
     fn commit_setup_prefix_populates_d64_singleton_slot() {
         assert_commit_setup_prefix_populates_singleton_slot::<64>();
+    }
+
+    #[test]
+    fn portable_and_resident_setup_prefix_slots_are_identical() {
+        let level_params = prefix_level_params(64);
+        let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening batch");
+        let witness_ring_slots = level_params
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let natural_len = active_setup_field_len(&level_params, &opening_batch)
+            .expect("natural length")
+            .min(n_prefix);
+        let prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let id = SetupPrefixSlotId {
+            natural_len,
+            commitment_profile: prefix_params.profile,
+        };
+        let setup = test_setup::<64>(&level_params, n_prefix);
+        let backend = CpuBackend::DEFAULT;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let portable = commit_setup_prefix(
+            &setup.expanded,
+            &portable_executor(&setup, &backend, &prepared),
+            &id,
+        )
+        .expect("portable setup-prefix slot");
+        let resident_executor = resident_executor(&setup, &backend, &prepared);
+        let resident = commit_setup_prefix(&setup.expanded, &resident_executor, &id)
+            .expect("resident setup-prefix slot");
+
+        assert_eq!(resident, portable);
+        assert_eq!(resident.verifier_slot(), portable.verifier_slot());
+        let mut portable_hint_bytes = Vec::new();
+        portable
+            .hint
+            .serialize_compressed(&mut portable_hint_bytes)
+            .expect("serialize portable hint");
+        let mut resident_hint_bytes = Vec::new();
+        resident
+            .hint
+            .serialize_compressed(&mut resident_hint_bytes)
+            .expect("serialize resident-exported hint");
+        assert_eq!(resident_hint_bytes, portable_hint_bytes);
+    }
+
+    #[test]
+    fn missing_portable_export_rejects_before_setup_prefix_arithmetic() {
+        let level_params = prefix_level_params(64);
+        let witness_ring_slots = level_params
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let id = SetupPrefixSlotId {
+            natural_len: n_prefix,
+            commitment_profile: prefix_params.profile,
+        };
+        let setup = test_setup::<64>(&level_params, n_prefix);
+        let backend = CpuBackend::DEFAULT;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let (executor, _inner, _compression) =
+            executor_without_portable_export(&setup, &backend, &prepared);
+
+        let error = commit_setup_prefix(&setup.expanded, &executor, &id)
+            .expect_err("missing export route must reject");
+        assert!(error.to_string().contains("portable inner-image exporter"));
+        assert!(setup.prefix_slots.is_empty());
+    }
+
+    #[test]
+    fn setup_prefix_executor_matches_canonical_ntt_requirements() {
+        let level_params = prefix_level_params(64);
+        let witness_ring_slots = level_params
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let id = SetupPrefixSlotId {
+            natural_len: n_prefix,
+            commitment_profile: prefix_params.profile,
+        };
+        let setup = test_setup::<64>(&level_params, n_prefix);
+        let backend = CpuBackend::DEFAULT;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let executor = resident_executor(&setup, &backend, &prepared);
+        let source = DensePoly::from_field_evals(
+            id.commitment_profile.group.num_vars(),
+            setup.expanded.shared_matrix().as_field_slice()[..n_prefix].to_vec(),
+        )
+        .expect("setup-prefix source");
+        let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+        let plan = CommitmentExecutionPlan::for_setup_prefix(&id).expect("setup-prefix plan");
+        let mut requirements = NttExecutionRequirements::default();
+        requirements
+            .add_setup_prefix_commitment(0, &id)
+            .expect("canonical setup-prefix requirements");
+        let mut expected_keys = Vec::new();
+        for requirement in requirements.entries() {
+            match expected_keys
+                .iter()
+                .position(|key: &akita_types::NttCacheKey| {
+                    key.ring_d == requirement.key.ring_d && key.domain == requirement.key.domain
+                }) {
+                Some(index)
+                    if requirement.key.num_ring_elements
+                        > expected_keys[index].num_ring_elements =>
+                {
+                    expected_keys[index] = requirement.key;
+                }
+                Some(_) => {}
+                None => expected_keys.push(requirement.key),
+            }
+        }
+        executor
+            .prewarm_request(&plan, &sources)
+            .expect("prewarm setup-prefix request");
+        let resident = prepared
+            .shared_ntt_cache_metrics()
+            .expect("resident executor metrics");
+        let resident_keys = resident.iter().map(|metric| metric.key).collect::<Vec<_>>();
+        assert_eq!(resident_keys, expected_keys);
+        let cached_bytes = prepared.shared_ntt_cache_bytes();
+        assert!(cached_bytes > 0);
+        assert_eq!(
+            backend.release_built_ntt_slots(&prepared).unwrap(),
+            cached_bytes
+        );
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
     }
 
     #[test]
@@ -471,15 +637,13 @@ mod tests {
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
-        let error = commit_setup_prefix::<F, 64, _>(
-            &setup.expanded,
-            &backend,
-            &prepared,
-            &prefix_params.profile,
-            n_prefix,
-            n_prefix,
-        )
-        .expect_err("unaudited outer D32 must reject");
+        let executor = portable_executor(&setup, &backend, &prepared);
+        let id = SetupPrefixSlotId {
+            natural_len: n_prefix,
+            commitment_profile: prefix_params.profile,
+        };
+        let error = commit_setup_prefix(&setup.expanded, &executor, &id)
+            .expect_err("unaudited outer D32 must reject");
         assert!(
             error.to_string().contains("no audited SIS table key"),
             "unexpected error: {error}"

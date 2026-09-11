@@ -200,7 +200,8 @@ where
         + PseudoMersenne
         + Valid
         + AkitaDeserialize<Context = ()>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + jolt_field::WithCommitAccumulator,
     Cfg::ExtField: ExtField<FField> + Unreduced + Fold,
     <FField as Unreduced>::Wide: From<FField>,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
@@ -230,12 +231,12 @@ where
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -247,7 +248,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 selection,
@@ -480,12 +481,12 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
@@ -494,7 +495,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -680,12 +681,12 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit::<_, _>(
                 &setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
@@ -696,7 +697,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -813,12 +814,12 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -830,7 +831,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -1101,12 +1102,12 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 &[poly_a.clone(), poly_b.clone()],
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -1115,7 +1116,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -1264,12 +1265,12 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint,
+            prover_state: hint,
         } = scheme
             .commit(
                 &setup,
                 &polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -1277,7 +1278,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _>(
+            .batched_prove::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,

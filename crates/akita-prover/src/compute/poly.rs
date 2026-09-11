@@ -1,6 +1,6 @@
 use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
     SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::runtime_capabilities::{
@@ -98,62 +98,11 @@ where
     }
 }
 
-/// Capability: expose a borrowed commit source view for a `RootCommitKernel`.
-pub trait RootCommitSource<F, const D: usize>: RootPolyShape<F, D>
-where
-    F: Field,
-{
-    /// Borrowed commit view consumed by `RootCommitKernel`.
-    type CommitView<'a>
-    where
-        Self: 'a;
-
-    /// Borrow a commit view of this polynomial.
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError>;
-
-    /// Largest centered coefficient magnitudes this source commits, as
-    /// `(negative_abs_max, positive_max)`, under the balanced-decomposition sign
-    /// rule for `modulus` and `centering_threshold`.
-    ///
-    /// The commit path compares this reach against
-    /// [`akita_types::sis::CommittedSourceContract::accepted_bounds`] and rejects
-    /// the commitment when it falls outside. That interval intersects two
-    /// constraints: what `num_digits_inner` balanced digits can *represent* (the
-    /// kernel silently discards anything above it, so a truncation would bind a
-    /// different polynomial than the caller opens) and the bound the schedule was
-    /// *priced* for (see
-    /// [`akita_types::DecompositionParams::log_commit_bound`]). Only a bounded
-    /// committed source constrains either side.
-    ///
-    /// This answers the *magnitude* half of the contract only. The source's
-    /// class — whether it is the representation the schedule's response caps were
-    /// priced against — is a separate admission check that no coefficient reach
-    /// can express.
-    ///
-    /// `centering_threshold` comes from
-    /// `akita_algebra::ring::cyclotomic::decompose_centering_threshold`, so a
-    /// source reports its reach under exactly the sign rule its digits will be
-    /// produced with instead of a locally assumed one.
-    ///
-    /// Every source must answer: there is no safe default. Sources whose
-    /// representation is structurally inside every envelope (unit one-hot, or an
-    /// already-decomposed digit witness) report their small exact reach without
-    /// scanning. This is never called for a full-field depth, so an unbounded
-    /// source never pays for it.
-    fn committed_centered_reach(
-        &self,
-        modulus: u128,
-        centering_threshold: u128,
-    ) -> Result<(u128, u128), AkitaError>
-    where
-        F: Field + CanonicalEncoding;
-}
-
 /// Largest centered magnitudes over a flat field slice, as
 /// `(negative_abs_max, positive_max)`.
 ///
-/// Shared by every dense-like [`RootCommitSource::committed_centered_reach`]
-/// implementation so the centering convention is written once: a canonical
+/// Shared by dense [`crate::commitment::CommitmentSource`] implementations so the
+/// centering convention is written once: a canonical
 /// residue at or below `centering_threshold` is the positive side, anything above
 /// it is negative with magnitude `modulus - canonical`. That is the same split
 /// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies. We track
@@ -247,30 +196,6 @@ where
 
     /// Borrow a same-point batch tensor view over several polynomials.
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
-}
-
-/// Capability: this backend can **commit** a single source `P`.
-///
-/// This is the uniform "source-typed capability" vocabulary: a bound of the form
-/// "backend `Self` can commit source `P`", rather than a hard-coded per-type
-/// kernel bundle. It folds together the shared outer digit-row surface and the
-/// inner-commit kernel over `P`'s borrowed commit view.
-///
-pub trait CommitBackendFor<F, P, const D: usize>: DigitRowsComputeBackend<F>
-where
-    F: Field + CanonicalEncoding,
-    P: RootCommitSource<F, D>,
-    Self: for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
-{
-}
-
-impl<F, P, const D: usize, B> CommitBackendFor<F, P, D> for B
-where
-    F: Field + CanonicalEncoding,
-    P: RootCommitSource<F, D>,
-    B: DigitRowsComputeBackend<F>
-        + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
-{
 }
 
 /// Ring-switch cluster capability for the source-typed relation kernel.

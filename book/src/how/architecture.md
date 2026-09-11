@@ -130,14 +130,16 @@ Mixed-dimension malformed proof rejection is covered by
 | `CommittedGroupParams` | One fold's ordered groups, shared D matrix, payload mode, source encoding, and witness chunk layout |
 | `FoldParams`, `TerminalFoldParams`, `FoldSchedule` | Verifier-visible nonterminal, terminal, and complete schedule structure |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
-| `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
+| `DensePoly`, `OneHotPoly`, `CommitmentSource`, `CommitmentExecutor` | D-free polynomial storage, commitment representations, and the checked split-or-fused commitment boundary |
+| `RootOpeningSource`, `RootTensorSource`, compute-backend traits | Typed views and kernels retained for opening, tensor, and ring-switch operations |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
 | `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
 | `GroupCommitPhaseParams`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
-| `PreparedProverGroup` | Coarse borrowed prover group; applications may use one concrete enum polynomial type for heterogeneous representations |
+| `PreparedProverGroup` | Borrowed homogeneous prover group whose polynomials all have the same concrete source type |
+| `ErasedPreparedProverGroup` | Type-erased whole-group carrier that allows different concrete source types between commitment groups |
 | `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |

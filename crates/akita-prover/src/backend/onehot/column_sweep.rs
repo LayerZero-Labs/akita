@@ -227,7 +227,7 @@ fn estimated_matrix_passes(total_blocks: usize, workers: usize, block_tile: usiz
 }
 
 fn max_entries_per_block<const D: usize, I: OneHotIndex>(
-    sources: &[OneHotView<'_, impl Field, D, I>],
+    sources: &[OneHotSource<'_, I>],
     num_positions_per_block: usize,
 ) -> Result<usize, AkitaError> {
     let field_elems_per_block = num_positions_per_block
@@ -235,9 +235,9 @@ fn max_entries_per_block<const D: usize, I: OneHotIndex>(
         .ok_or_else(|| AkitaError::InvalidSetup("one hot block field width overflow".into()))?;
     sources.iter().try_fold(0usize, |current, source| {
         let crossing_bound = field_elems_per_block
-            .div_ceil(source.poly.onehot_k())
+            .div_ceil(source.chunk_size)
             .saturating_add(1)
-            .min(source.poly.indices().len());
+            .min(source.indices.len());
         Ok(current.max(crossing_bound))
     })
 }
@@ -374,7 +374,7 @@ where
 
 fn column_sweep_ajtai_onehot_multi_with_sweep<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[OneHotView<'_, F, D, I>],
+    sources: &[OneHotSource<'_, I>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
@@ -394,7 +394,7 @@ where
     let num_positions_per_block = active_a_cols / num_digits_inner;
     let counts = sources
         .iter()
-        .map(|source| source.poly.num_live_blocks_for(D, num_positions_per_block))
+        .map(|source| source.num_live_blocks_for(D, num_positions_per_block))
         .collect::<Result<Vec<_>, _>>()?;
     let mut starts = Vec::with_capacity(counts.len() + 1);
     let mut total = 0usize;
@@ -415,8 +415,7 @@ where
             total
                 .checked_add(
                     source
-                        .poly
-                        .indices()
+                        .indices
                         .iter()
                         .filter(|entry| entry.is_some())
                         .count(),
@@ -426,7 +425,7 @@ where
     } else {
         None
     };
-    let max_entries = max_entries_per_block(sources, num_positions_per_block)?;
+    let max_entries = max_entries_per_block::<D, I>(sources, num_positions_per_block)?;
     let block_tile = block_tile_for_scratch::<F, D>(
         total,
         active_a_cols,
@@ -476,7 +475,7 @@ where
                         if lo >= hi {
                             continue;
                         }
-                        owners.push(source.poly.materialize_block_range(
+                        owners.push(source.materialize_block_range(
                             D,
                             num_positions_per_block,
                             lo - src_start..hi - src_start,
@@ -522,7 +521,7 @@ where
 /// Fused multi-polynomial column sweep over one hot source views.
 pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[OneHotView<'_, F, D, I>],
+    sources: &[OneHotSource<'_, I>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
@@ -547,7 +546,7 @@ where
 #[cfg(test)]
 pub(super) fn column_sweep_ajtai_onehot_multi_forced<F, const D: usize, I>(
     a_view: &RingMatrixView<'_, F, D>,
-    sources: &[OneHotView<'_, F, D, I>],
+    sources: &[OneHotSource<'_, I>],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,

@@ -1,9 +1,10 @@
 use super::*;
-use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeCommitBackendFor,
-    RuntimeRingSwitchProveBackend,
+use crate::commitment::{
+    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
 };
-use crate::RecursiveWitnessFlat;
+use crate::compute::{
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeRingSwitchProveBackend,
+};
 use jolt_field::AdditiveGroup;
 
 /// Prove the folded-root proof payload for an intermediate root.
@@ -19,24 +20,24 @@ use jolt_field::AdditiveGroup;
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
+pub(crate) fn prove_root<'stack, F, E, T, P, S, O, TS, R, SP, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,
-        Commit = C,
         Opening = O,
         Tensor = TS,
         RingSwitch = R,
+        CommitmentStatePolicy = SP,
     >,
     transcript: &mut T,
-    claims: ProverOpeningData<'_, E, P, F>,
+    claims: ProverOpeningData<'_, E, P, F, S>,
     scheduled: &akita_types::FoldParams,
     next_params: super::fold::FoldSuccessorParams<'_>,
     next_witness_binding: akita_types::NextWitnessBindingPolicy,
     basis: BasisMode,
-) -> Result<ProveLevelOutput<F, E>, AkitaError>
+) -> Result<ProveLevelOutput<F, E, SP::State>, AkitaError>
 where
     F: Field
         + CanonicalEncoding
@@ -56,7 +57,7 @@ where
         + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
-    C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
+    S: InnerRelationState<F> + OuterCompressionState<F>,
     O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     TS: ComputeBackendSetup<F> + 'stack,
     R: RuntimeRingSwitchProveBackend<F>
@@ -64,7 +65,8 @@ where
         + ComputeBackendSetup<F>
         + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: TerminalBindingState<F>,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -76,7 +78,7 @@ where
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
     claims.append_to_transcript::<T>(root_params, transcript)?;
 
-    let prepared_fold = prepare_single_field_fold::<F, E, T, P, C, O, TS, R>(
+    let prepared_fold = prepare_single_field_fold::<F, E, T, P, S, O, TS, R, SP>(
         stack,
         claims,
         false,
@@ -87,7 +89,7 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
 
-    prove_fold::<F, E, T, C, O, TS, R, Cfg>(
+    prove_fold::<F, E, T, O, TS, R, SP, Cfg>(
         expanded,
         prefix_slots,
         stack,

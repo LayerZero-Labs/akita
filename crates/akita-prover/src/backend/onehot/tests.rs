@@ -1,7 +1,7 @@
 use super::test_helpers::inner_ajtai_reference;
 use super::*;
 use crate::backend::test_support::aggregate_witnesses;
-use crate::compute::{RootCommitSource, RootOpeningSource};
+use crate::compute::RootOpeningSource;
 use crate::DensePoly;
 use akita_types::FlatMatrix;
 use jolt_field::{Field, Ring};

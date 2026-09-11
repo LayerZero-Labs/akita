@@ -21,8 +21,8 @@ use akita_types::{
     detect_field_modulus, sample_akita_setup_seed, setup_seed_digest, AkitaSetupDescriptor,
     AkitaSetupSeed, FlatMatrix, SetupPrefixProverRegistry,
 };
-use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{Unreduced, WithCommitAccumulator};
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -64,6 +64,7 @@ where
         + Valid
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
+        + WithCommitAccumulator
         + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -358,7 +359,14 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: Field + Valid + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + 'static,
+    F: Field
+        + Valid
+        + CanonicalEncoding
+        + Unreduced
+        + WithCommitAccumulator
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + 'static,
 >(
     schedules: &ValidatedScheduleCatalog,
     max_num_vars: usize,
@@ -1074,110 +1082,84 @@ mod tests {
 
         #[test]
         fn ntt_caches_rebuilt_correctly_from_disk() {
-            with_test_cache_dir("ntt-rebuild", || {
-                use akita_algebra::CyclotomicRing;
-                use akita_prover::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
-                use akita_prover::DensePoly;
-                use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
+            std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn(|| {
+                    with_test_cache_dir("ntt-rebuild", || {
+                        use akita_prover::{
+                            CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource,
+                            ComputeBackendSetup, CpuBackend, DensePoly, DenseType, PolynomialType,
+                            PortableStatePolicy,
+                        };
 
-                const MAX_VARS: usize = 14;
+                        const MAX_VARS: usize = 14;
 
-                cleanup_setup_file_shape(MAX_VARS, 1);
+                        cleanup_setup_file_shape(MAX_VARS, 1);
 
-                let fresh_setup =
-                    new_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
+                        let fresh_setup =
+                            new_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
 
-                let disk_setup = load_prover_setup::<TestF>(
-                    &schedules(),
-                    MAX_VARS,
-                    1,
-                    &SetupRequirements::from_catalog::<Cfg>(&schedules(), MAX_VARS, 1).unwrap(),
-                )
-                .unwrap();
-
-                let catalog = schedules();
-                let opening = akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
-                    .expect("singleton opening batch");
-                let lp = catalog
-                    .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                        opening
-                            .root_final_group_layout()
-                            .expect("root group layout"),
-                    ))
-                    .unwrap()
-                    .schedule()
-                    .root
-                    .params
-                    .clone();
-                let num_coeffs = lp.blocks().live_blocks * lp.blocks().positions_per_block;
-                let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
-                let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs).unwrap();
-
-                let commit_u = |setup: &AkitaProverSetup<TestF>| {
-                    let prepared = CpuBackend::DEFAULT.prepare_setup(setup).unwrap();
-                    let plan = CommitInnerPlan::from_level(&lp);
-                    let mut inner_group = CpuBackend::DEFAULT
-                        .commit_inner_group(
-                            &prepared,
-                            vec![RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap()],
-                            plan,
+                        let disk_setup = load_prover_setup::<TestF>(
+                            &schedules(),
+                            MAX_VARS,
+                            1,
+                            &SetupRequirements::from_catalog::<Cfg>(&schedules(), MAX_VARS, 1)
+                                .unwrap(),
                         )
                         .unwrap();
-                    let inner = inner_group.pop().expect("singleton commit result");
-                    let n_a = lp.inner().matrix.output_rank();
-                    let blocks = (0..lp.blocks().live_blocks)
-                        .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
-                        .collect::<Vec<_>>();
-                    let digits = akita_prover::kernels::linear::decompose_commit_blocks_into::<
-                        TestF,
-                        TEST_D,
-                        TEST_D,
-                    >(
-                        &blocks,
-                        lp.outer().digits.num_digits,
-                        lp.outer().digits.log_basis,
-                    )
-                    .unwrap();
-                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
-                        lp.outer_slice_count(),
-                        lp.blocks().live_blocks,
-                        1,
-                        n_a,
-                        lp.outer().digits.num_digits,
-                        TEST_D,
-                        TEST_D,
-                    )
-                    .unwrap();
-                    let block_width = slice_geometry.ring_elements_per_block_per_polynomial();
-                    let range = slice_geometry
-                        .block_ranges()
-                        .iter()
-                        .max_by_key(|range| range.len())
-                        .unwrap();
-                    let plane_start = range.start * block_width;
-                    let plane_end = range.end * block_width;
-                    let mut slice_digits =
-                        digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
-                    slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
-                    let mut batches = CpuBackend::DEFAULT
-                        .digit_rows::<TEST_D>(
-                            &prepared,
-                            lp.outer().matrix.output_rank(),
-                            &[slice_digits.as_slice()],
-                            lp.outer().digits.log_basis,
+
+                        let catalog = schedules();
+                        let opening = akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
+                            .expect("singleton opening batch");
+                        let lp = catalog
+                            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                                opening
+                                    .root_final_group_layout()
+                                    .expect("root group layout"),
+                            ))
+                            .unwrap()
+                            .schedule()
+                            .root
+                            .params
+                            .clone();
+                        let poly = DensePoly::<TestF>::from_field_evals(
+                            MAX_VARS,
+                            vec![TestF::zero(); 1usize << MAX_VARS],
                         )
                         .unwrap();
-                    assert_eq!(batches.len(), 1);
-                    batches.pop().unwrap()
-                };
+                        let plan =
+                            CommitmentExecutionPlan::for_root(&lp.own_group().profile).unwrap();
 
-                let fresh_u = commit_u(&fresh_setup);
-                let disk_u = commit_u(&disk_setup);
+                        let commit_payload = |setup: &AkitaProverSetup<TestF>| {
+                            let backend = CpuBackend::DEFAULT;
+                            let prepared = backend.prepare_setup(setup).unwrap();
+                            let executor = CommitmentExecutor::cpu(
+                                &backend,
+                                &prepared,
+                                &setup.expanded,
+                                vec![PolynomialType::Dense(DenseType::Coefficients)],
+                                PortableStatePolicy,
+                            )
+                            .unwrap();
+                            let sources: [&dyn CommitmentSource<TestF>; 1] = [&poly];
+                            executor
+                                .execute_full(&plan, &sources)
+                                .unwrap()
+                                .into_parts()
+                                .0
+                        };
 
-                assert_eq!(fresh_u, disk_u);
+                        let fresh_payload = commit_payload(&fresh_setup);
+                        let disk_payload = commit_payload(&disk_setup);
 
-                cleanup_setup_file_shape(MAX_VARS, 1);
-            });
+                        assert_eq!(fresh_payload, disk_payload);
+
+                        cleanup_setup_file_shape(MAX_VARS, 1);
+                    });
+                })
+                .expect("spawn NTT rebuild test")
+                .join()
+                .expect("NTT rebuild test panicked");
         }
     }
 }

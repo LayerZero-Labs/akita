@@ -1,8 +1,7 @@
-//! Prover-owned commitment kernels.
+//! Top-level prover commitment API.
 
-use crate::compute::{
-    RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor, RuntimeCommitSource,
-    UniformProverStack,
+use crate::commitment::{
+    CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -11,28 +10,14 @@ use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedS
 use akita_error::checked;
 use akita_error::AkitaError;
 use akita_types::sis::CommittedSourceContract;
+#[cfg(test)]
+use akita_types::CommittedGroupParams;
 use akita_types::{
-    dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommittedGroup,
-    CommittedGroupParams, FpExtEncoding, GadgetDigits, GroupCommitPhaseParams,
-    PrecommittedGroupProfiles,
+    validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommittedGroup, FpExtEncoding,
+    GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
-
-mod compression;
-mod inner_outer;
-use compression::{compute_commitment_compression, CommitmentCompressionOutput};
-use inner_outer::compute_inner_outer_commitment;
-pub(crate) use inner_outer::validate_commit_inner_shape;
-pub(crate) use inner_outer::{commit_outer_slices, for_each_outer_slice_input};
-#[cfg(test)]
-use inner_outer::{compute_inner_commitment, outer_slice_inputs};
-
-/// Commitment output plus prover-side hint for one committed polynomial bundle.
-///
-/// D-free protocol storage: a flat [`Commitment`] plus the semantic A-native
-/// inner rows needed when the commitment is opened.
-pub(crate) type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
@@ -104,13 +89,13 @@ impl<'a> GroupContext<'a> {
     }
 }
 
-/// Result of committing one polynomial group.
+/// Result of committing one polynomial group with policy-selected private state.
 #[derive(Debug)]
-pub struct CommitOutput<F: Field> {
+pub struct CommitOutput<F: Field, S = AkitaCommitmentHint<F>> {
     /// Self-describing committed group.
     pub committed_group: CommittedGroup<F>,
-    /// Prover-only opening hint.
-    pub hint: AkitaCommitmentHint<F>,
+    /// Prover-private state selected by the commitment executor's policy.
+    pub prover_state: S,
 }
 
 fn validate_commitment_geometry<F>(
@@ -172,6 +157,7 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn validate_commit_level_params<F>(
     params: &CommittedGroupParams,
     setup: &AkitaExpandedSetup<F>,
@@ -234,18 +220,20 @@ pub fn resolve_polynomial_group_layout<F, P>(
 ) -> Result<akita_types::PolynomialGroupLayout, AkitaError>
 where
     F: Field,
-    P: RootPolyMeta<F>,
+    P: CommitmentSource<F>,
 {
     if polys.is_empty() {
         return Err(AkitaError::InvalidInput(
             "commit requires at least one polynomial".to_string(),
         ));
     }
-    let num_vars = polys[0].num_vars();
-    if polys.iter().any(|p| p.num_vars() != num_vars) {
-        return Err(AkitaError::InvalidInput(
-            "all polynomials in a batched commit must have the same num_vars".to_string(),
-        ));
+    let num_vars = polys[0].descriptor()?.num_vars();
+    for poly in &polys[1..] {
+        if poly.descriptor()?.num_vars() != num_vars {
+            return Err(AkitaError::InvalidInput(
+                "all polynomials in a batched commit must have the same num_vars".to_string(),
+            ));
+        }
     }
     if polys.len() > setup.descriptor.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
@@ -283,22 +271,23 @@ fn ensure_sources_match_declared_class<F, P>(
 ) -> Result<(), AkitaError>
 where
     F: Field,
-    P: RootPolyMeta<F>,
+    P: CommitmentSource<F>,
 {
     let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
         return Ok(());
     };
     for poly in polys {
-        match RootPolyMeta::<F>::onehot_chunk_size(poly) {
-            Some(chunk_size) if chunk_size == required_chunk_size => {}
-            Some(chunk_size) => {
+        match poly.descriptor()?.class() {
+            crate::commitment::CommitSourceClass::OneHot { chunk_size }
+                if chunk_size == required_chunk_size => {}
+            crate::commitment::CommitSourceClass::OneHot { chunk_size } => {
                 return Err(AkitaError::InvalidInput(format!(
                     "committed source is a unit one-hot representation with chunk size \
                      {chunk_size}, but this schedule is priced for one hot position per \
                      {required_chunk_size} coefficients"
                 )))
             }
-            None => {
+            _ => {
                 return Err(AkitaError::InvalidInput(format!(
                     "committed source is not a unit one-hot representation, but this schedule \
                      is priced for one hot position per {required_chunk_size} coefficients; \
@@ -313,14 +302,14 @@ where
 
 /// Reject coefficients outside the intersection of the source declaration and
 /// the exact balanced-digit interval committed by this row.
-fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
+fn ensure_sources_fit_accepted_interval<F, P>(
     polys: &[P],
     inner_digits: GadgetDigits,
     contract: CommittedSourceContract,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    P: RootCommitSource<F, D>,
+    P: CommitmentSource<F>,
 {
     let modulus = (-F::one())
         .to_u128_checked()
@@ -342,8 +331,7 @@ where
         None => ">2^128".to_string(),
     };
     for poly in polys {
-        let (negative_abs, positive) =
-            RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
+        let (negative_abs, positive) = poly.committed_centered_reach(modulus, threshold)?;
         if exceeds(negative_abs, positive) {
             return Err(AkitaError::InvalidInput(format!(
                 "committed source exceeds the scheduled bound: centered coefficients reach \
@@ -371,7 +359,7 @@ fn resolve_commit_params<Cfg, P>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding,
-    P: RuntimeCommitSource<Cfg::Field>,
+    P: CommitmentSource<Cfg::Field>,
 {
     let polynomial_group_layout =
         resolve_polynomial_group_layout::<Cfg::Field, P>(polys, expanded)?;
@@ -428,15 +416,10 @@ where
     // geometry, so they run here instead of inside the commit kernel.
     let contract = Cfg::committed_source_contract()?;
     ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        Cfg::Field,
-        commit_params.inner.matrix.ring_dimension(),
-        |D_A| ensure_sources_fit_accepted_interval::<Cfg::Field, P, D_A>(
-            polys,
-            commit_params.inner.digits,
-            contract,
-        )
+    ensure_sources_fit_accepted_interval::<Cfg::Field, P>(
+        polys,
+        commit_params.inner.digits,
+        contract,
     )?;
 
     Ok(commit_params)
@@ -452,46 +435,38 @@ where
 ///
 /// Returns an error for an empty or mixed-arity group, unsupported role
 /// parameters, insufficient setup, or commitment execution failure.
-pub fn commit<Cfg, P, B>(
+pub fn commit<Cfg, P, SP>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
-    stack: &UniformProverStack<'_, Cfg::Field, B>,
+    executor: &CommitmentExecutor<'_, Cfg::Field, SP>,
     context: GroupContext<'_>,
-) -> Result<CommitOutput<Cfg::Field>, AkitaError>
+) -> Result<CommitOutput<Cfg::Field, SP::State>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    P: RuntimeCommitSource<Cfg::Field>,
-    B: RuntimeCommitBackendFor<Cfg::Field, P>,
+    P: CommitmentSource<Cfg::Field>,
+    SP: CommitmentStatePolicy<Cfg::Field>,
 {
+    executor.validate_setup(expanded)?;
     let commit_params = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
-    let ctx = stack.commit();
-    let (inner_rows, uncompressed_commitment) =
-        compute_inner_outer_commitment(polys, ctx, commit_params)?;
-    let CommitmentCompressionOutput {
-        payload,
-        witness,
-        quotients,
-    } = compute_commitment_compression(
-        ctx,
-        commit_params.outer.matrix.sis_table_key().modulus_profile,
-        uncompressed_commitment,
-    )?;
-    let hint = AkitaCommitmentHint::new_with_outer_compression(
-        commit_params.inner.matrix.ring_dimension(),
-        inner_rows,
-        &witness,
-        &quotients,
-    )?;
+    let execution_plan = CommitmentExecutionPlan::for_root(&commit_params)?;
+    let source_refs: Vec<&dyn CommitmentSource<Cfg::Field>> = polys
+        .iter()
+        .map(|poly| poly as &dyn CommitmentSource<Cfg::Field>)
+        .collect();
+    let (payload, prover_state) = executor
+        .execute_full(&execution_plan, &source_refs)?
+        .into_parts();
 
     Ok(CommitOutput {
         committed_group: CommittedGroup::new(commit_params, Commitment::new(payload)),
-        hint,
+        prover_state,
     })
 }
 
 #[cfg(test)]
+#[path = "tests/api.rs"]
 mod tests;

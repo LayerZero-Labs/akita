@@ -42,20 +42,25 @@ position_j = ring_j mod P.
 
 This is the only coordinate rule. Single chunk and multi chunk layouts do not
 need different stored block types. `OneHotPoly` stores the indices and scalar
-shape data. `OneHotView` validates the runtime ring dimension and exposes the
-logical source to a backend.
+shape data. Its D-free commitment representation carries those semantics into
+request compilation; `OneHotView` remains the typed opening view.
 
 ## One group commitment operation
 
 The protocol always commits a group. A singleton is a group with one source.
-`RootCommitKernel::commit_inner_group` is therefore the only root commitment
-operation. Dense, one hot, and recursive witness sources implement the same
-source typed boundary without sharing a CPU representation.
+Each source first advertises its representations without materializing them;
+request compilation intersects those choices with the registered operation's
+capabilities. `CommitmentExecutor` then materializes only the selected path and
+runs either independent inner/outer operations or one explicit fused operation.
+Dense, one hot, and recursive witness sources implement the same D-free
+`CommitmentSource` boundary without sharing a CPU representation. Commitment
+state remains policy-selected: a portable policy exports the existing hint,
+while a resident policy keeps backend state in process.
 
 The CPU one hot path runs this flow:
 
 ```text
-validated OneHotView values
+validated OneHotRepresentation values
         |
         v
 derive the active block interval

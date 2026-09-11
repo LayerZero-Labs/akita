@@ -389,6 +389,6 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
-  `crates/akita-prover/src/api/commitment.rs`
+  `crates/akita-prover/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.
