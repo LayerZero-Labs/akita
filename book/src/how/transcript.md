@@ -225,9 +225,11 @@ with no truncation, leftover bits, or nonzero tail padding.
 
 The planner accepts only complete schedules whose expanded grinding query
 count is less than `u32::MAX`. If the objective-best candidate exceeds that
-capacity, planning treats it as an infeasible path and continues within the
-configured candidate domain. It returns `UnsupportedSchedule` only when no
-complete candidate in that domain fits the query capacity.
+capacity, planning treats it as an infeasible path and continues among schedules
+admitted by the planner's existing bounded candidate-generation policies.
+`UnsupportedSchedule` means that no feasible schedule was found within this
+domain; it does not prove that no mathematically valid schedule exists among
+layouts discarded by those policies.
 
 Proof-of-work and fold-response search share this packed storage, but they
 serve different purposes.

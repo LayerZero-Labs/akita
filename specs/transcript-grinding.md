@@ -978,12 +978,13 @@ Planner and profile reports show:
 Generated schedule identity includes the grinding-policy revision and the
 grinding contribution to proof bytes. A candidate whose exact grinding query
 count exceeds the plan capacity is an infeasible schedule path; schedule
-generation skips that path and continues searching the configured candidate
-domain. Schedule generation MUST fail for arithmetic, geometry, or invariant
-errors encountered while deriving a candidate plan, and returns
-`UnsupportedSchedule` when no complete candidate in the configured domain fits
-the grinding query capacity. Existing catalog drift tests protect the generated
-output.
+generation skips that path and continues among schedules admitted by the
+planner's existing bounded candidate-generation policies. Schedule generation
+MUST fail for arithmetic, geometry, or invariant errors encountered while
+deriving a candidate plan. `UnsupportedSchedule` means that no feasible schedule
+was found within this domain; it does not prove that no mathematically valid
+schedule exists among layouts discarded by those policies. Existing catalog
+drift tests protect the generated output.
 
 ## Evaluation
 

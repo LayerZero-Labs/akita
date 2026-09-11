@@ -190,7 +190,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn proof_first_uniform_search_matches_unpruned_descriptor() {
+fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
@@ -262,6 +262,40 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         )
         .unwrap(),
     );
+
+    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1));
+    let query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        &selected.schedule,
+        &lookup_key.opening_layout().unwrap(),
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )
+    .unwrap()
+    .expanded_query_count();
+    let constrained = crate::planner::find_schedule_in_relation_order(
+        &lookup_key,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        &[],
+        &policy,
+        OneHot::ring_challenge_config,
+        crate::planner::ScheduleSearchOptions {
+            relation_traversal_order: RelationTraversalOrder::Canonical,
+            relation_mode_filter: RelationModeFilter::All,
+            root_main_constraint: None,
+            adaptation_guide: None,
+            query_prefix_count: akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT - query_count,
+        },
+    )
+    .unwrap();
+    let constrained_query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        &constrained.schedule,
+        &lookup_key.opening_layout().unwrap(),
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )
+    .unwrap()
+    .expanded_query_count();
+    assert!(constrained_query_count < query_count);
 }
 
 #[cfg(feature = "catalog-gen")]

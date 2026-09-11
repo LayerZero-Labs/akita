@@ -238,7 +238,7 @@ impl QueryPrefix {
 #[derive(Clone)]
 pub(crate) enum QuerySearch {
     Unconstrained,
-    Root,
+    Root(u64),
     Restricted(QueryPrefix),
 }
 
@@ -253,8 +253,8 @@ impl QuerySearch {
     ) -> Result<Option<Self>, AkitaError> {
         match self {
             Self::Unconstrained => Ok(Some(Self::Unconstrained)),
-            Self::Root => Ok(Some(Self::Restricted(QueryPrefix {
-                finalized_query_count: 0,
+            Self::Root(finalized_query_count) => Ok(Some(Self::Restricted(QueryPrefix {
+                finalized_query_count: *finalized_query_count,
                 incoming: PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?,
             }))),
             Self::Restricted(prefix) => {
@@ -273,7 +273,7 @@ impl QuerySearch {
         candidate: &ScheduleCandidate,
     ) -> Result<bool, AkitaError> {
         match self {
-            Self::Unconstrained | Self::Root => Ok(true),
+            Self::Unconstrained | Self::Root(_) => Ok(true),
             Self::Restricted(prefix) => prefix.admits(policy, candidate),
         }
     }

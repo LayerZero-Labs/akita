@@ -48,6 +48,8 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
+    #[cfg(test)]
+    pub(crate) query_prefix_count: u64,
 }
 
 impl ScheduleSearchOptions<'_> {
@@ -57,6 +59,8 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            #[cfg(test)]
+            query_prefix_count: 0,
         }
     }
 }
@@ -826,12 +830,16 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
+    #[cfg(test)]
+    let query_prefix_count = options.query_prefix_count;
+    #[cfg(not(test))]
+    let query_prefix_count = 0;
     let suffix = derive_selected_suffix_schedule(
         &suffix_ctx,
         &mut memo,
         initial_state,
         0,
-        super::schedule_params::QuerySearch::Root,
+        super::schedule_params::QuerySearch::Root(query_prefix_count),
     );
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
