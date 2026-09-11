@@ -20,7 +20,7 @@ use akita_types::sis::{
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
     DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    PolynomialGroupLayout, TranscriptGrindingCost,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
@@ -37,7 +37,8 @@ mod suffix_dp;
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
-    materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
+    materialize_candidate_schedule, CandidateFoldStep, CandidateMaterializationCost,
+    CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
@@ -59,7 +60,8 @@ pub(crate) use relation_transition::{
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
-    derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology,
+    derive_selected_suffix_schedule, QuerySearch, ScheduleMemo, SuffixCtx, SuffixState,
+    SuffixTopology,
 };
 
 pub(crate) fn root_inner_basis_source(
@@ -375,13 +377,19 @@ pub(crate) struct ScheduleCandidate {
 pub(crate) struct PackedProofCost {
     payload_bytes: usize,
     nonce_bits: usize,
+    expanded_query_count: u64,
 }
 
 impl PackedProofCost {
-    pub(crate) fn new(payload_bytes: usize, nonce_bits: usize) -> Result<Self, AkitaError> {
+    pub(crate) fn new(
+        payload_bytes: usize,
+        nonce_bits: usize,
+        expanded_query_count: u64,
+    ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
             nonce_bits,
+            expanded_query_count,
         };
         cost.checked_proof_bytes()
             .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
@@ -397,20 +405,35 @@ impl PackedProofCost {
         self,
         payload_bytes: usize,
         nonce_bits: usize,
+        expanded_query_count: u64,
     ) -> Result<Self, AkitaError> {
-        Self::new(
-            self.payload_bytes
-                .checked_add(payload_bytes)
-                .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?,
-            self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
-                AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
-            })?,
-        )
+        let payload_bytes = self
+            .payload_bytes
+            .checked_add(payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?;
+        let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
+        })?;
+        let expanded_query_count = self
+            .expanded_query_count
+            .checked_add(expanded_query_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        Self::new(payload_bytes, nonce_bits, expanded_query_count)
     }
 
-    #[cfg(all(test, feature = "catalog-gen"))]
-    pub(crate) const fn nonce_bits(self) -> usize {
-        self.nonce_bits
+    pub(crate) const fn grinding_cost(self) -> TranscriptGrindingCost {
+        TranscriptGrindingCost {
+            total_nonce_bits: self.nonce_bits,
+            expanded_query_count: self.expanded_query_count,
+        }
+    }
+
+    pub(crate) const fn expanded_query_count(self) -> u64 {
+        self.expanded_query_count
+    }
+
+    pub(crate) const fn fits_query_limit(self) -> bool {
+        self.expanded_query_count < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
     pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {

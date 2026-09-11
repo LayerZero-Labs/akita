@@ -213,16 +213,16 @@ pub use transcript_grinding::{
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
     sample_grinded_sumcheck_challenge, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
     ProverGrindingTranscript, ProverTranscriptGrinding, SumcheckProtocol, TranscriptGrinding,
-    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
+    TranscriptGrindingCost, TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
     VerifierGrindingTranscript, VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION,
     FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
-    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT,
+    TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape,
-    transcript_grinding_nonce_bits_for_planner_candidate,
-    transcript_grinding_nonce_bits_for_planner_edge,
+    transcript_grinding_cost_for_planner_candidate, transcript_grinding_cost_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,

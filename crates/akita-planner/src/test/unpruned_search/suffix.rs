@@ -146,18 +146,18 @@ fn visit_fold_opening(
                     relation_state: relation_transition.next_state,
                 };
                 visit_suffixes(ctx, next_state, memo, work, &mut |child| {
-                    retain_frontier_candidate(
-                        frontier,
-                        prepend_fold(
-                            policy,
-                            state.level,
-                            state.input_witness_len,
-                            output_witness_len,
-                            fold_opening.reduction_bytes,
-                            &params,
-                            &child,
-                        )?,
-                    )
+                    if let Some(candidate) = prepend_fold(
+                        policy,
+                        state.level,
+                        state.input_witness_len,
+                        output_witness_len,
+                        fold_opening.reduction_bytes,
+                        &params,
+                        &child,
+                    )? {
+                        retain_frontier_candidate(frontier, candidate)?;
+                    }
+                    Ok(())
                 })?;
             }
         }

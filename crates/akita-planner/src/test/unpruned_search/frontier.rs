@@ -72,6 +72,7 @@ fn candidate_dominates(left: &FrontierCandidate, right: &FrontierCandidate) -> b
         return true;
     }
     left.schedule.setup_field_elements <= right.schedule.setup_field_elements
+        && left.schedule.cost.expanded_query_count() <= right.schedule.cost.expanded_query_count()
         && left
             .schedule
             .cost
@@ -107,5 +108,69 @@ pub(super) fn retain(
     }
     retained.push(candidate);
     bucket.candidates = retained;
+    Ok(())
+}
+
+#[test]
+fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
+    let challenge = SparseChallengeConfig::pm1_only(3);
+    let mut params = CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q32Offset99,
+        64,
+        3,
+        2,
+        8,
+        2,
+        challenge,
+    )
+    .with_decomp(1, 64, 2, 2, 2)?;
+    let inner = params.inner().matrix;
+    params.own_group_mut().profile.inner.matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            4_095,
+            inner.ring_dimension(),
+        );
+    let (terminal_params, linf_cap) =
+        akita_types::TerminalFoldParams::try_from_expanded_group(params)?;
+    let response_shape = akita_types::TerminalResponseShape::derive(&terminal_params, linf_cap)?;
+    let candidate =
+        |payload_bytes, expanded_query_count| -> Result<ScheduleCandidate, AkitaError> {
+            Ok(ScheduleCandidate {
+                first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
+                first_direct_output_witness_len: 0,
+                cost: PackedProofCost::new(payload_bytes, 0, expanded_query_count)?,
+                setup_field_elements: 1,
+                folds: CandidateFoldChain::default(),
+                terminal: std::sync::Arc::new(CandidateTerminalResponse {
+                    params: terminal_params.clone(),
+                    sparse_challenge_config: challenge,
+                    input_witness_len: 64,
+                    estimated_direct_payload_bytes: 0,
+                    response_shape: response_shape.clone(),
+                    estimated_payload_bytes: 0,
+                }),
+            })
+        };
+    let mut frontier = OracleFrontier::default();
+    retain(&mut frontier, candidate(10, 95)?)?;
+    retain(&mut frontier, candidate(11, 85)?)?;
+
+    let retained = frontier.into_candidates();
+    assert_eq!(
+        retained.len(),
+        2,
+        "a proof-better candidate with more queries must not dominate away a lower-query tradeoff"
+    );
+    assert!(retained
+        .iter()
+        .any(|candidate| candidate.cost.expanded_query_count() == 85));
     Ok(())
 }

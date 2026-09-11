@@ -90,16 +90,16 @@ struct ChildEdge<'a> {
 }
 
 impl ChildEdge<'_> {
-    fn grinding_nonce_bits(
+    fn grinding_cost(
         &self,
         suffix: &ScheduleCandidate,
         relation_geometry: akita_types::RelationAddressGeometry,
-    ) -> Result<usize, AkitaError> {
+    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
             || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
             |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
-        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        akita_types::transcript_grinding_cost_for_planner_edge(
             self.candidate_params.as_ref(),
             relation_geometry,
             self.opening_layout,
@@ -108,6 +108,174 @@ impl ChildEdge<'_> {
             self.policy.claim_ext_degree,
             self.level,
         )
+    }
+}
+
+/// A nonterminal edge whose grinding cost becomes exact only after its
+/// successor fold (or terminal) has been selected.
+#[derive(Clone)]
+struct PendingQueryEdge {
+    params: Arc<CommittedGroupParams>,
+    opening_layout: Arc<OpeningClaimsLayout>,
+    level: u32,
+    next_witness_len: usize,
+}
+
+impl PendingQueryEdge {
+    fn new(
+        state: SuffixState,
+        opening_layout: &OpeningClaimsLayout,
+        params: &CommittedGroupParams,
+        next_witness_len: usize,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            params: Arc::new(params.clone()),
+            opening_layout: Arc::new(opening_layout.clone()),
+            level: u32::try_from(state.level)
+                .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
+            next_witness_len,
+        })
+    }
+
+    fn grinding_cost(
+        &self,
+        policy: &PlannerPolicy,
+        successor: akita_types::FoldSuccessor<'_>,
+    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
+        let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            policy,
+            &self.params,
+            &self.opening_layout,
+            successor,
+            self.next_witness_len,
+        )?;
+        akita_types::transcript_grinding_cost_for_planner_edge(
+            &self.params,
+            payload.relation_geometry,
+            &self.opening_layout,
+            successor,
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            self.level,
+        )
+    }
+
+    fn candidate_grinding_cost(
+        &self,
+        policy: &PlannerPolicy,
+        candidate: &ScheduleCandidate,
+    ) -> Result<akita_types::TranscriptGrindingCost, AkitaError> {
+        let successor = candidate.folds.first().map_or_else(
+            || akita_types::FoldSuccessor::Terminal(&candidate.terminal.params),
+            |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+        );
+        self.grinding_cost(policy, successor)
+    }
+}
+
+/// Exact query usage above the current suffix, plus the incoming edge that is
+/// waiting for the suffix's first successor.
+#[derive(Clone)]
+pub(crate) struct QueryPrefix {
+    finalized_query_count: u64,
+    incoming: PendingQueryEdge,
+}
+
+impl QueryPrefix {
+    fn admits(
+        &self,
+        policy: &PlannerPolicy,
+        candidate: &ScheduleCandidate,
+    ) -> Result<bool, AkitaError> {
+        let edge = self.incoming.candidate_grinding_cost(policy, candidate)?;
+        let total = self
+            .finalized_query_count
+            .checked_add(edge.expanded_query_count)
+            .and_then(|queries| queries.checked_add(candidate.cost.expanded_query_count()))
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        Ok(total < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT)
+    }
+
+    fn advance(
+        &self,
+        policy: &PlannerPolicy,
+        successor: &CommittedGroupParams,
+        incoming: PendingQueryEdge,
+    ) -> Result<Option<Self>, AkitaError> {
+        let edge = self
+            .incoming
+            .grinding_cost(policy, akita_types::FoldSuccessor::Recursive(successor))?;
+        let finalized_query_count = self
+            .finalized_query_count
+            .checked_add(edge.expanded_query_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
+        if finalized_query_count >= akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            finalized_query_count,
+            incoming,
+        }))
+    }
+
+    fn admits_result(
+        &self,
+        policy: &PlannerPolicy,
+        result: &SuffixResult,
+    ) -> Result<bool, AkitaError> {
+        for candidate in result.payload_candidates().chain(result.setup_candidates()) {
+            if !self.admits(policy, candidate)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Selects between the budget-independent memo search and a caller-specific
+/// search used only when the memoized optimum does not fit that caller's
+/// transcript-query prefix.
+#[derive(Clone)]
+pub(crate) enum QuerySearch {
+    Unconstrained,
+    Root(u64),
+    Restricted(QueryPrefix),
+}
+
+impl QuerySearch {
+    fn child(
+        &self,
+        ctx: &SuffixCtx<'_>,
+        state: SuffixState,
+        opening_layout: &OpeningClaimsLayout,
+        params: &CommittedGroupParams,
+        next_witness_len: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        match self {
+            Self::Unconstrained => Ok(Some(Self::Unconstrained)),
+            Self::Root(finalized_query_count) => Ok(Some(Self::Restricted(QueryPrefix {
+                finalized_query_count: *finalized_query_count,
+                incoming: PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?,
+            }))),
+            Self::Restricted(prefix) => {
+                let incoming =
+                    PendingQueryEdge::new(state, opening_layout, params, next_witness_len)?;
+                prefix
+                    .advance(ctx.policy, params, incoming)
+                    .map(|next| next.map(Self::Restricted))
+            }
+        }
+    }
+
+    fn admits_terminal(
+        &self,
+        policy: &PlannerPolicy,
+        candidate: &ScheduleCandidate,
+    ) -> Result<bool, AkitaError> {
+        match self {
+            Self::Unconstrained | Self::Root(_) => Ok(true),
+            Self::Restricted(prefix) => prefix.admits(policy, candidate),
+        }
     }
 }
 
@@ -293,7 +461,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
-    edge_nonce_bits: usize,
+    edge_grinding_cost: akita_types::TranscriptGrindingCost,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -338,9 +506,11 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
-    let cost = suffix
-        .cost
-        .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
+    let cost = suffix.cost.checked_prepend(
+        edge_payload_bytes,
+        edge_grinding_cost.total_nonce_bits,
+        edge_grinding_cost.expanded_query_count,
+    )?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
         first_direct_output_witness_len,
@@ -496,6 +666,7 @@ fn candidate_traversal(
 fn price_terminal_candidate(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
+    query_search: &QuerySearch,
     candidate_params: &CommittedGroupParams,
     opening_reduction_bytes: usize,
     natural_len: usize,
@@ -565,11 +736,14 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(total, 0)?,
+        cost: PackedProofCost::new(total, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
     };
+    if !query_search.admits_terminal(policy, &candidate)? {
+        return Ok(());
+    }
     frontiers.projected.consider_candidate(
         policy,
         ctx.diagnostics,

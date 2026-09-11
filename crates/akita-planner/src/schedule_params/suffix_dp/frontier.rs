@@ -56,7 +56,7 @@ impl ProjectionMask {
 #[derive(Clone, Copy)]
 pub(super) struct PricedChildEdge {
     edge_price: super::ChildEdgePrice,
-    edge_nonce_bits: usize,
+    edge_grinding_cost: akita_types::TranscriptGrindingCost,
 }
 
 pub(super) fn price_child_edge(
@@ -70,10 +70,10 @@ pub(super) fn price_child_edge(
         ));
     }
     let edge_price = child_edge_price(edge, representative)?;
-    let edge_nonce_bits = edge.grinding_nonce_bits(representative, edge_price.relation_geometry)?;
+    let edge_grinding_cost = edge.grinding_cost(representative, edge_price.relation_geometry)?;
     Ok(PricedChildEdge {
         edge_price,
-        edge_nonce_bits,
+        edge_grinding_cost,
     })
 }
 
@@ -93,7 +93,7 @@ pub(super) fn consider_child_suffixes<'a>(
         let Some(candidate) = child_choice(
             edge,
             priced_edge.edge_price,
-            priced_edge.edge_nonce_bits,
+            priced_edge.edge_grinding_cost,
             suffix,
         )?
         else {

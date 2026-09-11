@@ -354,7 +354,7 @@ The probability that an honest prover finds no passing predicate is
  < 2^-184.6.
 ```
 
-This bound is independent of `g`. The plan accepts fewer than `2^32` query
+This bound is independent of `g`. The plan accepts fewer than `u32::MAX` query
 entries and encodes query ordinals as `u32`. A union bound therefore puts total
 proof-of-work exhaustion below `2^-152`, which is already
 well below the required `2^-128`. No per-proof query-count surcharge is needed.
@@ -976,9 +976,15 @@ Planner and profile reports show:
 8. every query family whose loss rule is nonzero.
 
 Generated schedule identity includes the grinding-policy revision and the
-grinding contribution to proof bytes. Schedule generation MUST fail if a
-candidate cannot derive a valid plan. Existing catalog drift tests protect the
-generated output.
+grinding contribution to proof bytes. A candidate whose exact grinding query
+count exceeds the plan capacity is an infeasible schedule path; schedule
+generation skips that path and continues among schedules admitted by the
+planner's existing bounded candidate-generation policies. Schedule generation
+MUST fail for arithmetic, geometry, or invariant errors encountered while
+deriving a candidate plan. `UnsupportedSchedule` means that no feasible schedule
+was found within this domain; it does not prove that no mathematically valid
+schedule exists among layouts discarded by those policies. Existing catalog
+drift tests protect the generated output.
 
 ## Evaluation
 
