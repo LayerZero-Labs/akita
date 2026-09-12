@@ -102,7 +102,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
             BenchmarkId::new("project_i32_direct_packed", cols),
             &input_i32,
             |bencher, input| {
-                bencher.iter_batched(
+                bencher.iter_batched_ref(
                     || matrix.clone(),
                     |matrix| matrix.project(black_box(input)).unwrap(),
                     BatchSize::PerIteration,
@@ -155,7 +155,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                 BenchmarkId::new(format!("project_i32_cold_packed_{blocks}blocks"), cols),
                 &block_input,
                 |bencher, input| {
-                    bencher.iter_batched(
+                    bencher.iter_batched_ref(
                         || matrix.clone(),
                         |matrix| matrix.project_blocks(black_box(input)).unwrap(),
                         BatchSize::PerIteration,
@@ -167,7 +167,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                 BenchmarkId::new(format!("project_i32_cold_dense_{blocks}blocks"), cols),
                 &block_input,
                 |bencher, input| {
-                    bencher.iter_batched(
+                    bencher.iter_batched_ref(
                         || {
                             let matrix = matrix.clone();
                             matrix.project(&input_i32).unwrap();

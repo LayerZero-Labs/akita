@@ -11,6 +11,8 @@ use akita_error::AkitaError;
 pub const BALANCED_TERNARY_EXPANSION_VERSION: u32 = 2;
 
 const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/paired-rademacher/aes128-ctr";
+// Two coarse streams amortize the join once each plane spans 256 KiB.
+const PARALLEL_PLANE_MIN_BYTES: usize = 1 << 18;
 
 /// Derive one domain-separated local-matrix seed from a transcript master seed.
 ///
@@ -83,8 +85,16 @@ pub fn expand_balanced_ternary_matrix(
     let expander = Aes128CtrExpander::new(&key, base_block);
     let mut first_signs = try_zeroed_bytes(shape.plane_len())?;
     let mut second_signs = try_zeroed_bytes(shape.plane_len())?;
-    expander.fill_stream(0, &mut first_signs);
-    expander.fill_stream(1, &mut second_signs);
+    if cfg!(feature = "parallel") && shape.plane_len() >= PARALLEL_PLANE_MIN_BYTES {
+        let (first, second) =
+            jolt_field::cfg_join!(|| expander.fill_stream(0, &mut first_signs), || expander
+                .fill_stream(1, &mut second_signs));
+        first?;
+        second?;
+    } else {
+        expander.fill_stream(0, &mut first_signs)?;
+        expander.fill_stream(1, &mut second_signs)?;
+    }
     for plane in [&mut first_signs, &mut second_signs] {
         if shape.rows() & 1 != 0 {
             for group in plane.chunks_exact_mut(shape.row_pairs()) {

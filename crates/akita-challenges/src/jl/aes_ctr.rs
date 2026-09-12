@@ -1,6 +1,7 @@
 //! Canonical AES-128 counter expansion for JL matrix bitplanes.
 
 use aes::Aes128;
+use akita_error::AkitaError;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 
 type Aes128Ctr = ctr::Ctr64LE<Aes128>;
@@ -22,13 +23,14 @@ impl Aes128CtrExpander {
         }
     }
 
-    pub(super) fn fill_stream(&self, stream: u64, output: &mut [u8]) {
+    pub(super) fn fill_stream(&self, stream: u64, output: &mut [u8]) -> Result<(), AkitaError> {
         let mut iv = [0u8; 16];
         iv[..8].copy_from_slice(&self.base_low.to_le_bytes());
         iv[8..].copy_from_slice(&(self.base_high ^ stream).to_le_bytes());
         let mut cipher = Aes128Ctr::new((&self.key).into(), (&iv).into());
-        output.fill(0);
-        cipher.apply_keystream(output);
+        cipher
+            .try_write_keystream(output)
+            .map_err(|_| AkitaError::InvalidInput("JL AES counter stream exhausted".into()))
     }
 }
 
@@ -37,14 +39,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parallel_stream_fills_match_serial_for_large_partial_blocks() {
+        let expander = Aes128CtrExpander::new(&[0x42; 16], [0x24; 16]);
+        let mut first = vec![0xa5; (1 << 18) + 7];
+        let mut second = vec![0x5a; first.len()];
+        let (a, b) = jolt_field::cfg_join!(|| expander.fill_stream(0, &mut first), || expander
+            .fill_stream(1, &mut second));
+        a.unwrap();
+        b.unwrap();
+        let mut reference = vec![0; first.len()];
+        expander.fill_stream(0, &mut reference).unwrap();
+        assert_eq!(first, reference);
+        expander.fill_stream(1, &mut reference).unwrap();
+        assert_eq!(second, reference);
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn stream_and_counter_domains_are_disjoint_and_stable() {
         let expander = Aes128CtrExpander::new(&[0x42; 16], [0x24; 16]);
-        let mut first = [0u8; 37];
+        let mut first = [0xa5u8; 37];
         let mut repeated = [0u8; 37];
         let mut other_stream = [0u8; 37];
-        expander.fill_stream(0, &mut first);
-        expander.fill_stream(0, &mut repeated);
-        expander.fill_stream(1, &mut other_stream);
+        expander.fill_stream(0, &mut first).unwrap();
+        expander.fill_stream(0, &mut repeated).unwrap();
+        expander.fill_stream(1, &mut other_stream).unwrap();
         assert_eq!(first, repeated);
         assert_ne!(first, other_stream);
         assert_eq!(
