@@ -1,0 +1,1176 @@
+{
+  "schema": "akita-jl-budget-planning-v1",
+  "planningStatus": "untrusted-exploration",
+  "warning": "Exploratory nv30 projection-forest geometry with kernel-checked endpoint records. The source declarations and revisions below certify the tails, but this tool does not replay those proofs or establish a production no-wrap/modulus/schedule admission.",
+  "failureBudget": {
+    "numerator": "1",
+    "denominator": "87112285931760246646623899502532662132736"
+  },
+  "expectedCensus": {
+    "chargedBlocks": 5548,
+    "rawMatrixEnvelopes": 46,
+    "distinctMatrixEnvelopes": 20
+  },
+  "folds": [
+    {
+      "level": 0,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            512,
+            8,
+            1
+          ],
+          "depths": [
+            0,
+            1,
+            2
+          ],
+          "matrixEnvelopes": [
+            "f0-d0",
+            "f0-d1",
+            "f0-d2"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            256,
+            4,
+            1
+          ],
+          "depths": [
+            0,
+            1,
+            2
+          ],
+          "matrixEnvelopes": [
+            "f0-d0",
+            "f0-d1",
+            "f0-d2"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            4096,
+            64,
+            1
+          ],
+          "depths": [
+            0,
+            1,
+            2
+          ],
+          "matrixEnvelopes": [
+            "f0-d0",
+            "f0-d1",
+            "f0-d2"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            3
+          ],
+          "matrixEnvelopes": [
+            "f0-d3"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 1,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            64,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f1-d0",
+            "f1-d1"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            128,
+            2,
+            1
+          ],
+          "depths": [
+            0,
+            1,
+            2
+          ],
+          "matrixEnvelopes": [
+            "f1-d0",
+            "f1-d1",
+            "f1-d2"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            256,
+            4,
+            1
+          ],
+          "depths": [
+            0,
+            1,
+            2
+          ],
+          "matrixEnvelopes": [
+            "f1-d0",
+            "f1-d1",
+            "f1-d2"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            3
+          ],
+          "matrixEnvelopes": [
+            "f1-d3"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 2,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            8,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f2-d0",
+            "f2-d1"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            16,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f2-d0",
+            "f2-d1"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            64,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f2-d0",
+            "f2-d1"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            2
+          ],
+          "matrixEnvelopes": [
+            "f2-d2"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 3,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            4,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f3-d0",
+            "f3-d1"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            4,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f3-d0",
+            "f3-d1"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            16,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f3-d0",
+            "f3-d1"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            2
+          ],
+          "matrixEnvelopes": [
+            "f3-d2"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 4,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            2,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f4-d0",
+            "f4-d1"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            2,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f4-d0",
+            "f4-d1"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            8,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f4-d0",
+            "f4-d1"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            2
+          ],
+          "matrixEnvelopes": [
+            "f4-d2"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    },
+    {
+      "level": 5,
+      "candidates": 2,
+      "useFamilies": [
+        {
+          "role": "Z",
+          "blocks": [
+            2,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f5-d0",
+            "f5-d1"
+          ]
+        },
+        {
+          "role": "E",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            0
+          ],
+          "matrixEnvelopes": [
+            "f5-d0"
+          ]
+        },
+        {
+          "role": "T",
+          "blocks": [
+            4,
+            1
+          ],
+          "depths": [
+            0,
+            1
+          ],
+          "matrixEnvelopes": [
+            "f5-d0",
+            "f5-d1"
+          ]
+        },
+        {
+          "role": "ETjoin",
+          "blocks": [
+            1
+          ],
+          "depths": [
+            2
+          ],
+          "matrixEnvelopes": [
+            "f5-d2"
+          ],
+          "extendsPaths": [
+            "E",
+            "T"
+          ]
+        }
+      ]
+    }
+  ],
+  "frontier": {
+    "lower": [
+      {
+        "id": "lower-152",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 79,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "lowerFailureBits152",
+          "dyadicExponent": 152
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower79Over4Bits152",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-151",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 20,
+          "denominator": 1
+        },
+        "failureCap": {
+          "name": "lowerFailureBits151",
+          "dyadicExponent": 151
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower20Bits151",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-150",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 41,
+          "denominator": 2
+        },
+        "failureCap": {
+          "name": "lowerFailureBits150",
+          "dyadicExponent": 150
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower41Over2Bits150",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-149",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 83,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "lowerFailureBits149",
+          "dyadicExponent": 149
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower83Over4Bits149",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-148",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 21,
+          "denominator": 1
+        },
+        "failureCap": {
+          "name": "lowerFailureBits148",
+          "dyadicExponent": 148
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower21Bits148",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-147",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 85,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "lowerFailureBits147",
+          "dyadicExponent": 147
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower85Over4Bits147",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-146",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 43,
+          "denominator": 2
+        },
+        "failureCap": {
+          "name": "lowerFailureBits146",
+          "dyadicExponent": 146
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower43Over2Bits146",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-145",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 87,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "lowerFailureBits145",
+          "dyadicExponent": 145
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower87Over4Bits145",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      },
+      {
+        "id": "lower-144",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 22,
+          "denominator": 1
+        },
+        "failureCap": {
+          "name": "lowerFailureBits144",
+          "dyadicExponent": 144
+        },
+        "theorem": "CertifiedJL.Results.L2.Lower.Rows256Bits152.ternaryL2ThresholdLower22Bits144",
+        "sourceRevision": "c8dc949bc646a16fdd977ecd80ef897cf540f1a5",
+        "modulusHypotheses": [
+          "odd modulus q",
+          "input w centered modulo q",
+          "positive threshold b",
+          "b^2 <= ||w||_2^2",
+          "3*b <= q"
+        ]
+      }
+    ],
+    "upper": [
+      {
+        "id": "upper-140",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5623,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits140",
+          "dyadicExponent": 140
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5623Over16Bits140",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-141",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5641,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits141",
+          "dyadicExponent": 141
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5641Over16Bits141",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-142",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5659,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits142",
+          "dyadicExponent": 142
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5659Over16Bits142",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-143",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5677,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits143",
+          "dyadicExponent": 143
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5677Over16Bits143",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-144",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 2847,
+          "denominator": 8
+        },
+        "failureCap": {
+          "name": "upperFailureBits144",
+          "dyadicExponent": 144
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper2847Over8Bits144",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-145",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 357,
+          "denominator": 1
+        },
+        "failureCap": {
+          "name": "upperFailureBits145",
+          "dyadicExponent": 145
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper357Bits145",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-146",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 2865,
+          "denominator": 8
+        },
+        "failureCap": {
+          "name": "upperFailureBits146",
+          "dyadicExponent": 146
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper2865Over8Bits146",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-147",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 1437,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "upperFailureBits147",
+          "dyadicExponent": 147
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper1437Over4Bits147",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-148",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5765,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits148",
+          "dyadicExponent": 148
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5765Over16Bits148",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-149",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5783,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits149",
+          "dyadicExponent": 149
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5783Over16Bits149",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-150",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 5801,
+          "denominator": 16
+        },
+        "failureCap": {
+          "name": "upperFailureBits150",
+          "dyadicExponent": 150
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper5801Over16Bits150",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-151",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 2909,
+          "denominator": 8
+        },
+        "failureCap": {
+          "name": "upperFailureBits151",
+          "dyadicExponent": 151
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper2909Over8Bits151",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      },
+      {
+        "id": "upper-152",
+        "status": "certified",
+        "rowLaw": "balanced-ternary",
+        "rows": 256,
+        "threshold": {
+          "numerator": 1459,
+          "denominator": 4
+        },
+        "failureCap": {
+          "name": "upperFailureBits152",
+          "dyadicExponent": 152
+        },
+        "theorem": "CertifiedJL.Results.L2.Upper.Rows256Frontier.ternaryL2Upper1459Over4Bits152",
+        "sourceRevision": "ee909cf4e64597cf7359944f5ea1e40fb92829f3",
+        "modulusHypotheses": [
+          "every natural modulus q; no norm-to-modulus condition"
+        ]
+      }
+    ]
+  },
+  "searchPairs": [
+    {
+      "lower": "lower-144",
+      "upper": "upper-144"
+    },
+    {
+      "lower": "lower-146",
+      "upper": "upper-146"
+    },
+    {
+      "lower": "lower-148",
+      "upper": "upper-148"
+    },
+    {
+      "lower": "lower-150",
+      "upper": "upper-150"
+    },
+    {
+      "lower": "lower-151",
+      "upper": "upper-151"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "uniform-151",
+      "scope": "level",
+      "selections": {
+        "0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "1": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "2": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "3": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "4": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "5": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        }
+      }
+    },
+    {
+      "name": "heterogeneous-136",
+      "scope": "level",
+      "selections": {
+        "0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "1": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "2": {
+          "lower": "lower-148",
+          "upper": "upper-148"
+        },
+        "3": {
+          "lower": "lower-146",
+          "upper": "upper-146"
+        },
+        "4": {
+          "lower": "lower-146",
+          "upper": "upper-146"
+        },
+        "5": {
+          "lower": "lower-145",
+          "upper": "upper-145"
+        }
+      }
+    },
+    {
+      "name": "per-use-improved-136",
+      "scope": "use",
+      "selectionMethod": "Deterministic greedy improvement from uniform151. Choose the feasible ratio-decreasing swap with greatest exact relative path-product improvement per extra failure cost; a shared tail counts in every dependent path. Stops at a one-use local optimum within the listed frontier. No global optimality claim.",
+      "selections": {
+        "0:Z:0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "0:Z:1": {
+          "lower": "lower-147",
+          "upper": "upper-149"
+        },
+        "0:Z:2": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "0:E:0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "0:E:1": {
+          "lower": "lower-146",
+          "upper": "upper-148"
+        },
+        "0:E:2": {
+          "lower": "lower-144",
+          "upper": "upper-146"
+        },
+        "0:T:0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "0:T:1": {
+          "lower": "lower-150",
+          "upper": "upper-152"
+        },
+        "0:T:2": {
+          "lower": "lower-144",
+          "upper": "upper-146"
+        },
+        "0:ETjoin:3": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "1:Z:0": {
+          "lower": "lower-150",
+          "upper": "upper-152"
+        },
+        "1:Z:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "1:E:0": {
+          "lower": "lower-150",
+          "upper": "upper-152"
+        },
+        "1:E:1": {
+          "lower": "lower-145",
+          "upper": "upper-147"
+        },
+        "1:E:2": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "1:T:0": {
+          "lower": "lower-151",
+          "upper": "upper-151"
+        },
+        "1:T:1": {
+          "lower": "lower-146",
+          "upper": "upper-148"
+        },
+        "1:T:2": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "1:ETjoin:3": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "2:Z:0": {
+          "lower": "lower-147",
+          "upper": "upper-149"
+        },
+        "2:Z:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "2:E:0": {
+          "lower": "lower-148",
+          "upper": "upper-150"
+        },
+        "2:E:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "2:T:0": {
+          "lower": "lower-150",
+          "upper": "upper-152"
+        },
+        "2:T:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "2:ETjoin:2": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "3:Z:0": {
+          "lower": "lower-146",
+          "upper": "upper-148"
+        },
+        "3:Z:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "3:E:0": {
+          "lower": "lower-146",
+          "upper": "upper-148"
+        },
+        "3:E:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "3:T:0": {
+          "lower": "lower-148",
+          "upper": "upper-150"
+        },
+        "3:T:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "3:ETjoin:2": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "4:Z:0": {
+          "lower": "lower-145",
+          "upper": "upper-147"
+        },
+        "4:Z:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "4:E:0": {
+          "lower": "lower-145",
+          "upper": "upper-147"
+        },
+        "4:E:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "4:T:0": {
+          "lower": "lower-147",
+          "upper": "upper-149"
+        },
+        "4:T:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "4:ETjoin:2": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        },
+        "5:Z:0": {
+          "lower": "lower-145",
+          "upper": "upper-147"
+        },
+        "5:Z:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "5:E:0": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "5:T:0": {
+          "lower": "lower-146",
+          "upper": "upper-148"
+        },
+        "5:T:1": {
+          "lower": "lower-145",
+          "upper": "upper-146"
+        },
+        "5:ETjoin:2": {
+          "lower": "lower-144",
+          "upper": "upper-145"
+        }
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "baseline": "uniform-151",
+      "candidate": "heterogeneous-136"
+    },
+    {
+      "baseline": "uniform-151",
+      "candidate": "per-use-improved-136"
+    }
+  ],
+  "endpointEvidenceStatus": "kernel-checked"
+}
