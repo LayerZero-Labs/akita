@@ -1,14 +1,14 @@
 //! Euclidean-norm SIS lattice cost.
 
 use num_bigint::BigUint;
-use num_traits::One;
+use num_traits::FromPrimitive;
 
 use crate::{
     config::{EstimateConfig, ReductionCostModel},
     cost::{CostValue, EstimateTag, LatticeCost},
     error::{EstimatorError, Result},
     math::log2_biguint,
-    params::SisParameters,
+    params::{Bound, SisParameters},
     reduction::{adps16_log2_cost, beta as beta_from_delta, delta, validate_euclidean_reduction},
 };
 
@@ -18,7 +18,7 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
     if length_bound_trivially_easy(params) {
         return Err(EstimatorError::InvalidParameter {
             field: "length_bound",
-            reason: "SIS trivially easy: length_bound must be below (q - 1) / 2".to_string(),
+            reason: "SIS trivially easy: Euclidean length_bound must be below q".to_string(),
         });
     }
 
@@ -99,8 +99,18 @@ fn opt_sis_dimension(params: &SisParameters, m: u64, log_q: f64) -> Result<u64> 
 }
 
 fn length_bound_trivially_easy(params: &SisParameters) -> bool {
-    let half_q_log2 = log2_biguint(&(params.q.clone() - BigUint::one())) - 1.0;
-    params.length_bound.log2() >= half_q_log2
+    // Standard Euclidean SIS has the unconditional solution q * e_i, whose
+    // length is q.  The centered-representative boundary (q - 1) / 2 is not a
+    // triviality threshold for this norm.
+    match &params.length_bound {
+        Bound::Integer(value) => value >= &params.q,
+        Bound::Float(value) => BigUint::from_f64(*value).is_some_and(|value| value >= params.q),
+        Bound::Rational {
+            numerator,
+            denominator,
+        } => numerator >= &(&params.q * denominator),
+        Bound::SqrtInteger(radicand) => radicand >= &(&params.q * &params.q),
+    }
 }
 
 fn length_bound_exceeds_euclidean_lower_bound(params: &SisParameters, d: u64, log_q: f64) -> bool {
@@ -194,5 +204,44 @@ mod tests {
             cost.rop,
             CostValue::finite_log2(adps16_log2_cost(beta, Adps16Mode::Quantum))
         );
+    }
+
+    #[test]
+    fn euclidean_triviality_boundary_is_q() {
+        let q = akita_q32();
+        let params = |length_bound| {
+            SisParameters::try_new(32, q.clone(), Some(128), length_bound, SisNorm::Euclidean)
+                .unwrap()
+        };
+
+        assert!(!length_bound_trivially_easy(&params(Bound::Integer(
+            &q - BigUint::from(1u8)
+        ))));
+        assert!(length_bound_trivially_easy(&params(Bound::Integer(
+            q.clone()
+        ))));
+
+        assert!(!length_bound_trivially_easy(&params(Bound::Rational {
+            numerator: &q * BigUint::from(2u8) - BigUint::from(1u8),
+            denominator: BigUint::from(2u8),
+        })));
+        assert!(length_bound_trivially_easy(&params(Bound::Rational {
+            numerator: &q * BigUint::from(2u8),
+            denominator: BigUint::from(2u8),
+        })));
+
+        assert!(!length_bound_trivially_easy(&params(Bound::SqrtInteger(
+            &q * &q - BigUint::from(1u8)
+        ))));
+        assert!(length_bound_trivially_easy(&params(Bound::SqrtInteger(
+            &q * &q
+        ))));
+
+        assert!(!length_bound_trivially_easy(&params(Bound::Float(
+            3_000_000_000.0
+        ))));
+        assert!(length_bound_trivially_easy(&params(Bound::Float(
+            4_294_967_197.0
+        ))));
     }
 }
