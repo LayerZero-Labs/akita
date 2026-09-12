@@ -6,7 +6,7 @@ use akita_algebra::{
     EqPolynomial,
 };
 use akita_challenges::expand_balanced_ternary_matrix;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use criterion::BatchSize;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
@@ -98,7 +98,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                 })
             },
         );
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         group.bench_with_input(
             BenchmarkId::new("project_i32_direct_packed", cols),
             &input_i32,
@@ -111,22 +111,22 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i32_hot_dense", cols),
+            BenchmarkId::new("project_i32_hot_cached", cols),
             &input_i32,
             |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i8_hot_dense", cols),
+            BenchmarkId::new("project_i8_hot_cached", cols),
             &input_i8,
             |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i16_hot_dense", cols),
+            BenchmarkId::new("project_i16_hot_cached", cols),
             &input_i16,
             |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i64_hot_dense", cols),
+            BenchmarkId::new("project_i64_hot_cached", cols),
             &input_i64,
             |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
         );
@@ -145,15 +145,15 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
             ));
             assert_eq!(matrix.project_blocks(&block_input).unwrap(), block_expected);
             group.bench_with_input(
-                BenchmarkId::new(format!("project_i32_hot_dense_{blocks}blocks"), cols),
+                BenchmarkId::new(format!("project_i32_hot_cached_{blocks}blocks"), cols),
                 &block_input,
                 |bencher, input| {
                     bencher.iter(|| hot_dense_matrix.project_blocks(black_box(input)).unwrap())
                 },
             );
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
             group.bench_with_input(
-                BenchmarkId::new(format!("project_i32_cold_packed_{blocks}blocks"), cols),
+                BenchmarkId::new(format!("project_i32_cold_{blocks}blocks"), cols),
                 &block_input,
                 |bencher, input| {
                     bencher.iter_batched_ref(

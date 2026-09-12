@@ -104,6 +104,42 @@ shape with fewer ring rows may expose less parallel work. The generated planner
 therefore chooses dimensions from measured and certified candidates instead of
 always choosing the largest ring.
 
+## Measure ternary JL kernels
+
+The `ternary_jl` target separates AES matrix expansion, integer projection,
+matrix multilinear evaluation, equality-table construction, and column weights.
+Run a bounded width sweep with a fixed Rayon pool:
+
+```bash
+RAYON_NUM_THREADS=1 AKITA_JL_BENCH_LOG_WIDTHS=12,14,16 \
+  cargo bench -p akita-challenges --bench ternary_jl
+```
+
+Repeat with the worker count used by your application. The matrix has 256
+rows; each configured width is the base-two logarithm of its column count.
+
+Projection labels distinguish three costs:
+
+- `expand_project_i32_cold` includes AES expansion and the first projection.
+- `project_i32_direct_packed` excludes cloning and measures a projection with
+  an empty lazy compute cache on AArch64 and x86-64.
+- `hot_cached` labels prewarm the compute cache before timing repeated calls.
+  The dispatcher can still choose a packed kernel; these labels do not force
+  dense arithmetic.
+
+Here, *cold* describes the lazy matrix cache, not cold processor caches or DRAM.
+Matrix-evaluation `cached_eq` cases exclude equality-table construction;
+`with_eq_tables` cases include it. Keep those results separate.
+
+On x86-64, test-only microbenchmarks can call each supported instruction-set
+backend directly. A native build on an AVX-512 host does not, by itself,
+measure the AVX2 path. Record the CPU, compiler version, source revision,
+thread count, and selected backend with each result. Run timings without
+competing builds or benchmarks.
+
+These JL primitives are foundation measurements, not measurements of a
+production digit-range-check replacement.
+
 ## Return to the complete proof
 
 Criterion throughput counts `rank * width * D` coefficient products. The
