@@ -259,6 +259,29 @@ fn cold_packed_i32_handles_extreme_inputs_without_narrow_lut_overflow() {
     assert!(matrix.dense.get().is_none());
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+#[test]
+fn cold_packed_parallel_row_chunks_match_exact_sum() {
+    // This shape crosses the packed row-parallel threshold. Every entry is
+    // +1, so the independent reference needs only one exact input sum.
+    let shape = TernaryProjectionShape::new(256, 1 << 18).unwrap();
+    let matrix = TernaryProjectionMatrix::from_rademacher_bitplanes(
+        shape,
+        vec![0xff; shape.plane_len()],
+        vec![0xff; shape.plane_len()],
+    )
+    .unwrap();
+    let input: Vec<i32> = (0..shape.cols())
+        .map(|col| if col % 2 == 0 { i32::MAX } else { i32::MIN })
+        .collect();
+    let expected: i64 = input.iter().map(|&value| i64::from(value)).sum();
+    assert_eq!(
+        matrix.project(&input).unwrap(),
+        vec![expected; shape.rows()]
+    );
+    assert!(matrix.dense.get().is_none());
+}
+
 #[test]
 fn integer_and_field_projection_match_dense_reference() {
     let matrix = fixture();
