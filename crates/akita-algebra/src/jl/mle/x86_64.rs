@@ -175,7 +175,7 @@ mod tests {
 
     fn assert_forced_kernel(
         pairs: usize,
-        kernel: unsafe fn(&[u8], &[u8], &mut [F], &[F; 81]) -> usize,
+        kernel: RowKernel<F>,
     ) {
         let table = lut();
         for block in (0..=u16::MAX as usize).step_by(pairs) {
@@ -205,7 +205,7 @@ mod tests {
     }
 
     fn assert_field_contraction<G: Field + std::fmt::Debug>(
-        kernel: unsafe fn(&[u8], &[u8], &mut [G], &[G; 81]) -> usize,
+        kernel: RowKernel<G>,
     ) {
         // Multiple vectors in both backends, two residual pairs, and an odd row.
         const ROWS: usize = 261;
@@ -416,7 +416,7 @@ mod tests {
         iterations: usize,
         matrix: &crate::jl::TernaryProjectionMatrix,
         col_weights: &[G],
-        kernel: Option<unsafe fn(&[u8], &[u8], &mut [G], &[G; 81]) -> usize>,
+        kernel: Option<RowKernel<G>>,
     ) -> std::time::Duration {
         let mut rows = vec![G::zero(); matrix.shape().rows()];
         let start = Instant::now();
@@ -432,7 +432,7 @@ mod tests {
         matrix: &crate::jl::TernaryProjectionMatrix,
         col_weights: &[G],
         row_acc: &mut [G],
-        kernel: Option<unsafe fn(&[u8], &[u8], &mut [G], &[G; 81]) -> usize>,
+        kernel: Option<RowKernel<G>>,
     ) {
         let shape = matrix.shape();
         for group in 0..shape.col_groups() {
@@ -471,7 +471,7 @@ mod tests {
         first: &[u8],
         second: &[u8],
         table: &[F; TERNARY4_PATTERN_COUNT],
-        kernel: unsafe fn(&[u8], &[u8], &mut [F], &[F; 81]) -> usize,
+        kernel: RowKernel<F>,
     ) -> std::time::Duration {
         let start = Instant::now();
         let mut rows = vec![F::zero(); 2 * first.len()];
