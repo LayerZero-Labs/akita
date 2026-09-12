@@ -6,7 +6,9 @@ use akita_algebra::{
     EqPolynomial,
 };
 use akita_challenges::expand_balanced_ternary_matrix;
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+#[cfg(target_arch = "aarch64")]
+use criterion::BatchSize;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use std::hint::black_box;
 
@@ -95,6 +97,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                 })
             },
         );
+        #[cfg(target_arch = "aarch64")]
         group.bench_with_input(
             BenchmarkId::new("project_i32_direct_packed", cols),
             &input_i32,
@@ -102,7 +105,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                 bencher.iter_batched(
                     || matrix.clone(),
                     |matrix| matrix.project(black_box(input)).unwrap(),
-                    BatchSize::SmallInput,
+                    BatchSize::PerIteration,
                 )
             },
         );
@@ -147,6 +150,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                     bencher.iter(|| hot_dense_matrix.project_blocks(black_box(input)).unwrap())
                 },
             );
+            #[cfg(target_arch = "aarch64")]
             group.bench_with_input(
                 BenchmarkId::new(format!("project_i32_cold_packed_{blocks}blocks"), cols),
                 &block_input,
@@ -154,10 +158,11 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                     bencher.iter_batched(
                         || matrix.clone(),
                         |matrix| matrix.project_blocks(black_box(input)).unwrap(),
-                        BatchSize::SmallInput,
+                        BatchSize::PerIteration,
                     )
                 },
             );
+            #[cfg(target_arch = "aarch64")]
             group.bench_with_input(
                 BenchmarkId::new(format!("project_i32_cold_dense_{blocks}blocks"), cols),
                 &block_input,
@@ -169,7 +174,7 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
                             matrix
                         },
                         |matrix| matrix.project_blocks(black_box(input)).unwrap(),
-                        BatchSize::SmallInput,
+                        BatchSize::PerIteration,
                     )
                 },
             );
