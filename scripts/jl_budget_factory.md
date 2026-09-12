@@ -20,6 +20,22 @@ python3 scripts/jl_budget_factory.py search \
   scripts/jl_budget_planning_example.json --budget-bits 132
 ```
 
+Improve a named level scenario into an independently selected per-use plan:
+
+```bash
+python3 scripts/jl_budget_factory.py improve \
+  scripts/jl_budget_certified_frontier_example.json \
+  --scenario uniform-151 --max-iterations 1000
+```
+
+`improve` evaluates the full compatible lower/upper cross-product, removes
+locally dominated `(failure, U/L)` pairs, and greedily applies exact one-use
+ratio improvements while preserving the budget. Free improvements precede
+positive-cost moves; positive-cost moves maximize the exact path-multiplicity
+gain per added failure cost with deterministic ties. The result is only a
+one-use local stop, never a global-optimality claim. Hitting the explicit
+iteration limit is an error rather than a partial success.
+
 The JSON output preserves all probabilities and distortion products as exact
 `numerator`/`denominator` pairs. A search rejects an unexpectedly large product
 instead of silently sampling it; narrow `searchPairs` or explicitly raise
@@ -37,6 +53,10 @@ sum_level candidates_level
   * sum_use blocks_use * (delta_lower_use + delta_upper_use)
   <= failureBudget.
 ```
+
+The current planner models one fixed forest, so every endpoint in a registry
+must use the same row law and row count. Tail-specific modulus hypotheses remain
+independent and are reported for every selected lower/upper pair.
 
 Matrix-envelope sharing is audited separately from this ledger. The example
 has 46 logical use rows sharing 20 `(fold, depth)` envelopes, but all 5,548

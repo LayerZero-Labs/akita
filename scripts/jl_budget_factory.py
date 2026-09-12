@@ -275,6 +275,14 @@ def load_plan(path: pathlib.Path) -> dict[str, Any]:
         raise PlanError("planningStatus must be certified or untrusted-exploration")
     lower = _load_endpoints(raw, "lower")
     upper = _load_endpoints(raw, "upper")
+    forest_signatures = {
+        (endpoint["rowLaw"], endpoint["rows"])
+        for endpoint in (*lower.values(), *upper.values())
+    }
+    if len(forest_signatures) != 1:
+        raise PlanError(
+            "fixed-forest planning requires one rowLaw/rows pair across the frontier"
+        )
     cap_names = [entry["capName"] for entry in (*lower.values(), *upper.values())]
     if len(cap_names) != len(set(cap_names)):
         raise PlanError("every lower and upper failure cap must have an independent name")
@@ -615,6 +623,241 @@ def _dominates(left: tuple[Fraction, ...], right: tuple[Fraction, ...]) -> bool:
     )
 
 
+def _locally_nondominated_pairs(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return deterministic (failure cost, U/L) Pareto pairs from the full cross-product."""
+    candidates: list[dict[str, Any]] = []
+    for lower_id in sorted(plan["lower"]):
+        for upper_id in sorted(plan["upper"]):
+            selection = {"lower": lower_id, "upper": upper_id}
+            try:
+                lower, upper = _pair(plan, selection, "endpoint cross-product")
+            except PlanError:
+                continue
+            candidates.append(
+                {
+                    "selection": selection,
+                    "cost": lower["cap"] + upper["cap"],
+                    "ratio": upper["threshold"] / lower["threshold"],
+                }
+            )
+    if not candidates:
+        raise PlanError("lower/upper endpoint cross-product has no compatible pair")
+
+    frontier: list[dict[str, Any]] = []
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (
+            item["cost"],
+            item["ratio"],
+            item["selection"]["lower"],
+            item["selection"]["upper"],
+        ),
+    ):
+        metrics = (candidate["cost"], candidate["ratio"])
+        if any(
+            (existing["cost"], existing["ratio"]) == metrics
+            or _dominates((existing["cost"], existing["ratio"]), metrics)
+            for existing in frontier
+        ):
+            continue
+        frontier = [
+            existing
+            for existing in frontier
+            if not _dominates(metrics, (existing["cost"], existing["ratio"]))
+        ]
+        frontier.append(candidate)
+    return sorted(
+        frontier,
+        key=lambda item: (
+            item["cost"],
+            item["ratio"],
+            item["selection"]["lower"],
+            item["selection"]["upper"],
+        ),
+    )
+
+
+def _scenario_by_name(plan: dict[str, Any], name: str) -> dict[str, Any]:
+    scenarios = plan["raw"].get("scenarios", [])
+    if not isinstance(scenarios, list):
+        raise PlanError("scenarios must be a list")
+    matches = [
+        scenario
+        for scenario in scenarios
+        if isinstance(scenario, dict) and scenario.get("name") == name
+    ]
+    if len(matches) != 1:
+        raise PlanError(f"expected exactly one scenario named {name!r}")
+    return matches[0]
+
+
+def _expanded_use_selections(
+    plan: dict[str, Any], scenario: dict[str, Any]
+) -> dict[str, dict[str, str]]:
+    # Validate every seed selection before using it as greedy state.
+    audit_scenario(plan, scenario)
+    selections = scenario["selections"]
+    if scenario["scope"] == "use":
+        return {use["id"]: dict(selections[use["id"]]) for use in plan["uses"]}
+    return {
+        use["id"]: dict(selections[str(use["level"])]) for use in plan["uses"]
+    }
+
+
+def _best_one_use_improvement(
+    plan: dict[str, Any],
+    selections: dict[str, dict[str, str]],
+    local_pairs: list[dict[str, Any]],
+    total: Fraction,
+    budget: Fraction,
+    path_multiplicity: dict[str, int],
+) -> dict[str, Any] | None:
+    free: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    paid: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    for use in plan["uses"]:
+        use_id = use["id"]
+        lower, upper = _pair(plan, selections[use_id], f"greedy selection {use_id!r}")
+        old_cost = lower["cap"] + upper["cap"]
+        old_ratio = upper["threshold"] / lower["threshold"]
+        weight = plan["candidates"][str(use["level"])] * use["blocks"]
+        multiplicity = path_multiplicity[use_id]
+        for pair in local_pairs:
+            if pair["ratio"] >= old_ratio:
+                continue
+            extra = weight * (pair["cost"] - old_cost)
+            if total + extra > budget:
+                continue
+            gain = (old_ratio / pair["ratio"]) ** multiplicity - 1
+            move = {
+                "use": use_id,
+                "selection": pair["selection"],
+                "extra": extra,
+                "gain": gain,
+                "newCost": pair["cost"],
+            }
+            ids = (
+                use_id,
+                pair["selection"]["lower"],
+                pair["selection"]["upper"],
+            )
+            if extra <= 0:
+                free.append(((-gain, pair["cost"], *ids), move))
+            else:
+                score = gain / extra
+                move["score"] = score
+                paid.append(((-score, -gain, extra, *ids), move))
+    choices = free if free else paid
+    return min(choices, key=lambda item: item[0])[1] if choices else None
+
+
+def improve_report(
+    plan: dict[str, Any],
+    scenario_name: str,
+    budget: Fraction,
+    max_iterations: int,
+) -> dict[str, Any]:
+    """Greedily improve one logical use at a time under an exact budget."""
+    if max_iterations <= 0:
+        raise PlanError("--max-iterations must be positive")
+    seed = _scenario_by_name(plan, scenario_name)
+    selections = _expanded_use_selections(plan, seed)
+    baseline_scenario = {
+        "name": f"{scenario_name}-baseline",
+        "scope": "use",
+        "selections": {key: dict(value) for key, value in selections.items()},
+    }
+    baseline = audit_scenario(plan, baseline_scenario, budget)
+    if not baseline["budgetSatisfied"]:
+        raise PlanError(f"seed scenario {scenario_name!r} exceeds the improvement budget")
+
+    local_pairs = _locally_nondominated_pairs(plan)
+    path_multiplicity = {
+        use["id"]: sum(index in path["uses"] for path in plan["paths"])
+        for index, use in enumerate(plan["uses"])
+    }
+    if any(value <= 0 for value in path_multiplicity.values()):
+        raise PlanError("every logical use must belong to at least one dependency path")
+    total = _rational(baseline["failureCost"], "baseline.failureCost")
+    iterations = 0
+    while iterations < max_iterations:
+        move = _best_one_use_improvement(
+            plan,
+            selections,
+            local_pairs,
+            total,
+            budget,
+            path_multiplicity,
+        )
+        if move is None:
+            break
+        selections[move["use"]] = dict(move["selection"])
+        total += move["extra"]
+        iterations += 1
+    else:
+        if (
+            _best_one_use_improvement(
+                plan,
+                selections,
+                local_pairs,
+                total,
+                budget,
+                path_multiplicity,
+            )
+            is not None
+        ):
+            raise PlanError(
+                f"greedy improvement exceeded --max-iterations {max_iterations}"
+            )
+
+    improved = audit_scenario(
+        plan,
+        {
+            "name": f"{scenario_name}-improved",
+            "scope": "use",
+            "selections": selections,
+        },
+        budget,
+    )
+    audited_total = _rational(improved["failureCost"], "improved.failureCost")
+    if audited_total != total:
+        raise PlanError("internal error: incremental and audited failure costs disagree")
+    path_nonincreasing = all(
+        _rational(improved["pathDistortion"][path], f"improved.pathDistortion.{path}")
+        <= _rational(value, f"baseline.pathDistortion.{path}")
+        for path, value in baseline["pathDistortion"].items()
+    )
+    locally_stopped = (
+        _best_one_use_improvement(
+            plan,
+            selections,
+            local_pairs,
+            total,
+            budget,
+            path_multiplicity,
+        )
+        is None
+    )
+    return {
+        "schema": "akita-jl-budget-improvement-v1",
+        "planningStatus": plan["planningStatus"],
+        "productionWarning": (
+            "UNTRUSTED EXPLORATION: greedy results are not certified protocol parameters"
+            if plan["planningStatus"] != "certified"
+            else None
+        ),
+        "seedScenario": scenario_name,
+        "failureBudget": _fraction_json(budget),
+        "localPairCount": len(local_pairs),
+        "iterationCount": iterations,
+        "maxIterations": max_iterations,
+        "allPathRatiosNonincreasing": path_nonincreasing,
+        "oneUseLocalStop": locally_stopped,
+        "globalOptimalityClaim": False,
+        "baseline": baseline,
+        "improved": improved,
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -626,6 +869,13 @@ def _parser() -> argparse.ArgumentParser:
     search.add_argument("--budget-bits", type=int)
     search.add_argument("--max-combinations", type=int, default=2_000_000)
     search.add_argument("--max-results", type=int, default=100)
+    improve = subparsers.add_parser(
+        "improve", help="exact greedy per-use improvement from a named scenario"
+    )
+    improve.add_argument("plan", type=pathlib.Path)
+    improve.add_argument("--scenario", default="uniform-151")
+    improve.add_argument("--budget-bits", type=int)
+    improve.add_argument("--max-iterations", type=int, default=10_000)
     return parser
 
 
@@ -635,7 +885,7 @@ def main(argv: list[str] | None = None) -> int:
         plan = load_plan(args.plan)
         if args.command == "audit":
             report = audit_report(plan)
-        else:
+        elif args.command == "search":
             if args.max_combinations <= 0 or args.max_results <= 0:
                 raise PlanError("search limits must be positive")
             if args.budget_bits is None:
@@ -646,6 +896,16 @@ def main(argv: list[str] | None = None) -> int:
                 budget = Fraction(1, 1 << args.budget_bits)
             report = search_report(
                 plan, args.scope, budget, args.max_combinations, args.max_results
+            )
+        else:
+            if args.budget_bits is None:
+                budget = plan["budget"]
+            elif args.budget_bits < 0:
+                raise PlanError("--budget-bits must be non-negative")
+            else:
+                budget = Fraction(1, 1 << args.budget_bits)
+            report = improve_report(
+                plan, args.scenario, budget, args.max_iterations
             )
     except PlanError as error:
         print(f"error: {error}", file=sys.stderr)

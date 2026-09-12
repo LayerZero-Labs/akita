@@ -68,6 +68,40 @@ def minimal_plan():
     }
 
 
+def improvement_plan(two_uses=False):
+    raw = minimal_plan()
+    raw["failureBudget"] = {"numerator": 3, "denominator": 8}
+    raw["frontier"] = {
+        "lower": [
+            endpoint("lower", "l-loose", 2, {"dyadicExponent": 4}),
+            endpoint("lower", "l-tight", 3, {"dyadicExponent": 3}),
+        ],
+        "upper": [
+            endpoint("upper", "u-loose", 8, {"dyadicExponent": 4}),
+            endpoint("upper", "u-tight", 6, {"dyadicExponent": 3}),
+        ],
+    }
+    raw["scenarios"] = [
+        {
+            "name": "seed",
+            "scope": "level",
+            "selections": {"0": {"lower": "l-loose", "upper": "u-loose"}},
+        }
+    ]
+    if two_uses:
+        family = raw["folds"][0]["useFamilies"][0]
+        family["blocks"] = [1, 1]
+        family["depths"] = [0, 1]
+        family["matrixEnvelopes"] = ["f0-d0", "f0-d1"]
+        raw["expectedCensus"] = {
+            "chargedBlocks": 2,
+            "rawMatrixEnvelopes": 2,
+            "distinctMatrixEnvelopes": 2,
+        }
+        raw["failureBudget"] = {"numerator": 1, "denominator": 1}
+    return raw
+
+
 class JlBudgetFactoryTests(unittest.TestCase):
     def load_dict(self, value):
         with tempfile.TemporaryDirectory() as temporary:
@@ -172,10 +206,54 @@ class JlBudgetFactoryTests(unittest.TestCase):
         self.assertEqual(report["objective"], ["failureCost", "pathDistortion[*]"])
         self.assertFalse(report["optimalityClaimAboutUniformBits"])
 
+    def test_improve_respects_budget_paths_and_one_use_local_stop(self):
+        plan = self.load_dict(improvement_plan(two_uses=True))
+        report = factory.improve_report(plan, "seed", plan["budget"], 20)
+        self.assertTrue(report["improved"]["budgetSatisfied"])
+        self.assertLessEqual(
+            factory._rational(report["improved"]["failureCost"], "failureCost"),
+            plan["budget"],
+        )
+        self.assertTrue(report["allPathRatiosNonincreasing"])
+        for path, baseline in report["baseline"]["pathDistortion"].items():
+            self.assertLessEqual(
+                factory._rational(report["improved"]["pathDistortion"][path], "improved"),
+                factory._rational(baseline, "baseline"),
+            )
+        self.assertTrue(report["oneUseLocalStop"])
+        self.assertFalse(report["globalOptimalityClaim"])
+
+    def test_improve_uses_asymmetric_tail_pair_when_exact_budget_requires_it(self):
+        plan = self.load_dict(improvement_plan())
+        report = factory.improve_report(plan, "seed", plan["budget"], 20)
+        selected = report["improved"]["selections"]["0:Z:0"]
+        self.assertEqual(selected, {"lower": "l-tight", "upper": "u-loose"})
+        self.assertEqual(
+            report["improved"]["budgetUtilization"],
+            {"numerator": "1", "denominator": "1"},
+        )
+
+    def test_improve_iteration_limit_fails_instead_of_returning_partial_result(self):
+        plan = self.load_dict(improvement_plan(two_uses=True))
+        with self.assertRaisesRegex(factory.PlanError, "exceeded --max-iterations 1"):
+            factory.improve_report(plan, "seed", plan["budget"], 1)
+
+    def test_improve_is_deterministic(self):
+        plan = self.load_dict(improvement_plan(two_uses=True))
+        first = factory.improve_report(plan, "seed", plan["budget"], 20)
+        second = factory.improve_report(plan, "seed", plan["budget"], 20)
+        self.assertEqual(first, second)
+
     def test_malformed_frontier_root_is_rejected(self):
         raw = minimal_plan()
         raw["frontier"] = []
         with self.assertRaisesRegex(factory.PlanError, "frontier must be an object"):
+            self.load_dict(raw)
+
+    def test_fixed_forest_rejects_mixed_row_registries(self):
+        raw = minimal_plan()
+        raw["frontier"]["upper"][0]["rows"] = 16
+        with self.assertRaisesRegex(factory.PlanError, "one rowLaw/rows pair"):
             self.load_dict(raw)
 
     def test_float_threshold_is_rejected(self):
