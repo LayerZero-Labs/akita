@@ -12,7 +12,7 @@ mod projection;
 mod tests;
 
 use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, Field};
 #[cfg(target_arch = "aarch64")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{mem, sync::OnceLock};
@@ -555,6 +555,263 @@ pub fn squared_l2_i128(values: &[i128]) -> Result<u128, AkitaError> {
         sum.checked_add(square)
             .ok_or_else(|| AkitaError::InvalidInput("integer squared-norm sum overflow".into()))
     })
+}
+
+/// Recover the odd base-field modulus as a checked `u128`.
+pub fn base_field_modulus<F: Field + CanonicalEncoding>() -> Result<u128, AkitaError> {
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .and_then(|minus_one| minus_one.checked_add(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("JL base-field modulus does not fit u128".into())
+        })?;
+    if modulus <= 2 || modulus & 1 == 0 {
+        return Err(AkitaError::InvalidInput(
+            "JL base-field modulus must be an odd integer greater than two".into(),
+        ));
+    }
+    Ok(modulus)
+}
+
+/// Reject a signed coordinate outside the base field's unique centered window.
+pub fn validate_centered_i128<F: Field + CanonicalEncoding>(value: i128) -> Result<(), AkitaError> {
+    let half_modulus = base_field_modulus::<F>()? / 2;
+    validate_centered_with_half_modulus(value, half_modulus)
+}
+
+/// Convert one base-field value to its unique centered signed representative.
+pub fn centered_i128_from_field<F: Field + CanonicalEncoding>(
+    value: F,
+) -> Result<i128, AkitaError> {
+    let modulus = base_field_modulus::<F>()?;
+    centered_i128_from_field_with_modulus(value, modulus)
+}
+
+fn validate_centered_with_half_modulus(value: i128, half_modulus: u128) -> Result<(), AkitaError> {
+    if value.unsigned_abs() > half_modulus {
+        return Err(AkitaError::InvalidInput(
+            "JL coordinate is outside the canonical centered field window".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn centered_i128_from_field_with_modulus<F: Field + CanonicalEncoding>(
+    value: F,
+    modulus: u128,
+) -> Result<i128, AkitaError> {
+    let residue = value.to_u128_checked().ok_or_else(|| {
+        AkitaError::InvalidInput("JL projected value is not a base-field scalar".into())
+    })?;
+    centered_i128_from_residue(residue, modulus)
+}
+
+fn centered_i128_from_residue(residue: u128, modulus: u128) -> Result<i128, AkitaError> {
+    if residue >= modulus {
+        return Err(AkitaError::InvalidInput(
+            "JL canonical residue exceeds its modulus".into(),
+        ));
+    }
+    let magnitude = if residue <= modulus / 2 {
+        return i128::try_from(residue)
+            .map_err(|_| AkitaError::InvalidInput("JL centered coordinate overflow".into()));
+    } else {
+        modulus - residue
+    };
+    i128::try_from(magnitude)
+        .map(|centered| -centered)
+        .map_err(|_| AkitaError::InvalidInput("JL centered coordinate overflow".into()))
+}
+
+fn centered_i128_from_i64(value: i64, modulus: u128) -> Result<i128, AkitaError> {
+    let magnitude = u128::from(value.unsigned_abs());
+    if magnitude <= modulus / 2 {
+        return Ok(i128::from(value));
+    }
+    let reduced = magnitude % modulus;
+    let residue = if value >= 0 || reduced == 0 {
+        reduced
+    } else {
+        modulus - reduced
+    };
+    centered_i128_from_residue(residue, modulus)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CenteredProjectionKernel {
+    I8,
+    I16,
+    I32,
+    Field,
+}
+
+fn centered_projection_kernel(
+    input: &[i128],
+    cols: usize,
+    half_modulus: u128,
+) -> Result<CenteredProjectionKernel, AkitaError> {
+    let mut fits_i8 = true;
+    let mut fits_i16 = true;
+    let mut fits_i32 = true;
+    let mut outputs_fit_i64 = true;
+    for block in input.chunks_exact(cols) {
+        let mut l1 = 0u128;
+        for &coordinate in block {
+            validate_centered_with_half_modulus(coordinate, half_modulus)?;
+            fits_i8 &= i8::try_from(coordinate).is_ok();
+            fits_i16 &= i16::try_from(coordinate).is_ok();
+            fits_i32 &= i32::try_from(coordinate).is_ok();
+            if outputs_fit_i64 {
+                match l1.checked_add(coordinate.unsigned_abs()) {
+                    Some(next) if next <= i64::MAX as u128 => l1 = next,
+                    _ => outputs_fit_i64 = false,
+                }
+            }
+        }
+    }
+    Ok(if !outputs_fit_i64 {
+        CenteredProjectionKernel::Field
+    } else if fits_i8 {
+        CenteredProjectionKernel::I8
+    } else if fits_i16 {
+        CenteredProjectionKernel::I16
+    } else if fits_i32 {
+        CenteredProjectionKernel::I32
+    } else {
+        CenteredProjectionKernel::Field
+    })
+}
+
+impl TernaryProjectionMatrix {
+    /// Apply `I_blocks tensor self` modulo the base field and center every output.
+    ///
+    /// Inputs must already use the unique centered representation. Reducing and
+    /// centering after each layer prevents raw-integer aliases and intermediate
+    /// overflow from changing the iterated projection semantics.
+    pub fn project_centered_i128_blocks<F: Field + CanonicalEncoding>(
+        &self,
+        input: &[i128],
+    ) -> Result<Vec<i128>, AkitaError> {
+        if input.is_empty() || !input.len().is_multiple_of(self.shape.cols()) {
+            return Err(AkitaError::InvalidSize {
+                expected: self.shape.cols(),
+                actual: input.len(),
+            });
+        }
+        let blocks = input.len() / self.shape.cols();
+        let output_len = checked::product([blocks, self.shape.rows()])
+            .ok_or_else(|| AkitaError::InvalidInput("JL projection output overflow".into()))?;
+        let modulus = base_field_modulus::<F>()?;
+        let half_modulus = modulus / 2;
+        let kernel = centered_projection_kernel(input, self.shape.cols(), half_modulus)?;
+        match kernel {
+            CenteredProjectionKernel::I8 => {
+                return self.project_centered_narrow_blocks::<i8>(input, output_len, modulus);
+            }
+            CenteredProjectionKernel::I16 => {
+                return self.project_centered_narrow_blocks::<i16>(input, output_len, modulus);
+            }
+            CenteredProjectionKernel::I32 => {
+                return self.project_centered_narrow_blocks::<i32>(input, output_len, modulus);
+            }
+            CenteredProjectionKernel::Field => {}
+        }
+
+        let mut field_input = try_zeroed_vec(input.len(), F::zero())?;
+        for (&coordinate, embedded) in input.iter().zip(&mut field_input) {
+            *embedded = F::from_i128(coordinate);
+        }
+        let projected = self.project_field_blocks(&field_input)?;
+        let mut centered = try_zeroed_vec(projected.len(), 0i128)?;
+        for (coordinate, output) in projected.into_iter().zip(&mut centered) {
+            *output = centered_i128_from_field_with_modulus(coordinate, modulus)?;
+        }
+        Ok(centered)
+    }
+
+    fn project_centered_narrow_blocks<T>(
+        &self,
+        input: &[i128],
+        output_len: usize,
+        modulus: u128,
+    ) -> Result<Vec<i128>, AkitaError>
+    where
+        T: ProjectionInput + Default + TryFrom<i128>,
+    {
+        let mut narrow = try_zeroed_vec(input.len(), T::default())?;
+        for (&coordinate, converted) in input.iter().zip(&mut narrow) {
+            *converted = T::try_from(coordinate).map_err(|_| {
+                AkitaError::InvalidInput("JL narrow projection selection is inconsistent".into())
+            })?;
+        }
+        let mut projected = try_zeroed_vec(output_len, 0i64)?;
+        projection::project_blocks(self, &narrow, &mut projected)?;
+        let mut centered = try_zeroed_vec(output_len, 0i128)?;
+        for (coordinate, output) in projected.into_iter().zip(&mut centered) {
+            *output = centered_i128_from_i64(coordinate, modulus)?;
+        }
+        Ok(centered)
+    }
+
+    /// Materialize the literal upper-left rectangular prefix of this matrix.
+    ///
+    /// This preserves two-dimensional prefix semantics even when the requested
+    /// row count is smaller than the envelope row count; truncating a flat
+    /// row-major representation would not.
+    pub fn upper_left_prefix(&self, rows: usize, cols: usize) -> Result<Self, AkitaError> {
+        if rows == 0 || cols == 0 || rows > self.shape.rows() || cols > self.shape.cols() {
+            return Err(AkitaError::InvalidInput(format!(
+                "ternary prefix {rows} by {cols} is outside envelope {} by {}",
+                self.shape.rows(),
+                self.shape.cols()
+            )));
+        }
+        let shape = TernaryProjectionShape::new(rows, cols)?;
+        let mut first = try_zeroed_vec(shape.plane_len(), 0u8)?;
+        let mut second = try_zeroed_vec(shape.plane_len(), 0u8)?;
+        copy_upper_left_plane_prefix(&self.first_signs, self.shape, &mut first, shape)?;
+        copy_upper_left_plane_prefix(&self.second_signs, self.shape, &mut second, shape)?;
+        Self::from_rademacher_bitplanes(shape, first, second)
+    }
+}
+
+fn copy_upper_left_plane_prefix(
+    source: &[u8],
+    source_shape: TernaryProjectionShape,
+    target: &mut [u8],
+    target_shape: TernaryProjectionShape,
+) -> Result<(), AkitaError> {
+    for (source_group, target_group) in source
+        .chunks_exact(source_shape.row_pairs())
+        .zip(target.chunks_exact_mut(target_shape.row_pairs()))
+    {
+        let prefix = source_group
+            .get(..target_shape.row_pairs())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "ternary matrix prefix row geometry is inconsistent".into(),
+                )
+            })?;
+        target_group.copy_from_slice(prefix);
+        if target_shape.rows() & 1 != 0 {
+            let final_pair = target_group.last_mut().ok_or_else(|| {
+                AkitaError::InvalidInput("ternary matrix prefix has no live row pair".into())
+            })?;
+            *final_pair &= 0x0f;
+        }
+    }
+    let live = target_shape.final_selector_live_mask();
+    let live_pair = live | (live << 4);
+    let final_group = target
+        .chunks_exact_mut(target_shape.row_pairs())
+        .last()
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("ternary matrix prefix has no column group".into())
+        })?;
+    for byte in final_group {
+        *byte &= live_pair;
+    }
+    Ok(())
 }
 
 pub(super) fn try_zeroed_vec<T: Clone>(len: usize, zero: T) -> Result<Vec<T>, AkitaError> {

@@ -31,6 +31,10 @@ harness = false
 name = "offset_eq_window"
 harness = false
 
+[[bench]]
+name = "jl_centered_projection"
+harness = false
+
 [features]
 default = []
 parallel = ["dep:rayon", "jolt-field/parallel"]

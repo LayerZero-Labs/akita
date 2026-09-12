@@ -1,7 +1,8 @@
 use super::*;
 use crate::EqPolynomial;
 use jolt_field::{
-    Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,
+    CanonicalEncoding, Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
+    Prime64Offset59, Ring, Zero,
 };
 
 type F = Fp64<4294967197>;
@@ -345,6 +346,186 @@ fn repeated_block_projection_reuses_the_same_matrix() {
     );
     assert!(matrix.project_i128_blocks(&[]).is_err());
     assert!(matrix.project_i128_blocks(&input[..9]).is_err());
+}
+
+#[test]
+fn rectangular_prefix_is_two_dimensional_upper_left_view() {
+    let envelope = fixture();
+    for rows in 1..=3 {
+        for cols in 1..=5 {
+            let prefix = envelope.upper_left_prefix(rows, cols).unwrap();
+            assert_eq!(
+                prefix.shape(),
+                TernaryProjectionShape::new(rows, cols).unwrap()
+            );
+            for row in 0..rows {
+                for col in 0..cols {
+                    assert_eq!(
+                        prefix.entry(row, col).unwrap(),
+                        envelope.entry(row, col).unwrap()
+                    );
+                }
+            }
+        }
+    }
+    assert!(envelope.upper_left_prefix(4, 4).is_err());
+    assert!(envelope.upper_left_prefix(2, 6).is_err());
+}
+
+fn check_centered_projection<G: Field + CanonicalEncoding + std::fmt::Debug>() {
+    let matrix = matrix_from_entries(&[vec![1, 1]]);
+    let modulus = base_field_modulus::<G>().unwrap();
+    let half = i128::try_from(modulus / 2).unwrap();
+    assert_eq!(
+        matrix
+            .project_centered_i128_blocks::<G>(&[half, half])
+            .unwrap(),
+        [-1]
+    );
+    assert!(validate_centered_i128::<G>(half + 1).is_err());
+    assert!(matrix
+        .project_centered_i128_blocks::<G>(&[half + 1, 0])
+        .is_err());
+}
+
+fn centered_projection_reference<G: Field + CanonicalEncoding>(
+    matrix: &TernaryProjectionMatrix,
+    input: &[i128],
+) -> Vec<i128> {
+    matrix
+        .project_field_blocks(&input.iter().copied().map(G::from_i128).collect::<Vec<_>>())
+        .unwrap()
+        .into_iter()
+        .map(|value| centered_i128_from_field(value).unwrap())
+        .collect()
+}
+
+fn check_centered_narrow_paths_for_field<G: Field + CanonicalEncoding + std::fmt::Debug>() {
+    let matrix = fixture();
+    for (kernel, input) in [
+        (
+            CenteredProjectionKernel::I8,
+            vec![127, -128, 31, -17, 0, -1, 1, 2, 3, 4],
+        ),
+        (
+            CenteredProjectionKernel::I16,
+            vec![128, -129, 32_767, -32_768, 7, 400, -500, 600, -700, 800],
+        ),
+        (
+            CenteredProjectionKernel::I32,
+            vec![
+                32_768, -32_769, 1_000_000, -2_000_000, 17, 99, -101, 103, -107, 109,
+            ],
+        ),
+    ] {
+        let half_modulus = base_field_modulus::<G>().unwrap() / 2;
+        assert_eq!(
+            centered_projection_kernel(&input, matrix.shape().cols(), half_modulus).unwrap(),
+            kernel
+        );
+        assert_eq!(
+            matrix.project_centered_i128_blocks::<G>(&input).unwrap(),
+            centered_projection_reference::<G>(&matrix, &input)
+        );
+    }
+}
+
+#[test]
+fn centered_projection_wraps_each_layer_for_all_base_fields() {
+    check_centered_projection::<Prime32Offset99>();
+    check_centered_projection::<Prime64Offset59>();
+    check_centered_projection::<Prime128OffsetA7F7>();
+}
+
+#[test]
+fn centered_projection_narrows_exactly_across_fields_and_blocks() {
+    check_centered_narrow_paths_for_field::<Prime32Offset99>();
+    check_centered_narrow_paths_for_field::<Prime64Offset59>();
+    check_centered_narrow_paths_for_field::<Prime128OffsetA7F7>();
+}
+
+#[test]
+fn centered_projection_handles_i32_edges_and_modular_wraparound() {
+    let matrix = matrix_from_entries(&[vec![1, 1, 1]]);
+    let modulus = base_field_modulus::<Prime32Offset99>().unwrap();
+    let half = i128::try_from(modulus / 2).unwrap();
+    let input = [half, half, half, -half, -half, -half];
+    assert_eq!(
+        centered_projection_kernel(&input, matrix.shape().cols(), modulus / 2).unwrap(),
+        CenteredProjectionKernel::I32
+    );
+    assert_eq!(
+        matrix
+            .project_centered_i128_blocks::<Prime32Offset99>(&input)
+            .unwrap(),
+        centered_projection_reference::<Prime32Offset99>(&matrix, &input)
+    );
+
+    let edge_matrix = fixture();
+    let edge_input = [i128::from(i32::MIN), i128::from(i32::MAX), -1, 0, 1];
+    let q64_half = base_field_modulus::<Prime64Offset59>().unwrap() / 2;
+    assert_eq!(
+        centered_projection_kernel(&edge_input, edge_matrix.shape().cols(), q64_half).unwrap(),
+        CenteredProjectionKernel::I32
+    );
+    assert_eq!(
+        edge_matrix
+            .project_centered_i128_blocks::<Prime64Offset59>(&edge_input)
+            .unwrap(),
+        centered_projection_reference::<Prime64Offset59>(&edge_matrix, &edge_input)
+    );
+}
+
+#[test]
+fn centered_projection_falls_back_for_wide_inputs_and_i64_overflow() {
+    let matrix = matrix_from_entries(&[vec![1, 1]]);
+    let wide = [i128::from(i32::MAX) + 1, -(i128::from(i32::MAX) + 2)];
+    let q64_half = base_field_modulus::<Prime64Offset59>().unwrap() / 2;
+    assert_eq!(
+        centered_projection_kernel(&wide, matrix.shape().cols(), q64_half).unwrap(),
+        CenteredProjectionKernel::Field
+    );
+    assert_eq!(
+        matrix
+            .project_centered_i128_blocks::<Prime64Offset59>(&wide)
+            .unwrap(),
+        centered_projection_reference::<Prime64Offset59>(&matrix, &wide)
+    );
+
+    let overflowing = [i128::from(i64::MAX), 1];
+    let q128_half = base_field_modulus::<Prime128OffsetA7F7>().unwrap() / 2;
+    assert_eq!(
+        centered_projection_kernel(&overflowing, matrix.shape().cols(), q128_half).unwrap(),
+        CenteredProjectionKernel::Field
+    );
+    assert_eq!(
+        matrix
+            .project_centered_i128_blocks::<Prime128OffsetA7F7>(&overflowing)
+            .unwrap(),
+        centered_projection_reference::<Prime128OffsetA7F7>(&matrix, &overflowing)
+    );
+}
+
+#[test]
+fn centered_projection_validates_every_input_before_projection() {
+    let matrix = fixture();
+    let half = i128::try_from(base_field_modulus::<Prime32Offset99>().unwrap() / 2).unwrap();
+    let input = [1, 2, 3, 4, 5, 6, 7, 8, 9, half + 1];
+    assert!(matrix.dense.get().is_none());
+    assert!(matrix
+        .project_centered_i128_blocks::<Prime32Offset99>(&input)
+        .is_err());
+    assert!(matrix.dense.get().is_none());
+}
+
+#[test]
+fn centered_validation_rejects_modulus_aliases() {
+    let q32 = i128::try_from(base_field_modulus::<Prime32Offset99>().unwrap()).unwrap();
+    assert!(validate_centered_i128::<Prime32Offset99>(q32).is_err());
+    assert!(validate_centered_i128::<Prime32Offset99>(-q32).is_err());
+    let q64 = i128::try_from(base_field_modulus::<Prime64Offset59>().unwrap()).unwrap();
+    assert!(validate_centered_i128::<Prime64Offset59>(q64).is_err());
+    assert!(validate_centered_i128::<Prime64Offset59>(-q64).is_err());
 }
 
 #[test]
