@@ -8,6 +8,24 @@ use jolt_field::Field;
 const TERNARY4_PATTERN_COUNT: usize = 81;
 const SELECTORS_TO_TERNARY4: [u8; 256] = selectors_to_ternary4();
 
+// M4 Max measurements show that Rayon starts winning at 4K columns. At that
+// boundary smaller panels expose enough work to all host threads; larger
+// inputs use coarser panels to amortize scheduling, scratch, and reduction.
+#[cfg(feature = "parallel")]
+const PARALLEL_COLUMN_WEIGHT_MIN_COLS: usize = 1 << 12;
+#[cfg(feature = "parallel")]
+const SMALL_COLUMN_WEIGHT_PANEL_COLS: usize = 1 << 8;
+#[cfg(feature = "parallel")]
+const LARGE_COLUMN_WEIGHT_PANEL_COLS: usize = 1 << 10;
+#[cfg(feature = "parallel")]
+const PARALLEL_CONTRACTION_MIN_COLS: usize = 1 << 12;
+#[cfg(feature = "parallel")]
+const SMALL_CONTRACTION_PANEL_GROUPS: usize = 64;
+#[cfg(feature = "parallel")]
+const LARGE_CONTRACTION_PANEL_GROUPS: usize = 256;
+#[cfg(feature = "parallel")]
+const LARGE_PANEL_MIN_COLS: usize = 1 << 14;
+
 const fn selectors_to_ternary4() -> [u8; 256] {
     let mut table = [0u8; 256];
     let mut selectors = 0usize;
@@ -52,8 +70,57 @@ pub(super) fn contract_columns_to_rows<F: Field>(
         });
     }
 
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && shape.cols() >= PARALLEL_CONTRACTION_MIN_COLS {
+        use rayon::prelude::*;
+
+        let panel_groups = if shape.cols() < LARGE_PANEL_MIN_COLS {
+            SMALL_CONTRACTION_PANEL_GROUPS
+        } else {
+            LARGE_CONTRACTION_PANEL_GROUPS
+        };
+        let panel_count = checked::div_ceil(shape.col_groups(), panel_groups)
+            .ok_or_else(|| AkitaError::InvalidInput("ternary contraction panel overflow".into()))?;
+        let scratch_len = checked::product([panel_count, shape.rows()]).ok_or_else(|| {
+            AkitaError::InvalidInput("ternary contraction scratch overflow".into())
+        })?;
+        if let Ok(mut scratch) = try_zeroed_vec(scratch_len, F::zero()) {
+            scratch
+                .par_chunks_mut(shape.rows())
+                .enumerate()
+                .for_each(|(panel, panel_acc)| {
+                    let group_start = panel * panel_groups;
+                    let group_end = (group_start + panel_groups).min(shape.col_groups());
+                    contract_column_group_range(
+                        matrix,
+                        col_weights,
+                        panel_acc,
+                        group_start..group_end,
+                    );
+                });
+            row_acc.fill(F::zero());
+            for panel_acc in scratch.chunks_exact(shape.rows()) {
+                for (output, &partial) in row_acc.iter_mut().zip(panel_acc) {
+                    *output += partial;
+                }
+            }
+            return Ok(());
+        }
+    }
+
     row_acc.fill(F::zero());
-    for group in 0..shape.col_groups() {
+    contract_column_group_range(matrix, col_weights, row_acc, 0..shape.col_groups());
+    Ok(())
+}
+
+fn contract_column_group_range<F: Field>(
+    matrix: &TernaryProjectionMatrix,
+    col_weights: &[F],
+    row_acc: &mut [F],
+    groups: std::ops::Range<usize>,
+) {
+    let shape = matrix.shape();
+    for group in groups {
         let col_start = group * 4;
         let live = (shape.cols() - col_start).min(4);
         let mut weights = [F::zero(); 4];
@@ -70,7 +137,6 @@ pub(super) fn contract_columns_to_rows<F: Field>(
             }
         }
     }
-    Ok(())
 }
 
 #[inline]
@@ -162,10 +228,43 @@ pub fn build_ternary_column_weights<F: Field>(
     }
     let row_eq = EqPolynomial::evals(row_point)?;
     let mut weights = try_zeroed_vec(shape.col_domain_len()?, F::zero())?;
-    for group in 0..shape.col_groups() {
-        let col_start = group * 4;
-        let live = (shape.cols() - col_start).min(4);
-        let group_weights = &mut weights[col_start..col_start + live];
+
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && shape.cols() >= PARALLEL_COLUMN_WEIGHT_MIN_COLS {
+        use rayon::prelude::*;
+
+        let panel_cols = if shape.cols() < LARGE_PANEL_MIN_COLS {
+            SMALL_COLUMN_WEIGHT_PANEL_COLS
+        } else {
+            LARGE_COLUMN_WEIGHT_PANEL_COLS
+        };
+        weights[..shape.cols()]
+            .par_chunks_mut(panel_cols)
+            .enumerate()
+            .for_each(|(panel, panel_weights)| {
+                accumulate_column_weight_groups(
+                    matrix,
+                    &row_eq,
+                    panel * (panel_cols / 4),
+                    panel_weights,
+                );
+            });
+        return Ok(weights);
+    }
+
+    accumulate_column_weight_groups(matrix, &row_eq, 0, &mut weights[..shape.cols()]);
+    Ok(weights)
+}
+
+fn accumulate_column_weight_groups<F: Field>(
+    matrix: &TernaryProjectionMatrix,
+    row_eq: &[F],
+    first_group: usize,
+    output: &mut [F],
+) {
+    let shape = matrix.shape();
+    for (local_group, group_weights) in output.chunks_mut(4).enumerate() {
+        let group = first_group + local_group;
         let (first_signs, second_signs) = matrix.sign_groups_unchecked(group);
         for ((row_weights, &first), &second) in row_eq[..shape.rows()]
             .chunks(2)
@@ -183,7 +282,6 @@ pub fn build_ternary_column_weights<F: Field>(
             }
         }
     }
-    Ok(weights)
 }
 
 fn validate_block_tensor_shape(

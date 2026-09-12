@@ -403,6 +403,39 @@ fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
     }
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_mle_panels_match_all_tail_widths_fields_and_thread_counts() {
+    for cols in [4097, 4098, 4099] {
+        let rows = 17;
+        let entries: Vec<Vec<i8>> = (0..rows)
+            .map(|row| {
+                (0..cols)
+                    .map(|col| match (row * 11 + col * 7 + row * col) % 3 {
+                        0 => -1,
+                        1 => 0,
+                        _ => 1,
+                    })
+                    .collect()
+            })
+            .collect();
+        let matrix = matrix_from_entries(&entries);
+        for threads in [1, 2, 4] {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| {
+                    let seed = 0x9876_5432_u64.wrapping_add(cols as u64);
+                    check_mle_kernels_for_field::<F>(&matrix, seed);
+                    check_mle_kernels_for_field::<F32Ext>(&matrix, seed);
+                    check_mle_kernels_for_field::<F64Ext>(&matrix, seed);
+                    check_mle_kernels_for_field::<F128>(&matrix, seed);
+                });
+        }
+    }
+}
+
 #[test]
 fn mle_lut_covers_every_paired_rademacher_selector() {
     let shape = TernaryProjectionShape::new(2, 4).unwrap();

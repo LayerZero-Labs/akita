@@ -15,8 +15,8 @@ type ProductionF32Ext = FpExt4<Prime32Offset99>;
 type ProductionF64Ext = Ext2<Prime64Offset59>;
 type ProductionF128 = Prime128OffsetA7F7;
 
-const DEFAULT_LOG_WIDTHS: &str = "12,13,14,15,16";
-const MAX_LOG_WIDTH: u32 = 16;
+const DEFAULT_LOG_WIDTHS: &str = "12,13,14,15,16,17,18";
+const MAX_LOG_WIDTH: u32 = 18;
 
 fn benchmark_log_widths() -> Vec<u32> {
     let configured = std::env::var("AKITA_JL_BENCH_LOG_WIDTHS")
@@ -209,6 +209,27 @@ fn benchmark_mle_field<F: Field + 'static>(c: &mut Criterion, field: &str) {
         );
     }
     e2e_group.finish();
+
+    let mut eq_group = c.benchmark_group(format!("balanced_ternary_jl_eq_tables/{field}"));
+    for case in &cases {
+        let cols = case.cols;
+        let sample_size = mle_sample_size(cols);
+        eq_group.sample_size(sample_size);
+        eq_group.throughput(Throughput::Elements(cols as u64));
+        eq_group.bench_with_input(
+            BenchmarkId::new("from_points", cols),
+            &cols,
+            |bencher, _| {
+                bencher.iter(|| {
+                    black_box((
+                        EqPolynomial::evals(black_box(&case.row_point)).unwrap(),
+                        EqPolynomial::evals(black_box(&case.col_point)).unwrap(),
+                    ))
+                })
+            },
+        );
+    }
+    eq_group.finish();
 
     let mut column_group =
         c.benchmark_group(format!("balanced_ternary_jl_column_weights_e2e/{field}"));
