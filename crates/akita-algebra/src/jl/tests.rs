@@ -172,6 +172,93 @@ fn dense_compute_plane_is_lazy_cached_and_not_matrix_identity() {
     assert_eq!(matrix, materialized_clone);
 }
 
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn cold_packed_projection_leaves_dense_cache_empty_then_hot_projection_materializes_it() {
+    let matrix = fixture();
+    let input = [2i32, -3, 5, 7, 11];
+    assert!(matrix.dense.get().is_none());
+    let cold = matrix.project(&input).unwrap();
+    assert_eq!(cold, [4, 12, -16]);
+    assert!(matrix.dense.get().is_none());
+
+    assert_eq!(matrix.project(&input).unwrap(), cold);
+    assert!(matrix.dense.get().is_some());
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn cold_packed_projection_exhausts_paired_selectors() {
+    let shape = TernaryProjectionShape::new(2, 4).unwrap();
+    let input = [-17i32, 23, -31, 47];
+    for first in 0u8..=u8::MAX {
+        for second in 0u8..=u8::MAX {
+            let matrix = TernaryProjectionMatrix::from_rademacher_bitplanes(
+                shape,
+                vec![first],
+                vec![second],
+            )
+            .unwrap();
+            let expected = (0..shape.rows())
+                .map(|row| {
+                    input.iter().enumerate().fold(0i64, |sum, (col, &value)| {
+                        sum + i64::from(matrix.entry(row, col).unwrap()) * i64::from(value)
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(matrix.project(&input).unwrap(), expected);
+            assert!(matrix.dense.get().is_none());
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn native_width_projection_handles_odd_tails() {
+    for &(rows, cols) in &[(1, 1), (3, 3), (5, 5), (7, 9), (17, 259)] {
+        let entries = (0..rows)
+            .map(|row| {
+                (0..cols)
+                    .map(|col| match (row * 13 + col * 17 + row * col) % 3 {
+                        0 => -1,
+                        1 => 0,
+                        _ => 1,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let matrix = matrix_from_entries(&entries);
+        let input_i8 = (0..cols)
+            .map(|index| (index % 61) as i8 - 30)
+            .collect::<Vec<_>>();
+        let expected = matrix
+            .project_i128(&input_i8.iter().copied().map(i128::from).collect::<Vec<_>>())
+            .unwrap()
+            .into_iter()
+            .map(|value| value as i64)
+            .collect::<Vec<_>>();
+        let input_i16 = input_i8.iter().copied().map(i16::from).collect::<Vec<_>>();
+        let input_i32 = input_i8.iter().copied().map(i32::from).collect::<Vec<_>>();
+        let input_i64 = input_i8.iter().copied().map(i64::from).collect::<Vec<_>>();
+        assert_eq!(matrix.clone().project(&input_i8).unwrap(), expected);
+        assert_eq!(matrix.clone().project(&input_i16).unwrap(), expected);
+        assert_eq!(matrix.clone().project(&input_i32).unwrap(), expected);
+        assert_eq!(matrix.clone().project(&input_i64).unwrap(), expected);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn cold_packed_i32_handles_extreme_inputs_without_narrow_lut_overflow() {
+    let matrix = matrix_from_entries(&[vec![1, -1, 1, -1]]);
+    let input = [i32::MAX, i32::MIN, i32::MAX, i32::MIN];
+    assert_eq!(
+        matrix.project(&input).unwrap(),
+        [2 * i64::from(i32::MAX) - 2 * i64::from(i32::MIN)]
+    );
+    assert!(matrix.dense.get().is_none());
+}
+
 #[test]
 fn integer_and_field_projection_match_dense_reference() {
     let matrix = fixture();

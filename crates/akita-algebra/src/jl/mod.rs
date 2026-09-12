@@ -13,6 +13,8 @@ mod tests;
 
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
+#[cfg(target_arch = "aarch64")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{mem, sync::OnceLock};
 
 pub use mle::{
@@ -199,15 +201,20 @@ impl TernaryProjectionShape {
 /// balanced-ternary entry is half the sum of the two signs, giving the exact
 /// distribution `Pr[0] = 1/2` and `Pr[-1] = Pr[+1] = 1/4`. Padding bits are
 /// canonical zeroes and are never interpreted as live signs. A derived
-/// row-major signed-byte plane is materialized on first use for coefficient
-/// widths where lookup projection is not profitable; transcript and MLE
-/// semantics use only the canonical sign planes and never pay that cost.
+/// row-major signed-byte plane is materialized when repeated projection makes
+/// that representation profitable. On AArch64, the first `i32` projection
+/// scans the canonical planes directly and leaves the lazy dense cache empty;
+/// a later projection materializes the dense plane for its faster hot kernel.
+/// Transcript and MLE semantics use only the canonical sign planes and never
+/// pay that cost.
 #[derive(Debug)]
 pub struct TernaryProjectionMatrix {
     shape: TernaryProjectionShape,
     first_signs: Box<[u8]>,
     second_signs: Box<[u8]>,
     dense: OnceLock<Result<Box<[i8]>, AkitaError>>,
+    #[cfg(target_arch = "aarch64")]
+    cold_packed_projection_used: AtomicBool,
 }
 
 impl Clone for TernaryProjectionMatrix {
@@ -217,6 +224,8 @@ impl Clone for TernaryProjectionMatrix {
             first_signs: self.first_signs.clone(),
             second_signs: self.second_signs.clone(),
             dense: OnceLock::new(),
+            #[cfg(target_arch = "aarch64")]
+            cold_packed_projection_used: AtomicBool::new(false),
         }
     }
 }
@@ -280,6 +289,8 @@ impl TernaryProjectionMatrix {
             first_signs: first_signs.into_boxed_slice(),
             second_signs: second_signs.into_boxed_slice(),
             dense: OnceLock::new(),
+            #[cfg(target_arch = "aarch64")]
+            cold_packed_projection_used: AtomicBool::new(false),
         })
     }
 
@@ -458,6 +469,14 @@ impl TernaryProjectionMatrix {
             Ok(dense) => Ok(dense),
             Err(error) => Err(error.clone()),
         }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub(super) fn take_cold_packed_projection(&self) -> bool {
+        self.dense.get().is_none()
+            && !self
+                .cold_packed_projection_used
+                .swap(true, Ordering::Relaxed)
     }
 
     fn build_dense(&self) -> Result<Box<[i8]>, AkitaError> {

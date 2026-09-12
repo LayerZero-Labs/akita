@@ -12,6 +12,12 @@ use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(target_arch = "aarch64")]
+const AARCH64_LOOKUP_GROUPS_PER_TILE: usize = 32;
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+const AARCH64_PARALLEL_ROWS_PER_CHUNK: usize = 32;
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+const AARCH64_PARALLEL_PACKED_WORK_THRESHOLD: usize = 1 << 26;
 #[cfg(target_arch = "x86_64")]
 pub(super) const LOOKUP_GROUPS_PER_TILE: usize = 16;
 #[cfg(target_arch = "x86_64")]
@@ -20,12 +26,44 @@ const I16_LOOKUP_MIN_COLS: usize = 1 << 16;
 pub(super) mod private {
     use super::{AkitaError, TernaryProjectionMatrix};
 
+    #[cfg(target_arch = "aarch64")]
+    pub trait AarchColdProjection: Sized {
+        fn project_cold(
+            matrix: &TernaryProjectionMatrix,
+            input: &[Self],
+            output: &mut [i64],
+        ) -> Result<(), AkitaError>;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub trait Sealed: Sized + AarchColdProjection {
+        fn project(
+            matrix: &TernaryProjectionMatrix,
+            input: &[Self],
+            output: &mut [i64],
+        ) -> Result<(), AkitaError>;
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
     pub trait Sealed: Sized {
         fn project(
             matrix: &TernaryProjectionMatrix,
             input: &[Self],
             output: &mut [i64],
         ) -> Result<(), AkitaError>;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+trait WideLookupInput: Copy + Send + Sync {
+    fn to_i64(self) -> i64;
+}
+
+#[cfg(target_arch = "aarch64")]
+impl WideLookupInput for i32 {
+    #[inline(always)]
+    fn to_i64(self) -> i64 {
+        i64::from(self)
     }
 }
 
@@ -52,6 +90,39 @@ impl_projection_input!(i8, project_i8);
 impl_projection_input!(i16, project_i16);
 impl_projection_input!(i32, project_i32);
 
+#[cfg(target_arch = "aarch64")]
+impl private::AarchColdProjection for i8 {
+    fn project_cold(
+        matrix: &TernaryProjectionMatrix,
+        input: &[Self],
+        output: &mut [i64],
+    ) -> Result<(), AkitaError> {
+        dense::project_i8(matrix, input, output)
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl private::AarchColdProjection for i16 {
+    fn project_cold(
+        matrix: &TernaryProjectionMatrix,
+        input: &[Self],
+        output: &mut [i64],
+    ) -> Result<(), AkitaError> {
+        dense::project_i16(matrix, input, output)
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl private::AarchColdProjection for i32 {
+    fn project_cold(
+        matrix: &TernaryProjectionMatrix,
+        input: &[Self],
+        output: &mut [i64],
+    ) -> Result<(), AkitaError> {
+        project_wide_packed(matrix, input, output)
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 impl SmallLookupInput for i8 {
     #[inline(always)]
@@ -75,6 +146,17 @@ impl private::Sealed for i64 {
         output: &mut [i64],
     ) -> Result<(), AkitaError> {
         project_i64(matrix, input, output)
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl private::AarchColdProjection for i64 {
+    fn project_cold(
+        matrix: &TernaryProjectionMatrix,
+        input: &[Self],
+        output: &mut [i64],
+    ) -> Result<(), AkitaError> {
+        dense::project_i64(matrix, input, output)
     }
 }
 
@@ -116,7 +198,17 @@ pub(super) fn project_i32(
     input: &[i32],
     output: &mut [i64],
 ) -> Result<(), AkitaError> {
-    dense::project_i32(matrix, input, output)
+    #[cfg(target_arch = "aarch64")]
+    {
+        if matrix.take_cold_packed_projection() {
+            return project_wide_packed(matrix, input, output);
+        }
+        dense::project_i32(matrix, input, output)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        dense::project_i32(matrix, input, output)
+    }
 }
 
 pub(super) fn project_i64(
@@ -137,6 +229,79 @@ pub(super) fn project_i64(
     dense::project_i64(matrix, input, output)
 }
 
+#[cfg(target_arch = "aarch64")]
+fn project_wide_packed<T: WideLookupInput>(
+    matrix: &TernaryProjectionMatrix,
+    input: &[T],
+    output: &mut [i64],
+) -> Result<(), AkitaError> {
+    output.fill(0);
+    #[cfg(feature = "parallel")]
+    if matrix.shape().dense_len() >= AARCH64_PARALLEL_PACKED_WORK_THRESHOLD
+        && output.len() > AARCH64_PARALLEL_ROWS_PER_CHUNK
+    {
+        output
+            .par_chunks_mut(AARCH64_PARALLEL_ROWS_PER_CHUNK)
+            .enumerate()
+            .for_each(|(chunk, rows)| {
+                project_wide_packed_rows(
+                    matrix,
+                    input,
+                    rows,
+                    chunk * AARCH64_PARALLEL_ROWS_PER_CHUNK,
+                );
+            });
+        return finish_doubled_projection(output);
+    }
+    project_wide_packed_rows(matrix, input, output, 0);
+    finish_doubled_projection(output)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn project_wide_packed_rows<T: WideLookupInput>(
+    matrix: &TernaryProjectionMatrix,
+    input: &[T],
+    output: &mut [i64],
+    first_row: usize,
+) {
+    let shape = matrix.shape();
+    let mut tables = [[0i64; 16]; AARCH64_LOOKUP_GROUPS_PER_TILE];
+    for group_base in (0..shape.col_groups()).step_by(AARCH64_LOOKUP_GROUPS_PER_TILE) {
+        let groups = (shape.col_groups() - group_base).min(AARCH64_LOOKUP_GROUPS_PER_TILE);
+        for (local_group, table) in tables.iter_mut().take(groups).enumerate() {
+            *table = build_lookup_table_i64_wide(input, group_base + local_group);
+        }
+        accumulate_packed_i64_tile(matrix, group_base, groups, &tables, first_row, output);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn accumulate_packed_i64_tile(
+    matrix: &TernaryProjectionMatrix,
+    group_base: usize,
+    groups: usize,
+    tables: &[[i64; 16]; AARCH64_LOOKUP_GROUPS_PER_TILE],
+    first_row: usize,
+    output: &mut [i64],
+) {
+    for (row_pair, rows) in output.chunks_mut(2).enumerate() {
+        let row_pair = (first_row >> 1) + row_pair;
+        let mut even = rows[0];
+        let mut odd = rows.get(1).copied().unwrap_or_default();
+        for (local_group, table) in tables.iter().take(groups).enumerate() {
+            let (first, second) = matrix.sign_groups_unchecked(group_base + local_group);
+            let first = first[row_pair];
+            let second = second[row_pair];
+            even += table[usize::from(first & 0x0f)] + table[usize::from(second & 0x0f)];
+            odd += table[usize::from(first >> 4)] + table[usize::from(second >> 4)];
+        }
+        rows[0] = even;
+        if let Some(value) = rows.get_mut(1) {
+            *value = odd;
+        }
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 fn project_small_avx512<T: SmallLookupInput>(
     matrix: &TernaryProjectionMatrix,
@@ -150,7 +315,7 @@ fn project_small_avx512<T: SmallLookupInput>(
     finish_doubled_projection(output)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn finish_doubled_projection(output: &mut [i64]) -> Result<(), AkitaError> {
     for value in output {
         if *value & 1 != 0 {
@@ -178,6 +343,31 @@ pub(super) fn project_blocks<T: ProjectionInput>(
 ) -> Result<(), AkitaError> {
     let cols = matrix.shape().cols();
     let rows = matrix.shape().rows();
+    #[cfg(target_arch = "aarch64")]
+    if matrix.take_cold_packed_projection() {
+        #[cfg(feature = "parallel")]
+        if output.len() > rows
+            && checked::product([output.len(), cols])
+                .is_none_or(|work| work >= PARALLEL_WORK_THRESHOLD)
+        {
+            return input
+                .par_chunks_exact(cols)
+                .zip(output.par_chunks_exact_mut(rows))
+                .try_for_each(|(block_input, block_output)| {
+                    <T as private::AarchColdProjection>::project_cold(
+                        matrix,
+                        block_input,
+                        block_output,
+                    )
+                });
+        }
+        for (block_input, block_output) in
+            input.chunks_exact(cols).zip(output.chunks_exact_mut(rows))
+        {
+            <T as private::AarchColdProjection>::project_cold(matrix, block_input, block_output)?;
+        }
+        return Ok(());
+    }
     #[cfg(feature = "parallel")]
     if output.len() > rows
         && checked::product([output.len(), cols]).is_none_or(|work| work >= PARALLEL_WORK_THRESHOLD)
@@ -223,6 +413,25 @@ pub(super) fn build_lookup_table_i32<T: SmallLookupInput>(input: &[T], group: us
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub(super) fn build_lookup_table_i64(input: &[i64], group: usize) -> [i64; 16] {
+    build_lookup_table_i64_values(input, group)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn build_lookup_table_i64_wide<T: WideLookupInput>(input: &[T], group: usize) -> [i64; 16] {
+    let start = group * 4;
+    let mut values = [0i64; 4];
+    for (lane, value) in values.iter_mut().enumerate() {
+        if let Some(&input_value) = input.get(start + lane) {
+            *value = input_value.to_i64();
+        }
+    }
+    finish_lookup_table_i64(values)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn build_lookup_table_i64_values(input: &[i64], group: usize) -> [i64; 16] {
     let start = group * 4;
     let mut values = [0i64; 4];
     for (lane, value) in values.iter_mut().enumerate() {
@@ -230,6 +439,12 @@ pub(super) fn build_lookup_table_i64(input: &[i64], group: usize) -> [i64; 16] {
             *value = input_value;
         }
     }
+    finish_lookup_table_i64(values)
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[inline]
+fn finish_lookup_table_i64(values: [i64; 4]) -> [i64; 16] {
     let first = [
         -values[0] - values[1],
         values[0] - values[1],

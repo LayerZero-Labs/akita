@@ -6,7 +6,7 @@ use akita_algebra::{
     EqPolynomial,
 };
 use akita_challenges::expand_balanced_ternary_matrix;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use std::hint::black_box;
 
@@ -57,7 +57,21 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
         let input_i32: Vec<i32> = input_i8.iter().copied().map(i32::from).collect();
         let input_i64: Vec<i64> = input_i8.iter().copied().map(i64::from).collect();
         let input_i128: Vec<i128> = input_i8.iter().copied().map(i128::from).collect();
-        let input_i8_blocks = input_i8.repeat(8);
+        let hot_dense_matrix = matrix.clone();
+        hot_dense_matrix.project_i128(&input_i128).unwrap();
+        let expected_i32 = hot_dense_matrix.project(&input_i32).unwrap();
+        let direct_check = matrix.clone();
+        assert_eq!(direct_check.project(&input_i32).unwrap(), expected_i32);
+        assert_eq!(matrix.clone().project(&input_i8).unwrap(), expected_i32);
+        assert_eq!(matrix.clone().project(&input_i16).unwrap(), expected_i32);
+        assert_eq!(matrix.clone().project(&input_i64).unwrap(), expected_i32);
+        assert_eq!(
+            expand_balanced_ternary_matrix(&[0x42u8; 32], shape)
+                .unwrap()
+                .project(&input_i32)
+                .unwrap(),
+            expected_i32
+        );
         group.throughput(Throughput::Elements((shape.rows() * shape.cols()) as u64));
 
         group.bench_with_input(
@@ -82,35 +96,84 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i8", cols),
-            &input_i8,
-            |bencher, input| bencher.iter(|| matrix.project(black_box(input)).unwrap()),
-        );
-        group.bench_with_input(
-            BenchmarkId::new("project_i8_8blocks", cols),
-            &input_i8_blocks,
-            |bencher, input| bencher.iter(|| matrix.project_blocks(black_box(input)).unwrap()),
-        );
-        group.bench_with_input(
-            BenchmarkId::new("project_i16", cols),
-            &input_i16,
-            |bencher, input| bencher.iter(|| matrix.project(black_box(input)).unwrap()),
-        );
-        group.bench_with_input(
-            BenchmarkId::new("project_i32", cols),
+            BenchmarkId::new("project_i32_direct_packed", cols),
             &input_i32,
-            |bencher, input| bencher.iter(|| matrix.project(black_box(input)).unwrap()),
+            |bencher, input| {
+                bencher.iter_batched(
+                    || matrix.clone(),
+                    |matrix| matrix.project(black_box(input)).unwrap(),
+                    BatchSize::SmallInput,
+                )
+            },
         );
         group.bench_with_input(
-            BenchmarkId::new("project_i64", cols),
+            BenchmarkId::new("project_i32_hot_dense", cols),
+            &input_i32,
+            |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("project_i8_hot_dense", cols),
+            &input_i8,
+            |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("project_i16_hot_dense", cols),
+            &input_i16,
+            |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("project_i64_hot_dense", cols),
             &input_i64,
-            |bencher, input| bencher.iter(|| matrix.project(black_box(input)).unwrap()),
+            |bencher, input| bencher.iter(|| hot_dense_matrix.project(black_box(input)).unwrap()),
         );
         group.bench_with_input(
             BenchmarkId::new("project_i128", cols),
             &input_i128,
-            |bencher, input| bencher.iter(|| matrix.project_i128(black_box(input)).unwrap()),
+            |bencher, input| {
+                bencher.iter(|| hot_dense_matrix.project_i128(black_box(input)).unwrap())
+            },
         );
+        for blocks in [1usize, 2, 8] {
+            let block_input = input_i32.repeat(blocks);
+            let block_expected = expected_i32.repeat(blocks);
+            group.throughput(Throughput::Elements(
+                (blocks * shape.rows() * shape.cols()) as u64,
+            ));
+            assert_eq!(matrix.project_blocks(&block_input).unwrap(), block_expected);
+            group.bench_with_input(
+                BenchmarkId::new(format!("project_i32_hot_dense_{blocks}blocks"), cols),
+                &block_input,
+                |bencher, input| {
+                    bencher.iter(|| hot_dense_matrix.project_blocks(black_box(input)).unwrap())
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("project_i32_cold_packed_{blocks}blocks"), cols),
+                &block_input,
+                |bencher, input| {
+                    bencher.iter_batched(
+                        || matrix.clone(),
+                        |matrix| matrix.project_blocks(black_box(input)).unwrap(),
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("project_i32_cold_dense_{blocks}blocks"), cols),
+                &block_input,
+                |bencher, input| {
+                    bencher.iter_batched(
+                        || {
+                            let matrix = matrix.clone();
+                            matrix.project(&input_i32).unwrap();
+                            matrix
+                        },
+                        |matrix| matrix.project_blocks(black_box(input)).unwrap(),
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+        }
     }
     group.finish();
 }
