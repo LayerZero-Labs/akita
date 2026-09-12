@@ -139,6 +139,8 @@ competing builds or benchmarks.
 
 These JL primitives are foundation measurements, not measurements of a
 production digit-range-check replacement.
+The [September 2026 x86 measurement snapshot](../../../docs/jl-x86-kernel-measurements.md)
+records the tested alternatives and the evidence behind the dispatch choices.
 
 ## Return to the complete proof
 
