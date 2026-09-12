@@ -60,6 +60,7 @@ fn bench_field<F: Field + CanonicalEncoding + std::fmt::Debug + 'static>(
     field: &str,
 ) {
     let matrix = fixture();
+    matrix.project_i128(&centered_input("i8", COLS)).unwrap();
     let mut group = c.benchmark_group(format!("jl_centered_projection/{field}"));
     group.sample_size(10);
     group.warm_up_time(Duration::from_secs(1));
