@@ -65,7 +65,7 @@ This proposal does not:
 - assign an independent shortness meaning to quotient rows or padding;
 - replace the binary predicates required by commitment compression;
 - make a prover-selected projection matrix an unbounded grinding surface;
-- reuse one JL matrix at different projection layers or fold levels;
+- reuse one JL matrix along a projection dependency path or across fold levels;
 - commit a projected image in the first cutover; or
 - make the Book describe this design before it is implemented.
 
@@ -193,7 +193,10 @@ Each level plan MUST fix:
 
 - the `Z` projection tree;
 - the `Ehat || That` projection tree;
-- every local matrix law, row count, column count, block count, and layer;
+- every local matrix law, row count, column count, block count, layer, and
+  topological depth;
+- the maximum matrix envelope and ordered member manifest for every
+  `(fold level, topological depth)` sharing class;
 - the CertifiedJL lower and upper constants for each local matrix;
 - the final clear-image shapes and accepted integer energies;
 - the role caps `C_Z`, `C_E`, and `C_T`;
@@ -216,9 +219,8 @@ The schedule-derived proof stream contains, in order:
 
 ```text
 JL prelude
-  retry index for ProjZ, if the plan permits retries
+  retry index for the complete level projection forest, if permitted
   clear final ProjZ image
-  retry index for ProjET, if the plan permits retries
   clear final ProjET image
   reverse projection-reduction proofs and terminal source claims
 
@@ -243,8 +245,10 @@ For one nonterminal level, the transcript order is:
 
 ```text
 1. Bind the outgoing recursive witness.
-2. Derive every JL matrix from the bound transcript and the scheduled retry
-   index.
+2. Absorb the selected candidate index once, then derive every shared envelope
+   for that complete level projection forest in increasing topological-depth
+   order. A depth's inputs are fixed by the bound witness, public plan, and
+   earlier-depth envelopes before that depth's envelope is used.
 3. Send the final clear Z and ET projection images.
 4. Check both clear-image energies against their public thresholds.
 5. Run the projection reduction sumchecks.
@@ -293,6 +297,11 @@ Their final image predicates and no-wrap caps remain separate. Their
 projection sumchecks MAY be transcript-batched, but the implementation MUST
 NOT collapse the two public energy predicates into one bound that forces
 `Ehat` or `That` to inherit `Z` headroom.
+
+Projection uses in the Z, E, and T stems or tails that have the same fold level
+and topological depth MAY use authenticated prefixes of one shared matrix
+envelope. This sharing changes neither the logical certificate boundaries nor
+the independent energy predicates.
 
 The `Ehat || That` certificate MUST avoid a ragged first-layer boundary. It
 uses private stems until both branches have the same power-of-two output
@@ -358,7 +367,7 @@ premise. For the 256-row L2 theorem below, each invoked threshold `b` must
 satisfy `3 b <= q`; the actual adversarial input norm is otherwise
 unrestricted.
 
-The foundation registry MUST pin CertifiedJL revision
+The reviewed base registry pins CertifiedJL revision
 `8ac6eda09c6f8b6fe38770f78489af610eb05023`. Its tight 256-row base L2 point is:
 
 ```text
@@ -371,6 +380,82 @@ production plan with several tail events MUST pin a strengthened per-event
 frontier or otherwise prove that its complete checked ledger meets the target.
 Fewer rows or different constants MAY be used only when their matching lower
 and upper theorems are generated, named, and pinned.
+
+#### Target frontier for the nv30 plan
+
+The current dense nv30 planning estimate has `5,548` charged block
+applications when every input chunk is capped at `16,384` coefficients and
+every chain ends at `256` rows. In the notation of the normative ledger below,
+
+```text
+sum_level sum_depth sum_use blocks_use = 5,548.
+```
+
+Sharing matrices by `(fold level, topological depth)` reduces the estimated
+number of generated matrix envelopes from `46` to `20`; it does not reduce the
+number of tail events. The generated schedule MUST reproduce both census
+values, commit their audit digest, and reject a mismatch before these estimates
+become admitted parameters. Charging a lower and an upper tail for every block
+application and at most two transcript-derived whole-level forest candidates
+gives
+
+```text
+epsilon_JL <= 4 * 5,548 * 2^-b
+            = 22,192 * 2^-b
+            < 2^-(b - 14.438).
+```
+
+Consequently, a uniform `b = 151` already gives more than `136.56` bits for
+this JL ledger. There is no per-event 152-bit minimum. The planner MUST select
+lower and upper endpoints independently for each scheduled projection use,
+subject to a single public JL budget. Uses MAY share an endpoint for efficiency,
+but neither fold levels nor depths are required to use equal failure bounds.
+All endpoint choices are fixed by the public schedule before the witness and
+matrix seeds; they MUST NOT be selected after observing a sampled matrix.
+
+For example, the six fold-level block counts are
+`[4944, 458, 92, 28, 16, 10]`. Assigning both tails the respective bit budgets
+`[151, 151, 148, 146, 146, 145]`, with two whole-forest candidates per level,
+charges exactly `4093/4096` of a `2^-136` JL budget. This allocation illustrates
+the accounting only; every selected distortion constant still needs its own
+certificate. The `2^-136` value is a configurable planning example, not a new
+global security target or a requirement to leave eight bits unused.
+
+The schedule MUST expose its JL budget and the remaining protocol failure
+terms separately, and the complete security ledger MUST meet the configured
+128-bit target. Candidate constants obtained from numerical exploration are
+not protocol parameters: a constant enters the registry only after the
+matching CertifiedJL theorem and replay artifact are pinned.
+Before admitting an iterated-JL production schedule, the registry MUST advance
+to the exact CertifiedJL revision containing the selected strengthened
+frontier and record that revision's source digest.
+
+#### Fine-grained certified frontier
+
+An endpoint record MUST identify the row law, row count, rational distortion
+constant, exact failure upper bound, theorem declaration, source revision,
+and modulus hypotheses. Lower and upper endpoints need not have matching bit
+labels. Rational floors and thresholds are permitted. The planner MUST use
+exact rational or outward-rounded dyadic failure bounds for admission; decimal
+bit labels are reporting values only. It MUST NOT interpolate probability or
+distortion constants between certified endpoints without a matching theorem.
+
+The proof factory SHOULD reuse the analytic theorem and verified profile
+enclosures while replaying only the endpoint arithmetic that changes. It
+SHOULD permit a caller to request a rational threshold and failure budget,
+returning either a checked endpoint or a failed certificate check. A failed
+check means that certificate did not establish the bound; it is not a
+counterexample to the requested probability statement.
+
+For a fixed projection forest, the planner SHOULD retain the Pareto frontier
+of certified assignments in exact failure cost, path no-wrap caps, proof size,
+and computation cost. A path's elementary distortion is the product of its
+selected `U/L` ratios, with the structured block-allocation and E/T join rules
+applied when deriving its actual cap. Spending more failure budget at a late
+projection depth can improve every source path feeding it. A later fold with
+fewer charged blocks can often use weaker local tails at the same total cost,
+but geometry and modulus feasibility determine the best allocation. Equal
+per-level budgets are only a search seed, not an optimality claim.
 
 ### L2 versus Linf tails
 
@@ -392,23 +477,42 @@ MUST NOT be selected merely because both theorem families exist.
 ### Matrix derivation and reuse
 
 One transcript-derived master seed MAY generate all matrices through distinct
-domain separators. The actual matrix at every `(level, certificate, stem,
-layer)` MUST be fresh.
+domain separators. The matrix-sharing unit is one public envelope
+
+```text
+J_max[level, depth] in {-1,0,1}^(m_max[level,depth] x n_max[level,depth])
+```
+
+for each `(fold level, topological projection depth)`. Projection edges
+increment depth. Selector reshapes, concatenations, and aligned E/T joins do
+not. Every projection use assigned to the class takes the literal upper-left
+`m x n` prefix of this two-dimensional envelope. Implementations MUST NOT
+obtain a rectangular prefix by truncating a flat row-major buffer.
+
+The public member manifest MUST list every use in canonical schedule order and
+bind its role, stem, layer, block geometry, and prefix shape. A use MUST NOT
+select an offset, permutation, transpose, or any other view of the envelope.
+The prefix rule preserves the balanced-ternary matrix law for every scheduled
+shape.
 
 The domain separator MUST bind at least:
 
 ```text
-protocol version, schedule identity, fold level, certificate,
-role or stem, layer, rows, columns, matrix law, retry index.
+protocol version, schedule identity, fold level, topological depth,
+envelope rows, envelope columns, prefix-policy version,
+matrix law, level-forest candidate index.
 ```
 
-The block index is intentionally absent only when the public plan selects
-`I_r tensor J` reuse. Every other semantically distinct matrix gets a distinct
-domain. Expansion MUST implement the balanced-ternary law
+Certificate, role, stem, block index, member prefix shape, and individual
+layer identity MUST NOT enter this seed domain: putting them there would
+silently defeat the specified sharing. They remain authenticated by the
+schedule identity and ordered member manifest. Expansion MUST implement the
+balanced-ternary law
 `Pr[0] = 1/2`, `Pr[-1] = Pr[+1] = 1/4`; binary sign matrices are not a
 compatible substitution for the pinned theorems.
 
-One local matrix MAY be reused across the equal-width blocks of one layer:
+One scheduled prefix MAY also be reused across the equal-width blocks of one
+layer:
 
 ```text
 P_i = I_(r_i) tensor J_i.
@@ -419,30 +523,53 @@ nonzero block and union-bounds the failure probabilities over blocks. Matrix
 reuse within the layer is therefore compatible with the CertifiedJL vector
 theorem.
 
-The same `J_i` MUST NOT be reused at another layer. The next layer input
-depends on the preceding matrix, so reusing the matrix would violate the
-fixed-input premise of the JL theorem. Matrices also MUST be fresh across fold
-levels.
+All inputs at depth `d` MUST be deterministic functions only of the bound
+witness, public plan, and matrices at depths strictly less than `d`. No input
+at depth `d` may depend on an output, acceptance decision, or retry decision at
+depth `d`. This fixed-input condition permits the same envelope to serve
+parallel uses at that depth, with a union bound over those uses. A dependency
+path MUST NOT apply the same envelope twice: the later input would depend on
+that matrix and the fixed-input CertifiedJL theorem would no longer apply.
+Fold levels use distinct envelopes unless a later proof changes the transcript
+order and establishes the corresponding independence claim.
 
 The default wide-field plan uses one projection attempt. If a schedule permits
 bounded retries for honest upper-tail failures, it MUST fix a maximum count.
-The prover selects only among transcript-derived candidates for the already
-bound witness, and the selected retry index is absorbed before the chosen
-matrix is used. The verifier rejects an out-of-range or noncanonical index.
-Retries multiply the lower-tail opportunity and therefore enter the ledger.
+There is one candidate index for the complete projection forest of a fold
+level, not one independently chosen index per envelope, depth, certificate, or
+member use. That index selects all Z, E, and T matrices at all depths of the
+level; mixing envelopes from different candidates is forbidden. The prover
+selects only among transcript-derived whole-forest candidates for the already
+bound witness, and the selected index is absorbed once before the chosen
+envelopes are derived. The verifier rejects an out-of-range index. Retries
+multiply every member's lower- and upper-tail opportunities and therefore
+enter the ledger.
+
+Independent per-depth retry indices are forbidden. They would create an
+adaptive retry tree in which a later bad event can be searched over products
+of earlier candidate counts, rather than the single candidate factor charged
+below. The protocol need not claim that the selected forest is the first
+passing candidate; such a rule would require the verifier to check private
+intermediate images and is unnecessary for the bounded union argument.
 
 The global JL failure satisfies a checked bound of the form
 
 ```text
-epsilon_JL <= sum_(levels,certificates,layers) blocks_i * retries_i * delta_i.
+epsilon_JL
+  <= sum_level candidates_level
+       * sum_depth sum_(use in members_(level,depth)) blocks_use
+           * (delta_lower_use + delta_upper_use).
 ```
 
+This ledger counts logical projection uses and structured blocks, not distinct
+matrix envelopes. Matrix sharing saves generation and verifier streaming work;
+it does not turn several bad events into one event or improve the union bound.
 The selected per-kernel frontier MUST make the complete protocol ledger meet
 the configured 128-bit target. The implementation MUST NOT silently treat one
 `2^-128` theorem as a `2^-128` schedule-wide result after adding the lower and
 upper tails or multiplying by block and retry counts. The target is 128 bits;
-the planner MUST NOT default to a 192-bit frontier when a tighter 128-bit
-ledger can be certified.
+the planner MUST NOT impose a uniform per-event bit target when a certified
+heterogeneous assignment meets the public JL budget with better caps or cost.
 
 ### Succinct projection verification
 
@@ -656,8 +783,13 @@ For a block layer with `r_i` blocks and local matrix
 
 - prover projection work is proportional to `r_i m_i n_i` sparse integer
   operations;
-- verifier matrix work is proportional to `m_i n_i` field operations for the
-  one local matrix MLE, not `r_i m_i n_i`;
+- matrix expansion visits each shared envelope entry once, rather than once per
+  member use;
+- each member still has a logically separate matrix-MLE claim at its own point
+  and prefix shape, but an implementation MAY stream one envelope once while
+  updating all of that envelope's prefix-MLE accumulators;
+- verifier matrix arithmetic therefore depends on the envelope size and the
+  number of member claims, but never on the repeated block count `r_i`;
 - the reduction has `log2(r_i) + log2(n_i)` Boolean variables; and
 - the proof transmits sumcheck polynomials and terminal claims, but not `J_i`
   or the repeated block matrix.
@@ -756,6 +888,11 @@ checks a separate accepted energy for every no-wrap shard. Projection
 sumchecks MAY batch the arrays over the public role/shard selector, while
 preserving the individual public energy predicates.
 
+More generally, all shard projections at the same fold level and topological
+depth MAY use scheduled upper-left prefixes of one shared envelope. Each shard
+remains a separate charged tail event, even when its prefix is identical to
+another shard's prefix.
+
 For E/T, the outer axis can retain the role selector used by the wide-field
 aligned join and add a shard selector beneath it. A batch is only algebraic:
 each shard keeps its own public accepted energy and extracted cap.
@@ -828,8 +965,9 @@ For every fold level, the planner:
 2. tries the unsharded wide-field plan;
 3. increases only the shard count of a role whose no-wrap or matrix-security
    constraint fails;
-4. derives CertifiedJL row counts and lower/upper constants for the complete
-   block/layer/retry ledger;
+4. assigns every projection use a topological depth, constructs the shared
+   envelope manifest, and derives CertifiedJL row counts and lower/upper
+   constants for the complete block/layer/retry ledger;
 5. verifies every shard cap is below `q` and every modular threshold premise;
 6. derives exact total role caps from shard caps, without JL distortion;
 7. prices `A`, `D`, and `B` from `C_Z`, `C_E`, and `C_T` respectively;
@@ -875,13 +1013,17 @@ proof-size code MUST NOT reimplement the formulas independently.
 - Implement deterministic balanced-ternary matrix expansion with
   `Pr[0] = 1/2` and `Pr[-1] = Pr[+1] = 1/4`.
 - Implement scalar and packed block projection kernels.
-- Implement local matrix MLE evaluation.
+- Implement two-dimensional envelope-prefix expansion and local matrix MLE
+  evaluation, with a streamed multi-prefix evaluator where it reduces verifier
+  work.
 - Test dense-reference equality, transcript domain separation, centered
   lifting, checked integer overflow, and malformed geometry rejection.
 
 ### Slice 2: projection reduction
 
 - Add schedule-derived `Z` and `ET` projection plans.
+- Assign projection uses to authenticated `(fold level, topological depth)`
+  manifests and reject dependency-path reuse.
 - Implement the reverse block-layer reduction sumchecks.
 - Implement aligned E/T stem joining.
 - Batch source claims without combining the two energy predicates.
@@ -954,7 +1096,10 @@ resolve and audit:
 
 - the number and shape of Z, E, and T stem layers;
 - the shared ET tail and every final row count;
-- a strengthened per-event CertifiedJL frontier for the full 128-bit ledger;
+- the `(fold level, topological depth)` envelope shapes and ordered prefix
+  manifests;
+- a certified per-use lower/upper frontier assignment and explicit JL budget
+  within the full 128-bit ledger;
 - whether bounded retries are worth their soundness and transcript cost;
 - the canonical clear-image encoding;
 - fp32 role shard counts; and
@@ -967,8 +1112,13 @@ or re-enable generic digit range.
 ## Acceptance criteria
 
 - [ ] The outgoing witness is transcript-bound before every JL seed.
-- [ ] Every projection layer and fold level uses a fresh domain-separated
-      matrix.
+- [ ] Every dependency-path depth and fold level uses a fresh domain-separated
+      matrix envelope; parallel uses at one depth are authenticated upper-left
+      prefixes of that envelope.
+- [ ] Every same-depth input is fixed independently of that depth's envelope,
+      output, acceptance result, and retry choice.
+- [ ] One bounded candidate index selects the complete projection forest at a
+      fold level; per-depth and per-envelope retry choices are rejected.
 - [ ] The verifier scans only local JL matrices, not repeated block matrices
       or dense products.
 - [ ] `ProjZ` and `ProjET` have independent public no-wrap caps.
@@ -1010,6 +1160,8 @@ The implementation requires:
 - fp32 tests proving `Z` shards are taken after chunk aggregation;
 - fp32 tests distinguishing norm-only sharding from matrix sharding;
 - schedule identity and proof-size agreement tests; and
+- shared-envelope manifest, rectangular-prefix, cross-depth separation, and
+  whole-forest retry mutation tests;
 - malformed-proof and allocation-bound tests for the verifier no-panic
   contract.
 
