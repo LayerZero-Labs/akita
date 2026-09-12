@@ -1,6 +1,8 @@
 //! Multilinear evaluations of packed ternary projection matrices.
 
-use super::{try_zeroed_vec, TernaryProjectionMatrix, TERNARY_NIBBLE_DECODE};
+use super::{
+    try_zeroed_vec, TernaryProjectionMatrix, TernaryProjectionShape, TERNARY_NIBBLE_DECODE,
+};
 use crate::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
@@ -25,6 +27,87 @@ const SMALL_CONTRACTION_PANEL_GROUPS: usize = 64;
 const LARGE_CONTRACTION_PANEL_GROUPS: usize = 256;
 #[cfg(feature = "parallel")]
 const LARGE_PANEL_MIN_COLS: usize = 1 << 14;
+
+impl TernaryProjectionShape {
+    /// Upper bound on temporary field elements for a column-to-row contraction.
+    ///
+    /// Excludes the caller's input and output. Covers the parallel path even
+    /// when admission and execution use different Rayon pools.
+    pub fn field_contraction_scratch_len(self) -> Result<usize, AkitaError> {
+        #[cfg(feature = "parallel")]
+        if self.cols() >= PARALLEL_CONTRACTION_MIN_COLS {
+            let panels =
+                checked::div_ceil(self.col_groups(), contraction_panel_groups(self.cols()))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("ternary contraction panel overflow".into())
+                    })?;
+            return checked::product([panels, self.rows()]).ok_or_else(|| {
+                AkitaError::InvalidInput("ternary contraction scratch overflow".into())
+            });
+        }
+        Ok(0)
+    }
+
+    /// Upper bound on temporary field elements for row-variable contraction.
+    ///
+    /// Excludes the returned column-weight table. Counts the row equality
+    /// table, its construction frontier conservatively, and all row lookup
+    /// tables. Small bounded stack temporaries are not materialized tables.
+    pub fn column_weight_scratch_len(self) -> Result<usize, AkitaError> {
+        let row_tables = checked::product([2, self.row_domain_len()?]).ok_or_else(|| {
+            AkitaError::InvalidInput("ternary row-table workspace overflow".into())
+        })?;
+        let lut_elements =
+            checked::product([column_weight_lut_count(self)?, TERNARY4_PATTERN_COUNT]).ok_or_else(
+                || AkitaError::InvalidInput("ternary row-lookup workspace overflow".into()),
+            )?;
+        checked::sum([row_tables, lut_elements]).ok_or_else(|| {
+            AkitaError::InvalidInput("ternary column-weight workspace overflow".into())
+        })
+    }
+
+    /// Upper bound on materialized field elements for a complete matrix MLE.
+    ///
+    /// Includes equality-table construction frontiers, row accumulation, and
+    /// the largest supported parallel contraction buffer; excludes input points.
+    pub fn matrix_mle_scratch_len(self) -> Result<usize, AkitaError> {
+        let rows = self.row_domain_len()?;
+        let cols = self.col_domain_len()?;
+        let row_build = checked::product([2, rows]);
+        let col_build =
+            checked::product([2, cols]).and_then(|columns| checked::sum([rows, columns]));
+        let contraction = checked::sum([
+            rows,
+            cols,
+            self.rows(),
+            self.field_contraction_scratch_len()?,
+        ]);
+        match (row_build, col_build, contraction) {
+            (Some(row), Some(col), Some(contract)) => Ok(row.max(col).max(contract)),
+            _ => Err(AkitaError::InvalidInput(
+                "ternary matrix-MLE workspace overflow".into(),
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn contraction_panel_groups(cols: usize) -> usize {
+    if cols < LARGE_PANEL_MIN_COLS {
+        SMALL_CONTRACTION_PANEL_GROUPS
+    } else {
+        LARGE_CONTRACTION_PANEL_GROUPS
+    }
+}
+
+fn column_weight_lut_count(shape: TernaryProjectionShape) -> Result<usize, AkitaError> {
+    if shape.rows() >= 4 && shape.cols() >= 128 {
+        checked::div_ceil(shape.rows(), 4)
+            .ok_or_else(|| AkitaError::InvalidInput("ternary row-table count overflow".into()))
+    } else {
+        Ok(0)
+    }
+}
 
 const fn selectors_to_ternary4() -> [u8; 256] {
     let mut table = [0u8; 256];
@@ -74,16 +157,8 @@ pub(super) fn contract_columns_to_rows<F: Field>(
     if rayon::current_num_threads() > 1 && shape.cols() >= PARALLEL_CONTRACTION_MIN_COLS {
         use rayon::prelude::*;
 
-        let panel_groups = if shape.cols() < LARGE_PANEL_MIN_COLS {
-            SMALL_CONTRACTION_PANEL_GROUPS
-        } else {
-            LARGE_CONTRACTION_PANEL_GROUPS
-        };
-        let panel_count = checked::div_ceil(shape.col_groups(), panel_groups)
-            .ok_or_else(|| AkitaError::InvalidInput("ternary contraction panel overflow".into()))?;
-        let scratch_len = checked::product([panel_count, shape.rows()]).ok_or_else(|| {
-            AkitaError::InvalidInput("ternary contraction scratch overflow".into())
-        })?;
+        let panel_groups = contraction_panel_groups(shape.cols());
+        let scratch_len = shape.field_contraction_scratch_len()?;
         if let Ok(mut scratch) = try_zeroed_vec(scratch_len, F::zero()) {
             scratch
                 .par_chunks_mut(shape.rows())
@@ -230,9 +305,8 @@ pub fn build_ternary_column_weights<F: Field>(
     let mut weights = try_zeroed_vec(shape.col_domain_len()?, F::zero())?;
     // Transpose four rows of selectors at a time. Their 81 possible weighted
     // sums are shared by every column, including all parallel panels.
-    let row_luts = if shape.rows() >= 4 && shape.cols() >= 128 {
-        let count = checked::div_ceil(shape.rows(), 4)
-            .ok_or_else(|| AkitaError::InvalidInput("ternary row-table count overflow".into()))?;
+    let count = column_weight_lut_count(shape)?;
+    let row_luts = if count != 0 {
         try_zeroed_vec(count, [F::zero(); TERNARY4_PATTERN_COUNT])
             .ok()
             .map(|mut tables| {
@@ -520,4 +594,51 @@ pub fn eval_power_of_two_block_projection_reduction_factor<F: Field>(
         input_block,
         input_col,
     )
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    #[test]
+    fn scratch_bounds_follow_kernel_thresholds_and_padded_domains() {
+        for rows in [1, 3, 4, 5, 256] {
+            for cols in [1, 127, 128, 4095, 4096, 16383, 16384, 65536] {
+                let shape = TernaryProjectionShape::new(rows, cols).unwrap();
+                let lut_count = if rows >= 4 && cols >= 128 {
+                    rows.div_ceil(4)
+                } else {
+                    0
+                };
+                assert_eq!(
+                    shape.column_weight_scratch_len().unwrap(),
+                    2 * rows.next_power_of_two() + 81 * lut_count,
+                );
+                #[cfg(feature = "parallel")]
+                let panels = if cols < 4096 {
+                    0
+                } else if cols < 16384 {
+                    cols.div_ceil(256)
+                } else {
+                    cols.div_ceil(1024)
+                };
+                #[cfg(not(feature = "parallel"))]
+                let panels = 0;
+                assert_eq!(
+                    shape.field_contraction_scratch_len().unwrap(),
+                    panels * rows
+                );
+                let mle_bound = shape.matrix_mle_scratch_len().unwrap();
+                assert!(mle_bound >= 2 * rows.next_power_of_two());
+                assert!(mle_bound >= rows.next_power_of_two() + 2 * cols.next_power_of_two());
+                assert!(
+                    mle_bound
+                        >= rows.next_power_of_two()
+                            + cols.next_power_of_two()
+                            + rows
+                            + panels * rows
+                );
+            }
+        }
+    }
 }
