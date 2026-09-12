@@ -7,6 +7,9 @@ use crate::EqPolynomial;
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
+
 const TERNARY4_PATTERN_COUNT: usize = 81;
 const SELECTORS_TO_TERNARY4: [u8; 256] = selectors_to_ternary4();
 
@@ -195,6 +198,8 @@ fn contract_column_group_range<F: Field>(
     groups: std::ops::Range<usize>,
 ) {
     let shape = matrix.shape();
+    #[cfg(target_arch = "x86_64")]
+    let row_kernel = x86_64::selected_row_kernel::<F>(shape.rows() / 2);
     for group in groups {
         let col_start = group * 4;
         let live = (shape.cols() - col_start).min(4);
@@ -202,14 +207,37 @@ fn contract_column_group_range<F: Field>(
         weights[..live].copy_from_slice(&col_weights[col_start..col_start + live]);
         let lut = build_ternary4_weight_lut(&weights);
         let (first_signs, second_signs) = matrix.sign_groups_unchecked(group);
+        #[cfg(target_arch = "x86_64")]
+        let first_scalar_pair = row_kernel.map_or(0, |kernel| {
+            // SAFETY: selection checked every feature required by this exact
+            // target-feature function. Matrix construction guarantees equal,
+            // complete sign planes and the caller validated the row output.
+            unsafe { kernel(first_signs, second_signs, row_acc, &lut) }
+        });
+        #[cfg(not(target_arch = "x86_64"))]
+        let first_scalar_pair = 0;
+        accumulate_selector_pairs(first_signs, second_signs, row_acc, &lut, first_scalar_pair);
+    }
+}
 
-        for ((rows, &first), &second) in row_acc.chunks_mut(2).zip(first_signs).zip(second_signs) {
-            let even_selectors = usize::from((first & 0x0f) | ((second & 0x0f) << 4));
-            rows[0] += lut[usize::from(SELECTORS_TO_TERNARY4[even_selectors])];
-            if let Some(odd) = rows.get_mut(1) {
-                let odd_selectors = usize::from((first >> 4) | (second & 0xf0));
-                *odd += lut[usize::from(SELECTORS_TO_TERNARY4[odd_selectors])];
-            }
+fn accumulate_selector_pairs<F: Field>(
+    first_signs: &[u8],
+    second_signs: &[u8],
+    row_acc: &mut [F],
+    lut: &[F; TERNARY4_PATTERN_COUNT],
+    first_pair: usize,
+) {
+    for ((rows, &first), &second) in row_acc
+        .chunks_mut(2)
+        .zip(first_signs)
+        .zip(second_signs)
+        .skip(first_pair)
+    {
+        let even_selectors = usize::from((first & 0x0f) | ((second & 0x0f) << 4));
+        rows[0] += lut[usize::from(SELECTORS_TO_TERNARY4[even_selectors])];
+        if let Some(odd) = rows.get_mut(1) {
+            let odd_selectors = usize::from((first >> 4) | (second & 0xf0));
+            *odd += lut[usize::from(SELECTORS_TO_TERNARY4[odd_selectors])];
         }
     }
 }
