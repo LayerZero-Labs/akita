@@ -54,16 +54,24 @@ pub(super) mod private {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
-trait WideLookupInput: Copy + Send + Sync {
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(super) trait WideLookupInput: Copy + Send + Sync {
     fn to_i64(self) -> i64;
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl WideLookupInput for i32 {
     #[inline(always)]
     fn to_i64(self) -> i64 {
         i64::from(self)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl WideLookupInput for i64 {
+    #[inline(always)]
+    fn to_i64(self) -> i64 {
+        self
     }
 }
 
@@ -171,7 +179,10 @@ pub(super) fn project_i8(
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("avx512f") {
-            return project_small_avx512(matrix, input, output);
+            return project_small_x86(matrix, input, output, X86LookupBackend::Avx512);
+        }
+        if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
+            return project_small_x86(matrix, input, output, X86LookupBackend::Avx2);
         }
     }
     dense::project_i8(matrix, input, output)
@@ -184,10 +195,13 @@ pub(super) fn project_i16(
 ) -> Result<(), AkitaError> {
     #[cfg(target_arch = "x86_64")]
     {
-        if matrix.shape().cols() >= I16_LOOKUP_MIN_COLS
-            && std::arch::is_x86_feature_detected!("avx512f")
-        {
-            return project_small_avx512(matrix, input, output);
+        if matrix.shape().cols() >= I16_LOOKUP_MIN_COLS {
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                return project_small_x86(matrix, input, output, X86LookupBackend::Avx512);
+            }
+            if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
+                return project_small_x86(matrix, input, output, X86LookupBackend::Avx2);
+            }
         }
     }
     dense::project_i16(matrix, input, output)
@@ -207,6 +221,15 @@ pub(super) fn project_i32(
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                return project_wide_x86(matrix, input, output, X86LookupBackend::Avx512);
+            }
+            if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
+                return project_wide_x86(matrix, input, output, X86LookupBackend::Avx2);
+            }
+        }
         dense::project_i32(matrix, input, output)
     }
 }
@@ -218,12 +241,13 @@ pub(super) fn project_i64(
 ) -> Result<(), AkitaError> {
     #[cfg(target_arch = "x86_64")]
     {
-        if std::arch::is_x86_feature_detected!("avx512f") && doubled_l1_fits_i64(input) {
-            output.fill(0);
-            // SAFETY: runtime dispatch checked AVX-512F; public projection
-            // methods validated all slice lengths.
-            unsafe { x86_64::project_lookup_i64_avx512(matrix, input, output) };
-            return finish_doubled_projection(output);
+        if doubled_l1_fits_i64(input) {
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                return project_wide_x86(matrix, input, output, X86LookupBackend::Avx512);
+            }
+            if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
+                return project_wide_x86(matrix, input, output, X86LookupBackend::Avx2);
+            }
         }
     }
     dense::project_i64(matrix, input, output)
@@ -269,7 +293,7 @@ fn project_wide_packed_rows<T: WideLookupInput>(
     for group_base in (0..shape.col_groups()).step_by(AARCH64_LOOKUP_GROUPS_PER_TILE) {
         let groups = (shape.col_groups() - group_base).min(AARCH64_LOOKUP_GROUPS_PER_TILE);
         for (local_group, table) in tables.iter_mut().take(groups).enumerate() {
-            *table = build_lookup_table_i64_wide(input, group_base + local_group);
+            *table = build_lookup_table_i64(input, group_base + local_group);
         }
         accumulate_packed_i64_tile(matrix, group_base, groups, &tables, first_row, output);
     }
@@ -303,15 +327,50 @@ fn accumulate_packed_i64_tile(
 }
 
 #[cfg(target_arch = "x86_64")]
-fn project_small_avx512<T: SmallLookupInput>(
+#[derive(Clone, Copy)]
+enum X86LookupBackend {
+    Avx2,
+    Avx512,
+}
+
+#[cfg(target_arch = "x86_64")]
+fn project_small_x86<T: SmallLookupInput>(
     matrix: &TernaryProjectionMatrix,
     input: &[T],
     output: &mut [i64],
+    backend: X86LookupBackend,
 ) -> Result<(), AkitaError> {
     output.fill(0);
-    // SAFETY: callers reach this function only after runtime AVX-512F
-    // detection; public projection methods validated all slice lengths.
-    unsafe { x86_64::project_lookup_i32_avx512(matrix, input, output) };
+    // SAFETY: each caller runtime-detects the feature required by its selected
+    // backend; public projection methods validated all slice lengths.
+    unsafe {
+        match backend {
+            X86LookupBackend::Avx2 => x86_64::project_lookup_i32_avx2(matrix, input, output),
+            X86LookupBackend::Avx512 => x86_64::project_lookup_i32_avx512(matrix, input, output),
+        }
+    }
+    finish_doubled_projection(output)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn project_wide_x86<T: WideLookupInput>(
+    matrix: &TernaryProjectionMatrix,
+    input: &[T],
+    output: &mut [i64],
+    backend: X86LookupBackend,
+) -> Result<(), AkitaError> {
+    output.fill(0);
+    // SAFETY: each caller runtime-detects the feature required by its selected
+    // backend. The i64 caller proves that doubled intermediates fit. For i32,
+    // the 1-GiB materialization limit bounds the number of columns below 2^30,
+    // so twice the L1 norm is at most 2^62 and fits in i64. Public projection
+    // methods validated exact input and output lengths before reaching here.
+    unsafe {
+        match backend {
+            X86LookupBackend::Avx2 => x86_64::project_lookup_i64_avx2(matrix, input, output),
+            X86LookupBackend::Avx512 => x86_64::project_lookup_i64_avx512(matrix, input, output),
+        }
+    }
     finish_doubled_projection(output)
 }
 
@@ -410,33 +469,14 @@ pub(super) fn build_lookup_table_i32<T: SmallLookupInput>(input: &[T], group: us
     std::array::from_fn(|selector| first[selector & 3] + second[selector >> 2])
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
-pub(super) fn build_lookup_table_i64(input: &[i64], group: usize) -> [i64; 16] {
-    build_lookup_table_i64_values(input, group)
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-fn build_lookup_table_i64_wide<T: WideLookupInput>(input: &[T], group: usize) -> [i64; 16] {
+pub(super) fn build_lookup_table_i64<T: WideLookupInput>(input: &[T], group: usize) -> [i64; 16] {
     let start = group * 4;
     let mut values = [0i64; 4];
     for (lane, value) in values.iter_mut().enumerate() {
         if let Some(&input_value) = input.get(start + lane) {
             *value = input_value.to_i64();
-        }
-    }
-    finish_lookup_table_i64(values)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn build_lookup_table_i64_values(input: &[i64], group: usize) -> [i64; 16] {
-    let start = group * 4;
-    let mut values = [0i64; 4];
-    for (lane, value) in values.iter_mut().enumerate() {
-        if let Some(&input_value) = input.get(start + lane) {
-            *value = input_value;
         }
     }
     finish_lookup_table_i64(values)
@@ -474,12 +514,6 @@ fn doubled_l1_fits_i64(input: &[i64]) -> bool {
         sum = next;
     }
     true
-}
-
-#[inline]
-#[cfg(target_arch = "x86_64")]
-pub(super) const fn expand_selector_pair(byte: u8) -> u16 {
-    (byte & 0x0f) as u16 | (((byte >> 4) as u16) << 8)
 }
 
 #[cfg(test)]
