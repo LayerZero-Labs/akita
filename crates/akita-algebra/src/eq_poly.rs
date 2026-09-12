@@ -692,11 +692,10 @@ mod tests {
     #[test]
     fn evals_parallel_matches_serial_across_fields() {
         fn check<E: Field + std::fmt::Debug>() {
+            let mut rng = StdRng::seed_from_u64(0xfeed_beef);
             for n in [0, 1, 7, 15, 16, 17, 18] {
-                let point: Vec<E> = (0..n)
-                    .map(|index| E::from_u64(0xfeed_beef + index as u64 * 0x9e37))
-                    .collect();
-                for scale in [None, Some(E::from_u64(23))] {
+                let point: Vec<E> = (0..n).map(|_| E::random(&mut rng)).collect();
+                for scale in [None, Some(E::random(&mut rng))] {
                     let serial = EqPolynomial::evals_serial(&point, scale).unwrap();
                     let parallel = EqPolynomial::evals_parallel(&point, scale).unwrap();
                     assert_eq!(serial, parallel, "n={n}");

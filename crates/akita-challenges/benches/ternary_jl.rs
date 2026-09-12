@@ -10,6 +10,7 @@ use akita_challenges::expand_balanced_ternary_matrix;
 use criterion::BatchSize;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_field::{Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use rand::{rngs::StdRng, SeedableRng};
 use std::hint::black_box;
 
 type BaselineF64 = Fp64<4294967197>;
@@ -184,9 +185,8 @@ fn benchmark_ternary_jl(c: &mut Criterion) {
 }
 
 fn challenge_point<F: Field>(num_vars: usize, seed: u64) -> Vec<F> {
-    (0..num_vars)
-        .map(|index| F::from_u64(seed.wrapping_add(index as u64 * 0x9e37_79b9)))
-        .collect()
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..num_vars).map(|_| F::random(&mut rng)).collect()
 }
 
 fn mle_sample_size(cols: usize) -> usize {
