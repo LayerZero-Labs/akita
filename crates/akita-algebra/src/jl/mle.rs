@@ -391,14 +391,28 @@ fn accumulate_column_weight_groups<F: Field>(
     output: &mut [F],
 ) {
     let shape = matrix.shape();
+    #[cfg(target_arch = "x86_64")]
+    let column_kernel =
+        row_luts.and_then(|_| x86_64::selected_column_kernel::<F>(shape.rows() / 4));
     for (local_group, group_weights) in output.chunks_mut(4).enumerate() {
         let group = first_group + local_group;
         let (first_signs, second_signs) = matrix.sign_groups_unchecked(group);
         if let Some(tables) = row_luts {
+            #[cfg(target_arch = "x86_64")]
+            let first_scalar_table = column_kernel.map_or(0, |kernel| {
+                // SAFETY: selection checked every feature required by this
+                // target-feature function. Matrix construction guarantees
+                // complete sign planes; row LUTs and output cover live rows
+                // and columns, with partial tails left to the scalar loop.
+                unsafe { kernel(first_signs, second_signs, tables, group_weights) }
+            });
+            #[cfg(not(target_arch = "x86_64"))]
+            let first_scalar_table = 0;
             for ((first, second), table) in first_signs
                 .chunks(2)
                 .zip(second_signs.chunks(2))
                 .zip(tables)
+                .skip(first_scalar_table)
             {
                 let first = transpose_four_rows(u16::from_le_bytes([
                     first[0],

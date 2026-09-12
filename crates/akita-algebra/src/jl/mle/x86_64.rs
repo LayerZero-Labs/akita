@@ -6,6 +6,8 @@ use std::arch::x86_64::*;
 
 const AVX2_ROW_PAIRS: usize = 32;
 const AVX512_ROW_PAIRS: usize = 64;
+const AVX2_COLUMN_TABLES: usize = 16;
+const AVX512_COLUMN_TABLES: usize = 32;
 
 /// A nibble contributes one bit to each of four base-three digits. Two
 /// Rademacher planes add their contributions to obtain an index in `0..81`.
@@ -13,6 +15,8 @@ const TERNARY_NIBBLE_WEIGHT: [u8; 16] = [0, 27, 9, 36, 3, 30, 12, 39, 1, 28, 10,
 
 pub(super) type RowKernel<F> =
     unsafe fn(&[u8], &[u8], &mut [F], &[F; TERNARY4_PATTERN_COUNT]) -> usize;
+pub(super) type ColumnKernel<F> =
+    unsafe fn(&[u8], &[u8], &[[F; TERNARY4_PATTERN_COUNT]], &mut [F]) -> usize;
 
 /// Select once per contraction panel, outside the column-group loop.
 pub(super) fn selected_row_kernel<F: Field>(complete_pairs: usize) -> Option<RowKernel<F>> {
@@ -23,6 +27,22 @@ pub(super) fn selected_row_kernel<F: Field>(complete_pairs: usize) -> Option<Row
         Some(contract_rows_avx512::<F>)
     } else if complete_pairs >= AVX2_ROW_PAIRS && std::arch::is_x86_feature_detected!("avx2") {
         Some(contract_rows_avx2::<F>)
+    } else {
+        None
+    }
+}
+
+/// Select once per column panel, outside the selector-group loop.
+pub(super) fn selected_column_kernel<F: Field>(complete_tables: usize) -> Option<ColumnKernel<F>> {
+    // The 16-table AVX2 working set wins across all shipped fields, including
+    // on AVX-512 hosts; retain the wider kernel for AVX-512-only targets.
+    if complete_tables >= AVX2_COLUMN_TABLES && std::arch::is_x86_feature_detected!("avx2") {
+        Some(contract_columns_avx2::<F>)
+    } else if complete_tables >= AVX512_COLUMN_TABLES
+        && std::arch::is_x86_feature_detected!("avx512f")
+        && std::arch::is_x86_feature_detected!("avx512bw")
+    {
+        Some(contract_columns_avx512::<F>)
     } else {
         None
     }
@@ -144,6 +164,132 @@ fn accumulate_indices<F: Field>(
     }
 }
 
+#[target_feature(enable = "avx2")]
+unsafe fn contract_columns_avx2<F: Field>(
+    first: &[u8],
+    second: &[u8],
+    tables: &[[F; TERNARY4_PATTERN_COUNT]],
+    columns: &mut [F],
+) -> usize {
+    let complete_tables = (first.len() / 2).min(second.len() / 2).min(tables.len());
+    let vector_tables = complete_tables / AVX2_COLUMN_TABLES * AVX2_COLUMN_TABLES;
+    let weights =
+        _mm256_broadcastsi128_si256(_mm_loadu_si128(TERNARY_NIBBLE_WEIGHT.as_ptr().cast()));
+    let nibble_mask = _mm256_set1_epi16(0x000f);
+
+    for table_start in (0..vector_tables).step_by(AVX2_COLUMN_TABLES) {
+        let byte_start = 2 * table_start;
+        let mut first_rows =
+            transpose_four_rows_avx2(_mm256_loadu_si256(first[byte_start..].as_ptr().cast()));
+        let mut second_rows =
+            transpose_four_rows_avx2(_mm256_loadu_si256(second[byte_start..].as_ptr().cast()));
+        for column in columns.iter_mut() {
+            let indices = selector_indices_u16_avx2(first_rows, second_rows, weights, nibble_mask);
+            let mut stored = [0u16; AVX2_COLUMN_TABLES];
+            _mm256_storeu_si256(stored.as_mut_ptr().cast(), indices);
+            for (table, index) in tables[table_start..table_start + AVX2_COLUMN_TABLES]
+                .iter()
+                .zip(stored)
+            {
+                *column += table[usize::from(index)];
+            }
+            first_rows = _mm256_srli_epi16::<4>(first_rows);
+            second_rows = _mm256_srli_epi16::<4>(second_rows);
+        }
+    }
+    vector_tables
+}
+
+#[target_feature(enable = "avx2")]
+unsafe fn transpose_four_rows_avx2(mut bits: __m256i) -> __m256i {
+    let swap = _mm256_and_si256(
+        _mm256_xor_si256(bits, _mm256_srli_epi16::<3>(bits)),
+        _mm256_set1_epi16(0x0a0a),
+    );
+    bits = _mm256_xor_si256(bits, _mm256_xor_si256(swap, _mm256_slli_epi16::<3>(swap)));
+    let swap = _mm256_and_si256(
+        _mm256_xor_si256(bits, _mm256_srli_epi16::<6>(bits)),
+        _mm256_set1_epi16(0x00cc),
+    );
+    _mm256_xor_si256(bits, _mm256_xor_si256(swap, _mm256_slli_epi16::<6>(swap)))
+}
+
+#[target_feature(enable = "avx2")]
+unsafe fn selector_indices_u16_avx2(
+    first: __m256i,
+    second: __m256i,
+    weights: __m256i,
+    nibble_mask: __m256i,
+) -> __m256i {
+    _mm256_add_epi8(
+        _mm256_shuffle_epi8(weights, _mm256_and_si256(first, nibble_mask)),
+        _mm256_shuffle_epi8(weights, _mm256_and_si256(second, nibble_mask)),
+    )
+}
+
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn contract_columns_avx512<F: Field>(
+    first: &[u8],
+    second: &[u8],
+    tables: &[[F; TERNARY4_PATTERN_COUNT]],
+    columns: &mut [F],
+) -> usize {
+    let complete_tables = (first.len() / 2).min(second.len() / 2).min(tables.len());
+    let vector_tables = complete_tables / AVX512_COLUMN_TABLES * AVX512_COLUMN_TABLES;
+    let weights = _mm512_broadcast_i32x4(_mm_loadu_si128(TERNARY_NIBBLE_WEIGHT.as_ptr().cast()));
+    let nibble_mask = _mm512_set1_epi16(0x000f);
+
+    for table_start in (0..vector_tables).step_by(AVX512_COLUMN_TABLES) {
+        let byte_start = 2 * table_start;
+        let mut first_rows =
+            transpose_four_rows_avx512(_mm512_loadu_si512(first[byte_start..].as_ptr().cast()));
+        let mut second_rows =
+            transpose_four_rows_avx512(_mm512_loadu_si512(second[byte_start..].as_ptr().cast()));
+        for column in columns.iter_mut() {
+            let indices =
+                selector_indices_u16_avx512(first_rows, second_rows, weights, nibble_mask);
+            let mut stored = [0u16; AVX512_COLUMN_TABLES];
+            _mm512_storeu_si512(stored.as_mut_ptr().cast(), indices);
+            for (table, index) in tables[table_start..table_start + AVX512_COLUMN_TABLES]
+                .iter()
+                .zip(stored)
+            {
+                *column += table[usize::from(index)];
+            }
+            first_rows = _mm512_srli_epi16::<4>(first_rows);
+            second_rows = _mm512_srli_epi16::<4>(second_rows);
+        }
+    }
+    vector_tables
+}
+
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn transpose_four_rows_avx512(mut bits: __m512i) -> __m512i {
+    let swap = _mm512_and_si512(
+        _mm512_xor_si512(bits, _mm512_srli_epi16::<3>(bits)),
+        _mm512_set1_epi16(0x0a0a),
+    );
+    bits = _mm512_xor_si512(bits, _mm512_xor_si512(swap, _mm512_slli_epi16::<3>(swap)));
+    let swap = _mm512_and_si512(
+        _mm512_xor_si512(bits, _mm512_srli_epi16::<6>(bits)),
+        _mm512_set1_epi16(0x00cc),
+    );
+    _mm512_xor_si512(bits, _mm512_xor_si512(swap, _mm512_slli_epi16::<6>(swap)))
+}
+
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn selector_indices_u16_avx512(
+    first: __m512i,
+    second: __m512i,
+    weights: __m512i,
+    nibble_mask: __m512i,
+) -> __m512i {
+    _mm512_add_epi8(
+        _mm512_shuffle_epi8(weights, _mm512_and_si512(first, nibble_mask)),
+        _mm512_shuffle_epi8(weights, _mm512_and_si512(second, nibble_mask)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::SELECTORS_TO_TERNARY4;
@@ -173,10 +319,7 @@ mod tests {
         F::from_u64(u64::from(SELECTORS_TO_TERNARY4[usize::from(selector)]))
     }
 
-    fn assert_forced_kernel(
-        pairs: usize,
-        kernel: RowKernel<F>,
-    ) {
+    fn assert_forced_kernel(pairs: usize, kernel: RowKernel<F>) {
         let table = lut();
         for block in (0..=u16::MAX as usize).step_by(pairs) {
             let mut first = vec![0u8; pairs];
@@ -204,9 +347,7 @@ mod tests {
         }
     }
 
-    fn assert_field_contraction<G: Field + std::fmt::Debug>(
-        kernel: RowKernel<G>,
-    ) {
+    fn assert_field_contraction<G: Field + std::fmt::Debug>(kernel: RowKernel<G>) {
         // Multiple vectors in both backends, two residual pairs, and an odd row.
         const ROWS: usize = 261;
         const ROW_PAIRS: usize = ROWS.div_ceil(2);
@@ -237,6 +378,91 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    fn assert_forced_column_kernel<G: Field + std::fmt::Debug>(kernel: ColumnKernel<G>) {
+        const TABLES: usize = 67;
+        let mut rng = StdRng::seed_from_u64(0x434f_4c55_4d4e_5349);
+        let row_weights: Vec<[G; 4]> = (0..TABLES)
+            .map(|_| std::array::from_fn(|_| G::random(&mut rng)))
+            .collect();
+        let tables: Vec<[G; TERNARY4_PATTERN_COUNT]> = row_weights
+            .iter()
+            .map(super::super::build_ternary4_weight_lut)
+            .collect();
+        let first: Vec<u8> = (0..2 * TABLES)
+            .map(|index| index.wrapping_mul(73).wrapping_add(19) as u8)
+            .collect();
+        let second: Vec<u8> = (0..2 * TABLES)
+            .map(|index| index.wrapping_mul(151).wrapping_add(41) as u8)
+            .collect();
+        let initial: Vec<G> = (0..4).map(|_| G::random(&mut rng)).collect();
+        let mut actual = initial.clone();
+        // SAFETY: callers check the target features required by the forced
+        // kernel, and the slices contain multiple complete vector batches.
+        let consumed = unsafe { kernel(&first, &second, &tables, &mut actual) };
+        assert_eq!(consumed, 64);
+
+        let mut expected = initial;
+        for (table_index, weights) in row_weights.iter().take(consumed).enumerate() {
+            for (column, output) in expected.iter_mut().enumerate() {
+                for (row, &weight) in weights.iter().enumerate() {
+                    let byte = 2 * table_index + row / 2;
+                    let bit = (row % 2) * 4 + column;
+                    match ((first[byte] >> bit) & 1) + ((second[byte] >> bit) & 1) {
+                        0 => *output -= weight,
+                        2 => *output += weight,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
+    fn patterned_matrix(rows: usize, cols: usize) -> crate::jl::TernaryProjectionMatrix {
+        let shape = crate::jl::TernaryProjectionShape::new(rows, cols).unwrap();
+        let mut first = vec![0u8; shape.plane_len()];
+        let mut second = vec![0u8; shape.plane_len()];
+        for row in 0..rows {
+            for col in 0..cols {
+                let index = (col >> 2) * shape.row_pairs() + (row >> 1);
+                let bit = 1u8 << (((row & 1) << 2) | (col & 3));
+                match (row * 37 + col * 19 + row * col) % 4 {
+                    0 => {}
+                    1 | 3 => {
+                        first[index] |= bit;
+                        second[index] |= bit;
+                    }
+                    _ => first[index] |= bit,
+                }
+            }
+        }
+        crate::jl::TernaryProjectionMatrix::from_rademacher_bitplanes(shape, first, second).unwrap()
+    }
+
+    fn assert_column_dispatch<G: Field + std::fmt::Debug>() {
+        let matrix = patterned_matrix(269, 7);
+        let shape = matrix.shape();
+        let mut rng = StdRng::seed_from_u64(0x434f_4c55_4d4e_454e);
+        let row_point: Vec<G> = (0..shape.row_num_vars().unwrap())
+            .map(|_| G::random(&mut rng))
+            .collect();
+        let row_eq = crate::EqPolynomial::evals(&row_point).unwrap();
+        let mut expected = vec![G::zero(); shape.col_domain_len().unwrap()];
+        for (row, &weight) in row_eq.iter().take(shape.rows()).enumerate() {
+            for (col, output) in expected.iter_mut().take(shape.cols()).enumerate() {
+                match matrix.entry(row, col).unwrap() {
+                    -1 => *output -= weight,
+                    1 => *output += weight,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(
+            super::super::build_ternary_column_weights(&matrix, &row_point).unwrap(),
+            expected
+        );
+    }
+
     #[test]
     fn forced_avx2_decoding_exhausts_both_selector_bytes() {
         if std::arch::is_x86_feature_detected!("avx2") {
@@ -257,6 +483,25 @@ mod tests {
             assert_field_contraction::<F64Ext>(contract_rows_avx512::<F64Ext>);
             assert_field_contraction::<F128>(contract_rows_avx512::<F128>);
         }
+    }
+
+    #[test]
+    fn forced_column_backends_match_full_field_oracle() {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            assert_forced_column_kernel::<F32Ext>(contract_columns_avx2::<F32Ext>);
+            assert_forced_column_kernel::<F64Ext>(contract_columns_avx2::<F64Ext>);
+            assert_forced_column_kernel::<F128>(contract_columns_avx2::<F128>);
+        }
+        if std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw")
+        {
+            assert_forced_column_kernel::<F32Ext>(contract_columns_avx512::<F32Ext>);
+            assert_forced_column_kernel::<F64Ext>(contract_columns_avx512::<F64Ext>);
+            assert_forced_column_kernel::<F128>(contract_columns_avx512::<F128>);
+        }
+        assert_column_dispatch::<F32Ext>();
+        assert_column_dispatch::<F64Ext>();
+        assert_column_dispatch::<F128>();
     }
 
     #[test]
@@ -375,6 +620,107 @@ mod tests {
         report_contraction_field::<F32Ext>("fp32ext", 50, &matrix);
         report_contraction_field::<F64Ext>("fp64ext", 50, &matrix);
         report_contraction_field::<F128>("fp128", 50, &matrix);
+    }
+
+    #[test]
+    #[ignore = "private x86 column-weight kernel microbenchmark"]
+    fn column_weight_kernel_microbenchmark() {
+        let matrix = patterned_matrix(256, 1 << 14);
+        report_column_weight_field::<F32Ext>("fp32ext", 50, &matrix);
+        report_column_weight_field::<F64Ext>("fp64ext", 50, &matrix);
+        report_column_weight_field::<F128>("fp128", 50, &matrix);
+    }
+
+    fn report_column_weight_field<G: Field>(
+        label: &str,
+        iterations: usize,
+        matrix: &crate::jl::TernaryProjectionMatrix,
+    ) {
+        let mut rng = StdRng::seed_from_u64(0x434f_4c55_4d4e_4245);
+        let row_weights: Vec<G> = (0..matrix.shape().rows())
+            .map(|_| G::random(&mut rng))
+            .collect();
+        let tables: Vec<[G; TERNARY4_PATTERN_COUNT]> = row_weights
+            .chunks(4)
+            .map(|rows| {
+                let mut values = [G::zero(); 4];
+                values[..rows.len()].copy_from_slice(rows);
+                super::super::build_ternary4_weight_lut(&values)
+            })
+            .collect();
+        let scalar = time_column_weights(iterations, matrix, &tables, None);
+        let avx2 = std::arch::is_x86_feature_detected!("avx2").then(|| {
+            time_column_weights(
+                iterations,
+                matrix,
+                &tables,
+                Some(contract_columns_avx2::<G>),
+            )
+        });
+        let avx512 = (std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw"))
+        .then(|| {
+            time_column_weights(
+                iterations,
+                matrix,
+                &tables,
+                Some(contract_columns_avx512::<G>),
+            )
+        });
+        eprintln!("{label}: scalar={scalar:?}, avx2={avx2:?}, avx512={avx512:?}");
+    }
+
+    fn time_column_weights<G: Field>(
+        iterations: usize,
+        matrix: &crate::jl::TernaryProjectionMatrix,
+        tables: &[[G; TERNARY4_PATTERN_COUNT]],
+        kernel: Option<ColumnKernel<G>>,
+    ) -> std::time::Duration {
+        let mut output = vec![G::zero(); matrix.shape().cols()];
+        let start = Instant::now();
+        for _ in 0..iterations {
+            output.fill(G::zero());
+            accumulate_column_weights_for_benchmark(matrix, tables, &mut output, kernel);
+            black_box(&output);
+        }
+        start.elapsed()
+    }
+
+    fn accumulate_column_weights_for_benchmark<G: Field>(
+        matrix: &crate::jl::TernaryProjectionMatrix,
+        tables: &[[G; TERNARY4_PATTERN_COUNT]],
+        output: &mut [G],
+        kernel: Option<ColumnKernel<G>>,
+    ) {
+        for (group, group_weights) in output.chunks_mut(4).enumerate() {
+            let (first, second) = matrix.sign_groups_unchecked(group);
+            let first_scalar_table = kernel.map_or(0, |kernel| {
+                // SAFETY: benchmark callers feature-check forced kernels, and
+                // matrix construction guarantees complete selector planes.
+                unsafe { kernel(first, second, tables, group_weights) }
+            });
+            for ((first, second), table) in first
+                .chunks(2)
+                .zip(second.chunks(2))
+                .zip(tables)
+                .skip(first_scalar_table)
+            {
+                let first = super::super::transpose_four_rows(u16::from_le_bytes([
+                    first[0],
+                    first.get(1).copied().unwrap_or_default(),
+                ]));
+                let second = super::super::transpose_four_rows(u16::from_le_bytes([
+                    second[0],
+                    second.get(1).copied().unwrap_or_default(),
+                ]));
+                for (col, value) in group_weights.iter_mut().enumerate() {
+                    let selectors =
+                        ((first >> (4 * col)) & 15) | (((second >> (4 * col)) & 15) << 4);
+                    *value += table
+                        [usize::from(super::super::SELECTORS_TO_TERNARY4[usize::from(selectors)])];
+                }
+            }
+        }
     }
 
     fn report_contraction_field<G: Field>(
