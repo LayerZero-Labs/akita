@@ -124,9 +124,14 @@ A source can translate itself into one or more Akita-owned representations:
 | `OneHotType` | Complete hot-position slice, chunk size, and variable count |
 
 Dense predecomposed digits remain distinct from packed short-norm coefficients.
-One-hot sources preserve their stored index width (`u8`, `u16`, `u32`, or
-`usize`) and use `None` for an all-zero chunk; the boundary does not widen or
-copy the position buffer.
+Packed short-norm representations carry three exact extents: source-live,
+encoded-stored, and commitment-padded. The encoded byte length must be exactly
+the stored extent, unused final-byte bits must be zero, and supplied positive
+and negative extrema must match every stored coefficient before those bounds
+may select a CPU kernel. Coefficients between the stored and padded extents are
+canonical zeroes. One-hot sources preserve their stored index width (`u8`, `u16`,
+`u32`, or `usize`) and use `None` for an all-zero chunk; the boundary does not
+widen or copy the position buffer.
 
 Sources that can expose one of these representations reuse Akita's inner
 implementations. Concrete source types may also implement opening and tensor
@@ -320,6 +325,18 @@ Consuming export moves uniquely owned CPU rows and compression buffers; shared
 leases use the borrowed copying fallback. Resident routes do not pay that cost
 unless a later consumer requests export.
 
+The first resident inner-row export consumes and replaces the backend image.
+It is checked against its request binding:
+ring dimension, source count, and the exact per-source coefficient length must
+all match. The validated rows become one shared immutable allocation, so state
+clones, terminal transcript binding, relation construction, and portable export
+observe identical material even when a custom exporter is stateful. The
+backend image and frozen host image are never retained at the same time.
+
+`InnerRelationStateMaterial::new` requires the expected inner plan and source
+count. Generic state preflight materializes and validates custom state before
+transcript mutation, and relation consumers validate again at use time.
+
 The direct ownership model has no global state slot table, pending deposit,
 generation counter, cleanup callback registry, CPU token map, or second
 composite dispatcher. CPU state directly owns its witness vectors and
@@ -350,9 +367,12 @@ Resource control exposes setup identity, exact NTT slot preparation,
 cached-versus-streamed policy, cache owner identity, release,
 and optional compression-cache accounting.
 
-`CommitmentNttRequirement` identifies the exact key, routing extent, and owning
-stage. Proof-wide routed requirements also identify whether the request is
-inner-only or A/B. A/B requirements use the fused registration when present;
+`CommitmentNttRequirement` identifies the exact key, routing extent, owning
+fold and stage, and whether the request is inner-only or A/B. The fold and route
+remain attached when the requirement reaches backend cache policy and
+prewarming. Direct terminal plans derive `InnerOnly`; full and uncompressed
+plans derive `InnerOuter`. A/B
+requirements use the fused registration when present;
 terminal A requirements use split inner. The same resolved route controls
 prewarm, owner selection, and execution. Physical
 owners are deduplicated by `NttCacheOwnerId` when stages share prepared state.

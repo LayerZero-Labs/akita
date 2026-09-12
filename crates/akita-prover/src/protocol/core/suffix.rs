@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::commitment::{
-    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
+    CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
+    TerminalBindingState, TerminalTFieldsMessage,
 };
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
@@ -267,9 +268,15 @@ where
         NextWitnessState::TerminalInnerState => {}
         NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
-    let terminal_message = prover_state.terminal_t_fields_message()?;
+    let terminal_plan = CommitmentExecutionPlan::for_terminal(scheduled)?;
+    let terminal_material = prover_state.inner_relation_material()?;
+    terminal_material.validate(terminal_plan.inner(), 1)?;
+    let [terminal_row] = terminal_material.rows() else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let terminal_message = TerminalTFieldsMessage::from_row(terminal_row)?;
     transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, terminal_message.as_bytes());
-    let mut terminal_rows = prover_state.inner_relation_material()?.into_rows();
+    let mut terminal_rows = terminal_material.into_rows();
     if terminal_rows.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }

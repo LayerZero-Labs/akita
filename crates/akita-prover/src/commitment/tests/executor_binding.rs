@@ -1,17 +1,78 @@
 use super::*;
 use crate::commitment::{
-    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, NoRetainedStatePolicy,
-    ResolvedCommitSource, StateOwnerCapability,
+    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, InnerRelationState,
+    InnerRelationStateMaterial, NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{
-    CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
+    CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
 use jolt_field::{Prime64Offset59, Ring};
 use std::sync::Arc;
 
 type F = Prime64Offset59;
+
+#[test]
+fn inner_relation_material_rejects_incomplete_exported_rows() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q64Offset59,
+        64,
+        2,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(4, 8, 1, 2, 2)
+    .unwrap();
+    let plan =
+        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params))
+            .unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        9,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 128 * 64,
+        },
+    )
+    .unwrap();
+    let binding = CommitmentStateBinding::new(
+        setup.expanded.descriptor().clone(),
+        *plan.inner(),
+        1,
+        None,
+        None,
+    )
+    .unwrap();
+    let short_row = RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap();
+
+    assert!(InnerRelationStateMaterial::from_binding(&binding, vec![short_row]).is_err());
+}
+
+#[test]
+fn generic_inner_state_preflight_rejects_incomplete_material() {
+    struct MalformedState;
+
+    impl InnerRelationState<F> for MalformedState {
+        fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+            InnerRelationStateMaterial::from_rows(
+                64,
+                vec![RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap()],
+            )
+        }
+    }
+
+    let plan = crate::compute::CommitInnerPlan {
+        ring_dimension: 64,
+        num_live_blocks: 1,
+        n_a: 2,
+        num_positions_per_block: 1,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    assert!(MalformedState.preflight_inner_relation(&plan, 1).is_err());
+}
 
 struct ReboundInner {
     owner: StateOwnerCapability<InnerImage>,

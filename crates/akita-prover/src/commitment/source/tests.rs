@@ -35,6 +35,36 @@ fn only_short_norm_sources_may_use_a_partial_logical_domain() {
 }
 
 #[test]
+fn short_norm_representation_rejects_forged_extrema_before_dispatch() {
+    let error = match ShortNormRepresentation::new(&[0x03], 1, 1, 64, 3, 0, 1) {
+        Err(error) => error,
+        Ok(_) => panic!("forged short-norm extrema must be rejected"),
+    };
+    assert!(
+        matches!(error, AkitaError::InvalidInput(message) if message.contains("decoded stored bounds"))
+    );
+}
+
+#[test]
+fn short_norm_representation_rejects_hidden_complete_tail_digit() {
+    let error = match ShortNormRepresentation::new(&[0x19], 1, 2, 64, 3, 0, 1) {
+        Err(error) => error,
+        Ok(_) => panic!("stored short-norm extrema must cover every decoded coefficient"),
+    };
+    assert!(
+        matches!(error, AkitaError::InvalidInput(message) if message.contains("decoded stored bounds"))
+    );
+
+    let error = match ShortNormRepresentation::new(&[0x19], 1, 1, 64, 3, 0, 1) {
+        Err(error) => error,
+        Ok(_) => panic!("unused packed bits must use the canonical zero encoding"),
+    };
+    assert!(
+        matches!(error, AkitaError::InvalidInput(message) if message.contains("non-canonical trailing bits"))
+    );
+}
+
+#[test]
 fn dense_source_borrows_coefficients_without_copying() {
     let poly = DensePoly::<F>::from_field_evals(6, vec![F::from_u64(1); 64]).unwrap();
     let descriptor = poly.descriptor().unwrap();

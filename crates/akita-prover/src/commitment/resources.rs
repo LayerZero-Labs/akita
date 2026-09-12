@@ -66,6 +66,8 @@ pub enum CommitmentNttRoute {
 /// Exact cache request routed to one registered commitment stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentNttRequirement {
+    fold_level: usize,
+    route: CommitmentNttRoute,
     stage: CommitmentNttStage,
     key: NttCacheKey,
     routing_extent: usize,
@@ -74,6 +76,8 @@ pub struct CommitmentNttRequirement {
 impl CommitmentNttRequirement {
     /// Construct after validating the operation-level routing extent.
     pub fn new(
+        fold_level: usize,
+        route: CommitmentNttRoute,
         stage: CommitmentNttStage,
         key: NttCacheKey,
         routing_extent: usize,
@@ -84,10 +88,22 @@ impl CommitmentNttRequirement {
             ));
         }
         Ok(Self {
+            fold_level,
+            route,
             stage,
             key,
             routing_extent,
         })
+    }
+
+    /// Fold level whose compute stack owns this request.
+    pub const fn fold_level(&self) -> usize {
+        self.fold_level
+    }
+
+    /// Execution route whose cache policy owns this request.
+    pub const fn route(&self) -> CommitmentNttRoute {
+        self.route
     }
 
     /// Owning commitment stage.
@@ -107,10 +123,10 @@ impl CommitmentNttRequirement {
 
     fn routed(&self) -> RoutedNttRequirement {
         RoutedNttRequirement {
-            fold_level: 0,
+            fold_level: self.fold_level,
             cluster: NttOperationCluster::Commit,
             commitment_stage: Some(self.stage),
-            commitment_route: Some(CommitmentNttRoute::InnerOuter),
+            commitment_route: Some(self.route),
             key: self.key,
             routing_extent: self.routing_extent,
         }
@@ -144,7 +160,14 @@ impl CommitmentExecutionPlan {
         let key = NttCacheKey::from_matrix_shape(plan.ring_dimension, plan.n_a, width, domain)?;
         let routing_extent = checked::product([plan.n_a, width])
             .ok_or_else(|| AkitaError::InvalidSetup("commitment A extent overflow".into()))?;
-        CommitmentNttRequirement::new(CommitmentNttStage::Inner, key, routing_extent).map(Some)
+        let route = match self.mode() {
+            super::CommitmentExecutionMode::InnerOnly => CommitmentNttRoute::InnerOnly,
+            super::CommitmentExecutionMode::Full | super::CommitmentExecutionMode::Uncompressed => {
+                CommitmentNttRoute::InnerOuter
+            }
+        };
+        CommitmentNttRequirement::new(0, route, CommitmentNttStage::Inner, key, routing_extent)
+            .map(Some)
     }
 
     /// Exact B-matrix cache request when this route contains an outer stage.
@@ -161,7 +184,14 @@ impl CommitmentExecutionPlan {
         )?;
         let routing_extent = checked::product([plan.n_b(), width])
             .ok_or_else(|| AkitaError::InvalidSetup("commitment B extent overflow".into()))?;
-        CommitmentNttRequirement::new(CommitmentNttStage::Outer, key, routing_extent).map(Some)
+        CommitmentNttRequirement::new(
+            0,
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Outer,
+            key,
+            routing_extent,
+        )
+        .map(Some)
     }
 }
 
@@ -370,10 +400,19 @@ where
     fn routed_requirement(
         requirement: RoutedNttRequirement,
     ) -> Result<CommitmentNttRequirement, AkitaError> {
+        let route = requirement.commitment_route.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
+        })?;
         let stage = requirement.commitment_stage.ok_or_else(|| {
             AkitaError::InvalidSetup("commitment NTT requirement has no stage discriminator".into())
         })?;
-        CommitmentNttRequirement::new(stage, requirement.key, requirement.routing_extent)
+        CommitmentNttRequirement::new(
+            requirement.fold_level,
+            route,
+            stage,
+            requirement.key,
+            requirement.routing_extent,
+        )
     }
 
     fn routed_resources(
@@ -414,11 +453,8 @@ where
         &self,
         requirement: RoutedNttRequirement,
     ) -> Result<(), AkitaError> {
-        let route = requirement.commitment_route.ok_or_else(|| {
-            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
-        })?;
         let requirement = Self::routed_requirement(requirement)?;
-        self.routed_resources(route, requirement.stage())?
+        self.routed_resources(requirement.route(), requirement.stage())?
             .ensure_ntt_slot(requirement)
     }
 
@@ -426,11 +462,8 @@ where
         &self,
         requirement: RoutedNttRequirement,
     ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
-        let route = requirement.commitment_route.ok_or_else(|| {
-            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
-        })?;
         let requirement = Self::routed_requirement(requirement)?;
-        let resources = self.routed_resources(route, requirement.stage())?;
+        let resources = self.routed_resources(requirement.route(), requirement.stage())?;
         if !resources.requirement_is_cached(requirement)? {
             return Ok(None);
         }
@@ -462,8 +495,37 @@ mod tests {
     #[test]
     fn commitment_requirement_rejects_short_routing_extent() {
         let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
-        assert!(CommitmentNttRequirement::new(CommitmentNttStage::Inner, key, 15).is_err());
-        assert!(CommitmentNttRequirement::new(CommitmentNttStage::Inner, key, 16).is_ok());
+        assert!(CommitmentNttRequirement::new(
+            0,
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Inner,
+            key,
+            15,
+        )
+        .is_err());
+        assert!(CommitmentNttRequirement::new(
+            0,
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Inner,
+            key,
+            16,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn commitment_requirement_preserves_owning_fold() {
+        let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
+        let requirement = CommitmentNttRequirement::new(
+            7,
+            CommitmentNttRoute::InnerOnly,
+            CommitmentNttStage::Inner,
+            key,
+            16,
+        )
+        .unwrap();
+        assert_eq!(requirement.fold_level(), 7);
+        assert_eq!(requirement.routed().fold_level, 7);
     }
 
     #[test]
