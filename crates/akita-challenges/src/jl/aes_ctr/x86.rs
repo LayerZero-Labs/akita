@@ -8,38 +8,70 @@ use core::arch::x86_64::*;
 const ROUND_KEYS: usize = 11;
 const AESNI_BATCH_BLOCKS: usize = 8;
 const VAES256_BATCH_VECTORS: usize = 8;
-#[cfg(test)]
-const VAES512_BATCH_VECTORS: usize = 16;
 
 type RoundKeys = [__m128i; ROUND_KEYS];
 type RoundKeys256 = [__m256i; ROUND_KEYS];
-#[cfg(test)]
 type RoundKeys512 = [__m512i; ROUND_KEYS];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HardwareKind {
+    AesNi,
+    Vaes256,
+    Vaes512,
+}
+
+const fn select_backend(
+    aes: bool,
+    sse2: bool,
+    avx2: bool,
+    avx512f: bool,
+    vaes: bool,
+) -> Option<HardwareKind> {
+    if !aes || !sse2 {
+        None
+    } else if avx512f && vaes {
+        Some(HardwareKind::Vaes512)
+    } else if avx2 && vaes {
+        Some(HardwareKind::Vaes256)
+    } else {
+        Some(HardwareKind::AesNi)
+    }
+}
 
 #[allow(
     clippy::large_enum_variant,
     reason = "inline round keys keep verifier-reachable setup allocation-free"
 )]
-pub(super) enum HardwareBackend {
+enum Backend {
     AesNi(RoundKeys),
     Vaes256(RoundKeys256),
+    Vaes512x4(RoundKeys512),
     #[cfg(test)]
-    Vaes512(RoundKeys512),
+    Vaes512x8(RoundKeys512),
+    #[cfg(test)]
+    Vaes512x16(RoundKeys512),
 }
+
+pub(super) struct HardwareBackend(Backend);
 
 impl HardwareBackend {
     pub(super) fn detect(key: &[u8; 16]) -> Option<Self> {
-        if !is_x86_feature_detected!("aes") || !is_x86_feature_detected!("sse2") {
-            return None;
-        }
+        let kind = select_backend(
+            is_x86_feature_detected!("aes"),
+            is_x86_feature_detected!("sse2"),
+            is_x86_feature_detected!("avx2"),
+            is_x86_feature_detected!("avx512f"),
+            is_x86_feature_detected!("vaes"),
+        )?;
         // SAFETY: AES and SSE2 support were detected above.
         let keys = unsafe { expand_key(key) };
-        // On the measured Zen 4 target, VAES256 is reliably faster than VAES512.
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("vaes") {
-            // SAFETY: AVX2 support was detected above.
-            return Some(Self::Vaes256(unsafe { broadcast256(&keys) }));
+        match kind {
+            HardwareKind::AesNi => Some(Self(Backend::AesNi(keys))),
+            // SAFETY: AVX2 and VAES support were detected by `select_backend`.
+            HardwareKind::Vaes256 => Some(Self(Backend::Vaes256(unsafe { broadcast256(&keys) }))),
+            // SAFETY: AVX-512F and VAES support were detected by `select_backend`.
+            HardwareKind::Vaes512 => Some(Self(Backend::Vaes512x4(unsafe { broadcast512(&keys) }))),
         }
-        Some(Self::AesNi(keys))
     }
 
     #[cfg(test)]
@@ -49,14 +81,17 @@ impl HardwareBackend {
         }
         // SAFETY: AES support was detected above.
         let keys = unsafe { expand_key(key) };
-        let mut backends = vec![Self::AesNi(keys)];
+        let mut backends = vec![Self(Backend::AesNi(keys))];
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("vaes") {
             // SAFETY: AVX2 support was detected above.
-            backends.push(Self::Vaes256(unsafe { broadcast256(&keys) }));
+            backends.push(Self(Backend::Vaes256(unsafe { broadcast256(&keys) })));
         }
         if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("vaes") {
             // SAFETY: AVX-512F support was detected above.
-            backends.push(Self::Vaes512(unsafe { broadcast512(&keys) }));
+            let keys512 = unsafe { broadcast512(&keys) };
+            backends.push(Self(Backend::Vaes512x4(keys512)));
+            backends.push(Self(Backend::Vaes512x8(keys512)));
+            backends.push(Self(Backend::Vaes512x16(keys512)));
         }
         backends
     }
@@ -64,22 +99,28 @@ impl HardwareBackend {
     pub(super) fn fill(&self, base_low: u64, nonce: u64, output: &mut [u8]) {
         // Every constructor checks the complete feature set required by its backend.
         unsafe {
-            match self {
-                Self::AesNi(keys) => fill_aesni(keys, base_low, nonce, output),
-                Self::Vaes256(keys) => fill_vaes256(keys, base_low, nonce, output),
+            match &self.0 {
+                Backend::AesNi(keys) => fill_aesni(keys, base_low, nonce, output),
+                Backend::Vaes256(keys) => fill_vaes256(keys, base_low, nonce, output),
+                Backend::Vaes512x4(keys) => fill_vaes512::<4>(keys, base_low, nonce, output),
                 #[cfg(test)]
-                Self::Vaes512(keys) => fill_vaes512(keys, base_low, nonce, output),
+                Backend::Vaes512x8(keys) => fill_vaes512::<8>(keys, base_low, nonce, output),
+                #[cfg(test)]
+                Backend::Vaes512x16(keys) => fill_vaes512::<16>(keys, base_low, nonce, output),
             }
         }
     }
 
     #[cfg(test)]
     pub(super) const fn name(&self) -> &'static str {
-        match self {
-            Self::AesNi(_) => "AES-NI",
-            Self::Vaes256(_) => "VAES256",
+        match &self.0 {
+            Backend::AesNi(_) => "AES-NI",
+            Backend::Vaes256(_) => "VAES256",
+            Backend::Vaes512x4(_) => "VAES512x4",
             #[cfg(test)]
-            Self::Vaes512(_) => "VAES512",
+            Backend::Vaes512x8(_) => "VAES512x8",
+            #[cfg(test)]
+            Backend::Vaes512x16(_) => "VAES512x16",
         }
     }
 
@@ -87,12 +128,15 @@ impl HardwareBackend {
     pub(super) fn rebuild(&self, key: &[u8; 16]) -> Self {
         // The test constructors only enumerate backends whose features were detected.
         let keys = unsafe { expand_key(key) };
-        match self {
-            Self::AesNi(_) => Self::AesNi(keys),
-            Self::Vaes256(_) => Self::Vaes256(unsafe { broadcast256(&keys) }),
+        Self(match &self.0 {
+            Backend::AesNi(_) => Backend::AesNi(keys),
+            Backend::Vaes256(_) => Backend::Vaes256(unsafe { broadcast256(&keys) }),
+            Backend::Vaes512x4(_) => Backend::Vaes512x4(unsafe { broadcast512(&keys) }),
             #[cfg(test)]
-            Self::Vaes512(_) => Self::Vaes512(unsafe { broadcast512(&keys) }),
-        }
+            Backend::Vaes512x8(_) => Backend::Vaes512x8(unsafe { broadcast512(&keys) }),
+            #[cfg(test)]
+            Backend::Vaes512x16(_) => Backend::Vaes512x16(unsafe { broadcast512(&keys) }),
+        })
     }
 }
 
@@ -101,7 +145,6 @@ unsafe fn broadcast256(keys: &RoundKeys) -> RoundKeys256 {
     keys.map(|key| _mm256_broadcastsi128_si256(key))
 }
 
-#[cfg(test)]
 #[target_feature(enable = "avx512f")]
 unsafe fn broadcast512(keys: &RoundKeys) -> RoundKeys512 {
     keys.map(|key| _mm512_broadcast_i32x4(key))
@@ -236,22 +279,29 @@ unsafe fn fill_vaes256(keys: &RoundKeys256, base_low: u64, nonce: u64, output: &
         }
         block_index += BATCH_BLOCKS;
     }
-    fill_aesni(
-        &keys.map(|key| _mm256_castsi256_si128(key)),
-        base_low.wrapping_add(block_index as u64),
-        nonce,
-        chunks.into_remainder(),
-    );
+    let remainder = chunks.into_remainder();
+    if !remainder.is_empty() {
+        fill_aesni(
+            &keys.map(|key| _mm256_castsi256_si128(key)),
+            base_low.wrapping_add(block_index as u64),
+            nonce,
+            remainder,
+        );
+    }
 }
 
-#[cfg(test)]
 #[target_feature(enable = "aes,avx512f,sse2,vaes")]
-unsafe fn fill_vaes512(keys: &RoundKeys512, base_low: u64, nonce: u64, output: &mut [u8]) {
-    const BATCH_BLOCKS: usize = VAES512_BATCH_VECTORS * 4;
-    let mut chunks = output.chunks_exact_mut(BATCH_BLOCKS * 16);
+unsafe fn fill_vaes512<const BATCH_VECTORS: usize>(
+    keys: &RoundKeys512,
+    base_low: u64,
+    nonce: u64,
+    output: &mut [u8],
+) {
+    let batch_blocks = BATCH_VECTORS * 4;
+    let mut chunks = output.chunks_exact_mut(batch_blocks * 16);
     let mut block_index = 0usize;
     for chunk in &mut chunks {
-        let mut batch = [_mm512_setzero_si512(); VAES512_BATCH_VECTORS];
+        let mut batch = [_mm512_setzero_si512(); BATCH_VECTORS];
         let low = base_low.wrapping_add(block_index as u64);
         batch[0] = _mm512_set_epi64(
             nonce as i64,
@@ -264,7 +314,7 @@ unsafe fn fill_vaes512(keys: &RoundKeys512, base_low: u64, nonce: u64, output: &
             low as i64,
         );
         let increment = _mm512_set_epi64(0, 4, 0, 4, 0, 4, 0, 4);
-        for offset in 1..VAES512_BATCH_VECTORS {
+        for offset in 1..BATCH_VECTORS {
             batch[offset] = _mm512_add_epi64(batch[offset - 1], increment);
         }
         for (round, key) in keys.iter().enumerate() {
@@ -281,12 +331,42 @@ unsafe fn fill_vaes512(keys: &RoundKeys512, base_low: u64, nonce: u64, output: &
         for (offset, vector) in batch.iter().enumerate() {
             _mm512_storeu_si512(chunk.as_mut_ptr().add(offset * 64).cast(), *vector);
         }
-        block_index += BATCH_BLOCKS;
+        block_index += batch_blocks;
     }
-    fill_aesni(
-        &keys.map(|key| _mm512_castsi512_si128(key)),
-        base_low.wrapping_add(block_index as u64),
-        nonce,
-        chunks.into_remainder(),
-    );
+    let remainder = chunks.into_remainder();
+    if !remainder.is_empty() {
+        fill_aesni(
+            &keys.map(|key| _mm512_castsi512_si128(key)),
+            base_low.wrapping_add(block_index as u64),
+            nonce,
+            remainder,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feature_selection_requires_each_backend_feature() {
+        assert_eq!(select_backend(false, true, true, true, true), None);
+        assert_eq!(select_backend(true, false, true, true, true), None);
+        assert_eq!(
+            select_backend(true, true, false, false, true),
+            Some(HardwareKind::AesNi)
+        );
+        assert_eq!(
+            select_backend(true, true, true, true, false),
+            Some(HardwareKind::AesNi)
+        );
+        assert_eq!(
+            select_backend(true, true, true, false, true),
+            Some(HardwareKind::Vaes256)
+        );
+        assert_eq!(
+            select_backend(true, true, true, true, true),
+            Some(HardwareKind::Vaes512)
+        );
+    }
 }
