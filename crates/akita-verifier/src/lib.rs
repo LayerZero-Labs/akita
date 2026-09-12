@@ -30,7 +30,8 @@ mod stages;
 pub use akita_types::CommitmentVerifier;
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use protocol::{
-    batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
+    batched_verify, prepare_relation_matrix_evaluator, verify_jl_projection_chain,
+    RelationMatrixEvaluator, RingSwitchReplay,
 };
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use protocol::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};

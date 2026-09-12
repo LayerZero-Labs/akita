@@ -38,5 +38,8 @@ pub use config::{
 pub use fold_draw::{
     fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
 };
-pub use jl::{expand_balanced_ternary_matrix, BALANCED_TERNARY_EXPANSION_VERSION};
+pub use jl::{
+    derive_balanced_ternary_matrix_seed, expand_balanced_ternary_matrix,
+    BALANCED_TERNARY_EXPANSION_VERSION,
+};
 pub use sampler::sample_sparse_challenges;

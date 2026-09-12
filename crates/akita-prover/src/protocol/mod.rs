@@ -4,6 +4,7 @@ mod coefficient_packing;
 pub mod core;
 pub mod extension_opening_reduction;
 pub mod fold_grind;
+pub mod jl;
 pub mod prg;
 pub mod ring_relation;
 pub mod ring_relation_witness;

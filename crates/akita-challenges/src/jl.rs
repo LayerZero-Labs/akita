@@ -12,6 +12,26 @@ pub const BALANCED_TERNARY_EXPANSION_VERSION: u32 = 2;
 
 const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/paired-rademacher/aes128-ctr";
 
+/// Derive one domain-separated local-matrix seed from a transcript master seed.
+///
+/// `context` is the canonical encoding of the complete public matrix domain;
+/// callers must include the protocol version, schedule, level, certificate,
+/// stem, layer, shape, law, and selected retry. The block index is omitted only
+/// for an explicitly repeated `I_r tensor J` matrix.
+pub fn derive_balanced_ternary_matrix_seed(
+    master_seed: &[u8; 32],
+    context: &[u8],
+) -> Result<[u8; 32], AkitaError> {
+    let context_root = shake256_root(&[b"akita/jl/context/v1", context])
+        .map_err(|message| AkitaError::InvalidInput(message.into()))?;
+    shake256_root(&[
+        b"akita/iterated-jl/local-seed/v1",
+        master_seed,
+        &context_root,
+    ])
+    .map_err(|message| AkitaError::InvalidInput(message.into()))
+}
+
 /// Expand a 32-byte Fiat--Shamir seed into a canonical balanced-ternary matrix.
 ///
 /// Every entry is computationally indistinguishable from an independent draw
@@ -117,6 +137,24 @@ mod tests {
             expand_balanced_ternary_matrix(&seed, TernaryProjectionShape::new(7, 20).unwrap())
                 .unwrap();
         assert_ne!(entries(&first), entries(&different_shape));
+    }
+
+    #[test]
+    fn local_seed_derivation_binds_the_complete_context() {
+        let master = [0xabu8; 32];
+        let first = derive_balanced_ternary_matrix_seed(&master, b"context-a").unwrap();
+        assert_eq!(
+            first,
+            derive_balanced_ternary_matrix_seed(&master, b"context-a").unwrap()
+        );
+        assert_ne!(
+            first,
+            derive_balanced_ternary_matrix_seed(&master, b"context-b").unwrap()
+        );
+        assert_ne!(
+            first,
+            derive_balanced_ternary_matrix_seed(&[0xacu8; 32], b"context-a").unwrap()
+        );
     }
 
     #[test]

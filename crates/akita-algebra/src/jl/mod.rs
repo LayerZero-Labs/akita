@@ -16,8 +16,9 @@ use jolt_field::Field;
 use std::{mem, sync::OnceLock};
 
 pub use mle::{
-    build_ternary_column_weights, eval_power_of_two_block_diagonal_mle, eval_ternary_matrix_mle,
-    eval_ternary_matrix_mle_from_eq_tables,
+    build_block_projection_weight_table, build_ternary_column_weights, eval_block_tensor_mle,
+    eval_power_of_two_block_diagonal_mle, eval_power_of_two_block_projection_reduction_factor,
+    eval_ternary_matrix_mle, eval_ternary_matrix_mle_from_eq_tables,
 };
 
 /// Maximum storage accepted for one materialized JL allocation.

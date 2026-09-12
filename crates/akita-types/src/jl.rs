@@ -4,6 +4,19 @@
 //! choose a protocol schedule: later planner work must compose per-layer and
 //! per-stem failure budgets explicitly.
 
+mod projection;
+mod wire;
+
+pub use projection::{
+    JlAlignedEtProjectionPlan, JlBlockLayerPlan, JlCertificateId, JlMatrixDerivationContext,
+    JlMatrixDomain, JlMatrixLawId, JlProjectionChainPlan, JlProjectionStemId,
+    JL_PROJECTION_PROTOCOL_VERSION, MAX_JL_PROJECTION_LAYERS, MAX_JL_PROJECTION_RETRIES,
+};
+pub use wire::{
+    JlLayerReductionProof, JlProjectionProof, JlProjectionProofShape, JlSourceClaim,
+    JL_PROJECTION_REDUCTION_DEGREE,
+};
+
 /// CertifiedJL revision from which the bound records were transcribed.
 pub const CERTIFIED_JL_SOURCE_REVISION: &str = "8ac6eda09c6f8b6fe38770f78489af610eb05023";
 

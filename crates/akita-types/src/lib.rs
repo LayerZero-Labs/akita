@@ -82,8 +82,13 @@ pub use instance_descriptor::{
     ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use jl::{
-    CertifiedJlBounds, CertifiedJlL2Bounds, CertifiedJlLinfBounds, JlRowLawId, RationalBound,
+    CertifiedJlBounds, CertifiedJlL2Bounds, CertifiedJlLinfBounds, JlAlignedEtProjectionPlan,
+    JlBlockLayerPlan, JlCertificateId, JlLayerReductionProof, JlMatrixDerivationContext,
+    JlMatrixDomain, JlMatrixLawId, JlProjectionChainPlan, JlProjectionProof,
+    JlProjectionProofShape, JlProjectionStemId, JlRowLawId, JlSourceClaim, RationalBound,
     BALANCED_TERNARY_256_ROWS_128_BITS, CERTIFIED_JL_SOURCE_REVISION,
+    JL_PROJECTION_PROTOCOL_VERSION, JL_PROJECTION_REDUCTION_DEGREE, MAX_JL_PROJECTION_LAYERS,
+    MAX_JL_PROJECTION_RETRIES,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,

@@ -478,3 +478,22 @@ fn power_of_two_block_mle_factorizes_without_repeated_matrix_scan() {
     )
     .is_err());
 }
+
+#[test]
+fn block_projection_weight_table_realizes_i_tensor_j_equation() {
+    let matrix = matrix_from_entries(&[vec![1, 0, -1, 1], vec![0, 1, 1, -1]]);
+    let input = (0..16)
+        .map(|index| F::from_i64(index as i64 - 7))
+        .collect::<Vec<_>>();
+    let output = matrix.project_field_blocks(&input).unwrap();
+    let output_point = [F::from_u64(3), F::from_u64(5), F::from_u64(7)];
+    let output_eval = eval_block_tensor_mle(&output, 4, 2, &output_point).unwrap();
+    let weights = build_block_projection_weight_table(&matrix, 4, &output_point).unwrap();
+    let rhs = input
+        .iter()
+        .zip(weights)
+        .fold(F::zero(), |sum, (&value, weight)| sum + value * weight);
+    assert_eq!(output_eval, rhs);
+    assert!(eval_block_tensor_mle(&input[..12], 3, 4, &output_point).is_err());
+    assert!(eval_block_tensor_mle(&input[..12], 4, 3, &output_point).is_err());
+}

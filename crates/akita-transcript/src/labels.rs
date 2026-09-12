@@ -94,6 +94,16 @@ pub const CHALLENGE_GRINDING_PREDICATE: &[u8] = b"ak/c/g";
 /// only; sponge bytes are positional and the schedule descriptor fixes the
 /// binding policy.
 pub const ABSORB_NEXT_LEVEL_WITNESS_BINDING: &[u8] = b"ak/a/w";
+/// Absorb a bounded iterated-JL retry selection before deriving its matrices.
+pub const ABSORB_JL_RETRY: &[u8] = b"ak/a/jlr";
+/// Squeeze the certificate master seed after the outgoing witness and retry.
+pub const CHALLENGE_JL_MASTER_SEED: &[u8] = b"ak/c/jls";
+/// Absorb one clear final JL image before its evaluation point is sampled.
+pub const ABSORB_JL_CLEAR_IMAGE: &[u8] = b"ak/a/jli";
+/// Sample coordinates of a clear-image evaluation point.
+pub const CHALLENGE_JL_IMAGE_POINT: &[u8] = b"ak/c/jip";
+/// Absorb one reverse-layer terminal input claim before the next reduction.
+pub const ABSORB_JL_REDUCTION_TERMINAL: &[u8] = b"ak/a/jlt";
 /// Absorb terminal raw-field `e_folded` bytes before sparse-challenge sampling.
 pub const ABSORB_TERMINAL_E_HAT: &[u8] = b"ak/a/twh";
 /// Absorb the terminal `z` response after sparse-challenge sampling.
@@ -141,6 +151,11 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_TRANSCRIPT_GRINDING,
     CHALLENGE_GRINDING_PREDICATE,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+    ABSORB_JL_RETRY,
+    CHALLENGE_JL_MASTER_SEED,
+    ABSORB_JL_CLEAR_IMAGE,
+    CHALLENGE_JL_IMAGE_POINT,
+    ABSORB_JL_REDUCTION_TERMINAL,
     ABSORB_TERMINAL_E_HAT,
     ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_TAU0,

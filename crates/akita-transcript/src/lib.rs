@@ -142,6 +142,49 @@ pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
 pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;
 
+/// Absorb a retry selection and derive the certificate's matrix master seed.
+///
+/// Callers validate the index against the public plan before invoking this
+/// helper. The outgoing witness binding must already have been absorbed.
+pub fn absorb_jl_retry_and_sample_seed<F, T>(
+    transcript: &mut T,
+    retry_index: Option<u32>,
+) -> [u8; TRANSCRIPT_CHALLENGE_BLOCK_LEN]
+where
+    F: Field + CanonicalEncoding,
+    T: Transcript<F>,
+{
+    if let Some(retry_index) = retry_index {
+        transcript.absorb_and_record_bytes(labels::ABSORB_JL_RETRY, &retry_index.to_le_bytes());
+    }
+    transcript.challenge_block(labels::CHALLENGE_JL_MASTER_SEED)
+}
+
+/// Absorb a headerless clear-image coordinate sequence.
+pub fn absorb_jl_clear_image<F, T>(transcript: &mut T, image: &[i128])
+where
+    F: Field + CanonicalEncoding,
+    T: Transcript<F>,
+{
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(image));
+    for coordinate in image {
+        bytes.extend_from_slice(&coordinate.to_le_bytes());
+    }
+    transcript.absorb_and_record_bytes(labels::ABSORB_JL_CLEAR_IMAGE, &bytes);
+}
+
+/// Sample one extension-field evaluation point after a clear JL image.
+pub fn sample_jl_image_point<F, E, T>(transcript: &mut T, num_vars: usize) -> Vec<E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    (0..num_vars)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, labels::CHALLENGE_JL_IMAGE_POINT))
+        .collect()
+}
+
 /// Append an extension-field element by absorbing its base-field coordinates.
 pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
 where
@@ -160,6 +203,17 @@ where
     for (limb, coeff) in coeffs.iter().enumerate() {
         transcript.append_field(&ext_limb_label(label, limb), coeff);
     }
+}
+
+/// Record and absorb one extension-field proof value as base-field limbs.
+pub fn absorb_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize,
+    T: Transcript<F>,
+{
+    transcript.record_wire_serde(label, x);
+    append_ext_field(transcript, label, x);
 }
 
 /// Sample an extension-field challenge from base-field transcript limbs.
