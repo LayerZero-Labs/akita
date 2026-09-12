@@ -256,8 +256,16 @@ impl<E: Field> EqPolynomial<E> {
     pub fn evals_with_scaling(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
         #[cfg(feature = "parallel")]
         {
-            const PARALLEL_THRESHOLD: usize = 16;
-            if r.len() > PARALLEL_THRESHOLD {
+            // Wide fields amortize scheduling sooner; for one-limb fields the
+            // serial recurrence remains faster through 2^17 entries.
+            const NARROW_FIELD_PARALLEL_THRESHOLD: usize = 17;
+            const WIDE_FIELD_PARALLEL_THRESHOLD: usize = 15;
+            let threshold = if mem::size_of::<E>() <= mem::size_of::<u64>() {
+                NARROW_FIELD_PARALLEL_THRESHOLD
+            } else {
+                WIDE_FIELD_PARALLEL_THRESHOLD
+            };
+            if r.len() > threshold {
                 return Self::evals_parallel(r, scaling_factor);
             }
         }
@@ -374,22 +382,32 @@ impl<E: Field> EqPolynomial<E> {
     pub fn evals_parallel(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
         use rayon::prelude::*;
 
-        let final_size = Self::materialized_table_len("eq evaluation table", r.len())?;
-        let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
-        evals[0] = scaling_factor.unwrap_or(E::one());
-        let mut size = 1;
-        // Forward iteration (r[0] first) produces little-endian ordering.
-        for &r_i in r.iter() {
-            let (evals_left, evals_right) = evals.split_at_mut(size);
-            let (evals_right, _) = evals_right.split_at_mut(size);
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    (*x, *y) = Self::split_lagrange_parent(*x, r_i);
-                });
-            size *= 2;
+        // Expanding every DP layer with a separate Rayon join is especially
+        // expensive for the small front of the tree. Instead, materialize a
+        // small high-variable frontier serially and give each frontier value
+        // a contiguous low-variable subtree. The subtrees are independent,
+        // preserve little-endian order, and perform exactly the same splits as
+        // the serial recurrence.
+        const MINIMUM_SLAB_VARS: usize = 10;
+        let thread_count = rayon::current_num_threads();
+        let target_tasks = thread_count.saturating_mul(4).max(1);
+        let target_outer_vars = target_tasks.ilog2() as usize;
+        let outer_vars = target_outer_vars.min(r.len().saturating_sub(MINIMUM_SLAB_VARS));
+        if thread_count == 1 || outer_vars == 0 {
+            return Self::evals_serial(r, scaling_factor);
         }
+
+        let final_size = Self::materialized_table_len("eq evaluation table", r.len())?;
+        let low_vars = r.len() - outer_vars;
+        let slab_len = 1usize << low_vars;
+        let outer = Self::evals_serial(&r[low_vars..], scaling_factor)?;
+        let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
+        evals
+            .par_chunks_mut(slab_len)
+            .zip(outer.par_iter())
+            .for_each(|(slab, &initial)| {
+                Self::fill_serial_with_final_map(slab, &r[..low_vars], initial, &|value| value);
+            });
         Ok(evals)
     }
 }
@@ -475,6 +493,8 @@ impl<E: Field> SplitEqEvals<E> {
 mod tests {
     use super::*;
     use crate::Field;
+    #[cfg(feature = "parallel")]
+    use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use jolt_field::{Fp64, One, Ring, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -670,14 +690,24 @@ mod tests {
 
     #[cfg(feature = "parallel")]
     #[test]
-    fn evals_parallel_matches_serial() {
-        let mut rng = StdRng::seed_from_u64(0xFF);
-        for n in 1..20 {
-            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
-            let serial = EqPolynomial::evals_serial(&r, None).unwrap();
-            let parallel = EqPolynomial::evals_parallel(&r, None).unwrap();
-            assert_eq!(serial, parallel, "n={n}");
+    fn evals_parallel_matches_serial_across_fields() {
+        fn check<E: Field + std::fmt::Debug>() {
+            for n in [0, 1, 7, 15, 16, 17, 18] {
+                let point: Vec<E> = (0..n)
+                    .map(|index| E::from_u64(0xfeed_beef + index as u64 * 0x9e37))
+                    .collect();
+                for scale in [None, Some(E::from_u64(23))] {
+                    let serial = EqPolynomial::evals_serial(&point, scale).unwrap();
+                    let parallel = EqPolynomial::evals_parallel(&point, scale).unwrap();
+                    assert_eq!(serial, parallel, "n={n}");
+                }
+            }
         }
+
+        check::<F>();
+        check::<FpExt4<Prime32Offset99>>();
+        check::<Ext2<Prime64Offset59>>();
+        check::<Prime128OffsetA7F7>();
     }
 
     #[cfg(feature = "parallel")]
