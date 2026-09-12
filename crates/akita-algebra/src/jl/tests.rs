@@ -466,9 +466,25 @@ fn matrix_mle_matches_zero_padded_dense_evaluation() {
 
 #[test]
 fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
-    for (case, &(rows, cols)) in [(1, 1), (1, 3), (2, 4), (3, 5), (5, 7), (7, 9), (9, 15)]
-        .iter()
-        .enumerate()
+    for (case, &(rows, cols)) in [
+        (1, 1),
+        (1, 3),
+        (2, 4),
+        (3, 5),
+        (5, 7),
+        (7, 9),
+        (9, 15),
+        (1, 128),
+        (2, 129),
+        (3, 130),
+        (4, 131),
+        (5, 132),
+        (6, 133),
+        (7, 134),
+        (8, 135),
+    ]
+    .iter()
+    .enumerate()
     {
         let entries: Vec<Vec<i8>> = (0..rows)
             .map(|row| {
@@ -493,7 +509,7 @@ fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_mle_panels_match_all_tail_widths_fields_and_thread_counts() {
-    for cols in [4097, 4098, 4099] {
+    for cols in [4097, 4098, 4099, 16385] {
         let rows = 17;
         let entries: Vec<Vec<i8>> = (0..rows)
             .map(|row| {
@@ -521,6 +537,26 @@ fn parallel_mle_panels_match_all_tail_widths_fields_and_thread_counts() {
                 });
         }
     }
+}
+
+#[test]
+fn transposed_column_weights_cover_all_paired_row_selectors() {
+    let shape = TernaryProjectionShape::new(4, 256).unwrap();
+    let mut first = vec![0u8; shape.plane_len()];
+    let mut second = first.clone();
+    for col in 0..256usize {
+        for row in 0..4 {
+            let index = (col / 4) * 2 + row / 2;
+            let bit = ((row % 2) * 4) + col % 4;
+            first[index] |= (((col >> row) & 1) as u8) << bit;
+            second[index] |= (((col >> (row + 4)) & 1) as u8) << bit;
+        }
+    }
+    let matrix = TernaryProjectionMatrix::from_rademacher_bitplanes(shape, first, second).unwrap();
+    check_mle_kernels_for_field::<F>(&matrix, 0x9876);
+    check_mle_kernels_for_field::<F32Ext>(&matrix, 0x9876);
+    check_mle_kernels_for_field::<F64Ext>(&matrix, 0x9876);
+    check_mle_kernels_for_field::<F128>(&matrix, 0x9876);
 }
 
 #[test]

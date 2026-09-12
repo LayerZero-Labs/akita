@@ -228,6 +228,24 @@ pub fn build_ternary_column_weights<F: Field>(
     }
     let row_eq = EqPolynomial::evals(row_point)?;
     let mut weights = try_zeroed_vec(shape.col_domain_len()?, F::zero())?;
+    // Transpose four rows of selectors at a time. Their 81 possible weighted
+    // sums are shared by every column, including all parallel panels.
+    let row_luts = if shape.rows() >= 4 && shape.cols() >= 128 {
+        let count = checked::div_ceil(shape.rows(), 4)
+            .ok_or_else(|| AkitaError::InvalidInput("ternary row-table count overflow".into()))?;
+        try_zeroed_vec(count, [F::zero(); TERNARY4_PATTERN_COUNT])
+            .ok()
+            .map(|mut tables| {
+                for (table, rows) in tables.iter_mut().zip(row_eq[..shape.rows()].chunks(4)) {
+                    let mut values = [F::zero(); 4];
+                    values[..rows.len()].copy_from_slice(rows);
+                    *table = build_ternary4_weight_lut(&values);
+                }
+                tables
+            })
+    } else {
+        None
+    };
 
     #[cfg(feature = "parallel")]
     if rayon::current_num_threads() > 1 && shape.cols() >= PARALLEL_COLUMN_WEIGHT_MIN_COLS {
@@ -245,6 +263,7 @@ pub fn build_ternary_column_weights<F: Field>(
                 accumulate_column_weight_groups(
                     matrix,
                     &row_eq,
+                    row_luts.as_deref(),
                     panel * (panel_cols / 4),
                     panel_weights,
                 );
@@ -252,13 +271,20 @@ pub fn build_ternary_column_weights<F: Field>(
         return Ok(weights);
     }
 
-    accumulate_column_weight_groups(matrix, &row_eq, 0, &mut weights[..shape.cols()]);
+    accumulate_column_weight_groups(
+        matrix,
+        &row_eq,
+        row_luts.as_deref(),
+        0,
+        &mut weights[..shape.cols()],
+    );
     Ok(weights)
 }
 
 fn accumulate_column_weight_groups<F: Field>(
     matrix: &TernaryProjectionMatrix,
     row_eq: &[F],
+    row_luts: Option<&[[F; TERNARY4_PATTERN_COUNT]]>,
     first_group: usize,
     output: &mut [F],
 ) {
@@ -266,6 +292,28 @@ fn accumulate_column_weight_groups<F: Field>(
     for (local_group, group_weights) in output.chunks_mut(4).enumerate() {
         let group = first_group + local_group;
         let (first_signs, second_signs) = matrix.sign_groups_unchecked(group);
+        if let Some(tables) = row_luts {
+            for ((first, second), table) in first_signs
+                .chunks(2)
+                .zip(second_signs.chunks(2))
+                .zip(tables)
+            {
+                let first = transpose_four_rows(u16::from_le_bytes([
+                    first[0],
+                    first.get(1).copied().unwrap_or_default(),
+                ]));
+                let second = transpose_four_rows(u16::from_le_bytes([
+                    second[0],
+                    second.get(1).copied().unwrap_or_default(),
+                ]));
+                for (col, value) in group_weights.iter_mut().enumerate() {
+                    let selectors =
+                        ((first >> (4 * col)) & 15) | (((second >> (4 * col)) & 15) << 4);
+                    *value += table[usize::from(SELECTORS_TO_TERNARY4[usize::from(selectors)])];
+                }
+            }
+            continue;
+        }
         for ((row_weights, &first), &second) in row_eq[..shape.rows()]
             .chunks(2)
             .zip(first_signs)
@@ -279,6 +327,32 @@ fn accumulate_column_weight_groups<F: Field>(
                 let odd_selectors = usize::from((first >> 4) | (second & 0xf0));
                 let odd_signs = TERNARY_NIBBLE_DECODE[odd_selectors].to_ne_bytes();
                 accumulate_row_weight(group_weights, &odd_signs, odd_weight);
+            }
+        }
+    }
+}
+
+#[inline]
+fn transpose_four_rows(mut bits: u16) -> u16 {
+    let swap = (bits ^ (bits >> 3)) & 0x0a0a;
+    bits ^= swap ^ (swap << 3);
+    let swap = (bits ^ (bits >> 6)) & 0x00cc;
+    bits ^ swap ^ (swap << 6)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn transpose_four_rows_matches_each_entry_exhaustively() {
+        for bits in 0..=u16::MAX {
+            let transposed = super::transpose_four_rows(bits);
+            for row in 0..4 {
+                for col in 0..4 {
+                    assert_eq!(
+                        (bits >> (row * 4 + col)) & 1,
+                        (transposed >> (col * 4 + row)) & 1
+                    );
+                }
             }
         }
     }
