@@ -382,7 +382,7 @@ mod tests {
         iterations: usize,
         matrix: &crate::jl::TernaryProjectionMatrix,
     ) {
-        let mut rng = StdRng::seed_from_u64(0x4a4c_4245_4e43_48);
+        let mut rng = StdRng::seed_from_u64(0x004a_4c42_454e_4348);
         let col_weights: Vec<G> = (0..matrix.shape().cols())
             .map(|_| G::random(&mut rng))
             .collect();
