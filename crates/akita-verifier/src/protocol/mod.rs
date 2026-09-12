@@ -10,7 +10,11 @@ pub(crate) mod ring_switch;
 pub use core::batched_verify;
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use evaluation_trace::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
-pub use jl::verify_jl_projection_chain;
+pub use jl::{
+    absorb_jl_projection_verification_images, prepare_jl_projection_verification,
+    verify_jl_projection_reduction_batch, JlVerifierReductionBatch,
+    PreparedJlProjectionVerification,
+};
 pub use ring_switch::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };

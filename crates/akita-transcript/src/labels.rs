@@ -94,9 +94,9 @@ pub const CHALLENGE_GRINDING_PREDICATE: &[u8] = b"ak/c/g";
 /// only; sponge bytes are positional and the schedule descriptor fixes the
 /// binding policy.
 pub const ABSORB_NEXT_LEVEL_WITNESS_BINDING: &[u8] = b"ak/a/w";
-/// Absorb a bounded iterated-JL retry selection before deriving its matrices.
+/// Absorb the bounded whole-forest candidate before deriving its envelopes.
 pub const ABSORB_JL_RETRY: &[u8] = b"ak/a/jlr";
-/// Squeeze the certificate master seed after the outgoing witness and retry.
+/// Squeeze the level-forest master seed after its outgoing witness and candidate.
 pub const CHALLENGE_JL_MASTER_SEED: &[u8] = b"ak/c/jls";
 /// Absorb one clear final JL image before its evaluation point is sampled.
 pub const ABSORB_JL_CLEAR_IMAGE: &[u8] = b"ak/a/jli";

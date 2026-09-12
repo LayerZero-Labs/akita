@@ -8,13 +8,14 @@ mod projection;
 mod wire;
 
 pub use projection::{
-    JlAlignedEtProjectionPlan, JlBlockLayerPlan, JlCertificateId, JlMatrixDerivationContext,
-    JlMatrixDomain, JlMatrixLawId, JlProjectionChainPlan, JlProjectionStemId,
-    JL_PROJECTION_PROTOCOL_VERSION, MAX_JL_PROJECTION_LAYERS, MAX_JL_PROJECTION_RETRIES,
+    JlBlockLayerPlan, JlCertificateId, JlMatrixDerivationContext, JlMatrixEnvelopeDomain,
+    JlMatrixLawId, JlMatrixMember, JlProjectionBatchPlan, JlProjectionChainPlan,
+    JlProjectionStemId, JL_PREFIX_POLICY_VERSION, JL_PROJECTION_PROTOCOL_VERSION,
+    MAX_JL_PROJECTION_LAYERS, MAX_JL_PROJECTION_RETRIES,
 };
 pub use wire::{
-    JlLayerReductionProof, JlProjectionProof, JlProjectionProofShape, JlSourceClaim,
-    JL_PROJECTION_REDUCTION_DEGREE,
+    JlLayerReductionProof, JlProjectionBatchProof, JlProjectionBatchProofShape, JlProjectionProof,
+    JlProjectionProofShape, JlSourceClaim, JL_PROJECTION_REDUCTION_DEGREE,
 };
 
 /// CertifiedJL revision from which the bound records were transcribed.

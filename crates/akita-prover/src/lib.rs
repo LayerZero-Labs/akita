@@ -77,9 +77,14 @@ pub use protocol::sumcheck::{
 };
 pub use protocol::{
     batched_prove, build_relation_weight_events, commit_terminal_w, commit_w,
-    jl::prove_jl_projection_chain, ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource,
-    RelationWeightContribution, RelationWeightEvent, RelationWeightEventInputs,
-    RelationWeightEvents, RelationWeightFactorization, RingSwitchOutput, SuffixProverState,
+    jl::{
+        absorb_jl_projection_batch_images, prepare_jl_projection_batch,
+        prove_jl_projection_reduction_batch, JlProjectionProverInput, JlProverReductionBatch,
+        PreparedJlProjectionBatch,
+    },
+    ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization, RingSwitchOutput, SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 pub use types::{ProverOpeningData, SelectedProverOpeningData};

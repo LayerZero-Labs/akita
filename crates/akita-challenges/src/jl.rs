@@ -14,12 +14,14 @@ const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/paired-rademacher/aes128-ctr";
 // Two coarse streams amortize the join once each plane spans 256 KiB.
 const PARALLEL_PLANE_MIN_BYTES: usize = 1 << 18;
 
-/// Derive one domain-separated local-matrix seed from a transcript master seed.
+/// Derive one domain-separated shared-envelope seed from a transcript master seed.
 ///
-/// `context` is the canonical encoding of the complete public matrix domain;
-/// callers must include the protocol version, schedule, level, certificate,
-/// stem, layer, shape, law, and selected retry. The block index is omitted only
-/// for an explicitly repeated `I_r tensor J` matrix.
+/// `context` is the canonical encoding of the complete public envelope domain.
+/// Iterated JL callers include the protocol version, schedule identity, fold
+/// level, topological depth, envelope shape, prefix-policy version, matrix law,
+/// and selected whole-forest candidate. Certificate, stem, layer, block, and
+/// member-prefix coordinates are intentionally omitted so every scheduled use
+/// at that level and depth receives a literal prefix of the same envelope.
 pub fn derive_balanced_ternary_matrix_seed(
     master_seed: &[u8; 32],
     context: &[u8],

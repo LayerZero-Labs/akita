@@ -142,7 +142,7 @@ pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
 pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;
 
-/// Absorb a retry selection and derive the certificate's matrix master seed.
+/// Absorb the whole-forest candidate and derive its matrix master seed.
 ///
 /// Callers validate the index against the public plan before invoking this
 /// helper. The outgoing witness binding must already have been absorbed.
@@ -161,16 +161,26 @@ where
 }
 
 /// Absorb a headerless clear-image coordinate sequence.
-pub fn absorb_jl_clear_image<F, T>(transcript: &mut T, image: &[i128])
+pub fn absorb_jl_clear_image<F, T>(transcript: &mut T, image: &[i128]) -> Result<(), &'static str>
 where
     F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
-    let mut bytes = Vec::with_capacity(std::mem::size_of_val(image));
+    let byte_len = jl_clear_image_byte_len(image.len())?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(byte_len)
+        .map_err(|_| "JL clear-image byte allocation failed")?;
     for coordinate in image {
         bytes.extend_from_slice(&coordinate.to_le_bytes());
     }
     transcript.absorb_and_record_bytes(labels::ABSORB_JL_CLEAR_IMAGE, &bytes);
+    Ok(())
+}
+
+fn jl_clear_image_byte_len(len: usize) -> Result<usize, &'static str> {
+    len.checked_mul(std::mem::size_of::<i128>())
+        .ok_or("JL clear-image byte length overflow")
 }
 
 /// Sample one extension-field evaluation point after a clear JL image.
@@ -267,4 +277,14 @@ pub fn ext_limb_base_label(label: &[u8]) -> Option<&[u8]> {
 #[must_use]
 pub fn is_ext_limb_label(candidate: &[u8], base: &[u8]) -> bool {
     ext_limb_base_label(candidate).is_some_and(|candidate_base| candidate_base == base)
+}
+
+#[cfg(test)]
+mod jl_tests {
+    use super::jl_clear_image_byte_len;
+
+    #[test]
+    fn clear_image_byte_length_overflow_is_rejected() {
+        assert!(jl_clear_image_byte_len(usize::MAX).is_err());
+    }
 }
