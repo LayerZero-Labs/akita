@@ -1,18 +1,21 @@
 use akita_algebra::jl::{base_field_modulus, eval_block_tensor_mle};
 use akita_prover::{
-    absorb_jl_projection_batch_images, prepare_jl_projection_batch,
-    prove_jl_projection_reduction_batch, JlProjectionProverInput,
+    absorb_jl_aligned_et_images, absorb_jl_projection_batch_images,
+    prepare_jl_aligned_et_projection, prepare_jl_projection_batch, prove_jl_aligned_et_reduction,
+    prove_jl_projection_reduction_batch, JlAlignedEtProverInput, JlProjectionProverInput,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::{
+    JlAlignedEtProjectionPlan, JlAlignedEtProjectionProof, JlAlignedEtProjectionProofShape,
     JlBlockLayerPlan, JlCertificateId, JlMatrixEnvelopeDomain, JlMatrixLawId, JlMatrixMember,
     JlProjectionBatchPlan, JlProjectionBatchProof, JlProjectionBatchProofShape,
     JlProjectionChainPlan, JlProjectionStemId,
 };
 use akita_verifier::{
-    absorb_jl_projection_verification_images, prepare_jl_projection_verification,
-    verify_jl_projection_reduction_batch,
+    absorb_jl_aligned_et_verification_images, absorb_jl_projection_verification_images,
+    prepare_jl_aligned_et_verification, prepare_jl_projection_verification,
+    verify_jl_aligned_et_reduction, verify_jl_projection_reduction_batch,
 };
 use jolt_field::{
     CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
@@ -146,6 +149,115 @@ fn single_certificate_plan(retries: u32) -> JlProjectionBatchPlan {
     )
     .unwrap();
     JlProjectionBatchPlan::new(vec![chain], retries).unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exact_layer(
+    schedule: [u8; 32],
+    fold_level: u32,
+    certificate: JlCertificateId,
+    stem: JlProjectionStemId,
+    layer: u16,
+    depth: u16,
+    rows: usize,
+    cols: usize,
+    blocks: usize,
+) -> JlBlockLayerPlan {
+    let envelope = JlMatrixEnvelopeDomain::new(
+        schedule,
+        fold_level,
+        depth,
+        rows,
+        cols,
+        JlMatrixLawId::BalancedTernaryRepeatedBlock,
+    )
+    .unwrap();
+    let member = JlMatrixMember::new(envelope, certificate, stem, layer, rows, cols).unwrap();
+    JlBlockLayerPlan::new(member, blocks).unwrap()
+}
+
+fn aligned_plan(schedule: [u8; 32], fold_level: u32, retries: u32) -> JlAlignedEtProjectionPlan {
+    let z = JlProjectionChainPlan::new(
+        vec![
+            layer(
+                schedule,
+                fold_level,
+                JlCertificateId::ProjZ,
+                JlProjectionStemId::Z,
+                0,
+                0,
+                4,
+                8,
+                2,
+            ),
+            layer(
+                schedule,
+                fold_level,
+                JlCertificateId::ProjZ,
+                JlProjectionStemId::Z,
+                1,
+                1,
+                4,
+                8,
+                1,
+            ),
+        ],
+        TEST_ENERGY_BOUND,
+    )
+    .unwrap();
+    let e = JlProjectionChainPlan::new_private(vec![layer(
+        schedule,
+        fold_level,
+        JlCertificateId::ProjEt,
+        JlProjectionStemId::E,
+        0,
+        0,
+        4,
+        8,
+        1,
+    )])
+    .unwrap();
+    let t = JlProjectionChainPlan::new_private(vec![layer(
+        schedule,
+        fold_level,
+        JlCertificateId::ProjEt,
+        JlProjectionStemId::T,
+        0,
+        0,
+        4,
+        8,
+        1,
+    )])
+    .unwrap();
+    let tail = JlProjectionChainPlan::new(
+        vec![
+            layer(
+                schedule,
+                fold_level,
+                JlCertificateId::ProjEt,
+                JlProjectionStemId::EtTail,
+                0,
+                1,
+                2,
+                4,
+                2,
+            ),
+            exact_layer(
+                schedule,
+                fold_level,
+                JlCertificateId::ProjEt,
+                JlProjectionStemId::EtTail,
+                1,
+                2,
+                2,
+                4,
+                1,
+            ),
+        ],
+        TEST_ENERGY_BOUND,
+    )
+    .unwrap();
+    JlAlignedEtProjectionPlan::new(z, e, t, tail, retries).unwrap()
 }
 
 fn bind<F: Field + CanonicalEncoding>(transcript: &mut AkitaTranscript<F>) {
@@ -375,4 +487,164 @@ fn headerless_batch_shape_rejects_missing_extra_and_malformed_elements() {
     let mut wrong_image = proof;
     wrong_image.chains[0].clear_image.pop();
     assert_rejects::<F, F>(&plan, &wrong_image);
+}
+
+fn aligned_proof<F, E>(
+    plan: &JlAlignedEtProjectionPlan,
+    retry: u32,
+) -> JlAlignedEtProjectionProof<E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize,
+{
+    let z = z_source();
+    let e = z[..8].to_vec();
+    let t = et_source()[..8].to_vec();
+    let mut transcript = AkitaTranscript::<F>::prover(b"jl/aligned/test", b"instance");
+    bind(&mut transcript);
+    let prepared = prepare_jl_aligned_et_projection::<F, _>(
+        &mut transcript,
+        plan,
+        retry,
+        &JlAlignedEtProverInput {
+            z: &z,
+            e: &e,
+            t: &t,
+        },
+    )
+    .unwrap();
+    let ready = absorb_jl_aligned_et_images::<F, _>(&mut transcript, prepared).unwrap();
+    prove_jl_aligned_et_reduction::<F, E, _>(&mut transcript, ready).unwrap()
+}
+
+fn verify_aligned<F, E>(
+    plan: &JlAlignedEtProjectionPlan,
+    proof: &JlAlignedEtProjectionProof<E>,
+) -> bool
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize,
+{
+    let mut transcript = AkitaTranscript::<F>::verifier(b"jl/aligned/test", b"instance");
+    bind(&mut transcript);
+    let result = prepare_jl_aligned_et_verification::<F, E, _>(&mut transcript, plan, proof)
+        .and_then(|prepared| {
+            absorb_jl_aligned_et_verification_images::<F, E, _>(&mut transcript, prepared)
+        })
+        .and_then(|ready| verify_jl_aligned_et_reduction::<F, E, _>(&mut transcript, ready));
+    let Ok(claims) = result else {
+        return false;
+    };
+    let sources = [
+        z_source(),
+        z_source()[..8].to_vec(),
+        et_source()[..8].to_vec(),
+    ];
+    for ((claim, source), chain) in [claims.z, claims.e, claims.t].iter().zip(&sources).zip([
+        plan.z().unwrap(),
+        plan.e_stem().unwrap(),
+        plan.t_stem().unwrap(),
+    ]) {
+        let field = source.iter().copied().map(E::from_i128).collect::<Vec<_>>();
+        let first = chain.layers()[0];
+        let direct = eval_block_tensor_mle(
+            &field,
+            first.blocks(),
+            first.matrix_member().shape().unwrap().cols(),
+            &claim.point,
+        )
+        .unwrap();
+        if claim.evaluation != direct {
+            return false;
+        }
+    }
+    true
+}
+
+fn aligned_roundtrip<F, E>()
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + AkitaSerialize,
+{
+    let plan = aligned_plan([21; 32], 3, 1);
+    let proof = aligned_proof::<F, E>(&plan, 0);
+    assert!(verify_aligned::<F, E>(&plan, &proof));
+}
+
+#[test]
+fn aligned_selector_join_roundtrips_all_shipped_fields() {
+    aligned_roundtrip::<Prime32Offset99, FpExt4<Prime32Offset99>>();
+    aligned_roundtrip::<Prime64Offset59, Ext2<Prime64Offset59>>();
+    aligned_roundtrip::<Prime128OffsetA7F7, Prime128OffsetA7F7>();
+}
+
+#[test]
+fn aligned_join_and_private_stem_mutations_reject() {
+    type F = Prime128OffsetA7F7;
+    let plan = aligned_plan([22; 32], 3, 2);
+    let proof = aligned_proof::<F, F>(&plan, 1);
+
+    let mut e_eval = proof.clone();
+    e_eval.e_stem_image_evaluation += F::one();
+    assert!(!verify_aligned::<F, F>(&plan, &e_eval));
+
+    let mut t_eval = proof.clone();
+    t_eval.t_stem_image_evaluation += F::one();
+    assert!(!verify_aligned::<F, F>(&plan, &t_eval));
+
+    let mut e_layer = proof.clone();
+    e_layer.e_stem_reverse_layers[0].input_evaluation += F::one();
+    assert!(!verify_aligned::<F, F>(&plan, &e_layer));
+
+    let mut t_layer = proof.clone();
+    t_layer.t_stem_reverse_layers[0].input_evaluation += F::one();
+    assert!(!verify_aligned::<F, F>(&plan, &t_layer));
+}
+
+#[test]
+fn aligned_headerless_wire_orders_both_images_before_reductions() {
+    type F = Prime128OffsetA7F7;
+    let plan = aligned_plan([23; 32], 3, 2);
+    let proof = aligned_proof::<F, F>(&plan, 1);
+    let shape = JlAlignedEtProjectionProofShape::from_plan(&plan).unwrap();
+    let mut bytes = Vec::new();
+    proof.serialize_compressed(&mut bytes).unwrap();
+    let mut expected_prelude = Vec::new();
+    proof
+        .retry_index
+        .unwrap()
+        .serialize_compressed(&mut expected_prelude)
+        .unwrap();
+    for image in [&proof.z.clear_image, &proof.et_tail.clear_image] {
+        for coordinate in image {
+            coordinate
+                .serialize_compressed(&mut expected_prelude)
+                .unwrap();
+        }
+    }
+    assert_eq!(&bytes[..expected_prelude.len()], expected_prelude);
+    let decoded =
+        JlAlignedEtProjectionProof::<F>::deserialize_compressed_exact(&bytes, &shape).unwrap();
+    assert_eq!(decoded, proof);
+    assert!(verify_aligned::<F, F>(&plan, &decoded));
+
+    let mut extra = bytes.clone();
+    extra.push(0);
+    assert!(JlAlignedEtProjectionProof::<F>::deserialize_compressed_exact(&extra, &shape).is_err());
+}
+
+#[test]
+fn single_attempt_prover_rejects_nonzero_candidate() {
+    type F = Prime128OffsetA7F7;
+    let plan = single_certificate_plan(1);
+    let source = z_source();
+    let mut transcript = AkitaTranscript::<F>::prover(b"jl/retry/test", b"instance");
+    bind(&mut transcript);
+    assert!(prepare_jl_projection_batch::<F, _>(
+        &mut transcript,
+        &plan,
+        u32::MAX,
+        &[JlProjectionProverInput { source: &source }],
+    )
+    .is_err());
 }

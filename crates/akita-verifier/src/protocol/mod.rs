@@ -11,8 +11,10 @@ pub use core::batched_verify;
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use evaluation_trace::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 pub use jl::{
-    absorb_jl_projection_verification_images, prepare_jl_projection_verification,
-    verify_jl_projection_reduction_batch, JlVerifierReductionBatch,
+    absorb_jl_aligned_et_verification_images, absorb_jl_projection_verification_images,
+    prepare_jl_aligned_et_verification, prepare_jl_projection_verification,
+    verify_jl_aligned_et_reduction, verify_jl_projection_reduction_batch, JlAlignedEtSourceClaims,
+    JlAlignedEtVerifierReduction, JlVerifierReductionBatch, PreparedJlAlignedEtVerification,
     PreparedJlProjectionVerification,
 };
 pub use ring_switch::{

@@ -78,9 +78,11 @@ pub use protocol::sumcheck::{
 pub use protocol::{
     batched_prove, build_relation_weight_events, commit_terminal_w, commit_w,
     jl::{
-        absorb_jl_projection_batch_images, prepare_jl_projection_batch,
-        prove_jl_projection_reduction_batch, JlProjectionProverInput, JlProverReductionBatch,
-        PreparedJlProjectionBatch,
+        absorb_jl_aligned_et_images, absorb_jl_projection_batch_images,
+        prepare_jl_aligned_et_projection, prepare_jl_projection_batch,
+        prove_jl_aligned_et_reduction, prove_jl_projection_reduction_batch, JlAlignedEtProverInput,
+        JlAlignedEtReductionBatch, JlProjectionProverInput, JlProverReductionBatch,
+        PreparedJlAlignedEtProjection, PreparedJlProjectionBatch,
     },
     ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,

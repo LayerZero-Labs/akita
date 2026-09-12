@@ -132,7 +132,11 @@ impl JlMatrixEnvelopeDomain {
         self.topological_depth
     }
 
-    /// Schedule identity authenticating the ordered member manifest.
+    /// Caller-supplied identity of the canonical schedule and ordered manifest.
+    ///
+    /// This foundation type checks the manifest's internal geometry but does
+    /// not recompute the schedule digest; the production schedule constructor
+    /// must supply its authenticated identity.
     #[must_use]
     pub const fn schedule_identity(self) -> [u8; 32] {
         self.schedule_identity
@@ -156,9 +160,9 @@ impl JlMatrixDerivationContext {
     /// Canonical domain bytes.
     ///
     /// Certificate, stem, member layer, blocks, and prefix shape are
-    /// intentionally absent. They are authenticated by the schedule identity
-    /// and ordered member manifest, while every same-depth use shares this
-    /// exact envelope.
+    /// intentionally absent. The production schedule identity must commit to
+    /// that ordered member manifest, while every same-depth use shares this
+    /// exact envelope. This foundation API does not recompute that identity.
     pub fn encode(self) -> Result<Vec<u8>, AkitaError> {
         let rows = u64::try_from(self.domain.rows)
             .map_err(|_| AkitaError::InvalidInput("JL row count exceeds u64".into()))?;
@@ -191,7 +195,7 @@ impl JlMatrixDerivationContext {
     }
 }
 
-/// One authenticated upper-left-prefix use in an envelope member manifest.
+/// One checked upper-left-prefix use in an envelope member manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JlMatrixMember {
     envelope: JlMatrixEnvelopeDomain,
@@ -363,7 +367,7 @@ impl JlBlockLayerPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JlProjectionChainPlan {
     layers: Vec<JlBlockLayerPlan>,
-    final_energy_bound: u128,
+    final_energy_bound: Option<u128>,
 }
 
 /// Checked ordered certificate batch and its shared-envelope manifest.
@@ -372,11 +376,34 @@ pub struct JlProjectionBatchPlan {
     chains: Vec<JlProjectionChainPlan>,
     envelopes: Vec<JlMatrixEnvelopeDomain>,
     max_retries: u32,
+    matrix_bytes: usize,
+    retained_i128_bytes: usize,
+    wire_image_bytes: usize,
+    max_projection_narrow_bytes: usize,
+    max_projection_field_coordinates: usize,
+    max_prover_reduction_field_coordinates: usize,
+    max_verifier_factor_field_coordinates: usize,
+    max_image_evaluation_field_coordinates: usize,
+    max_clear_image_bytes: usize,
+}
+
+/// Checked `Z` plus aligned private-E/private-T stems and shared ET tail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JlAlignedEtProjectionPlan {
+    batch: JlProjectionBatchPlan,
 }
 
 impl JlProjectionBatchPlan {
     /// Authenticate chain order, member order, and one envelope per depth.
     pub fn new(chains: Vec<JlProjectionChainPlan>, max_retries: u32) -> Result<Self, AkitaError> {
+        Self::new_with_private_stems(chains, max_retries, false)
+    }
+
+    fn new_with_private_stems(
+        chains: Vec<JlProjectionChainPlan>,
+        max_retries: u32,
+        allow_private_stems: bool,
+    ) -> Result<Self, AkitaError> {
         if chains.is_empty() || chains.len() > DEFAULT_MAX_SEQUENCE_LEN {
             return Err(AkitaError::InvalidInput(
                 "JL projection batch chain count is outside the proof-sequence bound".into(),
@@ -420,13 +447,24 @@ impl JlProjectionBatchPlan {
                 .copied()
                 .ok_or_else(|| AkitaError::InvalidInput("JL projection chain is empty".into()))?
                 .member;
-            if !matches!(
-                (first_member.certificate, first_member.stem),
-                (JlCertificateId::ProjZ, JlProjectionStemId::Z)
-                    | (JlCertificateId::ProjEt, JlProjectionStemId::EtTail)
-            ) {
+            if !allow_private_stems
+                && !matches!(
+                    (first_member.certificate, first_member.stem),
+                    (JlCertificateId::ProjZ, JlProjectionStemId::Z)
+                        | (JlCertificateId::ProjEt, JlProjectionStemId::EtTail)
+                )
+            {
                 return Err(AkitaError::InvalidInput(
                     "JL batch foundation accepts Z and already-joined ET-tail sources only".into(),
+                ));
+            }
+            let is_private = matches!(
+                first_member.stem,
+                JlProjectionStemId::E | JlProjectionStemId::T
+            );
+            if is_private != chain.final_energy_bound.is_none() {
+                return Err(AkitaError::InvalidInput(
+                    "JL energy bounds belong exactly to logical clear-image chains".into(),
                 ));
             }
             let chain_key = (first_member.certificate.tag(), first_member.stem.tag());
@@ -508,10 +546,122 @@ impl JlProjectionBatchPlan {
                 "JL batch matrices require {matrix_bytes} materialized bytes, exceeding the aggregate budget of {MAX_MATERIALIZED_JL_BYTES} bytes"
             )));
         }
+        let mut retained_coordinates = 0usize;
+        let mut wire_coordinates = 0usize;
+        let mut max_projection_narrow_bytes = 0usize;
+        let mut max_projection_field_coordinates = 0usize;
+        let mut max_prover_reduction_field_coordinates = 0usize;
+        let mut max_verifier_factor_field_coordinates = 0usize;
+        let mut max_image_evaluation_field_coordinates = 0usize;
+        let mut max_clear_image_bytes = 0usize;
+        for chain in &chains {
+            retained_coordinates = checked::sum([retained_coordinates, chain.source_len()])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("JL retained-vector length overflow".into())
+                })?;
+            let image_evaluation_coordinates = checked::product([2, chain.final_image_len()])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("JL image-evaluation workspace overflow".into())
+                })?;
+            max_image_evaluation_field_coordinates =
+                max_image_evaluation_field_coordinates.max(image_evaluation_coordinates);
+            if chain.final_energy_bound.is_some() {
+                wire_coordinates = checked::sum([wire_coordinates, chain.final_image_len()])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("JL clear-image length overflow".into())
+                    })?;
+                let clear_image_bytes =
+                    checked::product([chain.final_image_len(), std::mem::size_of::<i128>()])
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("JL clear-image workspace overflow".into())
+                        })?;
+                max_clear_image_bytes = max_clear_image_bytes.max(clear_image_bytes);
+            }
+            for layer in &chain.layers {
+                retained_coordinates = checked::sum([retained_coordinates, layer.output_len])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("JL retained-vector length overflow".into())
+                    })?;
+                let narrow_input_bytes =
+                    checked::product([layer.input_len, std::mem::size_of::<i32>()]).ok_or_else(
+                        || {
+                            AkitaError::InvalidInput(
+                                "JL narrow-projection input workspace overflow".into(),
+                            )
+                        },
+                    )?;
+                let narrow_output_bytes =
+                    checked::product([layer.output_len, std::mem::size_of::<i64>()]).ok_or_else(
+                        || {
+                            AkitaError::InvalidInput(
+                                "JL narrow-projection output workspace overflow".into(),
+                            )
+                        },
+                    )?;
+                let narrow_bytes = checked::sum([narrow_input_bytes, narrow_output_bytes])
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("JL narrow-projection workspace overflow".into())
+                    })?;
+                max_projection_narrow_bytes = max_projection_narrow_bytes.max(narrow_bytes);
+                let member = layer.member;
+                let shape = member.shape()?;
+                let projection_field_coordinates = checked::sum([
+                    layer.input_len,
+                    layer.output_len,
+                    shape.field_contraction_scratch_len()?,
+                ])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("JL field-projection workspace overflow".into())
+                })?;
+                max_projection_field_coordinates =
+                    max_projection_field_coordinates.max(projection_field_coordinates);
+
+                let build_weight_coordinates = checked::sum([
+                    layer.input_len,
+                    layer.blocks,
+                    shape.cols(),
+                    shape.column_weight_scratch_len()?.max(layer.input_len),
+                ])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("JL sumcheck weight workspace overflow".into())
+                })?;
+                let factor_coordinates = shape.matrix_mle_scratch_len()?;
+                max_prover_reduction_field_coordinates = max_prover_reduction_field_coordinates
+                    .max(build_weight_coordinates)
+                    .max(factor_coordinates);
+                max_verifier_factor_field_coordinates =
+                    max_verifier_factor_field_coordinates.max(factor_coordinates);
+            }
+        }
+        let retained_i128_bytes =
+            checked::product([retained_coordinates, std::mem::size_of::<i128>()]).ok_or_else(
+                || AkitaError::InvalidInput("JL retained-vector byte overflow".into()),
+            )?;
+        let wire_image_bytes = checked::product([wire_coordinates, std::mem::size_of::<i128>()])
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("JL clear-image byte length overflow".into())
+            })?;
+        let baseline_workspace =
+            checked::sum([matrix_bytes, retained_i128_bytes, wire_image_bytes])
+                .ok_or_else(|| AkitaError::InvalidInput("JL batch workspace overflow".into()))?;
+        if baseline_workspace > MAX_MATERIALIZED_JL_BYTES {
+            return Err(AkitaError::InvalidInput(format!(
+                "JL batch retains {baseline_workspace} baseline bytes, exceeding the aggregate workspace budget of {MAX_MATERIALIZED_JL_BYTES} bytes"
+            )));
+        }
         Ok(Self {
             chains,
             envelopes,
             max_retries,
+            matrix_bytes,
+            retained_i128_bytes,
+            wire_image_bytes,
+            max_projection_narrow_bytes,
+            max_projection_field_coordinates,
+            max_prover_reduction_field_coordinates,
+            max_verifier_factor_field_coordinates,
+            max_image_evaluation_field_coordinates,
+            max_clear_image_bytes,
         })
     }
 
@@ -551,6 +701,25 @@ impl JlProjectionBatchPlan {
         Ok(retry)
     }
 
+    /// Canonically encode a prover-selected whole-forest candidate.
+    pub fn encoded_retry(&self, retry: u32) -> Result<Option<u32>, AkitaError> {
+        if retry >= self.max_retries {
+            return Err(AkitaError::InvalidInput(
+                "JL retry index is outside the public batch plan".into(),
+            ));
+        }
+        if self.max_retries == 1 {
+            if retry != 0 {
+                return Err(AkitaError::InvalidInput(
+                    "single-attempt JL prover must select candidate zero".into(),
+                ));
+            }
+            Ok(None)
+        } else {
+            Ok(Some(retry))
+        }
+    }
+
     /// Whether the whole-forest candidate is present on the wire.
     #[must_use]
     pub const fn retry_is_encoded(&self) -> bool {
@@ -561,6 +730,72 @@ impl JlProjectionBatchPlan {
     #[must_use]
     pub const fn max_retries(&self) -> u32 {
         self.max_retries
+    }
+
+    /// Check the peak forward-projection footprint for one base-field element size.
+    pub fn validate_projection_workspace(
+        &self,
+        field_element_bytes: usize,
+    ) -> Result<(), AkitaError> {
+        let field_projection_bytes =
+            checked::product([self.max_projection_field_coordinates, field_element_bytes])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("JL projection workspace overflow".into())
+                })?;
+        let scratch = self
+            .max_projection_narrow_bytes
+            .max(field_projection_bytes)
+            .max(self.max_clear_image_bytes);
+        self.validate_workspace(checked::sum([
+            self.matrix_bytes,
+            self.retained_i128_bytes,
+            self.wire_image_bytes,
+            scratch,
+        ]))
+    }
+
+    /// Check the peak prover-reduction footprint for one extension-field element size.
+    pub fn validate_prover_workspace(&self, field_element_bytes: usize) -> Result<(), AkitaError> {
+        let reduction_coordinates = self
+            .max_prover_reduction_field_coordinates
+            .max(self.max_image_evaluation_field_coordinates);
+        let field_tables = checked::product([reduction_coordinates, field_element_bytes])
+            .ok_or_else(|| AkitaError::InvalidInput("JL prover workspace overflow".into()))?;
+        self.validate_workspace(checked::sum([
+            self.matrix_bytes,
+            self.retained_i128_bytes,
+            self.wire_image_bytes,
+            field_tables,
+        ]))
+    }
+
+    /// Check the peak verifier footprint for one extension-field element size.
+    pub fn validate_verifier_workspace(
+        &self,
+        field_element_bytes: usize,
+    ) -> Result<(), AkitaError> {
+        let verifier_coordinates = self
+            .max_verifier_factor_field_coordinates
+            .max(self.max_image_evaluation_field_coordinates);
+        let field_tables = checked::product([verifier_coordinates, field_element_bytes])
+            .ok_or_else(|| AkitaError::InvalidInput("JL verifier workspace overflow".into()))?;
+        let scratch = field_tables.max(self.max_clear_image_bytes);
+        self.validate_workspace(checked::sum([
+            self.matrix_bytes,
+            self.wire_image_bytes,
+            scratch,
+        ]))
+    }
+
+    fn validate_workspace(&self, bytes: Option<usize>) -> Result<(), AkitaError> {
+        let bytes =
+            bytes.ok_or_else(|| AkitaError::InvalidInput("JL workspace overflow".into()))?;
+        if bytes > MAX_MATERIALIZED_JL_BYTES {
+            return Err(AkitaError::InvalidInput(format!(
+                "JL operation requires {bytes} workspace bytes, exceeding the aggregate budget of {MAX_MATERIALIZED_JL_BYTES} bytes"
+            )));
+        }
+        Ok(())
     }
 
     /// Expand each depth envelope once, in increasing depth order.
@@ -617,11 +852,174 @@ impl JlProjectionBatchPlan {
     }
 }
 
+impl JlAlignedEtProjectionPlan {
+    /// Construct the complete aligned selector-join graph.
+    pub fn new(
+        z: JlProjectionChainPlan,
+        e_stem: JlProjectionChainPlan,
+        t_stem: JlProjectionChainPlan,
+        et_tail: JlProjectionChainPlan,
+        max_retries: u32,
+    ) -> Result<Self, AkitaError> {
+        for (chain, certificate, stem) in [
+            (&z, JlCertificateId::ProjZ, JlProjectionStemId::Z),
+            (&e_stem, JlCertificateId::ProjEt, JlProjectionStemId::E),
+            (&t_stem, JlCertificateId::ProjEt, JlProjectionStemId::T),
+            (
+                &et_tail,
+                JlCertificateId::ProjEt,
+                JlProjectionStemId::EtTail,
+            ),
+        ] {
+            let member = chain
+                .layers
+                .first()
+                .ok_or_else(|| AkitaError::InvalidInput("JL projection chain is empty".into()))?
+                .member;
+            if member.certificate != certificate || member.stem != stem {
+                return Err(AkitaError::InvalidInput(
+                    "JL aligned graph chain has the wrong certificate or stem".into(),
+                ));
+            }
+            if stem != JlProjectionStemId::EtTail && member.envelope.topological_depth != 0 {
+                return Err(AkitaError::InvalidInput(
+                    "JL Z, E, and T stems must begin at topological depth zero".into(),
+                ));
+            }
+        }
+        let stem_len = e_stem.final_image_len();
+        if stem_len != t_stem.final_image_len() || !stem_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "JL aligned E/T stems require equal power-of-two output lengths".into(),
+            ));
+        }
+        let tail_first = et_tail
+            .layers
+            .first()
+            .copied()
+            .ok_or_else(|| AkitaError::InvalidInput("JL E/T tail is empty".into()))?;
+        if tail_first.blocks != 2 || tail_first.member.cols != stem_len {
+            return Err(AkitaError::InvalidInput(
+                "JL E/T tail must begin with two selector blocks over one stem image".into(),
+            ));
+        }
+        let e_depth = e_stem
+            .layers
+            .last()
+            .ok_or_else(|| AkitaError::InvalidInput("JL E stem is empty".into()))?
+            .member
+            .envelope
+            .topological_depth;
+        let t_depth = t_stem
+            .layers
+            .last()
+            .ok_or_else(|| AkitaError::InvalidInput("JL T stem is empty".into()))?
+            .member
+            .envelope
+            .topological_depth;
+        let expected_tail_depth = e_depth
+            .max(t_depth)
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidInput("JL E/T dependency depth overflow".into()))?;
+        if tail_first.member.envelope.topological_depth != expected_tail_depth {
+            return Err(AkitaError::InvalidInput(
+                "JL E/T tail must follow both private stems in dependency order".into(),
+            ));
+        }
+        let batch = JlProjectionBatchPlan::new_with_private_stems(
+            vec![z, e_stem, t_stem, et_tail],
+            max_retries,
+            true,
+        )?;
+        Ok(Self { batch })
+    }
+
+    /// Complete shared-envelope plan in canonical `Z,E,T,ET-tail` order.
+    #[must_use]
+    pub const fn batch(&self) -> &JlProjectionBatchPlan {
+        &self.batch
+    }
+
+    /// Aggregate semantic-Z chain.
+    pub fn z(&self) -> Result<&JlProjectionChainPlan, AkitaError> {
+        self.batch
+            .chains
+            .first()
+            .ok_or_else(|| AkitaError::InvalidInput("JL aligned Z chain is missing".into()))
+    }
+
+    /// Private E stem.
+    pub fn e_stem(&self) -> Result<&JlProjectionChainPlan, AkitaError> {
+        self.batch
+            .chains
+            .get(1)
+            .ok_or_else(|| AkitaError::InvalidInput("JL aligned E stem is missing".into()))
+    }
+
+    /// Private T stem.
+    pub fn t_stem(&self) -> Result<&JlProjectionChainPlan, AkitaError> {
+        self.batch
+            .chains
+            .get(2)
+            .ok_or_else(|| AkitaError::InvalidInput("JL aligned T stem is missing".into()))
+    }
+
+    /// Shared E/T tail.
+    pub fn et_tail(&self) -> Result<&JlProjectionChainPlan, AkitaError> {
+        self.batch
+            .chains
+            .get(3)
+            .ok_or_else(|| AkitaError::InvalidInput("JL aligned E/T tail is missing".into()))
+    }
+
+    /// Concatenate equal-width private stem images in selector order `E,T`.
+    pub fn join_stem_images<T: Copy>(
+        &self,
+        e_image: &[T],
+        t_image: &[T],
+    ) -> Result<Vec<T>, AkitaError> {
+        let expected = self.e_stem()?.final_image_len();
+        if e_image.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: e_image.len(),
+            });
+        }
+        if t_image.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: t_image.len(),
+            });
+        }
+        let joined_len = checked::product([2, expected])
+            .ok_or_else(|| AkitaError::InvalidInput("JL E/T join length overflow".into()))?;
+        let mut joined = Vec::new();
+        joined
+            .try_reserve_exact(joined_len)
+            .map_err(|_| AkitaError::InvalidInput("JL E/T join allocation failed".into()))?;
+        joined.extend_from_slice(e_image);
+        joined.extend_from_slice(t_image);
+        Ok(joined)
+    }
+}
+
 impl JlProjectionChainPlan {
     /// Construct a chain. Consecutive live lengths must agree exactly.
     pub fn new(
         layers: Vec<JlBlockLayerPlan>,
         final_energy_bound: u128,
+    ) -> Result<Self, AkitaError> {
+        Self::new_with_energy_bound(layers, Some(final_energy_bound))
+    }
+
+    /// Construct a private intermediate chain with no public energy predicate.
+    pub fn new_private(layers: Vec<JlBlockLayerPlan>) -> Result<Self, AkitaError> {
+        Self::new_with_energy_bound(layers, None)
+    }
+
+    fn new_with_energy_bound(
+        layers: Vec<JlBlockLayerPlan>,
+        final_energy_bound: Option<u128>,
     ) -> Result<Self, AkitaError> {
         if layers.is_empty() || layers.len() > MAX_JL_PROJECTION_LAYERS {
             return Err(AkitaError::InvalidInput(format!(
@@ -629,10 +1027,20 @@ impl JlProjectionChainPlan {
             )));
         }
         for pair in layers.windows(2) {
-            if pair[0].output_len != pair[1].input_len {
+            let previous = pair.first().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "JL chain adjacency is missing its first layer".to_string(),
+                )
+            })?;
+            let next = pair.get(1).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "JL chain adjacency is missing its second layer".to_string(),
+                )
+            })?;
+            if previous.output_len != next.input_len {
                 return Err(AkitaError::InvalidInput(format!(
                     "JL chain layer boundary mismatch: {} != {}",
-                    pair[0].output_len, pair[1].input_len
+                    previous.output_len, next.input_len
                 )));
             }
         }
@@ -657,13 +1065,20 @@ impl JlProjectionChainPlan {
                     "JL chain mixes matrix semantic domains".into(),
                 ));
             }
-            if index > 0
-                && layer.member.envelope.topological_depth
-                    <= layers[index - 1].member.envelope.topological_depth
-            {
-                return Err(AkitaError::InvalidInput(
-                    "JL dependency path must use strictly increasing envelope depths".into(),
-                ));
+            if let Some(previous) = index.checked_sub(1).and_then(|i| layers.get(i)) {
+                let expected_depth = previous
+                    .member
+                    .envelope
+                    .topological_depth
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("JL dependency depth overflow".into())
+                    })?;
+                if layer.member.envelope.topological_depth != expected_depth {
+                    return Err(AkitaError::InvalidInput(
+                        "JL projection edges must increment topological depth by one".into(),
+                    ));
+                }
             }
         }
         Ok(Self {
@@ -692,7 +1107,7 @@ impl JlProjectionChainPlan {
 
     /// Public accepted final squared energy.
     #[must_use]
-    pub const fn final_energy_bound(&self) -> u128 {
+    pub const fn final_energy_bound(&self) -> Option<u128> {
         self.final_energy_bound
     }
 }
@@ -822,9 +1237,9 @@ mod tests {
     }
 
     #[test]
-    fn batch_does_not_claim_unimplemented_private_et_stem_linkage() {
+    fn direct_batch_rejects_private_et_stems_without_aligned_join() {
         let e_layer = JlBlockLayerPlan::new(member(JlProjectionStemId::E, 0, 0, 4, 8), 1).unwrap();
-        let e_chain = JlProjectionChainPlan::new(vec![e_layer], 100).unwrap();
+        let e_chain = JlProjectionChainPlan::new_private(vec![e_layer]).unwrap();
         assert!(JlProjectionBatchPlan::new(vec![e_chain], 1).is_err());
     }
 
@@ -851,5 +1266,61 @@ mod tests {
         let layer = JlBlockLayerPlan::new(member, 1).unwrap();
         let chain = JlProjectionChainPlan::new(vec![layer], 100).unwrap();
         assert!(JlProjectionBatchPlan::new(vec![chain], 1).is_err());
+    }
+
+    #[test]
+    fn batch_rejects_retained_vectors_over_aggregate_budget() {
+        let mut layers = Vec::new();
+        for depth in 0..MAX_JL_PROJECTION_LAYERS {
+            let depth = u16::try_from(depth).unwrap();
+            let envelope = JlMatrixEnvelopeDomain::new(
+                [5; 32],
+                0,
+                depth,
+                1,
+                1,
+                JlMatrixLawId::BalancedTernaryRepeatedBlock,
+            )
+            .unwrap();
+            let member = JlMatrixMember::new(
+                envelope,
+                JlCertificateId::ProjZ,
+                JlProjectionStemId::Z,
+                depth,
+                1,
+                1,
+            )
+            .unwrap();
+            layers.push(JlBlockLayerPlan::new(member, 1 << 25).unwrap());
+        }
+        let chain = JlProjectionChainPlan::new(layers, 100).unwrap();
+        assert!(JlProjectionBatchPlan::new(vec![chain], 1).is_err());
+    }
+
+    #[test]
+    fn field_working_tables_are_checked_before_proving_or_verifying() {
+        let envelope = JlMatrixEnvelopeDomain::new(
+            [6; 32],
+            0,
+            0,
+            1,
+            1,
+            JlMatrixLawId::BalancedTernaryRepeatedBlock,
+        )
+        .unwrap();
+        let member = JlMatrixMember::new(
+            envelope,
+            JlCertificateId::ProjZ,
+            JlProjectionStemId::Z,
+            0,
+            1,
+            1,
+        )
+        .unwrap();
+        let layer = JlBlockLayerPlan::new(member, 1 << 24).unwrap();
+        let chain = JlProjectionChainPlan::new(vec![layer], 100).unwrap();
+        let batch = JlProjectionBatchPlan::new(vec![chain], 1).unwrap();
+        assert!(batch.validate_prover_workspace(32).is_err());
+        assert!(batch.validate_verifier_workspace(32).is_err());
     }
 }

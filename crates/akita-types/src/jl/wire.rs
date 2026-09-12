@@ -8,7 +8,7 @@ use akita_sumcheck::{uniform_sumcheck_shape, SumcheckProof, SumcheckProofShape};
 use jolt_field::Field;
 use std::io::{Read, Write};
 
-use super::{JlProjectionBatchPlan, JlProjectionChainPlan};
+use super::{JlAlignedEtProjectionPlan, JlProjectionBatchPlan, JlProjectionChainPlan};
 
 /// Degree bound of the bilinear `X * (eq * J)` reduction summand.
 pub const JL_PROJECTION_REDUCTION_DEGREE: usize = 2;
@@ -77,6 +77,48 @@ pub struct JlProjectionBatchProofShape {
     chains: Vec<JlProjectionProofShape>,
 }
 
+/// Headerless proof for `Z` and an aligned private-E/private-T selector join.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JlAlignedEtProjectionProof<E: Field> {
+    /// Present exactly when multiple whole-forest candidates are scheduled.
+    pub retry_index: Option<u32>,
+    /// Aggregate semantic-Z clear image and reverse reduction.
+    pub z: JlProjectionProof<E>,
+    /// Final E/T-tail clear image and reverse reduction to the joined table.
+    pub et_tail: JlProjectionProof<E>,
+    /// Private E-stem image evaluation at the tail's terminal inner point.
+    pub e_stem_image_evaluation: E,
+    /// Private T-stem image evaluation at the same inner point.
+    pub t_stem_image_evaluation: E,
+    /// Private E-stem reverse reduction.
+    pub e_stem_reverse_layers: Vec<JlLayerReductionProof<E>>,
+    /// Private T-stem reverse reduction.
+    pub t_stem_reverse_layers: Vec<JlLayerReductionProof<E>>,
+}
+
+/// Schedule-derived decoder shape for an aligned E/T selector-join proof.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JlAlignedEtProjectionProofShape {
+    retry_is_encoded: bool,
+    z: JlProjectionProofShape,
+    e_stem: JlProjectionProofShape,
+    t_stem: JlProjectionProofShape,
+    et_tail: JlProjectionProofShape,
+}
+
+impl JlAlignedEtProjectionProofShape {
+    /// Derive the exact headerless shape from the aligned graph plan.
+    pub fn from_plan(plan: &JlAlignedEtProjectionPlan) -> Result<Self, akita_error::AkitaError> {
+        Ok(Self {
+            retry_is_encoded: plan.batch().retry_is_encoded(),
+            z: JlProjectionProofShape::from_plan(plan.z()?)?,
+            e_stem: JlProjectionProofShape::from_plan(plan.e_stem()?)?,
+            t_stem: JlProjectionProofShape::from_plan(plan.t_stem()?)?,
+            et_tail: JlProjectionProofShape::from_plan(plan.et_tail()?)?,
+        })
+    }
+}
+
 impl JlProjectionBatchProofShape {
     /// Derive the only accepted wire shape from a checked public batch plan.
     pub fn from_plan(plan: &JlProjectionBatchPlan) -> Result<Self, akita_error::AkitaError> {
@@ -120,6 +162,17 @@ impl<E: Field + Valid> Valid for JlProjectionProof<E> {
 impl<E: Field + Valid> Valid for JlProjectionBatchProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.chains.check()
+    }
+}
+
+impl<E: Field + Valid> Valid for JlAlignedEtProjectionProof<E> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.z.check()?;
+        self.et_tail.check()?;
+        self.e_stem_image_evaluation.check()?;
+        self.t_stem_image_evaluation.check()?;
+        self.e_stem_reverse_layers.check()?;
+        self.t_stem_reverse_layers.check()
     }
 }
 
@@ -318,6 +371,199 @@ where
         }
         Ok(proof)
     }
+}
+
+impl<E: Field + AkitaSerialize> AkitaSerialize for JlAlignedEtProjectionProof<E> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        if let Some(retry) = self.retry_index {
+            retry.serialize_with_mode(&mut writer, compress)?;
+        }
+        serialize_image(&self.z.clear_image, &mut writer, compress)?;
+        serialize_image(&self.et_tail.clear_image, &mut writer, compress)?;
+        serialize_layers(&self.z.reverse_layers, &mut writer, compress)?;
+        serialize_layers(&self.et_tail.reverse_layers, &mut writer, compress)?;
+        self.e_stem_image_evaluation
+            .serialize_with_mode(&mut writer, compress)?;
+        self.t_stem_image_evaluation
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_layers(&self.e_stem_reverse_layers, &mut writer, compress)?;
+        serialize_layers(&self.t_stem_reverse_layers, &mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.retry_index
+            .map_or(0, |retry| retry.serialized_size(compress))
+            + serialized_image_size(&self.z.clear_image, compress)
+            + serialized_image_size(&self.et_tail.clear_image, compress)
+            + serialized_layers_size(&self.z.reverse_layers, compress)
+            + serialized_layers_size(&self.et_tail.reverse_layers, compress)
+            + self.e_stem_image_evaluation.serialized_size(compress)
+            + self.t_stem_image_evaluation.serialized_size(compress)
+            + serialized_layers_size(&self.e_stem_reverse_layers, compress)
+            + serialized_layers_size(&self.t_stem_reverse_layers, compress)
+    }
+}
+
+impl<E> AkitaDeserialize for JlAlignedEtProjectionProof<E>
+where
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
+{
+    type Context = JlAlignedEtProjectionProofShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        shape: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        let retry_index = shape
+            .retry_is_encoded
+            .then(|| u32::deserialize_with_mode(&mut reader, compress, validate, &()))
+            .transpose()?;
+        let z_image = deserialize_image(&mut reader, compress, validate, shape.z.clear_image_len)?;
+        let et_image = deserialize_image(
+            &mut reader,
+            compress,
+            validate,
+            shape.et_tail.clear_image_len,
+        )?;
+        let z_layers =
+            deserialize_layers(&mut reader, compress, validate, &shape.z.reverse_sumchecks)?;
+        let et_layers = deserialize_layers(
+            &mut reader,
+            compress,
+            validate,
+            &shape.et_tail.reverse_sumchecks,
+        )?;
+        let e_stem_image_evaluation =
+            E::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let t_stem_image_evaluation =
+            E::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let e_stem_reverse_layers = deserialize_layers(
+            &mut reader,
+            compress,
+            validate,
+            &shape.e_stem.reverse_sumchecks,
+        )?;
+        let t_stem_reverse_layers = deserialize_layers(
+            &mut reader,
+            compress,
+            validate,
+            &shape.t_stem.reverse_sumchecks,
+        )?;
+        let proof = Self {
+            retry_index,
+            z: JlProjectionProof {
+                clear_image: z_image,
+                reverse_layers: z_layers,
+            },
+            et_tail: JlProjectionProof {
+                clear_image: et_image,
+                reverse_layers: et_layers,
+            },
+            e_stem_image_evaluation,
+            t_stem_image_evaluation,
+            e_stem_reverse_layers,
+            t_stem_reverse_layers,
+        };
+        if matches!(validate, Validate::Yes) {
+            proof.check()?;
+        }
+        Ok(proof)
+    }
+}
+
+fn serialize_image<W: Write>(
+    image: &[i128],
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    for coordinate in image {
+        coordinate.serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn serialize_layers<E: Field + AkitaSerialize, W: Write>(
+    layers: &[JlLayerReductionProof<E>],
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    for layer in layers {
+        layer.sumcheck.serialize_with_mode(&mut writer, compress)?;
+        layer
+            .input_evaluation
+            .serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn serialized_image_size(image: &[i128], compress: Compress) -> usize {
+    image
+        .iter()
+        .map(|coordinate| coordinate.serialized_size(compress))
+        .sum()
+}
+
+fn serialized_layers_size<E: Field + AkitaSerialize>(
+    layers: &[JlLayerReductionProof<E>],
+    compress: Compress,
+) -> usize {
+    layers
+        .iter()
+        .map(|layer| {
+            layer.sumcheck.serialized_size(compress)
+                + layer.input_evaluation.serialized_size(compress)
+        })
+        .sum()
+}
+
+fn deserialize_image<R: Read>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    len: usize,
+) -> Result<Vec<i128>, SerializationError> {
+    let mut image = Vec::new();
+    image
+        .try_reserve_exact(len)
+        .map_err(|_| SerializationError::InvalidData("JL clear-image allocation failed".into()))?;
+    for _ in 0..len {
+        image.push(i128::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+    }
+    Ok(image)
+}
+
+fn deserialize_layers<E, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shapes: &[SumcheckProofShape],
+) -> Result<Vec<JlLayerReductionProof<E>>, SerializationError>
+where
+    E: Field + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let mut layers = Vec::new();
+    layers
+        .try_reserve_exact(shapes.len())
+        .map_err(|_| SerializationError::InvalidData("JL layer allocation failed".into()))?;
+    for shape in shapes {
+        layers.push(JlLayerReductionProof {
+            sumcheck: SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
+            input_evaluation: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        });
+    }
+    Ok(layers)
 }
 
 /// Deferred source evaluation left after a complete reverse chain.

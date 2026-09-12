@@ -104,6 +104,8 @@ pub const ABSORB_JL_CLEAR_IMAGE: &[u8] = b"ak/a/jli";
 pub const CHALLENGE_JL_IMAGE_POINT: &[u8] = b"ak/c/jip";
 /// Absorb one reverse-layer terminal input claim before the next reduction.
 pub const ABSORB_JL_REDUCTION_TERMINAL: &[u8] = b"ak/a/jlt";
+/// Absorb E then T stem-image evaluations that open an aligned selector join.
+pub const ABSORB_JL_ET_STEM_EVALUATION: &[u8] = b"ak/a/jle";
 /// Absorb terminal raw-field `e_folded` bytes before sparse-challenge sampling.
 pub const ABSORB_TERMINAL_E_HAT: &[u8] = b"ak/a/twh";
 /// Absorb the terminal `z` response after sparse-challenge sampling.
@@ -156,6 +158,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_JL_CLEAR_IMAGE,
     CHALLENGE_JL_IMAGE_POINT,
     ABSORB_JL_REDUCTION_TERMINAL,
+    ABSORB_JL_ET_STEM_EVALUATION,
     ABSORB_TERMINAL_E_HAT,
     ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_TAU0,
@@ -175,5 +178,10 @@ mod tests {
     fn grinding_labels_are_registered() {
         assert!(ALL_LABELS.contains(&ABSORB_TRANSCRIPT_GRINDING));
         assert!(ALL_LABELS.contains(&CHALLENGE_GRINDING_PREDICATE));
+    }
+
+    #[test]
+    fn aligned_et_stem_evaluation_label_is_registered() {
+        assert!(ALL_LABELS.contains(&ABSORB_JL_ET_STEM_EVALUATION));
     }
 }

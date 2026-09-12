@@ -82,14 +82,14 @@ pub use instance_descriptor::{
     ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use jl::{
-    CertifiedJlBounds, CertifiedJlL2Bounds, CertifiedJlLinfBounds, JlBlockLayerPlan,
-    JlCertificateId, JlLayerReductionProof, JlMatrixDerivationContext, JlMatrixEnvelopeDomain,
-    JlMatrixLawId, JlMatrixMember, JlProjectionBatchPlan, JlProjectionBatchProof,
-    JlProjectionBatchProofShape, JlProjectionChainPlan, JlProjectionProof, JlProjectionProofShape,
-    JlProjectionStemId, JlRowLawId, JlSourceClaim, RationalBound,
-    BALANCED_TERNARY_256_ROWS_128_BITS, CERTIFIED_JL_SOURCE_REVISION, JL_PREFIX_POLICY_VERSION,
-    JL_PROJECTION_PROTOCOL_VERSION, JL_PROJECTION_REDUCTION_DEGREE, MAX_JL_PROJECTION_LAYERS,
-    MAX_JL_PROJECTION_RETRIES,
+    CertifiedJlBounds, CertifiedJlL2Bounds, CertifiedJlLinfBounds, JlAlignedEtProjectionPlan,
+    JlAlignedEtProjectionProof, JlAlignedEtProjectionProofShape, JlBlockLayerPlan, JlCertificateId,
+    JlLayerReductionProof, JlMatrixDerivationContext, JlMatrixEnvelopeDomain, JlMatrixLawId,
+    JlMatrixMember, JlProjectionBatchPlan, JlProjectionBatchProof, JlProjectionBatchProofShape,
+    JlProjectionChainPlan, JlProjectionProof, JlProjectionProofShape, JlProjectionStemId,
+    JlRowLawId, JlSourceClaim, RationalBound, BALANCED_TERNARY_256_ROWS_128_BITS,
+    CERTIFIED_JL_SOURCE_REVISION, JL_PREFIX_POLICY_VERSION, JL_PROJECTION_PROTOCOL_VERSION,
+    JL_PROJECTION_REDUCTION_DEGREE, MAX_JL_PROJECTION_LAYERS, MAX_JL_PROJECTION_RETRIES,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
