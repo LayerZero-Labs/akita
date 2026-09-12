@@ -43,6 +43,18 @@ fn field_reference<F: Field + CanonicalEncoding>(
         .collect()
 }
 
+fn centered_input(kind: &str, len: usize) -> Vec<i128> {
+    let scale = match kind {
+        "i8" => 1,
+        "i16" => 257,
+        "i32" => 100_003,
+        _ => unreachable!("benchmark input kind is fixed"),
+    };
+    (0..len)
+        .map(|index| ((index % 127) as i128 - 63) * scale)
+        .collect()
+}
+
 fn bench_field<F: Field + CanonicalEncoding + std::fmt::Debug + 'static>(
     c: &mut Criterion,
     field: &str,
@@ -52,52 +64,52 @@ fn bench_field<F: Field + CanonicalEncoding + std::fmt::Debug + 'static>(
     group.sample_size(10);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
-    for blocks in [1usize, 8] {
-        let input = (0..blocks * COLS)
-            .map(|index| (index % 127) as i128 - 63)
-            .collect::<Vec<_>>();
-        let expected = field_reference::<F>(&matrix, &input);
-        assert_eq!(
-            matrix.project_centered_i128_blocks::<F>(&input).unwrap(),
-            expected
-        );
-        group.throughput(Throughput::Elements((blocks * ROWS * COLS) as u64));
-        group.bench_with_input(
-            BenchmarkId::new("dynamic_narrow_hot", blocks),
-            &input,
-            |b, input| {
-                b.iter(|| {
-                    black_box(
-                        matrix
-                            .project_centered_i128_blocks::<F>(black_box(input))
-                            .unwrap(),
-                    )
-                })
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("field_reference_hot", blocks),
-            &input,
-            |b, input| {
-                b.iter(|| black_box(field_reference::<F>(black_box(&matrix), black_box(input))))
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("dynamic_narrow_cold", blocks),
-            &input,
-            |b, input| {
-                b.iter_batched(
-                    || matrix.clone(),
-                    |cold| {
+    for kind in ["i8", "i16", "i32"] {
+        for blocks in [1usize, 8] {
+            let input = centered_input(kind, blocks * COLS);
+            let expected = field_reference::<F>(&matrix, &input);
+            assert_eq!(
+                matrix.project_centered_i128_blocks::<F>(&input).unwrap(),
+                expected
+            );
+            group.throughput(Throughput::Elements((blocks * ROWS * COLS) as u64));
+            group.bench_with_input(
+                BenchmarkId::new(format!("dynamic_narrow_hot_{kind}"), blocks),
+                &input,
+                |b, input| {
+                    b.iter(|| {
                         black_box(
-                            cold.project_centered_i128_blocks::<F>(black_box(input))
+                            matrix
+                                .project_centered_i128_blocks::<F>(black_box(input))
                                 .unwrap(),
                         )
-                    },
-                    BatchSize::PerIteration,
-                )
-            },
-        );
+                    })
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("field_reference_hot_{kind}"), blocks),
+                &input,
+                |b, input| {
+                    b.iter(|| black_box(field_reference::<F>(black_box(&matrix), black_box(input))))
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("dynamic_narrow_cold_{kind}"), blocks),
+                &input,
+                |b, input| {
+                    b.iter_batched_ref(
+                        || matrix.clone(),
+                        |cold| {
+                            black_box(
+                                cold.project_centered_i128_blocks::<F>(black_box(input))
+                                    .unwrap(),
+                            )
+                        },
+                        BatchSize::PerIteration,
+                    )
+                },
+            );
+        }
     }
     group.finish();
 }

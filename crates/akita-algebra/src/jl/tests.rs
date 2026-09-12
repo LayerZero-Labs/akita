@@ -4,6 +4,7 @@ use jolt_field::{
     CanonicalEncoding, Ext2, Field, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
     Prime64Offset59, Ring, Zero,
 };
+use rand::{rngs::StdRng, SeedableRng};
 
 type F = Fp64<4294967197>;
 type F32Ext = FpExt4<Prime32Offset99>;
@@ -88,11 +89,12 @@ fn check_mle_kernels_for_field<G: Field + std::fmt::Debug>(
     seed: u64,
 ) {
     let shape = matrix.shape();
+    let mut rng = StdRng::seed_from_u64(seed);
     let row_point: Vec<G> = (0..shape.row_num_vars().unwrap())
-        .map(|index| G::from_u64(seed.wrapping_add(index as u64 * 17)))
+        .map(|_| G::random(&mut rng))
         .collect();
     let col_point: Vec<G> = (0..shape.col_num_vars().unwrap())
-        .map(|index| G::from_u64(seed.wrapping_add(index as u64 * 31 + 7)))
+        .map(|_| G::random(&mut rng))
         .collect();
     let row_eq = EqPolynomial::evals(&row_point).unwrap();
     let col_eq = EqPolynomial::evals(&col_point).unwrap();
@@ -516,6 +518,101 @@ fn centered_projection_validates_every_input_before_projection() {
         .project_centered_i128_blocks::<Prime32Offset99>(&input)
         .is_err());
     assert!(matrix.dense.get().is_none());
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn centered_projection_avoids_cold_dense_plane_but_reuses_cached_plane() {
+    let large = || {
+        let shape = TernaryProjectionShape::new(256, 1 << 14).unwrap();
+        TernaryProjectionMatrix::from_rademacher_bitplanes(
+            shape,
+            vec![0; shape.plane_len()],
+            vec![0; shape.plane_len()],
+        )
+        .unwrap()
+    };
+
+    let cold = large();
+    assert_eq!(
+        cold.project_centered_i128_blocks::<Prime32Offset99>(&vec![7; 1 << 14])
+            .unwrap(),
+        vec![-7 * (1 << 14); 256]
+    );
+    assert!(cold.dense.get().is_none());
+
+    let small = fixture();
+    small
+        .project_centered_i128_blocks::<Prime32Offset99>(&[1, 2, 3, 4, 5])
+        .unwrap();
+    assert!(small.dense.get().is_some());
+
+    let cached = matrix_from_entries(&[vec![1; 65_538]]);
+    cached.dense_rows().unwrap();
+    assert_eq!(
+        cached
+            .project_centered_i128_blocks::<Prime32Offset99>(&vec![32_767; 65_538])
+            .unwrap(),
+        [-2_147_483_551]
+    );
+
+    let multi_block = large();
+    assert_eq!(
+        multi_block
+            .project_centered_i128_blocks::<Prime32Offset99>(&vec![7; 2 << 14])
+            .unwrap(),
+        vec![-7 * (1 << 14); 512]
+    );
+    assert!(multi_block.dense.get().is_some());
+
+    #[cfg(feature = "parallel")]
+    {
+        let single_thread = large();
+        let single_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        single_pool
+            .install(|| {
+                single_thread.project_centered_i128_blocks::<Prime128OffsetA7F7>(&vec![7; 1 << 14])
+            })
+            .unwrap();
+        assert!(single_thread.dense.get().is_some());
+
+        let parallel = large();
+        let parallel_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        assert_eq!(
+            parallel_pool
+                .install(|| {
+                    parallel.project_centered_i128_blocks::<Prime128OffsetA7F7>(&vec![7; 1 << 14])
+                })
+                .unwrap(),
+            vec![-7 * (1 << 14); 256]
+        );
+        assert!(parallel.dense.get().is_none());
+
+        let tall_narrow_shape = TernaryProjectionShape::new(1 << 16, 64).unwrap();
+        let tall_narrow = TernaryProjectionMatrix::from_rademacher_bitplanes(
+            tall_narrow_shape,
+            vec![0; tall_narrow_shape.plane_len()],
+            vec![0; tall_narrow_shape.plane_len()],
+        )
+        .unwrap();
+        assert!(!parallel_pool.install(|| {
+            tall_narrow.prefer_field_for_cold_single_block::<Prime128OffsetA7F7>(1)
+        }));
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let q128 = large();
+        q128.project_centered_i128_blocks::<Prime128OffsetA7F7>(&vec![7; 1 << 14])
+            .unwrap();
+        assert!(q128.dense.get().is_some());
+    }
 }
 
 #[test]

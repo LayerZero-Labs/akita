@@ -32,6 +32,9 @@ pub use mle::{
 pub const MAX_MATERIALIZED_JL_BYTES: usize = 1 << 30;
 
 const DENSE_TRANSPOSE_GROUPS_PER_TILE: usize = 16;
+#[cfg(target_arch = "aarch64")]
+// Measured at the 256-by-16K cold crossover; keep tiny matrices on their existing path.
+const COLD_CENTERED_FIELD_MIN_WORK: usize = 1 << 22;
 const TERNARY_NIBBLE_DECODE: [u32; 256] = ternary_nibble_decode();
 
 const fn ternary_nibble_decode() -> [u32; 256] {
@@ -704,6 +707,16 @@ impl TernaryProjectionMatrix {
         let modulus = base_field_modulus::<F>()?;
         let half_modulus = modulus / 2;
         let kernel = centered_projection_kernel(input, self.shape.cols(), half_modulus)?;
+        #[cfg(target_arch = "aarch64")]
+        let kernel = if matches!(
+            kernel,
+            CenteredProjectionKernel::I8 | CenteredProjectionKernel::I16
+        ) && self.prefer_field_for_cold_single_block::<F>(blocks)
+        {
+            CenteredProjectionKernel::Field
+        } else {
+            kernel
+        };
         match kernel {
             CenteredProjectionKernel::I8 => {
                 return self.project_centered_narrow_blocks::<i8>(input, output_len, modulus);
@@ -727,6 +740,22 @@ impl TernaryProjectionMatrix {
             *output = centered_i128_from_field_with_modulus(coordinate, modulus)?;
         }
         Ok(centered)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn prefer_field_for_cold_single_block<F: Field>(&self, blocks: usize) -> bool {
+        #[cfg(feature = "parallel")]
+        let parallel = rayon::current_num_threads() > 1
+            && self
+                .shape
+                .field_contraction_scratch_len()
+                .is_ok_and(|elements| elements != 0);
+        #[cfg(not(feature = "parallel"))]
+        let parallel = false;
+        blocks == 1
+            && self.shape.dense_len() >= COLD_CENTERED_FIELD_MIN_WORK
+            && self.dense.get().is_none()
+            && (parallel || mem::size_of::<F>() <= mem::size_of::<u64>())
     }
 
     fn project_centered_narrow_blocks<T>(
