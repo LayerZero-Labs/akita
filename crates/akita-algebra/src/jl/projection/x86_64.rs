@@ -388,10 +388,22 @@ unsafe fn project_lookup_i64_avx512_baseline<T: WideLookupInput>(
 #[target_feature(enable = "avx512f")]
 unsafe fn selector_indices_16_i32_baseline(packed: *const u8) -> __m512i {
     let bytes = std::ptr::read_unaligned(packed.cast::<u64>()).to_le_bytes();
-    let expanded: [u16; 8] = std::array::from_fn(|index| {
-        u16::from(bytes[index] & 0x0f) | (u16::from(bytes[index] >> 4) << 8)
-    });
+    let expanded = [
+        expand_selector_pair_baseline(bytes[0]),
+        expand_selector_pair_baseline(bytes[1]),
+        expand_selector_pair_baseline(bytes[2]),
+        expand_selector_pair_baseline(bytes[3]),
+        expand_selector_pair_baseline(bytes[4]),
+        expand_selector_pair_baseline(bytes[5]),
+        expand_selector_pair_baseline(bytes[6]),
+        expand_selector_pair_baseline(bytes[7]),
+    ];
     _mm512_cvtepu8_epi32(_mm_loadu_si128(expanded.as_ptr().cast()))
+}
+
+#[cfg(test)]
+const fn expand_selector_pair_baseline(byte: u8) -> u16 {
+    (byte & 0x0f) as u16 | (((byte >> 4) as u16) << 8)
 }
 
 #[cfg(test)]
@@ -578,6 +590,61 @@ mod tests {
     }
 
     #[test]
+    fn forced_x86_backends_exhaust_paired_selector_bytes() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let shape = TernaryProjectionShape::new(16, 4).unwrap();
+        let input_i8 = [-17i8, 23, -31, 47];
+        let input_i32 = input_i8.map(|value| i32::from(value) * 1_000_003);
+        let rademacher_sum = |selector: u8, input: &[i64; 4]| {
+            input.iter().enumerate().fold(0i64, |sum, (lane, &value)| {
+                if selector & (1 << lane) == 0 {
+                    sum - value
+                } else {
+                    sum + value
+                }
+            })
+        };
+        let wide_input = input_i32.map(i64::from);
+        for first in 0u8..=u8::MAX {
+            for second in 0u8..=u8::MAX {
+                let matrix = TernaryProjectionMatrix::from_rademacher_bitplanes(
+                    shape,
+                    vec![first; shape.plane_len()],
+                    vec![second; shape.plane_len()],
+                )
+                .unwrap();
+                let expected_even = (rademacher_sum(first & 0x0f, &wide_input)
+                    + rademacher_sum(second & 0x0f, &wide_input))
+                    / 2;
+                let expected_odd = (rademacher_sum(first >> 4, &wide_input)
+                    + rademacher_sum(second >> 4, &wide_input))
+                    / 2;
+                let expected = (0..shape.rows())
+                    .map(|row| {
+                        if row & 1 == 0 {
+                            expected_even
+                        } else {
+                            expected_odd
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let expected_i8 = expected
+                    .iter()
+                    .map(|value| value / 1_000_003)
+                    .collect::<Vec<_>>();
+                assert_eq!(packed_small_avx2(&matrix, &input_i8), expected_i8);
+                assert_eq!(packed_wide_avx2(&matrix, &input_i32), expected);
+                if std::arch::is_x86_feature_detected!("avx512f") {
+                    assert_eq!(packed_small_avx512(&matrix, &input_i8), expected_i8);
+                    assert_eq!(packed_wide_avx512(&matrix, &input_i32), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn extreme_inputs_preserve_checked_projection_semantics() {
         let zero = TernaryProjectionMatrix::from_rademacher_bitplanes(
             TernaryProjectionShape::new(1, 4).unwrap(),
@@ -606,6 +673,19 @@ mod tests {
         assert_eq!(negative.project(&[i8::MIN]).unwrap(), [128]);
     }
 
+    #[test]
+    fn cold_packed_marker_is_single_use_and_clone_local() {
+        let matrix = patterned_matrix(3, 5);
+        assert!(matrix.take_cold_packed_projection());
+        assert!(!matrix.take_cold_packed_projection());
+        let clone = matrix.clone();
+        assert!(clone.take_cold_packed_projection());
+        assert!(!clone.take_cold_packed_projection());
+        let dense = patterned_matrix(3, 5);
+        super::super::dense::tests::scalar_i8(&dense, &[1, 2, 3, 4, 5]);
+        assert!(!dense.take_cold_packed_projection());
+    }
+
     fn time_many(mut run: impl FnMut(), iterations: u32) -> u128 {
         let start = Instant::now();
         for _ in 0..iterations {
@@ -621,102 +701,144 @@ mod tests {
             eprintln!("AVX2 unavailable");
             return;
         }
-        let matrix = patterned_matrix(256, 1 << 14);
-        let input_i8 = (0..matrix.shape().cols())
-            .map(|index| (index % 127) as i8 - 63)
-            .collect::<Vec<_>>();
-        let input_i16 = input_i8
-            .iter()
-            .map(|&value| i16::from(value) * 509)
-            .collect::<Vec<_>>();
-        let input_i32 = input_i8
-            .iter()
-            .map(|&value| i32::from(value) * 1_000_003)
-            .collect::<Vec<_>>();
-        let input_i64 = input_i8
-            .iter()
-            .map(|&value| i64::from(value) * 10_000_019)
-            .collect::<Vec<_>>();
-        let iterations = 12;
-
         macro_rules! report {
-            ($name:literal, $input:expr, $avx2:ident, $avx512:ident, $baseline:ident, $dense:ident) => {{
+            ($matrix:expr, $cols:expr, $iterations:expr, $name:literal, $input:expr, $avx2:ident, $avx512:ident, $baseline:ident, $dense:ident) => {{
+                let matrix = $matrix;
+                let cols = $cols;
+                let iterations = $iterations;
                 let input = $input;
-                let avx2 = time_many(
-                    || {
-                        black_box($avx2(&matrix, input));
-                    },
-                    iterations,
-                );
                 let hot = matrix.clone();
                 let mut output = vec![0; hot.shape().rows()];
+                let mut cold_output = vec![0; hot.shape().rows()];
                 super::super::dense::$dense(&hot, input, &mut output).unwrap();
-                let dense_hot = time_many(
-                    || super::super::dense::$dense(&hot, input, &mut output).unwrap(),
-                    iterations,
-                );
-                let dense_cold = time_many(
-                    || {
-                        let cold = matrix.clone();
-                        super::super::dense::$dense(&cold, input, &mut output).unwrap();
-                    },
-                    iterations,
-                );
-                eprintln!(
-                    "{} avx2_packed={}ns dense_hot={}ns dense_cold={}ns",
-                    $name, avx2, dense_hot, dense_cold
-                );
-                if std::arch::is_x86_feature_detected!("avx512f") {
-                    let avx512 = time_many(
-                        || {
-                            black_box($avx512(&matrix, input));
-                        },
-                        iterations,
-                    );
-                    let baseline = time_many(
-                        || {
-                            black_box($baseline(&matrix, input));
-                        },
-                        iterations,
-                    );
+                for trial in 0..5 {
+                    let measure_avx2 = || {
+                        time_many(
+                            || {
+                                black_box($avx2(&matrix, input));
+                            },
+                            iterations,
+                        )
+                    };
+                    let mut measure_hot = || {
+                        time_many(
+                            || super::super::dense::$dense(&hot, input, &mut output).unwrap(),
+                            iterations,
+                        )
+                    };
+                    let mut measure_cold = || {
+                        time_many(
+                            || {
+                                let cold = matrix.clone();
+                                super::super::dense::$dense(&cold, input, &mut cold_output).unwrap();
+                            },
+                            iterations,
+                        )
+                    };
+                    let (avx2, dense_hot, dense_cold) = if trial & 1 == 0 {
+                        (measure_avx2(), measure_hot(), measure_cold())
+                    } else {
+                        let cold = measure_cold();
+                        let hot = measure_hot();
+                        (measure_avx2(), hot, cold)
+                    };
                     eprintln!(
-                        "{} avx512_packed={}ns avx512_baseline={}ns",
-                        $name, avx512, baseline
+                        "cols={cols} trial={trial} {} avx2_packed={avx2}ns dense_hot={dense_hot}ns dense_cold={dense_cold}ns",
+                        $name
                     );
+                    if std::arch::is_x86_feature_detected!("avx512f") {
+                        let measure_avx512 = || {
+                            time_many(
+                                || {
+                                    black_box($avx512(&matrix, input));
+                                },
+                                iterations,
+                            )
+                        };
+                        let measure_baseline = || {
+                            time_many(
+                                || {
+                                    black_box($baseline(&matrix, input));
+                                },
+                                iterations,
+                            )
+                        };
+                        let (avx512, baseline) = if trial & 1 == 0 {
+                            (measure_avx512(), measure_baseline())
+                        } else {
+                            let baseline = measure_baseline();
+                            (measure_avx512(), baseline)
+                        };
+                        eprintln!(
+                            "cols={cols} trial={trial} {} avx512_packed={avx512}ns avx512_baseline={baseline}ns",
+                            $name
+                        );
+                    }
                 }
             }};
         }
-        report!(
-            "i8",
-            &input_i8,
-            packed_small_avx2,
-            packed_small_avx512,
-            packed_small_avx512_baseline,
-            project_i8
-        );
-        report!(
-            "i16",
-            &input_i16,
-            packed_small_avx2,
-            packed_small_avx512,
-            packed_small_avx512_baseline,
-            project_i16
-        );
-        report!(
-            "i32",
-            &input_i32,
-            packed_wide_avx2,
-            packed_wide_avx512,
-            packed_wide_avx512_baseline,
-            project_i32
-        );
-        report!(
-            "i64",
-            &input_i64,
-            packed_wide_avx2,
-            packed_wide_avx512,
-            packed_wide_avx512_baseline,
-            project_i64
-        );
+        for cols in [1 << 12, 1 << 14, 1 << 16] {
+            let matrix = patterned_matrix(256, cols);
+            let input_i8 = (0..cols)
+                .map(|index| (index % 127) as i8 - 63)
+                .collect::<Vec<_>>();
+            let input_i16 = input_i8
+                .iter()
+                .map(|&value| i16::from(value) * 509)
+                .collect::<Vec<_>>();
+            let input_i32 = input_i8
+                .iter()
+                .map(|&value| i32::from(value) * 1_000_003)
+                .collect::<Vec<_>>();
+            let input_i64 = input_i8
+                .iter()
+                .map(|&value| i64::from(value) * 10_000_019)
+                .collect::<Vec<_>>();
+            let iterations = (200 * (1 << 14) / cols).max(20) as u32;
+            report!(
+                &matrix,
+                cols,
+                iterations,
+                "i8",
+                &input_i8,
+                packed_small_avx2,
+                packed_small_avx512,
+                packed_small_avx512_baseline,
+                project_i8
+            );
+            report!(
+                &matrix,
+                cols,
+                iterations,
+                "i16",
+                &input_i16,
+                packed_small_avx2,
+                packed_small_avx512,
+                packed_small_avx512_baseline,
+                project_i16
+            );
+            report!(
+                &matrix,
+                cols,
+                iterations,
+                "i32",
+                &input_i32,
+                packed_wide_avx2,
+                packed_wide_avx512,
+                packed_wide_avx512_baseline,
+                project_i32
+            );
+            report!(
+                &matrix,
+                cols,
+                iterations,
+                "i64",
+                &input_i64,
+                packed_wide_avx2,
+                packed_wide_avx512,
+                packed_wide_avx512_baseline,
+                project_i64
+            );
+        }
     }
 }

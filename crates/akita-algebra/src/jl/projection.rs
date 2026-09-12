@@ -20,8 +20,6 @@ const AARCH64_PARALLEL_ROWS_PER_CHUNK: usize = 32;
 const AARCH64_PARALLEL_PACKED_WORK_THRESHOLD: usize = 1 << 26;
 #[cfg(target_arch = "x86_64")]
 pub(super) const LOOKUP_GROUPS_PER_TILE: usize = 16;
-#[cfg(target_arch = "x86_64")]
-const I16_LOOKUP_MIN_COLS: usize = 1 << 16;
 
 pub(super) mod private {
     use super::{AkitaError, TernaryProjectionMatrix};
@@ -195,13 +193,11 @@ pub(super) fn project_i16(
 ) -> Result<(), AkitaError> {
     #[cfg(target_arch = "x86_64")]
     {
-        if matrix.shape().cols() >= I16_LOOKUP_MIN_COLS {
-            if std::arch::is_x86_feature_detected!("avx512f") {
-                return project_small_x86(matrix, input, output, X86LookupBackend::Avx512);
-            }
-            if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
-                return project_small_x86(matrix, input, output, X86LookupBackend::Avx2);
-            }
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            return project_small_x86(matrix, input, output, X86LookupBackend::Avx512);
+        }
+        if std::arch::is_x86_feature_detected!("avx2") && matrix.take_cold_packed_projection() {
+            return project_small_x86(matrix, input, output, X86LookupBackend::Avx2);
         }
     }
     dense::project_i16(matrix, input, output)
@@ -402,6 +398,15 @@ pub(super) fn project_blocks<T: ProjectionInput>(
 ) -> Result<(), AkitaError> {
     let cols = matrix.shape().cols();
     let rows = matrix.shape().rows();
+    #[cfg(target_arch = "x86_64")]
+    if output.len() > rows
+        && std::arch::is_x86_feature_detected!("avx2")
+        && !std::arch::is_x86_feature_detected!("avx512f")
+    {
+        // Multiple blocks immediately reuse the matrix, so materialize once
+        // instead of paying for a packed cold pass before the dense hot path.
+        matrix.dense_rows()?;
+    }
     #[cfg(target_arch = "aarch64")]
     if matrix.take_cold_packed_projection() {
         #[cfg(feature = "parallel")]
