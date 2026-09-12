@@ -151,6 +151,7 @@ mod tests {
     use jolt_field::{
         Ext2, Fp64, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,
     };
+    use rand::{rngs::StdRng, SeedableRng};
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -214,11 +215,10 @@ mod tests {
         let second: Vec<u8> = (0..ROW_PAIRS)
             .map(|pair| pair.wrapping_mul(151).wrapping_add(41) as u8)
             .collect();
-        let table: [G; TERNARY4_PATTERN_COUNT] =
-            std::array::from_fn(|index| G::from_u64((index * 17 + 5) as u64));
-        let initial: Vec<G> = (0..ROWS)
-            .map(|row| G::from_u64((row * 29 + 7) as u64))
-            .collect();
+        // Exercise every extension coefficient, not only the embedded base field.
+        let mut rng = StdRng::seed_from_u64(0x4a4c_5349_4d44);
+        let table: [G; TERNARY4_PATTERN_COUNT] = std::array::from_fn(|_| G::random(&mut rng));
+        let initial: Vec<G> = (0..ROWS).map(|_| G::random(&mut rng)).collect();
         let mut expected = initial.clone();
         super::super::accumulate_selector_pairs(&first, &second, &mut expected, &table, 0);
 
@@ -381,8 +381,9 @@ mod tests {
         iterations: usize,
         matrix: &crate::jl::TernaryProjectionMatrix,
     ) {
+        let mut rng = StdRng::seed_from_u64(0x4a4c_4245_4e43_48);
         let col_weights: Vec<G> = (0..matrix.shape().cols())
-            .map(|index| G::from_u64((index * 17 + 5) as u64))
+            .map(|_| G::random(&mut rng))
             .collect();
         let scalar = time_contraction(iterations, matrix, &col_weights, None);
         let avx2 = if std::arch::is_x86_feature_detected!("avx2") {
