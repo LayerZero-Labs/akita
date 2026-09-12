@@ -13,8 +13,9 @@ scheduling remain follow-up work.
   buffers, command queues, or any backend-prepared state.
 - `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
   keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
-- `RootCommitKernel<S, F, D>` owns source-typed inner commitment. Its single
-  group method is the canonical boundary for singleton and batched sources.
+- `CommitmentSource<F>` exposes D-free source metadata and standard or external
+  representations. `CommitmentExecutor` routes checked requests through
+  registered inner, outer, compression, or fused operations.
 - `DigitRowsComputeBackend<F>` and `CyclicRowsComputeBackend<F>` own reusable
   row arithmetic. `RingSwitchRelationKernel<S, F, D>` owns the complete
   source-typed ring-switch relation operation.
@@ -39,7 +40,7 @@ let stack = UniformProverStack::uniform(
 let commit_output = scheme.commit(
     &setup,
     polys,
-    &stack,
+    stack.commitment(),
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
@@ -59,10 +60,10 @@ verifier.
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.
 
-One hot sources cross this boundary as validated `OneHotView` values. The CPU
-kernel derives one flat sparse block tile from those views, selects a private
+One hot sources cross the commitment boundary as validated `OneHotRepresentation`
+values. The CPU operation derives one flat sparse block tile from those inputs, selects a private
 bucketed or merge sweep, and drops the tile after producing its commitment
-rows. `OneHotPoly` does not own block caches. Opening derives its active data
+rows. `OneHotView` remains an opening-only view. `OneHotPoly` does not own block caches. Opening derives its active data
 for the lifetime of the operation. Recursive `EvaluationTrace` suffixes derive
 their tensor data from the committed recursive witness.
 
@@ -134,8 +135,8 @@ rebuild released shared matrix slots at the next exact request
   one source. Backends cannot replace a fused group operation with an optional
   default loop.
 - One-hot compact block storage is private to its source or operation. An
-  accelerator integration should implement the source-typed
-  kernel for its backend instead of depending on CPU storage plans.
+  accelerator integration should register an inner or fused commitment
+  operation instead of depending on CPU storage plans.
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
 - Cached and streamed ring-switch relation routes consume the same validated
@@ -144,13 +145,14 @@ rebuild released shared matrix slots at the next exact request
 
 ## Current Scope
 
-The CPU cutover routes root commit, prove, and ring-switch work through
-`CpuBackend`, `ProverComputeStack`, and source-typed kernels. Setup-owned CPU
-NTT caches live in `CpuPreparedSetup` only.
+The CPU cutover routes commitments through `CommitmentExecutor`; opening,
+tensor, and ring-switch work remains on `ProverComputeStack` and source-typed
+kernels. Setup-owned CPU NTT caches live in `CpuPreparedSetup` only.
 
 Covered operation families:
 
-- dense, one-hot, and recursive-witness commitment through `RootCommitKernel`;
+- dense, one-hot, and recursive-witness commitment through D-free sources and
+  registered CPU commitment operations;
 - dense cached digits remain an internal CPU optimization;
 - opening fold / decompose-fold, plus suffix-only tensor projection (single +
   batch);
@@ -159,7 +161,7 @@ Covered operation families:
   `RingSwitchRelationKernel`.
 
 **Prove routing:** `batched_prove` takes `&impl LevelProveStacks`. Each fold
-selects a `ProverComputeStack<C, O, TS, R>`; commit / opening / tensor /
+selects a `ProverComputeStack<O, TS, R>`; commit / opening / tensor /
 ring-switch call the matching `OperationCtx`. `TieredProveStacks` supports
 per-fold backend tiers; `UniformProverStack::uniform(cpu)` is the degenerate
 single-backend case.

@@ -101,12 +101,12 @@ fn verify_rejects_wrong_opening() {
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -123,7 +123,7 @@ fn verify_rejects_wrong_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prover_claims(
                 &scheme,

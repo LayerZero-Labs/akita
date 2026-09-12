@@ -96,6 +96,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             relation_mode_filter: RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            query_prefix_count: 0,
         },
     )
     .unwrap();
@@ -110,6 +111,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             relation_mode_filter: RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            query_prefix_count: 0,
         },
     )
     .unwrap();

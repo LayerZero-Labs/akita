@@ -47,6 +47,18 @@ pub(super) fn decode_at(storage: &[u8], index: usize, bit_width: u8) -> i8 {
     sign_extend(raw, bit_width)
 }
 
+#[inline]
+pub(super) fn decode_at_zero_padded(storage: &[u8], index: usize, bit_width: u8) -> i8 {
+    let bit_offset = index * usize::from(bit_width);
+    let byte_offset = bit_offset / 8;
+    let shift = bit_offset % 8;
+    let low = storage.get(byte_offset).copied().unwrap_or(0);
+    let high = storage.get(byte_offset + 1).copied().unwrap_or(0);
+    let word = u16::from(low) | (u16::from(high) << 8);
+    let raw = ((word >> shift) as u8) & bit_mask(bit_width);
+    sign_extend(raw, bit_width)
+}
+
 #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
 pub(super) fn decode_full_block(
     encoded: &[u8],
@@ -55,6 +67,16 @@ pub(super) fn decode_full_block(
 ) {
     for (index, slot) in output.iter_mut().enumerate() {
         *slot = decode_at(encoded, index, bit_width);
+    }
+}
+
+pub(super) fn decode_full_block_zero_padded(
+    encoded: &[u8],
+    bit_width: u8,
+    output: &mut [i8; DIGITS_PER_BLOCK],
+) {
+    for (index, slot) in output.iter_mut().enumerate() {
+        *slot = decode_at_zero_padded(encoded, index, bit_width);
     }
 }
 

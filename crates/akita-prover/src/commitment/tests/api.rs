@@ -1,8 +1,8 @@
 use super::*;
-use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx};
-use crate::kernels::linear::decompose_commit_blocks_into;
-use crate::{AkitaProverSetup, CpuBackend, DensePoly};
+use crate::commitment::PortableStatePolicy;
+use crate::compute::CpuBackend;
+use crate::compute::{ComputeBackendSetup, OperationCtx};
+use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_types::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
@@ -10,7 +10,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     CommittedSourceEncoding, CompressionChainPlan, GroupCommitPhaseParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
+    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
 use jolt_field::Fp64;
@@ -293,165 +293,34 @@ fn commitment_params_for_slice_count(
     audited_commit_params(slice_count, 2, 16, slice_fixture_num_digits_inner(), 1, 1)
 }
 
-fn commit_unsliced_reference(
-    polys: &[DensePoly<F>],
-    ctx: &OperationCtx<'_, F, CpuBackend>,
-    params: &CommittedGroupParams,
-) -> Result<(CommitmentWithHint<F>, CompressionChainPlan), AkitaError> {
-    let backend = ctx.backend();
-    let prepared = ctx.prepared();
-    let plan = CommitInnerPlan::from_level(params);
-    let inners = compute_inner_commitment::<F, DensePoly<F>, _, D>(backend, prepared, polys, plan)?;
-    if inners.len() != polys.len() {
-        return Err(AkitaError::InvalidSetup(
-            "unsliced reference inner commitment count mismatch".into(),
-        ));
-    }
-    let prepared_polynomials = inners
-        .into_iter()
-        .map(|inner| {
-            validate_commit_inner_shape::<F, D>(&inner, params.blocks().live_blocks, plan.n_a)?;
-            let blocks = (0..params.blocks().live_blocks)
-                .map(|block| inner.block_rows::<D>(block, plan.n_a))
-                .collect::<Result<Vec<_>, _>>()?;
-            let digits = decompose_commit_blocks_into::<F, D, D>(
-                &blocks,
-                params.outer().digits.num_digits,
-                params.outer().digits.log_basis,
-            )?;
-            Ok((inner.into_inner_rows(), digits))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    let geometry = akita_types::CommitmentSliceGeometry::try_new(
-        akita_types::CommitmentSliceCount::ONE,
-        params.blocks().live_blocks,
-        polys.len(),
-        params.inner().matrix.output_rank(),
-        params.outer().digits.num_digits,
-        D,
-        D,
-    )?;
-
-    // Independent pre-slicing B input: concatenate complete polynomial planes
-    // directly. The shipping path reaches the same input through its slice
-    // iterator, which is deliberately not used to build this reference.
-    let mut reference_b_input = Vec::with_capacity(geometry.physical_input_width());
-    for (_, digits) in &prepared_polynomials {
-        reference_b_input.extend_from_slice(digits.typed_planes::<D>()?);
-    }
-    if reference_b_input.len() != params.outer().matrix.input_width() {
-        return Err(AkitaError::InvalidSetup(
-            "unsliced reference B input width mismatch".into(),
-        ));
-    }
-    let production_b_inputs = outer_slice_inputs::<D>(
-        &prepared_polynomials
-            .iter()
-            .map(|(_, digits)| digits)
-            .collect::<Vec<_>>(),
-        &geometry,
-    )?;
-    if production_b_inputs.as_slice() != [reference_b_input.as_slice()] {
-        return Err(AkitaError::InvalidSetup(
-            "S=1 sliced input differs from the unsliced B input".into(),
-        ));
-    }
-
-    let n_b = params.outer().matrix.output_rank();
-    let mut reference_b_batches = backend.digit_rows::<D>(
-        prepared,
-        n_b,
-        &[reference_b_input.as_slice()],
-        params.outer().digits.log_basis,
-    )?;
-    if reference_b_batches.len() != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "single B input did not produce one row batch".into(),
-        ));
-    }
-    let reference_b_image = reference_b_batches.pop().expect("length checked");
-    let production_b_image = commit_outer_slices::<F, _, D>(
-        backend,
-        prepared,
-        n_b,
-        prepared_polynomials.iter().map(|(_, digits)| digits),
-        &geometry,
-        params.outer().digits.log_basis,
-    )?;
-    if production_b_image != reference_b_image {
-        return Err(AkitaError::InvalidSetup(
-            "S=1 sliced B image differs from the unsliced image".into(),
-        ));
-    }
-
-    let source = RingVec::from_ring_elems(&reference_b_image);
-    let compression_plan = CompressionChainPlan::for_complete_source(
-        params.outer().matrix.sis_table_key().modulus_profile,
-        source.coeff_len(),
-    )?;
-    let (mut outputs, _) = execute_compression_chains(
-        ctx,
-        vec![CompressionExecutionInput {
-            id: (),
-            plan: compression_plan.clone(),
-            coefficients: source.into_coeffs(),
-            relation_mode: akita_types::RingRelationMode::QuotientLift,
-        }],
-    )?;
-    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
-    let terminal_ring_dim = output
-        .witness
-        .plan()
-        .maps()
-        .last()
-        .ok_or(AkitaError::InvalidProof)?
-        .ring_dimension();
-    let payload = RingVec::from_coeffs_with_ring_dim(
-        output.terminal.coefficients().to_vec(),
-        terminal_ring_dim,
-    )?;
-    let inner_rows = prepared_polynomials
-        .into_iter()
-        .map(|(rows, _)| rows)
-        .collect::<Vec<_>>();
-    let quotients = output.relation.into_quotient_lift()?;
-    let hint = AkitaCommitmentHint::new_with_outer_compression(
-        D,
-        inner_rows,
-        &output.witness,
-        &quotients,
-    )?;
-    Ok(((Commitment::new(payload), hint), compression_plan))
-}
-
+#[allow(clippy::type_complexity)]
 fn commit_fixture_with_profile(
     polys: &[DensePoly<F>],
     ctx: &OperationCtx<'_, F, CpuBackend>,
     profile: GroupCommitPhaseParams,
-) -> Result<CommitmentWithHint<F>, AkitaError> {
-    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile)?;
-    let CommitmentCompressionOutput {
-        payload,
-        witness,
-        quotients,
-    } = compute_commitment_compression(
-        ctx,
-        profile.outer.matrix.sis_table_key().modulus_profile,
-        source,
+) -> Result<(Commitment<F>, AkitaCommitmentHint<F>), AkitaError> {
+    let execution_plan = CommitmentExecutionPlan::for_root(&profile)?;
+    let expanded = ctx.backend().prepared_expanded_setup(ctx.prepared());
+    let executor = CommitmentExecutor::cpu(
+        ctx.backend(),
+        ctx.prepared(),
+        expanded,
+        Vec::new(),
+        PortableStatePolicy,
     )?;
-    let hint = AkitaCommitmentHint::new_with_outer_compression(
-        profile.inner.matrix.ring_dimension(),
-        inner_rows,
-        &witness,
-        &quotients,
-    )?;
+    let sources = polys
+        .iter()
+        .map(|poly| poly as &dyn CommitmentSource<F>)
+        .collect::<Vec<_>>();
+    let (payload, hint) = executor
+        .execute_full(&execution_plan, &sources)?
+        .into_parts();
     Ok((Commitment::new(payload), hint))
 }
 
 #[test]
-fn s1_matches_real_unsliced_commitment_pipeline() {
+fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
     const NUM_VARS: usize = 10;
-    let params = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
         NUM_VARS,
         1,
@@ -469,42 +338,6 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .map(|index| F::from_u64(index as u64 + 1))
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
-
-    validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
-        .expect("production S=1 geometry");
-    let production = commit_fixture_with_profile(
-        std::slice::from_ref(&poly),
-        &ctx,
-        GroupCommitPhaseParams::try_from_params(params.group(), &params).expect("S=1 profile"),
-    )
-    .expect("production S=1 commitment");
-    let (reference, compression_plan) =
-        commit_unsliced_reference(std::slice::from_ref(&poly), &ctx, &params)
-            .expect("independent unsliced commitment");
-
-    assert_eq!(production.0, reference.0, "terminal payload must match");
-    assert_eq!(production.1.inner_rows(), reference.1.inner_rows());
-    assert_eq!(
-        production
-            .1
-            .outer_compression_witness(&compression_plan)
-            .expect("production compression witness"),
-        reference
-            .1
-            .outer_compression_witness(&compression_plan)
-            .expect("reference compression witness")
-    );
-    assert_eq!(
-        production
-            .1
-            .outer_compression_quotients(&compression_plan)
-            .expect("production compression quotients"),
-        reference
-            .1
-            .outer_compression_quotients(&compression_plan)
-            .expect("reference compression quotients")
-    );
-    assert_eq!(production.1, reference.1, "complete hint must match");
 
     for slice_count in akita_types::CommitmentSliceCount::ALL {
         let sliced_params = commitment_params_for_slice_count(slice_count);

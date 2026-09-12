@@ -8,17 +8,17 @@ use akita_types::{
 use jolt_field::Field;
 
 // ===========================================================================
-// Open, source-typed operation boundary
+// Open, source-typed proving boundary
 //
 // The prover compute boundary is open by source type `S` instead of closed
 // over Akita's built-in representation plan shapes:
 //
-// - operation kernels (`RootCommitKernel`, `OpeningFoldKernel`, ...) take the
+// - proving kernels (`OpeningFoldKernel`, tensor, ring-switch, ...) take the
 //   borrowed representation view as a generic type parameter `S`, so a
 //   downstream crate can define its own local view type and implement the
 //   relevant kernel for `CpuBackend` without modifying an Akita-owned enum;
 // - root polynomials expose those views through capability traits
-//   (`RootCommitSource`, `RootOpeningSource`, ...) whose associated view types
+//   (`RootOpeningSource`, `RootTensorSource`, ...) whose associated view types
 //   become the `S` a kernel runs over;
 // - a prover run threads operation *contexts* (`OperationCtx`) bundled into a
 //   `ProverComputeStack`, each carrying a backend plus its validated prepared
@@ -32,10 +32,14 @@ use jolt_field::Field;
 
 /// Scalar operation parameters for an inner Ajtai commit.
 ///
-/// The polynomial data lives in the borrowed commit source view (`S`); this
-/// plan carries only the shape parameters the kernel needs to size its work.
-#[derive(Debug, Clone, Copy)]
+/// Polynomial data lives in a request-compiled commitment representation; this
+/// plan carries only the shape parameters the selected operation needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitInnerPlan {
+    /// Runtime ring dimension used by the A-side commitment.
+    pub ring_dimension: usize,
+    /// Number of live source blocks committed by this request.
+    pub num_live_blocks: usize,
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Number of ring-element positions in each root block.
@@ -50,6 +54,8 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
     pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
+            ring_dimension: params.inner().matrix.ring_dimension(),
+            num_live_blocks: params.blocks().live_blocks,
             n_a: params.inner().matrix.output_rank(),
             num_positions_per_block: params.blocks().positions_per_block,
             num_digits_inner: params.inner().digits.num_digits,
@@ -60,6 +66,8 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a frozen standalone precommit profile.
     pub fn from_profile(profile: &GroupCommitPhaseParams) -> Self {
         Self {
+            ring_dimension: profile.inner.matrix.ring_dimension(),
+            num_live_blocks: profile.blocks.live_blocks,
             n_a: profile.inner.matrix.output_rank(),
             num_positions_per_block: profile.blocks.positions_per_block,
             num_digits_inner: profile.inner.digits.num_digits,

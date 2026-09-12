@@ -7,6 +7,7 @@ use crate::{
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
     CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
     GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    TranscriptGrindingCost,
 };
 use akita_error::AkitaError;
 
@@ -46,21 +47,23 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
 /// standalone [`FoldSchedule`] and must not pass root-only structure checks.
 /// The planner separately validates candidate geometry before calling this
 /// pricing entry point.
-pub fn transcript_grinding_nonce_bits_for_planner_candidate(
+pub fn transcript_grinding_cost_for_planner_candidate(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
     modulus_bits: u32,
     extension_degree: usize,
-) -> Result<usize, AkitaError> {
-    Ok(
-        derive_transcript_grinding_plan(schedule, root_layout, modulus_bits, extension_degree)?
-            .total_nonce_bits(),
-    )
+) -> Result<TranscriptGrindingCost, AkitaError> {
+    let plan =
+        derive_transcript_grinding_plan(schedule, root_layout, modulus_bits, extension_degree)?;
+    Ok(TranscriptGrindingCost {
+        total_nonce_bits: plan.total_nonce_bits(),
+        expanded_query_count: plan.expanded_query_count(),
+    })
 }
 
 /// Price one planner edge using the canonical query builders.
 #[allow(clippy::too_many_arguments)]
-pub fn transcript_grinding_nonce_bits_for_planner_edge(
+pub fn transcript_grinding_cost_for_planner_edge(
     params: &CommittedGroupParams,
     relation_geometry: crate::RelationAddressGeometry,
     layout: &OpeningClaimsLayout,
@@ -68,7 +71,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     modulus_bits: u32,
     extension_degree: usize,
     level: u32,
-) -> Result<usize, AkitaError> {
+) -> Result<TranscriptGrindingCost, AkitaError> {
     let capacity = challenge_capacity_bits(layout, modulus_bits, extension_degree)?;
     let mut accumulator = GrindingPlanAccumulator::new(capacity)?;
     let mut push = |run| accumulator.push(run);
@@ -94,7 +97,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
             terminal,
         )?;
     }
-    Ok(accumulator.total_nonce_bits())
+    Ok(accumulator.cost())
 }
 
 fn derive_transcript_grinding_plan(

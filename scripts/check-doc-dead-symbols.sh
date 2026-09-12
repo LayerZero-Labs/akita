@@ -134,6 +134,8 @@ removed_api_patterns=(
   'GeneratedSetupPrefixGroup'
   '\bFoldStep\b'
   'TerminalWitnessPlan'
+  'MultilinearPolynomial\b'
+  'multilinear_polynomial'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

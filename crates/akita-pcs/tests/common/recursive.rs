@@ -71,12 +71,12 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
                 make_onehot_poly::<BaseCfg>(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
             let akita_prover::CommitOutput {
                 committed_group: commitment,
-                hint,
+                prover_state: hint,
             } = base_scheme
                 .commit(
                     &setup,
                     std::slice::from_ref(&poly),
-                    &stack,
+                    stack.commitment(),
                     akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("precommit group");
@@ -94,12 +94,12 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = recursive_scheme
             .commit(
                 &setup,
                 &final_polys,
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final generated-profile commitment");

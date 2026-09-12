@@ -1,16 +1,14 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
-use crate::api::commitment::{validate_commit_inner_shape, validate_commit_level_params};
 use crate::protocol::ring_relation::compute_multi_group_relation_quotient;
 use crate::{tensor_pack_recursive_witness, RecursiveWitnessFlat};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, RingVec,
+    r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
+    FpExtEncoding, NegativeBinarySupport, RingVec,
 };
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,

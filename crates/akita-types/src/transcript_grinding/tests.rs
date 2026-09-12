@@ -446,3 +446,36 @@ fn special_proof_of_work_site_and_reserved_sentinel_are_rejected() {
     .unwrap();
     assert!(GrindingPlan::new(vec![reserved], 128).is_err());
 }
+
+#[test]
+fn public_plan_rejects_query_limit_without_expanding_runs() {
+    let accepted =
+        GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 2).unwrap();
+    assert_eq!(
+        GrindingPlan::new(vec![accepted], 128)
+            .unwrap()
+            .expanded_query_count(),
+        TRANSCRIPT_GRINDING_QUERY_LIMIT - 1
+    );
+
+    let excessive =
+        GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 1).unwrap();
+    assert!(matches!(
+        GrindingPlan::new(vec![excessive], 128),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn planner_accumulator_prices_an_oversized_edge_without_plan_validation() {
+    let run = GrindingRun::fold_challenge_group(0, 0, TRANSCRIPT_GRINDING_QUERY_LIMIT - 1).unwrap();
+    let mut accumulator = GrindingPlanAccumulator::new(128).unwrap();
+    accumulator.push(run).unwrap();
+    assert_eq!(
+        accumulator.cost(),
+        TranscriptGrindingCost {
+            total_nonce_bits: 0,
+            expanded_query_count: TRANSCRIPT_GRINDING_QUERY_LIMIT,
+        }
+    );
+}

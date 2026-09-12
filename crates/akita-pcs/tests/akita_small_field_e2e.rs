@@ -119,9 +119,12 @@ macro_rules! small_field_test {
                         .map(|i| weights[i] * <$se>::lift_base(evals[i]))
                         .fold(<$se>::from_u64(0), |a, b| a + b);
 
-                    let roundtrip = single_group_roundtrip::<$cfg>(
+                    let roundtrip = single_group_roundtrip::<
+                        $cfg,
+                        akita_prover::DensePoly<$sf>,
+                    >(
                         nv,
-                        &akita_prover::MultilinearPolynomial::dense(poly),
+                        &poly,
                         point,
                         expected,
                         label,
@@ -177,11 +180,11 @@ macro_rules! small_field_test {
                     .expect("pre dense poly");
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
-                        hint: pre_hint,
+                        prover_state: pre_hint,
                     } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
-                        &stack,
+                        stack.commitment(),
                         akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                     )
                     .expect("precommit");
@@ -199,11 +202,11 @@ macro_rules! small_field_test {
                         PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
-                        hint: final_hint,
+                        prover_state: final_hint,
                     } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
-                        &stack,
+                        stack.commitment(),
                         akita_prover::GroupContext::scheduler_with_precommitted_groups(
                             &precommitteds,
                         ),
@@ -249,7 +252,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove::<_, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -304,9 +307,12 @@ macro_rules! small_field_test {
                         .collect();
                     let expected = onehot_opening_lagrange(&poly, &point);
 
-                    single_group_roundtrip::<$cfg>(
+                    single_group_roundtrip::<
+                        $cfg,
+                        akita_prover::OneHotPoly<$sf, u8>,
+                    >(
                         nv,
-                        &akita_prover::MultilinearPolynomial::onehot(poly),
+                        &poly,
                         point,
                         expected,
                         label,
@@ -362,11 +368,11 @@ macro_rules! small_field_test {
                     .expect("pre onehot poly");
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
-                        hint: pre_hint,
+                        prover_state: pre_hint,
                     } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
-                        &stack,
+                        stack.commitment(),
                         akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                     )
                     .expect("precommit");
@@ -384,11 +390,11 @@ macro_rules! small_field_test {
                         PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
-                        hint: final_hint,
+                        prover_state: final_hint,
                     } = scheme.commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
-                        &stack,
+                        stack.commitment(),
                         akita_prover::GroupContext::scheduler_with_precommitted_groups(
                             &precommitteds,
                         ),
@@ -444,7 +450,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove::<_, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -577,12 +583,12 @@ fn fp32_onehot_multi_group() {
         .expect("pre stack");
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
-            hint: pre_hint,
+            prover_state: pre_hint,
         } = scheme
             .commit(
                 &pre_setup,
                 std::slice::from_ref(&pre_poly),
-                &pre_stack,
+                pre_stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
@@ -610,12 +616,12 @@ fn fp32_onehot_multi_group() {
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
-            hint: final_hint,
+            prover_state: final_hint,
         } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&final_poly),
-                &stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");

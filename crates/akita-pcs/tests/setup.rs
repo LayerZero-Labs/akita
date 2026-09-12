@@ -183,12 +183,12 @@ where
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -201,7 +201,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -312,12 +312,12 @@ where
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -330,7 +330,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -470,12 +470,12 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched commit");
@@ -485,7 +485,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -584,12 +584,12 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
@@ -599,7 +599,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],

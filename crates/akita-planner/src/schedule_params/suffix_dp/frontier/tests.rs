@@ -7,7 +7,7 @@ use super::{
     SetupScore,
 };
 use crate::schedule_params::{
-    CandidateMetrics, CompleteObjectiveBound, PackedProofCost, SetupPrefixCapacity,
+    objective::CompleteObjectiveBound, CandidateMetrics, PackedProofCost, SetupPrefixCapacity,
 };
 
 const SETUP_FIRST: crate::SelectionPolicyId =
@@ -52,7 +52,21 @@ fn setup_score(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, nonce_bits).unwrap(),
+        cost: PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap(),
+        setup_field_elements,
+    }
+}
+
+fn setup_score_with_queries(
+    capacity: SetupPrefixCapacity,
+    payload_bytes: usize,
+    expanded_query_count: u64,
+    setup_field_elements: usize,
+) -> SetupScore {
+    SetupScore {
+        first_direct_setup_capacity: capacity,
+        first_direct_output_witness_len: 0,
+        cost: PackedProofCost::new(payload_bytes, 0, expanded_query_count).unwrap(),
         setup_field_elements,
     }
 }
@@ -63,7 +77,19 @@ fn payload_score(
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
-        cost: PackedProofCost::new(payload_bytes, nonce_bits).unwrap(),
+        cost: PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap(),
+        setup_field_elements,
+    }
+}
+
+fn payload_score_with_queries(
+    payload_bytes: usize,
+    nonce_bits: usize,
+    expanded_query_count: u64,
+    setup_field_elements: usize,
+) -> PayloadScore {
+    PayloadScore {
+        cost: PackedProofCost::new(payload_bytes, nonce_bits, expanded_query_count).unwrap(),
         setup_field_elements,
     }
 }
@@ -320,11 +346,106 @@ fn strict_primary_dominance_does_not_consider_maskable_setup_or_ties() {
     ));
 }
 
+#[test]
+fn unconstrained_payload_frontier_uses_proof_objective() {
+    let context = context(2, 7);
+    let admission = admission(2, 8);
+    let smaller_proof = order(
+        payload_score_with_queries(99, 0, 100, 0),
+        &[1],
+        &context,
+        admission,
+    );
+    let fewer_queries = order(
+        payload_score_with_queries(100, 0, 10, 0),
+        &[2],
+        &context,
+        admission,
+    );
+
+    assert!(payload_projection_dominates(
+        SETUP_FIRST,
+        smaller_proof,
+        fewer_queries,
+    ));
+    assert!(!payload_projection_dominates(
+        SETUP_FIRST,
+        fewer_queries,
+        smaller_proof,
+    ));
+}
+
+#[test]
+fn unconstrained_setup_frontier_uses_setup_objective() {
+    let context = context(2, 7);
+    let admission = admission(2, 8);
+    let smaller_setup_more_queries = order(
+        setup_score_with_queries(SetupPrefixCapacity::for_natural_len(4), 100, 100, 0),
+        &[1],
+        &context,
+        admission,
+    );
+    let larger_setup_fewer_queries = order(
+        setup_score_with_queries(SetupPrefixCapacity::for_natural_len(8), 100, 10, 0),
+        &[2],
+        &context,
+        admission,
+    );
+
+    assert!(setup_projection_dominates(
+        SETUP_FIRST,
+        smaller_setup_more_queries,
+        larger_setup_fewer_queries,
+    ));
+    assert!(!setup_projection_dominates(
+        SETUP_FIRST,
+        larger_setup_fewer_queries,
+        smaller_setup_more_queries,
+    ));
+}
+
+#[test]
+fn fewer_queries_do_not_override_objective_or_descriptor_order() {
+    let context = context(2, 7);
+    let admission = admission(2, 8);
+
+    assert!(!payload_projection_dominates(
+        SETUP_FIRST,
+        order(
+            payload_score_with_queries(101, 0, 1, 0),
+            &[1],
+            &context,
+            admission,
+        ),
+        order(
+            payload_score_with_queries(100, 0, 2, 0),
+            &[2],
+            &context,
+            admission,
+        ),
+    ));
+    assert!(!payload_projection_dominates(
+        SETUP_FIRST,
+        order(
+            payload_score_with_queries(100, 0, 1, 0),
+            &[2],
+            &context,
+            admission,
+        ),
+        order(
+            payload_score_with_queries(100, 0, 2, 0),
+            &[1],
+            &context,
+            admission,
+        ),
+    ));
+}
+
 fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
     CandidateMetrics {
         first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(proof_bytes, 0).unwrap(),
+        cost: PackedProofCost::new(proof_bytes, 0, 0).unwrap(),
         setup_field_elements: 0,
     }
 }
@@ -345,7 +466,6 @@ fn recursive_bound_requires_dominance_in_both_parent_projections() {
         lower_bound,
         [setup_winner],
     ));
-
     assert!(projection_bound_is_dominated(
         Projection::FirstDirectSetup,
         candidate_admission,

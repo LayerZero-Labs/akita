@@ -26,12 +26,12 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     .expect("stack");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint: _hint,
+        prover_state: _hint,
     } = scheme
         .commit(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
@@ -112,23 +112,23 @@ fn profile_native_commit_group_allows_independent_groups() {
     with_precommit_stack(&scheme, NV, SETUP_CAPACITY_SIZE, |setup, stack| {
         let akita_prover::CommitOutput {
             committed_group: pre_a_commitment,
-            hint: _pre_a_hint,
+            prover_state: _pre_a_hint,
         } = scheme
             .commit(
                 setup,
                 &pre_a_polys,
-                stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit A");
         let akita_prover::CommitOutput {
             committed_group: pre_b_commitment,
-            hint: _pre_b_hint,
+            prover_state: _pre_b_hint,
         } = scheme
             .commit(
                 setup,
                 &pre_b_polys,
-                stack,
+                stack.commitment(),
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit B");
@@ -242,23 +242,23 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     .expect("protocol stack");
     let akita_prover::CommitOutput {
         committed_group: pre_a_commitment,
-        hint: _pre_a_hint,
+        prover_state: _pre_a_hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &pre_a_polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit A");
     let akita_prover::CommitOutput {
         committed_group: pre_b_commitment,
-        hint: _pre_b_hint,
+        prover_state: _pre_b_hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &pre_b_polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit B");
@@ -290,12 +290,12 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     .expect("nonempty precommitted groups");
     let akita_prover::CommitOutput {
         committed_group: final_commitment,
-        hint: final_hint,
+        prover_state: final_hint,
     } = scheme
         .commit(
             &setup,
             &final_polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
@@ -303,13 +303,13 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         .commit(
             &setup,
             &final_polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::explicit(&main_params.own_group().profile),
         )
         .expect("explicit final multi-group commitment");
 
     assert_eq!(explicit_output.committed_group, final_commitment);
-    assert_eq!(explicit_output.hint, final_hint);
+    assert_eq!(explicit_output.prover_state, final_hint);
 
     assert_eq!(
         pre_a_commitment.rows().count(),
@@ -369,12 +369,12 @@ fn commit_group_returns_frozen_exact_layout() {
     .expect("stack");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint: _hint,
+        prover_state: _hint,
     } = scheme
         .commit(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit group");
@@ -460,12 +460,12 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
-        hint,
+        prover_state: hint,
     } = scheme
         .commit::<_, _>(
             &setup,
             &polys,
-            &stack,
+            stack.commitment(),
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
@@ -478,9 +478,9 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     )
     .expect("valid one-hot prover group");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove::<_, _, _, _>(
             &setup,
-            selected_prover_data::<OneHotCfg, _>(
+            selected_prover_data::<OneHotCfg, _, _>(
                 &scheme,
                 OpeningClaims::from_groups(vec![prover_group])
                     .expect("valid one-hot prover claims"),

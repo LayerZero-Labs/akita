@@ -661,7 +661,7 @@ Tests MUST prove that:
 
 The generated schedule drift guards MUST pass after regeneration.
 
-Dense, one-hot, extension field, mixed group, recursive, terminal, and
+Dense, one-hot, extension field, heterogeneous-group, recursive, terminal, and
 setup prefix end-to-end tests MUST pass.
 
 The profile benchmark report MUST compare the new rows with the merge base for
