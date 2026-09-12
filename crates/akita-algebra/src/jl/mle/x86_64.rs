@@ -365,45 +365,6 @@ mod tests {
         }
         eprintln!("column weights + row Eq:    {:?}", start.elapsed());
 
-        let row_luts: Vec<[F; TERNARY4_PATTERN_COUNT]> = row_eq
-            .chunks(4)
-            .map(|rows| {
-                let mut values = [F::zero(); 4];
-                values[..rows.len()].copy_from_slice(rows);
-                super::super::build_ternary4_weight_lut(&values)
-            })
-            .collect();
-        let scalar_columns = time_column_weights(
-            ITERATIONS,
-            &matrix,
-            &row_eq,
-            &row_luts,
-            accumulate_columns_scalar::<F>,
-        );
-        eprintln!("column accumulation scalar: {scalar_columns:?}");
-        if std::arch::is_x86_feature_detected!("avx2") {
-            let avx2_columns = time_column_weights(
-                ITERATIONS,
-                &matrix,
-                &row_eq,
-                &row_luts,
-                accumulate_columns_avx2::<F>,
-            );
-            eprintln!("column accumulation avx2:   {avx2_columns:?}");
-        }
-        if std::arch::is_x86_feature_detected!("avx512f")
-            && std::arch::is_x86_feature_detected!("avx512bw")
-        {
-            let avx512_columns = time_column_weights(
-                ITERATIONS,
-                &matrix,
-                &row_eq,
-                &row_luts,
-                accumulate_columns_avx512::<F>,
-            );
-            eprintln!("column accumulation avx512: {avx512_columns:?}");
-        }
-
         let start = Instant::now();
         for _ in 0..ITERATIONS {
             black_box(crate::EqPolynomial::evals(&col_point).unwrap());
@@ -413,61 +374,6 @@ mod tests {
         report_contraction_field::<F32Ext>("fp32ext", 50, &matrix);
         report_contraction_field::<F64Ext>("fp64ext", 50, &matrix);
         report_contraction_field::<F128>("fp128", 50, &matrix);
-    }
-
-    type ColumnKernel<G> = unsafe fn(
-        &crate::jl::TernaryProjectionMatrix,
-        &[G],
-        &[[G; TERNARY4_PATTERN_COUNT]],
-        &mut [G],
-    );
-
-    fn time_column_weights<G: Field>(
-        iterations: usize,
-        matrix: &crate::jl::TernaryProjectionMatrix,
-        row_eq: &[G],
-        row_luts: &[[G; TERNARY4_PATTERN_COUNT]],
-        kernel: ColumnKernel<G>,
-    ) -> std::time::Duration {
-        let mut output = vec![G::zero(); matrix.shape().cols()];
-        let start = Instant::now();
-        for _ in 0..iterations {
-            output.fill(G::zero());
-            // SAFETY: callers feature-check target-specific kernels; the
-            // scalar test kernel has no additional precondition.
-            unsafe { kernel(matrix, row_eq, row_luts, &mut output) };
-            black_box(&output);
-        }
-        start.elapsed()
-    }
-
-    unsafe fn accumulate_columns_scalar<G: Field>(
-        matrix: &crate::jl::TernaryProjectionMatrix,
-        row_eq: &[G],
-        row_luts: &[[G; TERNARY4_PATTERN_COUNT]],
-        output: &mut [G],
-    ) {
-        super::super::accumulate_column_weight_groups(matrix, row_eq, Some(row_luts), 0, output);
-    }
-
-    #[target_feature(enable = "avx2")]
-    unsafe fn accumulate_columns_avx2<G: Field>(
-        matrix: &crate::jl::TernaryProjectionMatrix,
-        row_eq: &[G],
-        row_luts: &[[G; TERNARY4_PATTERN_COUNT]],
-        output: &mut [G],
-    ) {
-        super::super::accumulate_column_weight_groups(matrix, row_eq, Some(row_luts), 0, output);
-    }
-
-    #[target_feature(enable = "avx512f,avx512bw")]
-    unsafe fn accumulate_columns_avx512<G: Field>(
-        matrix: &crate::jl::TernaryProjectionMatrix,
-        row_eq: &[G],
-        row_luts: &[[G; TERNARY4_PATTERN_COUNT]],
-        output: &mut [G],
-    ) {
-        super::super::accumulate_column_weight_groups(matrix, row_eq, Some(row_luts), 0, output);
     }
 
     fn report_contraction_field<G: Field>(
