@@ -1,0 +1,138 @@
+{
+  "schema": "akita-jl-budget-planning-v1",
+  "planningStatus": "untrusted-exploration",
+  "warning": "UNTRUSTED EXPLORATION ONLY. Synthetic intermediate geometry is not a CertifiedJL result and must not be admitted into a production schedule.",
+  "failureBudget": {
+    "numerator": "1",
+    "denominator": "87112285931760246646623899502532662132736"
+  },
+  "expectedCensus": {
+    "chargedBlocks": 5548,
+    "rawMatrixEnvelopes": 46,
+    "distinctMatrixEnvelopes": 20
+  },
+  "folds": [
+    {
+      "level": 0,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [512, 8, 1], "depths": [0, 1, 2], "matrixEnvelopes": ["f0-d0", "f0-d1", "f0-d2"]},
+        {"role": "E", "blocks": [256, 4, 1], "depths": [0, 1, 2], "matrixEnvelopes": ["f0-d0", "f0-d1", "f0-d2"]},
+        {"role": "T", "blocks": [4096, 64, 1], "depths": [0, 1, 2], "matrixEnvelopes": ["f0-d0", "f0-d1", "f0-d2"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [3], "matrixEnvelopes": ["f0-d3"], "extendsPaths": ["E", "T"]}
+      ]
+    },
+    {
+      "level": 1,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [64, 1], "depths": [0, 1], "matrixEnvelopes": ["f1-d0", "f1-d1"]},
+        {"role": "E", "blocks": [128, 2, 1], "depths": [0, 1, 2], "matrixEnvelopes": ["f1-d0", "f1-d1", "f1-d2"]},
+        {"role": "T", "blocks": [256, 4, 1], "depths": [0, 1, 2], "matrixEnvelopes": ["f1-d0", "f1-d1", "f1-d2"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [3], "matrixEnvelopes": ["f1-d3"], "extendsPaths": ["E", "T"]}
+      ]
+    },
+    {
+      "level": 2,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [8, 1], "depths": [0, 1], "matrixEnvelopes": ["f2-d0", "f2-d1"]},
+        {"role": "E", "blocks": [16, 1], "depths": [0, 1], "matrixEnvelopes": ["f2-d0", "f2-d1"]},
+        {"role": "T", "blocks": [64, 1], "depths": [0, 1], "matrixEnvelopes": ["f2-d0", "f2-d1"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [2], "matrixEnvelopes": ["f2-d2"], "extendsPaths": ["E", "T"]}
+      ]
+    },
+    {
+      "level": 3,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [4, 1], "depths": [0, 1], "matrixEnvelopes": ["f3-d0", "f3-d1"]},
+        {"role": "E", "blocks": [4, 1], "depths": [0, 1], "matrixEnvelopes": ["f3-d0", "f3-d1"]},
+        {"role": "T", "blocks": [16, 1], "depths": [0, 1], "matrixEnvelopes": ["f3-d0", "f3-d1"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [2], "matrixEnvelopes": ["f3-d2"], "extendsPaths": ["E", "T"]}
+      ]
+    },
+    {
+      "level": 4,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [2, 1], "depths": [0, 1], "matrixEnvelopes": ["f4-d0", "f4-d1"]},
+        {"role": "E", "blocks": [2, 1], "depths": [0, 1], "matrixEnvelopes": ["f4-d0", "f4-d1"]},
+        {"role": "T", "blocks": [8, 1], "depths": [0, 1], "matrixEnvelopes": ["f4-d0", "f4-d1"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [2], "matrixEnvelopes": ["f4-d2"], "extendsPaths": ["E", "T"]}
+      ]
+    },
+    {
+      "level": 5,
+      "candidates": 2,
+      "useFamilies": [
+        {"role": "Z", "blocks": [2, 1], "depths": [0, 1], "matrixEnvelopes": ["f5-d0", "f5-d1"]},
+        {"role": "E", "blocks": [1], "depths": [0], "matrixEnvelopes": ["f5-d0"]},
+        {"role": "T", "blocks": [4, 1], "depths": [0, 1], "matrixEnvelopes": ["f5-d0", "f5-d1"]},
+        {"role": "ETjoin", "blocks": [1], "depths": [2], "matrixEnvelopes": ["f5-d2"], "extendsPaths": ["E", "T"]}
+      ]
+    }
+  ],
+  "frontier": {
+    "lower": [
+      {"id": "lower-128", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 29, "denominator": 1}, "failureCap": {"name": "lowerFailureBits128", "dyadicExponent": 128}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-141", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 24, "denominator": 1}, "failureCap": {"name": "lowerFailureBits141", "dyadicExponent": 141}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-142", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 24, "denominator": 1}, "failureCap": {"name": "lowerFailureBits142", "dyadicExponent": 142}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-144", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 23, "denominator": 1}, "failureCap": {"name": "lowerFailureBits144", "dyadicExponent": 144}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-145", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 23, "denominator": 1}, "failureCap": {"name": "lowerFailureBits145", "dyadicExponent": 145}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-146", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 22, "denominator": 1}, "failureCap": {"name": "lowerFailureBits146", "dyadicExponent": 146}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-147", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 22, "denominator": 1}, "failureCap": {"name": "lowerFailureBits147", "dyadicExponent": 147}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-148", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 21, "denominator": 1}, "failureCap": {"name": "lowerFailureBits148", "dyadicExponent": 148}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-151", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 20, "denominator": 1}, "failureCap": {"name": "lowerFailureBits151", "dyadicExponent": 151}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "lower-152", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 19, "denominator": 1}, "failureCap": {"name": "lowerFailureBits152", "dyadicExponent": 152}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]}
+    ],
+    "upper": [
+      {"id": "upper-128", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 338, "denominator": 1}, "failureCap": {"name": "upperFailureBits128", "dyadicExponent": 128}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-141", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 353, "denominator": 1}, "failureCap": {"name": "upperFailureBits141", "dyadicExponent": 141}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-142", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 354, "denominator": 1}, "failureCap": {"name": "upperFailureBits142", "dyadicExponent": 142}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-144", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 356, "denominator": 1}, "failureCap": {"name": "upperFailureBits144", "dyadicExponent": 144}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-145", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 357, "denominator": 1}, "failureCap": {"name": "upperFailureBits145", "dyadicExponent": 145}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-146", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 358, "denominator": 1}, "failureCap": {"name": "upperFailureBits146", "dyadicExponent": 146}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-147", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 359, "denominator": 1}, "failureCap": {"name": "upperFailureBits147", "dyadicExponent": 147}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-148", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 361, "denominator": 1}, "failureCap": {"name": "upperFailureBits148", "dyadicExponent": 148}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-151", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 364, "denominator": 1}, "failureCap": {"name": "upperFailureBits151", "dyadicExponent": 151}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]},
+      {"id": "upper-152", "status": "provisional", "rowLaw": "balanced-ternary", "rows": 256, "threshold": {"numerator": 365, "denominator": 1}, "failureCap": {"name": "upperFailureBits152", "dyadicExponent": 152}, "theorem": "UNTRUSTED_EXPLORATION", "sourceRevision": "UNTRUSTED_EXPLORATION", "modulusHypotheses": ["modulusMargin=3"]}
+    ]
+  },
+  "searchPairs": [
+    {"lower": "lower-141", "upper": "upper-141"},
+    {"lower": "lower-144", "upper": "upper-144"},
+    {"lower": "lower-146", "upper": "upper-146"},
+    {"lower": "lower-148", "upper": "upper-148"},
+    {"lower": "lower-151", "upper": "upper-151"}
+  ],
+  "scenarios": [
+    {
+      "name": "uniform-151",
+      "scope": "level",
+      "selections": {
+        "0": {"lower": "lower-151", "upper": "upper-151"},
+        "1": {"lower": "lower-151", "upper": "upper-151"},
+        "2": {"lower": "lower-151", "upper": "upper-151"},
+        "3": {"lower": "lower-151", "upper": "upper-151"},
+        "4": {"lower": "lower-151", "upper": "upper-151"},
+        "5": {"lower": "lower-151", "upper": "upper-151"}
+      }
+    },
+    {
+      "name": "heterogeneous-136",
+      "scope": "level",
+      "selections": {
+        "0": {"lower": "lower-151", "upper": "upper-151"},
+        "1": {"lower": "lower-151", "upper": "upper-151"},
+        "2": {"lower": "lower-148", "upper": "upper-148"},
+        "3": {"lower": "lower-146", "upper": "upper-146"},
+        "4": {"lower": "lower-146", "upper": "upper-146"},
+        "5": {"lower": "lower-145", "upper": "upper-145"}
+      }
+    }
+  ],
+  "comparisons": [
+    {"baseline": "uniform-151", "candidate": "heterogeneous-136"}
+  ]
+}
