@@ -207,7 +207,8 @@ mod tests {
     fn assert_field_contraction<G: Field + std::fmt::Debug>(
         kernel: unsafe fn(&[u8], &[u8], &mut [G], &[G; 81]) -> usize,
     ) {
-        const ROWS: usize = 131;
+        // Multiple vectors in both backends, two residual pairs, and an odd row.
+        const ROWS: usize = 261;
         const ROW_PAIRS: usize = ROWS.div_ceil(2);
         let first: Vec<u8> = (0..ROW_PAIRS)
             .map(|pair| pair.wrapping_mul(73).wrapping_add(19) as u8)

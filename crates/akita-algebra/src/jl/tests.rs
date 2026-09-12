@@ -783,6 +783,7 @@ fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
         (6, 133),
         (7, 134),
         (8, 135),
+        (261, 259),
     ]
     .iter()
     .enumerate()
@@ -810,8 +811,7 @@ fn mle_kernels_match_scalar_reference_for_odd_shapes_and_shipped_fields() {
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_mle_panels_match_all_tail_widths_fields_and_thread_counts() {
-    for cols in [4097, 4098, 4099, 16385] {
-        let rows = 17;
+    for (rows, cols) in [(17, 4097), (17, 4098), (17, 4099), (17, 16385), (261, 4097)] {
         let entries: Vec<Vec<i8>> = (0..rows)
             .map(|row| {
                 (0..cols)
