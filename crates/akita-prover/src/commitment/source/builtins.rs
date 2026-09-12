@@ -220,6 +220,7 @@ impl<F: Field> CommitmentSource<F> for crate::RecursiveWitnessFlat {
         let mut representation = ShortNormRepresentation::new(
             encoded_bytes,
             self.live_coeff_len(),
+            self.digits().len(),
             physical_coefficient_len,
             signed_bit_width,
             negative_abs_max,

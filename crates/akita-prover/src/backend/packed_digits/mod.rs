@@ -403,26 +403,39 @@ impl<'a> PackedSignedDigitView<'a> {
     pub(crate) fn from_encoded(
         storage: &'a [u8],
         live_len: usize,
+        stored_len: usize,
         physical_len: usize,
         bit_width: u8,
         negative_abs_max: u8,
         positive_max: u8,
     ) -> Result<Self, AkitaError> {
         validate_bit_width(bit_width)?;
-        if live_len == 0 || live_len > physical_len {
+        if live_len == 0 || live_len > stored_len || stored_len > physical_len {
             return Err(AkitaError::InvalidInput(
                 "packed signed-digit view has inconsistent extents".into(),
             ));
         }
-        let represented_bits = checked::product([storage.len(), 8]).ok_or_else(|| {
-            AkitaError::InvalidInput("packed signed-digit represented length overflow".into())
+        let stored_bits =
+            checked::product([stored_len, usize::from(bit_width)]).ok_or_else(|| {
+                AkitaError::InvalidInput("packed signed-digit stored length overflow".into())
+            })?;
+        let expected_bytes = checked::div_ceil(stored_bits, 8).ok_or_else(|| {
+            AkitaError::InvalidInput("packed signed-digit byte length overflow".into())
         })?;
-        let represented_len = represented_bits / usize::from(bit_width);
-        if represented_len < live_len {
+        if storage.len() != expected_bytes {
             return Err(AkitaError::InvalidSize {
-                expected: live_len,
-                actual: represented_len,
+                expected: expected_bytes,
+                actual: storage.len(),
             });
+        }
+        let used_final_bits = stored_bits % 8;
+        if used_final_bits != 0 {
+            let unused_mask = !((1u8 << used_final_bits) - 1);
+            if storage.last().is_some_and(|byte| byte & unused_mask != 0) {
+                return Err(AkitaError::InvalidInput(
+                    "packed signed-digit payload has non-canonical trailing bits".into(),
+                ));
+            }
         }
         let bounds = SignedDigitBounds {
             negative_abs_max,
@@ -433,7 +446,7 @@ impl<'a> PackedSignedDigitView<'a> {
             negative_abs_max: 0,
             positive_max: 0,
         };
-        for index in 0..live_len {
+        for index in 0..stored_len {
             let digit = scalar::decode_at_zero_padded(storage, index, bit_width);
             if digit < 0 {
                 decoded_bounds.negative_abs_max =
@@ -444,7 +457,7 @@ impl<'a> PackedSignedDigitView<'a> {
         }
         if decoded_bounds != bounds {
             return Err(AkitaError::InvalidInput(format!(
-                "packed signed-digit bounds [-{}, {}] disagree with decoded live bounds [-{}, {}]",
+                "packed signed-digit bounds [-{}, {}] disagree with decoded stored bounds [-{}, {}]",
                 bounds.negative_abs_max,
                 bounds.positive_max,
                 decoded_bounds.negative_abs_max,
@@ -453,7 +466,7 @@ impl<'a> PackedSignedDigitView<'a> {
         }
         Ok(Self {
             storage,
-            stored_len: represented_len.min(physical_len),
+            stored_len,
             bit_width,
             bounds,
             vector_safe: false,

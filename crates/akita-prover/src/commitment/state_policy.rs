@@ -129,36 +129,6 @@ impl<F: Field> CommitmentStateComponents<F> {
     }
 }
 
-fn export_portable<F: Field>(
-    components: &CommitmentStateComponents<F>,
-) -> Result<AkitaCommitmentHint<F>, AkitaError> {
-    let binding = components.binding().clone();
-    let rows = components
-        .exporters
-        .inner
-        .as_ref()
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("commitment route has no portable inner-image exporter".into())
-        })?
-        .export_inner_rows(binding.inner_plan(), &components.image)?;
-    let compression = match components.compression() {
-        Some(state) => Some(
-            components
-                .exporters
-                .compression
-                .as_ref()
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "commitment route has no portable compression exporter".into(),
-                    )
-                })?
-                .export_compression_state(state)?,
-        ),
-        None => None,
-    };
-    assemble_portable_hint(binding, components.mode(), rows, compression)
-}
-
 fn into_portable<F: Field>(
     components: CommitmentStateComponents<F>,
 ) -> Result<AkitaCommitmentHint<F>, AkitaError> {
@@ -176,6 +146,7 @@ fn into_portable<F: Field>(
             AkitaError::InvalidInput("commitment route has no portable inner-image exporter".into())
         })?
         .consume_inner_rows(binding.inner_plan(), image)?;
+    let rows = InnerRelationStateMaterial::from_binding(&binding, rows)?.into_rows();
     let compression = match compression {
         Some(state) => Some(
             exporters
@@ -293,8 +264,16 @@ pub struct ResidentStatePolicy;
 /// Checked resident commitment state plus its owner-specific consumer routes.
 #[derive(Clone)]
 pub struct ResidentCommitmentState<F: Field> {
-    components: CommitmentStateComponents<F>,
-    inner_material: Arc<Mutex<Option<InnerRelationStateMaterial<F>>>>,
+    binding: CommitmentStateBinding,
+    mode: CommitmentExecutionMode,
+    inner: Arc<Mutex<ResidentInnerState<F>>>,
+    compression: Option<BackendStateRef<CompressionState>>,
+    exporters: CommitmentStateExporters<F>,
+}
+
+struct ResidentInnerState<F: Field> {
+    image: Option<BackendStateRef<InnerImage>>,
+    material: Option<InnerRelationStateMaterial<F>>,
 }
 
 impl<F: Field> std::fmt::Debug for ResidentCommitmentState<F> {
@@ -306,39 +285,55 @@ impl<F: Field> std::fmt::Debug for ResidentCommitmentState<F> {
 impl<F: Field> ResidentCommitmentState<F> {
     /// Immutable checked request binding.
     pub fn binding(&self) -> &CommitmentStateBinding {
-        self.components.binding()
+        &self.binding
     }
 
     /// Backend-reported bytes retained by this complete commitment state.
     pub fn retained_bytes(&self) -> Result<usize, AkitaError> {
-        let backend_bytes = self.components.compression().map_or(
-            Ok(self.components.image().retained_bytes()),
-            |compression| {
-                self.components
-                    .image()
-                    .retained_bytes()
-                    .checked_add(compression.retained_bytes())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "resident commitment retained-byte total overflow".into(),
-                        )
-                    })
-            },
-        )?;
-        let frozen = self.inner_material.lock().map_err(|_| {
+        let inner = self.inner.lock().map_err(|_| {
             AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
         })?;
-        let frozen_coefficients = frozen.as_ref().map_or(Some(0), |material| {
-            akita_error::checked::sum(material.rows().iter().map(RingVec::coeff_len))
-        });
-        let frozen_bytes = frozen_coefficients
-            .and_then(|coefficients| akita_error::checked::product([coefficients, size_of::<F>()]))
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("resident inner-relation byte total overflow".into())
-            })?;
-        akita_error::checked::sum([backend_bytes, frozen_bytes]).ok_or_else(|| {
+        let inner_bytes = match (&inner.image, &inner.material) {
+            (Some(image), None) => image.retained_bytes(),
+            (None, Some(material)) => material.retained_bytes()?,
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "resident inner state has inconsistent ownership".into(),
+                ))
+            }
+        };
+        let compression_bytes = self
+            .compression
+            .as_ref()
+            .map_or(0, BackendStateRef::retained_bytes);
+        akita_error::checked::sum([inner_bytes, compression_bytes]).ok_or_else(|| {
             AkitaError::InvalidInput("resident commitment retained-byte total overflow".into())
         })
+    }
+
+    fn frozen_inner_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
+        })?;
+        if let Some(material) = inner.material.as_ref() {
+            return Ok(material.clone());
+        }
+        let image = inner.image.take().ok_or_else(|| {
+            AkitaError::InvalidInput("resident inner state omitted its image".into())
+        })?;
+        let rows = self
+            .exporters
+            .inner
+            .as_ref()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "commitment route has no inner-relation state operation".into(),
+                )
+            })?
+            .consume_inner_rows(self.binding.inner_plan(), image)?;
+        let material = InnerRelationStateMaterial::from_binding(&self.binding, rows)?;
+        inner.material = Some(material.clone());
+        Ok(material)
     }
 }
 
@@ -358,12 +353,40 @@ pub trait IntoPortableCommitmentState<F: Field> {
 #[derive(Clone)]
 pub struct InnerRelationStateMaterial<F: Field> {
     ring_dimension: usize,
-    rows: Vec<RingVec<F>>,
+    rows: Arc<Vec<RingVec<F>>>,
 }
 
 impl<F: Field> InnerRelationStateMaterial<F> {
-    /// Bind canonical rows to their runtime ring dimension.
-    pub fn new(ring_dimension: usize, rows: Vec<RingVec<F>>) -> Result<Self, AkitaError> {
+    /// Construct canonical rows for one exact inner relation request.
+    pub fn new(
+        plan: &CommitInnerPlan,
+        source_count: usize,
+        rows: Vec<RingVec<F>>,
+    ) -> Result<Self, AkitaError> {
+        let expected_coefficients =
+            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("inner-relation row length overflow".into())
+                })?;
+        if rows.len() != source_count
+            || rows.iter().any(|row| {
+                row.ring_dim() != plan.ring_dimension || row.coeff_len() != expected_coefficients
+            })
+        {
+            return Err(AkitaError::InvalidInput(
+                "inner-relation rows do not match their commitment plan".into(),
+            ));
+        }
+        Ok(Self {
+            ring_dimension: plan.ring_dimension,
+            rows: Arc::new(rows),
+        })
+    }
+
+    pub(crate) fn from_rows(
+        ring_dimension: usize,
+        rows: Vec<RingVec<F>>,
+    ) -> Result<Self, AkitaError> {
         if rows.iter().any(|row| !row.can_decode_vec(ring_dimension)) {
             return Err(AkitaError::InvalidInput(
                 "inner-relation rows do not match their ring dimension".into(),
@@ -371,7 +394,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
         }
         Ok(Self {
             ring_dimension,
-            rows,
+            rows: Arc::new(rows),
         })
     }
 
@@ -380,25 +403,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
         binding: &CommitmentStateBinding,
         rows: Vec<RingVec<F>>,
     ) -> Result<Self, AkitaError> {
-        let plan = binding.inner_plan();
-        let expected_coefficients =
-            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("inner-relation row length overflow".into())
-                })?;
-        if rows.len() != binding.source_count()
-            || rows.iter().any(|row| {
-                row.ring_dim() != plan.ring_dimension || row.coeff_len() != expected_coefficients
-            })
-        {
-            return Err(AkitaError::InvalidInput(
-                "exported inner-relation rows do not match their commitment binding".into(),
-            ));
-        }
-        Ok(Self {
-            ring_dimension: plan.ring_dimension,
-            rows,
-        })
+        Self::new(binding.inner_plan(), binding.source_count(), rows)
     }
 
     /// Runtime ring dimension of every row.
@@ -408,12 +413,42 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 
     /// Borrow the canonical rows in source order.
     pub fn rows(&self) -> &[RingVec<F>] {
-        &self.rows
+        self.rows.as_slice()
     }
 
     /// Consume the carrier and return the canonical rows.
     pub fn into_rows(self) -> Vec<RingVec<F>> {
-        self.rows
+        Arc::try_unwrap(self.rows).unwrap_or_else(|rows| rows.as_ref().clone())
+    }
+
+    /// Validate this material against the relation request that consumes it.
+    pub fn validate(&self, plan: &CommitInnerPlan, source_count: usize) -> Result<(), AkitaError> {
+        let expected_coefficients =
+            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("inner-relation row length overflow".into())
+                })?;
+        if self.ring_dimension != plan.ring_dimension
+            || self.rows.len() != source_count
+            || self.rows.iter().any(|row| {
+                row.ring_dim() != plan.ring_dimension || row.coeff_len() != expected_coefficients
+            })
+        {
+            return Err(AkitaError::InvalidInput(
+                "inner-relation material does not match its commitment plan".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn retained_bytes(&self) -> Result<usize, AkitaError> {
+        let coefficients = akita_error::checked::sum(self.rows.iter().map(RingVec::coeff_len))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("inner-relation coefficient total overflow".into())
+            })?;
+        akita_error::checked::product([coefficients, size_of::<F>()]).ok_or_else(|| {
+            AkitaError::InvalidInput("inner-relation retained bytes overflow".into())
+        })
     }
 }
 
@@ -422,10 +457,10 @@ pub trait InnerRelationState<F: Field> {
     /// Validate that inner-relation material can be produced without exporting it.
     fn preflight_inner_relation(
         &self,
-        _plan: &CommitInnerPlan,
-        _source_count: usize,
+        plan: &CommitInnerPlan,
+        source_count: usize,
     ) -> Result<(), AkitaError> {
-        Ok(())
+        self.inner_relation_material()?.validate(plan, source_count)
     }
 
     /// Derive canonical inner rows without constructing a portable hint.
@@ -548,7 +583,7 @@ impl<F: Field> InnerRelationState<F> for AkitaCommitmentHint<F> {
     }
 
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        InnerRelationStateMaterial::new(self.ring_dim(), self.inner_rows().to_vec())
+        InnerRelationStateMaterial::from_rows(self.ring_dim(), self.inner_rows().to_vec())
     }
 }
 
@@ -558,12 +593,12 @@ impl<F: Field> InnerRelationState<F> for ResidentCommitmentState<F> {
         plan: &CommitInnerPlan,
         source_count: usize,
     ) -> Result<(), AkitaError> {
-        if self.binding().inner_plan() != plan || self.binding().source_count() != source_count {
+        if self.binding.inner_plan() != plan || self.binding.source_count() != source_count {
             return Err(AkitaError::InvalidInput(
                 "resident commitment state does not match the requested inner plan".into(),
             ));
         }
-        if self.components.exporters.inner.is_none() {
+        if self.exporters.inner.is_none() {
             return Err(AkitaError::InvalidInput(
                 "commitment route has no inner-relation state operation".into(),
             ));
@@ -572,27 +607,7 @@ impl<F: Field> InnerRelationState<F> for ResidentCommitmentState<F> {
     }
 
     fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        let binding = self.components.binding();
-        let mut frozen = self.inner_material.lock().map_err(|_| {
-            AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
-        })?;
-        if let Some(material) = frozen.as_ref() {
-            return Ok(material.clone());
-        }
-        let rows = self
-            .components
-            .exporters
-            .inner
-            .as_ref()
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "commitment route has no inner-relation state operation".into(),
-                )
-            })?
-            .export_inner_rows(binding.inner_plan(), &self.components.image)?;
-        let material = InnerRelationStateMaterial::from_binding(binding, rows)?;
-        *frozen = Some(material.clone());
-        Ok(material)
+        self.frozen_inner_material()
     }
 }
 
@@ -634,7 +649,7 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<(), AkitaError> {
-        if self.components.mode != CommitmentExecutionMode::Full
+        if self.mode != CommitmentExecutionMode::Full
             || self.binding().relation_mode() != Some(relation_mode)
             || self.binding().compression_plan() != Some(plan)
         {
@@ -642,9 +657,7 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
                 "resident commitment state does not match the requested compression plan".into(),
             ));
         }
-        if self.components.compression().is_none()
-            || self.components.exporters.compression.is_none()
-        {
+        if self.compression.is_none() || self.exporters.compression.is_none() {
             return Err(AkitaError::InvalidInput(
                 "commitment route has no outer-compression state operation".into(),
             ));
@@ -657,19 +670,18 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<PortableCompressionState<F>, AkitaError> {
-        if self.components.mode != CommitmentExecutionMode::Full
-            || self.components.binding().relation_mode() != Some(relation_mode)
-            || self.components.binding().compression_plan() != Some(plan)
+        if self.mode != CommitmentExecutionMode::Full
+            || self.binding.relation_mode() != Some(relation_mode)
+            || self.binding.compression_plan() != Some(plan)
         {
             return Err(AkitaError::InvalidInput(
                 "resident commitment state does not match the requested compression mode".into(),
             ));
         }
-        let compression = self.components.compression.as_ref().ok_or_else(|| {
+        let compression = self.compression.as_ref().ok_or_else(|| {
             AkitaError::InvalidInput("resident commitment state omitted compression state".into())
         })?;
         let material = self
-            .components
             .exporters
             .compression
             .as_ref()
@@ -700,7 +712,22 @@ impl<F: Field> PortableCommitmentState<F> for AkitaCommitmentHint<F> {
 
 impl<F: Field> PortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn portable_hint(&self) -> Result<AkitaCommitmentHint<F>, AkitaError> {
-        export_portable(&self.components)
+        let rows = self.frozen_inner_material()?.rows().to_vec();
+        let compression = match self.compression.as_ref() {
+            Some(state) => Some(
+                self.exporters
+                    .compression
+                    .as_ref()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "commitment route has no portable compression exporter".into(),
+                        )
+                    })?
+                    .export_compression_state(state)?,
+            ),
+            None => None,
+        };
+        assemble_portable_hint(self.binding.clone(), self.mode, rows, compression)
     }
 }
 
@@ -712,7 +739,30 @@ impl<F: Field> IntoPortableCommitmentState<F> for AkitaCommitmentHint<F> {
 
 impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn into_portable_hint(self) -> Result<AkitaCommitmentHint<F>, AkitaError> {
-        into_portable(self.components)
+        let material = self.frozen_inner_material()?;
+        let Self {
+            binding,
+            mode,
+            inner,
+            compression,
+            exporters,
+        } = self;
+        drop(inner);
+        let compression = match compression {
+            Some(state) => Some(
+                exporters
+                    .compression
+                    .as_ref()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "commitment route has no portable compression exporter".into(),
+                        )
+                    })?
+                    .consume_compression_state(state)?,
+            ),
+            None => None,
+        };
+        assemble_portable_hint(binding, mode, material.into_rows(), compression)
     }
 }
 
@@ -720,9 +770,22 @@ impl<F: Field> CommitmentStatePolicy<F> for ResidentStatePolicy {
     type State = ResidentCommitmentState<F>;
 
     fn bind(&self, components: CommitmentStateComponents<F>) -> Result<Self::State, AkitaError> {
+        let CommitmentStateComponents {
+            mode,
+            image,
+            compression,
+            exporters,
+        } = components;
+        let binding = image.binding().clone();
         Ok(ResidentCommitmentState {
-            components,
-            inner_material: Arc::new(Mutex::new(None)),
+            binding,
+            mode,
+            inner: Arc::new(Mutex::new(ResidentInnerState {
+                image: Some(image),
+                material: None,
+            })),
+            compression,
+            exporters,
         })
     }
 }

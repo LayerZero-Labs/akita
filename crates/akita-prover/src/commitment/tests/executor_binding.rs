@@ -1,7 +1,7 @@
 use super::*;
 use crate::commitment::{
-    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, InnerRelationStateMaterial,
-    NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
+    CommitmentSource, DenseType, InnerCommitOperation, InnerImage, InnerRelationState,
+    InnerRelationStateMaterial, NoRetainedStatePolicy, ResolvedCommitSource, StateOwnerCapability,
 };
 use crate::{AkitaProverSetup, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -48,6 +48,30 @@ fn inner_relation_material_rejects_incomplete_exported_rows() {
     let short_row = RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap();
 
     assert!(InnerRelationStateMaterial::from_binding(&binding, vec![short_row]).is_err());
+}
+
+#[test]
+fn generic_inner_state_preflight_rejects_incomplete_material() {
+    struct MalformedState;
+
+    impl InnerRelationState<F> for MalformedState {
+        fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+            InnerRelationStateMaterial::from_rows(
+                64,
+                vec![RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap()],
+            )
+        }
+    }
+
+    let plan = crate::compute::CommitInnerPlan {
+        ring_dimension: 64,
+        num_live_blocks: 1,
+        n_a: 2,
+        num_positions_per_block: 1,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    assert!(MalformedState.preflight_inner_relation(&plan, 1).is_err());
 }
 
 struct ReboundInner {

@@ -281,6 +281,8 @@ pub struct ShortNormRepresentation<'a> {
     pub encoded_bytes: &'a [u8],
     /// Number of source-owned live coefficients.
     pub live_coefficient_len: usize,
+    /// Number of coefficients represented by the encoded payload.
+    pub stored_coefficient_len: usize,
     /// Commitment-aligned logical coefficient extent.
     pub physical_coefficient_len: usize,
     /// Stored two's-complement bit width.
@@ -297,35 +299,31 @@ impl<'a> ShortNormRepresentation<'a> {
     pub fn new(
         encoded_bytes: &'a [u8],
         live_coefficient_len: usize,
+        stored_coefficient_len: usize,
         physical_coefficient_len: usize,
         signed_bit_width: u8,
         negative_abs_max: u8,
         positive_max: u8,
     ) -> Result<Self, AkitaError> {
         ShortNormType::new(signed_bit_width)?;
-        if live_coefficient_len == 0 || live_coefficient_len > physical_coefficient_len {
+        if live_coefficient_len == 0
+            || live_coefficient_len > stored_coefficient_len
+            || stored_coefficient_len > physical_coefficient_len
+        {
             return Err(AkitaError::InvalidInput(
                 "packed short-norm extents are inconsistent".into(),
             ));
         }
-        let minimum_bits = checked::product([live_coefficient_len, usize::from(signed_bit_width)])
+        let stored_bits = checked::product([stored_coefficient_len, usize::from(signed_bit_width)])
             .ok_or_else(|| {
                 AkitaError::InvalidInput("packed short-norm bit length overflow".into())
             })?;
-        let maximum_bits =
-            checked::product([physical_coefficient_len, usize::from(signed_bit_width)])
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("packed short-norm bit length overflow".into())
-                })?;
-        let minimum_bytes = checked::div_ceil(minimum_bits, 8).ok_or_else(|| {
+        let stored_bytes = checked::div_ceil(stored_bits, 8).ok_or_else(|| {
             AkitaError::InvalidInput("packed short-norm byte length overflow".into())
         })?;
-        let maximum_bytes = checked::div_ceil(maximum_bits, 8).ok_or_else(|| {
-            AkitaError::InvalidInput("packed short-norm byte length overflow".into())
-        })?;
-        if !(minimum_bytes..=maximum_bytes).contains(&encoded_bytes.len()) {
+        if encoded_bytes.len() != stored_bytes {
             return Err(AkitaError::InvalidSize {
-                expected: maximum_bytes,
+                expected: stored_bytes,
                 actual: encoded_bytes.len(),
             });
         }
@@ -333,6 +331,7 @@ impl<'a> ShortNormRepresentation<'a> {
             crate::backend::packed_digits::PackedSignedDigitView::from_encoded(
                 encoded_bytes,
                 live_coefficient_len,
+                stored_coefficient_len,
                 physical_coefficient_len,
                 signed_bit_width,
                 negative_abs_max,
@@ -342,6 +341,7 @@ impl<'a> ShortNormRepresentation<'a> {
         Ok(Self {
             encoded_bytes,
             live_coefficient_len,
+            stored_coefficient_len,
             physical_coefficient_len,
             signed_bit_width,
             negative_abs_max,

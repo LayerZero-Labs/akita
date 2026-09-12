@@ -71,4 +71,30 @@ mod tests {
         assert_eq!(packed.to_i8_digits().len(), 2 * D);
         assert_eq!(packed.committed_coeff_len().unwrap(), 2 * D);
     }
+
+    #[test]
+    fn tensor_packed_extrema_in_physical_tail_are_admitted() {
+        type F = Prime32Offset99;
+        type E = FpExt4<F>;
+        const D: usize = 128;
+        let logical_len = D + <E as ExtField<F>>::DEGREE;
+        let mut digits = vec![0; logical_len];
+        digits[D + 1] = 3;
+        let witness = RecursiveWitnessFlat::from_i8_digits(digits);
+        let packed = tensor_pack_recursive_witness::<F, E, D>(&witness).unwrap();
+        let stored = packed.to_i8_digits();
+        assert!(stored[logical_len..].contains(&3));
+        let (bytes, width, negative, positive) = packed.packed_representation_parts();
+
+        crate::commitment::ShortNormRepresentation::new(
+            bytes,
+            packed.live_coeff_len(),
+            stored.len(),
+            packed.committed_coeff_len().unwrap(),
+            width,
+            negative,
+            positive,
+        )
+        .unwrap();
+    }
 }

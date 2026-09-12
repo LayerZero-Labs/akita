@@ -2,7 +2,9 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
-use crate::commitment::{InnerRelationState, OuterCompressionState, PortableCompressionState};
+use crate::commitment::{
+    CommitmentExecutionPlan, InnerRelationState, OuterCompressionState, PortableCompressionState,
+};
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, DigitRowsComputeBackend,
     OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource,
@@ -439,11 +441,16 @@ impl RingRelationProver {
         }
         let mut inner_relation_material = Vec::with_capacity(num_groups);
         for group_index in 0..num_groups {
-            inner_relation_material.push(
-                block_claims
-                    .group_state(group_index)?
-                    .inner_relation_material()?,
-            );
+            let group = lp.group_params(&opening_batch, group_index)?;
+            let plan = CommitmentExecutionPlan::for_root(&group.profile)?;
+            let material = block_claims
+                .group_state(group_index)?
+                .inner_relation_material()?;
+            material.validate(
+                plan.inner(),
+                opening_batch.group_layout(group_index)?.num_polynomials(),
+            )?;
+            inner_relation_material.push(material);
         }
         let relation_geometry =
             akita_types::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
