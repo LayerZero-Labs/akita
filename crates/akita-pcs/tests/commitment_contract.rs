@@ -13,8 +13,8 @@ use akita_prover::commitment::{
     AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionPlan,
     CommitmentExecutor, CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType,
     InnerRelationState, NoRetainedStatePolicy, OuterCompressionState, PolynomialRepresentation,
-    PolynomialType, PolynomialTypeSelection, PortableCommitmentState, PortableCompressionState,
-    PortableStatePolicy, ResidentStatePolicy,
+    PolynomialType, PolynomialTypeSelection, PortableCommitmentState, PortableStatePolicy,
+    ResidentStatePolicy,
 };
 use akita_prover::compute::{CommitInnerPlan, ComputeBackendSetup};
 use akita_prover::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
@@ -243,30 +243,8 @@ fn run_custom_commit_source_contract() {
         .prover_state
         .outer_compression_material(compression_plan, params.ring_relation_mode)
         .expect("resident outer relation");
-    match (portable_outer, resident_outer) {
-        (
-            PortableCompressionState::QuotientLift {
-                witness: portable_witness,
-                quotients: portable_quotients,
-            },
-            PortableCompressionState::QuotientLift {
-                witness: resident_witness,
-                quotients: resident_quotients,
-            },
-        ) => {
-            assert_eq!(portable_witness, resident_witness);
-            assert_eq!(portable_quotients, resident_quotients);
-        }
-        (
-            PortableCompressionState::ReducedEvaluation {
-                witness: portable_witness,
-            },
-            PortableCompressionState::ReducedEvaluation {
-                witness: resident_witness,
-            },
-        ) => assert_eq!(portable_witness, resident_witness),
-        _ => panic!("portable and resident compression relations disagree"),
-    }
+    assert_eq!(portable_outer.witness(), resident_outer.witness());
+    assert_eq!(portable_outer.quotients(), resident_outer.quotients());
     assert_eq!(
         resident_output
             .prover_state

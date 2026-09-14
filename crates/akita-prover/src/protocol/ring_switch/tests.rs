@@ -474,11 +474,11 @@ fn retained_compression_digits(
             [
                 (
                     f_span.clone(),
-                    expected_packed_digits(&f_span, &outer.witness.stages()[layer.map_index()]),
+                    expected_packed_digits(&f_span, &outer.witness().stages()[layer.map_index()]),
                 ),
                 (
                     h_span.clone(),
-                    expected_packed_digits(&h_span, &opening.witness.stages()[layer.map_index()]),
+                    expected_packed_digits(&h_span, &opening.witness().stages()[layer.map_index()]),
                 ),
             ]
         })
@@ -525,9 +525,8 @@ fn compressed_reduced_ring_switch_keeps_quotient_paths_cold() {
         let outer_source = CompressionSourceWitness::from_outer_state(
             0,
             &outer_plan,
-            crate::commitment::PortableCompressionState::ReducedEvaluation {
-                witness: outer_output.witness,
-            },
+            crate::commitment::PortableCompressionState::reduced_evaluation(outer_output.witness)
+                .unwrap(),
             outer_output.terminal.coefficients().to_vec(),
             RingRelationMode::ReducedEvaluation,
         )

@@ -448,22 +448,20 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         .prover_state()
         .outer_compression_material(compression_plan, params.ring_relation_mode)
         .unwrap();
-    match (expected_compression, actual_compression) {
-        (
-            PortableCompressionState::QuotientLift {
-                witness: expected_witness,
-                quotients: expected_quotients,
-            },
-            PortableCompressionState::QuotientLift {
-                witness: actual_witness,
-                quotients: actual_quotients,
-            },
-        ) => {
-            assert_eq!(actual_witness, expected_witness);
-            assert_eq!(actual_quotients, expected_quotients);
-        }
-        _ => panic!("root fixture must retain quotient-lift compression state"),
-    }
+    let repeated_compression = actual
+        .prover_state()
+        .outer_compression_material(compression_plan, params.ring_relation_mode)
+        .unwrap();
+    assert!(actual_compression.shares_allocation_with(&repeated_compression));
+    assert_eq!(
+        actual.prover_state().retained_bytes().unwrap(),
+        retained_before_freeze
+    );
+    assert_eq!(actual_compression.witness(), expected_compression.witness());
+    assert_eq!(
+        actual_compression.quotients(),
+        expected_compression.quotients()
+    );
     assert_eq!(
         events.lock().unwrap().as_slice(),
         [
@@ -472,7 +470,6 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
             FusedEvent::DeviceBBegin,
             FusedEvent::HostResult,
             FusedEvent::InnerStateConsumed,
-            FusedEvent::CompressionStateConsumed,
             FusedEvent::CompressionStateConsumed,
         ]
     );
@@ -643,4 +640,55 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
             FusedEvent::HostResult,
         ]
     );
+
+    struct InnerOnlyContext;
+    let mut inner_only_builder =
+        CommitmentExecutorBuilder::new(setup.expanded.as_ref(), NoRetainedStatePolicy);
+    let ensures = Arc::new(AtomicUsize::new(0));
+    let context = inner_only_builder
+        .operation_context(
+            inner_only_builder.issue_backend_instance(),
+            "inner-only",
+            counting_resources(
+                &backend,
+                &prepared,
+                setup.expanded.as_ref(),
+                ensures.clone(),
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(Vec::new())),
+            ),
+        )
+        .unwrap();
+    inner_only_builder
+        .register_inner(
+            PreparedInnerCommitment::new(
+                inner.clone(),
+                inner.owner().clone(),
+                context,
+                CommitmentRequestCapabilities::split::<InnerOnlyContext>(
+                    BackendKindId::of::<CpuBackend>("inner-only").unwrap(),
+                    vec![PolynomialType::Dense(DenseType::Coefficients)],
+                ),
+                StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let inner_only_executor = inner_only_builder.build().unwrap();
+    let requirement = plan
+        .inner_ntt_requirement(PolynomialType::Dense(DenseType::Coefficients))
+        .unwrap()
+        .unwrap();
+    assert!(inner_only_executor
+        .prewarm_routed_requirement(RoutedNttRequirement {
+            fold_level: requirement.fold_level(),
+            cluster: NttOperationCluster::Commit,
+            commitment_stage: Some(requirement.stage()),
+            commitment_route: Some(requirement.route()),
+            key: requirement.key(),
+            routing_extent: requirement.routing_extent(),
+        })
+        .is_err());
+    assert_eq!(ensures.load(Ordering::SeqCst), 0);
 }

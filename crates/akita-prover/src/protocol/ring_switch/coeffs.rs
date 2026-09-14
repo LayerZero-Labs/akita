@@ -752,7 +752,7 @@ fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
     };
     let packed = compression
         .source(source)?
-        .witness
+        .witness()
         .stages()
         .get(map_index)
         .ok_or(AkitaError::InvalidProof)?;

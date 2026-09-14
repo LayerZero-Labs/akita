@@ -2,7 +2,7 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
-use crate::commitment::{InnerRelationState, OuterCompressionState, PortableCompressionState};
+use crate::commitment::{InnerRelationState, OuterCompressionState};
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, DigitRowsComputeBackend,
     OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource,
@@ -483,11 +483,8 @@ impl RingRelationProver {
                             "prepared commitment material omitted compression state".into(),
                         )
                     })?;
-                let witness = match &retained {
-                    PortableCompressionState::QuotientLift { witness, .. }
-                    | PortableCompressionState::ReducedEvaluation { witness } => witness,
-                };
-                let source = witness
+                let source = retained
+                    .witness()
                     .stages()
                     .first()
                     .ok_or(AkitaError::InvalidProof)?
@@ -754,7 +751,7 @@ impl RingRelationProver {
             })?;
             let opening_source = compression.source(CompressionSourceId::Opening)?;
             let opening_terminal_ring_dim = opening_source
-                .witness
+                .witness()
                 .plan()
                 .maps()
                 .last()

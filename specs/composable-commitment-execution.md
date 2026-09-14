@@ -338,6 +338,15 @@ clones, terminal transcript binding, relation construction, and portable export
 observe identical material even when a custom exporter is stateful. The
 backend image and frozen host image are never retained at the same time.
 
+Resident compression follows the same ownership transition. The first
+compression-relation request consumes the opaque backend state, validates the
+relation mode, chain plan, and quotient geometry, and replaces it with one
+shared immutable material allocation. The resident state and the material
+carried to the following fold share that allocation; they do not retain a
+backend image beside a copied portable image. Portable hints perform borrowed
+shape and packed-byte preflight and build owned compression material only once
+at the proof preparation boundary.
+
 If consuming export or validation fails, the resident state enters an explicit
 failed state. Later access reports that failed lifecycle state instead of
 treating an absent image as fresh state.

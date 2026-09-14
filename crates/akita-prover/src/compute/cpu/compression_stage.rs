@@ -67,17 +67,12 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
                 Some(RingRelationMode::QuotientLift),
                 CompressionRelationOutput::QuotientLift { quotients },
             ) if quotients.len() == retained.witness.plan().maps().len() => {
-                Ok(PortableCompressionState::QuotientLift {
-                    witness: retained.witness.clone(),
-                    quotients: quotients.clone(),
-                })
+                PortableCompressionState::quotient_lift(retained.witness.clone(), quotients.clone())
             }
             (
                 Some(RingRelationMode::ReducedEvaluation),
                 CompressionRelationOutput::ReducedEvaluation,
-            ) => Ok(PortableCompressionState::ReducedEvaluation {
-                witness: retained.witness.clone(),
-            }),
+            ) => PortableCompressionState::reduced_evaluation(retained.witness.clone()),
             _ => Err(AkitaError::InvalidInput(
                 "CPU compression state disagrees with its bound relation mode".into(),
             )),
@@ -95,17 +90,12 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
                     Some(RingRelationMode::QuotientLift),
                     CompressionRelationOutput::QuotientLift { quotients },
                 ) if quotients.len() == retained.witness.plan().maps().len() => {
-                    Ok(PortableCompressionState::QuotientLift {
-                        witness: retained.witness,
-                        quotients,
-                    })
+                    PortableCompressionState::quotient_lift(retained.witness, quotients)
                 }
                 (
                     Some(RingRelationMode::ReducedEvaluation),
                     CompressionRelationOutput::ReducedEvaluation,
-                ) => Ok(PortableCompressionState::ReducedEvaluation {
-                    witness: retained.witness,
-                }),
+                ) => PortableCompressionState::reduced_evaluation(retained.witness),
                 _ => Err(AkitaError::InvalidInput(
                     "CPU compression state disagrees with its bound relation mode".into(),
                 )),
@@ -287,19 +277,12 @@ mod tests {
                 .portable_exporter()
                 .export_compression_state(output.state())
                 .unwrap();
-            match (mode, exported) {
-                (
-                    RingRelationMode::ReducedEvaluation,
-                    PortableCompressionState::ReducedEvaluation { witness },
-                ) => assert_eq!(witness.plan(), &plan),
-                (
-                    RingRelationMode::QuotientLift,
-                    PortableCompressionState::QuotientLift { witness, quotients },
-                ) => {
-                    assert_eq!(witness.plan(), &plan);
-                    assert_eq!(quotients.len(), plan.maps().len());
+            assert_eq!(exported.witness().plan(), &plan);
+            match mode {
+                RingRelationMode::ReducedEvaluation => assert!(exported.quotients().is_none()),
+                RingRelationMode::QuotientLift => {
+                    assert_eq!(exported.quotients().unwrap().len(), plan.maps().len());
                 }
-                _ => panic!("portable compression state used the wrong relation variant"),
             }
         }
     }

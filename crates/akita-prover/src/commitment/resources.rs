@@ -426,33 +426,33 @@ where
         route: CommitmentNttRoute,
         stage: CommitmentNttStage,
     ) -> Result<&StageResources<'a, F>, AkitaError> {
-        if route == CommitmentNttRoute::InnerOuter {
-            if let Some(fused) = self.fused() {
-                return Ok(&fused.stage.resources);
+        match route {
+            CommitmentNttRoute::InnerOnly => match stage {
+                CommitmentNttStage::Inner => self
+                    .inner()
+                    .map(|inner| &inner.stage.resources)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("commitment route has no inner resources".into())
+                    }),
+                CommitmentNttStage::Outer => Err(AkitaError::InvalidSetup(
+                    "inner-only route cannot request outer resources".into(),
+                )),
+            },
+            CommitmentNttRoute::InnerOuter => {
+                if let Some(fused) = self.fused() {
+                    return Ok(&fused.stage.resources);
+                }
+                let inner = self.inner().ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment route has no inner operation".into())
+                })?;
+                let outer = self.outer().ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment route has no outer operation".into())
+                })?;
+                Ok(match stage {
+                    CommitmentNttStage::Inner => &inner.stage.resources,
+                    CommitmentNttStage::Outer => &outer.stage.resources,
+                })
             }
-        }
-        match (route, stage) {
-            (CommitmentNttRoute::InnerOnly, CommitmentNttStage::Inner) => self
-                .inner()
-                .map(|inner| &inner.stage.resources)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment route has no inner resources".into())
-                }),
-            (CommitmentNttRoute::InnerOnly, CommitmentNttStage::Outer) => Err(
-                AkitaError::InvalidSetup("inner-only route cannot request outer resources".into()),
-            ),
-            (CommitmentNttRoute::InnerOuter, CommitmentNttStage::Inner) => self
-                .inner()
-                .map(|inner| &inner.stage.resources)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment route has no inner resources".into())
-                }),
-            (CommitmentNttRoute::InnerOuter, CommitmentNttStage::Outer) => self
-                .outer()
-                .map(|outer| &outer.stage.resources)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment route has no outer resources".into())
-                }),
         }
     }
 

@@ -603,7 +603,7 @@ where
             RingVec::from_coeffs(
                 compression
                     .source(CompressionSourceId::Outer { group_index })?
-                    .witness
+                    .witness()
                     .stages()
                     .first()
                     .ok_or(AkitaError::InvalidProof)?

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
-    COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+    CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, RingRelationMode,
+    COMPRESSION_MAP_COUNT, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 
 fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
@@ -196,8 +196,51 @@ impl<F: Field> AkitaCommitmentHint<F> {
         &self,
         plan: &CompressionChainPlan,
     ) -> Result<(), AkitaError> {
-        self.outer_compression_witness(plan)?;
-        self.outer_compression_quotients(plan).map(|_| ())
+        self.validate_outer_compression_mode(plan, RingRelationMode::QuotientLift)
+    }
+
+    /// Validate retained compression shapes and packed bytes without rebuilding them.
+    pub fn validate_outer_compression_mode(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
+        if self.outer_compression_stages.len() != plan.maps().len() {
+            return Err(AkitaError::InvalidInput(
+                "commitment hint compression stage count disagrees with the derived plan".into(),
+            ));
+        }
+        for (bytes, map) in self.outer_compression_stages.iter().zip(plan.maps()) {
+            PackedNegativeBinary::validate_bytes(*map, bytes)?;
+        }
+        match relation_mode {
+            RingRelationMode::QuotientLift => {
+                if self.outer_compression_quotients.len() != plan.maps().len() {
+                    return Err(AkitaError::InvalidInput(
+                        "commitment hint compression quotient count disagrees with the derived plan"
+                            .into(),
+                    ));
+                }
+                for (quotient, map) in self.outer_compression_quotients.iter().zip(plan.maps()) {
+                    if quotient.ring_dim() != map.ring_dimension()
+                        || quotient.coeff_len() != map.output_coefficients()
+                    {
+                        return Err(AkitaError::InvalidInput(
+                            "commitment hint compression quotient shape disagrees with the derived plan"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+            RingRelationMode::ReducedEvaluation => {
+                if !self.outer_compression_quotients.is_empty() {
+                    return Err(AkitaError::InvalidInput(
+                        "reduced commitment hint must not retain compression quotient rows".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Consume the hint and return semantic A rows in polynomial order.
@@ -628,6 +671,11 @@ mod tests {
             &quotients,
         )
         .unwrap();
+        hint.validate_outer_compression_mode(&plan, RingRelationMode::QuotientLift)
+            .unwrap();
+        assert!(hint
+            .validate_outer_compression_mode(&plan, RingRelationMode::ReducedEvaluation)
+            .is_err());
         assert!(hint.reduced_outer_compression_witness(&plan).is_err());
 
         let mut encoded = Vec::new();
@@ -656,6 +704,9 @@ mod tests {
 
         let mut wrong_length = hint;
         wrong_length.outer_compression_stages[0].pop();
+        assert!(wrong_length
+            .validate_outer_compression_mode(&plan, RingRelationMode::QuotientLift)
+            .is_err());
         assert!(wrong_length.outer_compression_witness(&plan).is_err());
     }
 
@@ -673,6 +724,11 @@ mod tests {
         let hint =
             AkitaCommitmentHint::singleton_with_reduced_outer_compression(rows(10, 8, 4), &witness)
                 .unwrap();
+        hint.validate_outer_compression_mode(&plan, RingRelationMode::ReducedEvaluation)
+            .unwrap();
+        assert!(hint
+            .validate_outer_compression_mode(&plan, RingRelationMode::QuotientLift)
+            .is_err());
 
         let mut encoded = Vec::new();
         hint.serialize_uncompressed(&mut encoded).unwrap();

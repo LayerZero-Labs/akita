@@ -11,8 +11,13 @@ use jolt_field::Field;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
-/// Canonical host material exported from one retained compression state.
-pub enum PortableCompressionState<F: Field> {
+/// Canonical shared host material exported from one retained compression state.
+#[derive(Clone)]
+pub struct PortableCompressionState<F: Field> {
+    material: Arc<PortableCompressionMaterial<F>>,
+}
+
+enum PortableCompressionMaterial<F: Field> {
     /// Packed witness and one quotient image per compression map.
     QuotientLift {
         /// Checked packed compression witness.
@@ -28,13 +33,60 @@ pub enum PortableCompressionState<F: Field> {
 }
 
 impl<F: Field> PortableCompressionState<F> {
+    /// Construct checked quotient-lift compression material.
+    pub fn quotient_lift(
+        witness: CompressionChainWitness,
+        quotients: Vec<RingVec<F>>,
+    ) -> Result<Self, AkitaError> {
+        let material = Self {
+            material: Arc::new(PortableCompressionMaterial::QuotientLift { witness, quotients }),
+        };
+        let plan = material.witness().plan().clone();
+        material.validate(&plan, RingRelationMode::QuotientLift)?;
+        Ok(material)
+    }
+
+    /// Construct checked reduced-evaluation compression material.
+    pub fn reduced_evaluation(witness: CompressionChainWitness) -> Result<Self, AkitaError> {
+        let material = Self {
+            material: Arc::new(PortableCompressionMaterial::ReducedEvaluation { witness }),
+        };
+        let plan = material.witness().plan().clone();
+        material.validate(&plan, RingRelationMode::ReducedEvaluation)?;
+        Ok(material)
+    }
+
+    /// Borrow the checked compression-chain witness.
+    pub fn witness(&self) -> &CompressionChainWitness {
+        match self.material.as_ref() {
+            PortableCompressionMaterial::QuotientLift { witness, .. }
+            | PortableCompressionMaterial::ReducedEvaluation { witness } => witness,
+        }
+    }
+
+    /// Borrow quotient rows when the material uses quotient-lift relations.
+    pub fn quotients(&self) -> Option<&[RingVec<F>]> {
+        match self.material.as_ref() {
+            PortableCompressionMaterial::QuotientLift { quotients, .. } => Some(quotients),
+            PortableCompressionMaterial::ReducedEvaluation { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_allocation_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.material, &other.material)
+    }
+
     pub(crate) fn validate(
         &self,
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<(), AkitaError> {
-        let valid = match (self, relation_mode) {
-            (Self::QuotientLift { witness, quotients }, RingRelationMode::QuotientLift) => {
+        let valid = match (self.material.as_ref(), relation_mode) {
+            (
+                PortableCompressionMaterial::QuotientLift { witness, quotients },
+                RingRelationMode::QuotientLift,
+            ) => {
                 witness.plan() == plan
                     && quotients.len() == plan.maps().len()
                     && quotients.iter().zip(plan.maps()).all(|(quotient, map)| {
@@ -42,9 +94,10 @@ impl<F: Field> PortableCompressionState<F> {
                             && quotient.coeff_len() == map.output_coefficients()
                     })
             }
-            (Self::ReducedEvaluation { witness }, RingRelationMode::ReducedEvaluation) => {
-                witness.plan() == plan
-            }
+            (
+                PortableCompressionMaterial::ReducedEvaluation { witness },
+                RingRelationMode::ReducedEvaluation,
+            ) => witness.plan() == plan,
             _ => false,
         };
         if !valid {
@@ -53,6 +106,30 @@ impl<F: Field> PortableCompressionState<F> {
             ));
         }
         Ok(())
+    }
+
+    fn retained_bytes(&self) -> Result<usize, AkitaError> {
+        let quotient_coefficients = match self.quotients() {
+            Some(quotients) => akita_error::checked::sum(quotients.iter().map(RingVec::coeff_len))
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("compression material retained bytes overflow".into())
+                })?,
+            None => 0,
+        };
+        self.witness()
+            .retained_bytes()?
+            .checked_add(
+                quotient_coefficients
+                    .checked_mul(size_of::<F>())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "compression material retained bytes overflow".into(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("compression material retained bytes overflow".into())
+            })
     }
 }
 
@@ -214,26 +291,38 @@ fn assemble_portable_hint<F: Field>(
                     "compressed portable state omitted compression material".into(),
                 )
             })?;
-            match (binding.relation_mode(), compression) {
-                (
-                    Some(RingRelationMode::QuotientLift),
-                    PortableCompressionState::QuotientLift { witness, quotients },
-                ) => AkitaCommitmentHint::new_with_outer_compression(
+            let relation_mode = binding.relation_mode().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "compressed portable state omitted its relation mode".into(),
+                )
+            })?;
+            let compression_plan = binding.compression_plan().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "compressed portable state omitted its compression plan".into(),
+                )
+            })?;
+            compression.validate(compression_plan, relation_mode)?;
+            match relation_mode {
+                RingRelationMode::QuotientLift => AkitaCommitmentHint::new_with_outer_compression(
                     binding.inner_plan().ring_dimension,
                     rows,
-                    &witness,
-                    &quotients,
+                    compression.witness(),
+                    compression.quotients().ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "portable compression export omitted quotient rows".into(),
+                        )
+                    })?,
                 ),
-                (
-                    Some(RingRelationMode::ReducedEvaluation),
-                    PortableCompressionState::ReducedEvaluation { witness },
-                ) => {
+                RingRelationMode::ReducedEvaluation if compression.quotients().is_none() => {
                     let [row] = rows.try_into().map_err(|_: Vec<_>| {
                         AkitaError::InvalidInput(
                             "reduced portable commitment state must contain one source".into(),
                         )
                     })?;
-                    AkitaCommitmentHint::singleton_with_reduced_outer_compression(row, &witness)
+                    AkitaCommitmentHint::singleton_with_reduced_outer_compression(
+                        row,
+                        compression.witness(),
+                    )
                 }
                 _ => Err(AkitaError::InvalidInput(
                     "portable compression export disagrees with the bound relation mode".into(),
@@ -296,13 +385,19 @@ pub struct ResidentCommitmentState<F: Field> {
     binding: CommitmentStateBinding,
     mode: CommitmentExecutionMode,
     inner: Arc<Mutex<ResidentInnerState<F>>>,
-    compression: Option<BackendStateRef<CompressionState>>,
+    compression: Option<Arc<Mutex<ResidentCompressionState<F>>>>,
     exporters: CommitmentStateExporters<F>,
 }
 
 enum ResidentInnerState<F: Field> {
     Image(BackendStateRef<InnerImage>),
     Material(InnerRelationStateMaterial<F>),
+    Failed,
+}
+
+enum ResidentCompressionState<F: Field> {
+    Image(BackendStateRef<CompressionState>),
+    Material(PortableCompressionState<F>),
     Failed,
 }
 
@@ -332,10 +427,25 @@ impl<F: Field> ResidentCommitmentState<F> {
                 ));
             }
         };
-        let compression_bytes = self
-            .compression
-            .as_ref()
-            .map_or(0, BackendStateRef::retained_bytes);
+        let compression_bytes = match self.compression.as_ref() {
+            Some(compression) => {
+                let compression = compression.lock().map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "resident compression material lock is poisoned".into(),
+                    )
+                })?;
+                match &*compression {
+                    ResidentCompressionState::Image(image) => image.retained_bytes(),
+                    ResidentCompressionState::Material(material) => material.retained_bytes()?,
+                    ResidentCompressionState::Failed => {
+                        return Err(AkitaError::InvalidInput(
+                            "resident compression state export previously failed".into(),
+                        ));
+                    }
+                }
+            }
+            None => 0,
+        };
         akita_error::checked::sum([inner_bytes, compression_bytes]).ok_or_else(|| {
             AkitaError::InvalidInput("resident commitment retained-byte total overflow".into())
         })
@@ -371,6 +481,49 @@ impl<F: Field> ResidentCommitmentState<F> {
         let material = InnerRelationStateMaterial::from_binding(&self.binding, rows)?;
         *inner = ResidentInnerState::Material(material.clone());
         Ok(material)
+    }
+
+    fn frozen_compression_material(
+        &self,
+    ) -> Result<Option<PortableCompressionState<F>>, AkitaError> {
+        let Some(compression) = self.compression.as_ref() else {
+            return Ok(None);
+        };
+        let mut compression = compression.lock().map_err(|_| {
+            AkitaError::InvalidInput("resident compression material lock is poisoned".into())
+        })?;
+        let image = match std::mem::replace(&mut *compression, ResidentCompressionState::Failed) {
+            ResidentCompressionState::Image(image) => image,
+            ResidentCompressionState::Material(material) => {
+                let result = material.clone();
+                *compression = ResidentCompressionState::Material(material);
+                return Ok(Some(result));
+            }
+            ResidentCompressionState::Failed => {
+                return Err(AkitaError::InvalidInput(
+                    "resident compression state export previously failed".into(),
+                ));
+            }
+        };
+        let material = self
+            .exporters
+            .compression
+            .as_ref()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "commitment route has no outer-compression state operation".into(),
+                )
+            })?
+            .consume_compression_state(image)?;
+        let plan = self.binding.compression_plan().ok_or_else(|| {
+            AkitaError::InvalidInput("resident compression state omitted its chain plan".into())
+        })?;
+        let relation_mode = self.binding.relation_mode().ok_or_else(|| {
+            AkitaError::InvalidInput("resident compression state omitted its relation mode".into())
+        })?;
+        material.validate(plan, relation_mode)?;
+        *compression = ResidentCompressionState::Material(material.clone());
+        Ok(Some(material))
     }
 }
 
@@ -598,8 +751,7 @@ where
         plan: &CompressionChainPlan,
         relation_mode: RingRelationMode,
     ) -> Result<(), AkitaError> {
-        self.outer_compression_material(plan, relation_mode)
-            .map(drop)
+        self.validate_outer_compression_mode(plan, relation_mode)
     }
 
     fn outer_compression_material(
@@ -608,15 +760,13 @@ where
         relation_mode: RingRelationMode,
     ) -> Result<PortableCompressionState<F>, AkitaError> {
         match relation_mode {
-            RingRelationMode::QuotientLift => Ok(PortableCompressionState::QuotientLift {
-                witness: self.outer_compression_witness(plan)?,
-                quotients: self.outer_compression_quotients(plan)?,
-            }),
-            RingRelationMode::ReducedEvaluation => {
-                Ok(PortableCompressionState::ReducedEvaluation {
-                    witness: self.reduced_outer_compression_witness(plan)?,
-                })
-            }
+            RingRelationMode::QuotientLift => PortableCompressionState::quotient_lift(
+                self.outer_compression_witness(plan)?,
+                self.outer_compression_quotients(plan)?,
+            ),
+            RingRelationMode::ReducedEvaluation => PortableCompressionState::reduced_evaluation(
+                self.reduced_outer_compression_witness(plan)?,
+            ),
         }
     }
 }
@@ -656,19 +806,9 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
                 "resident commitment state does not match the requested compression mode".into(),
             ));
         }
-        let compression = self.compression.as_ref().ok_or_else(|| {
+        let material = self.frozen_compression_material()?.ok_or_else(|| {
             AkitaError::InvalidInput("resident commitment state omitted compression state".into())
         })?;
-        let material = self
-            .exporters
-            .compression
-            .as_ref()
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "commitment route has no outer-compression state operation".into(),
-                )
-            })?
-            .export_compression_state(compression)?;
         material.validate(plan, relation_mode)?;
         Ok(material)
     }
@@ -683,20 +823,7 @@ impl<F: Field> PortableCommitmentState<F> for AkitaCommitmentHint<F> {
 impl<F: Field> PortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn portable_hint(&self) -> Result<AkitaCommitmentHint<F>, AkitaError> {
         let rows = self.frozen_inner_material()?.rows().to_vec();
-        let compression = match self.compression.as_ref() {
-            Some(state) => Some(
-                self.exporters
-                    .compression
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "commitment route has no portable compression exporter".into(),
-                        )
-                    })?
-                    .export_compression_state(state)?,
-            ),
-            None => None,
-        };
+        let compression = self.frozen_compression_material()?;
         assemble_portable_hint(self.binding.clone(), self.mode, rows, compression)
     }
 }
@@ -710,6 +837,7 @@ impl<F: Field> IntoPortableCommitmentState<F> for AkitaCommitmentHint<F> {
 impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
     fn into_portable_hint(self) -> Result<AkitaCommitmentHint<F>, AkitaError> {
         let material = self.frozen_inner_material()?;
+        let compression_material = self.frozen_compression_material()?;
         let Self {
             binding,
             mode,
@@ -718,21 +846,9 @@ impl<F: Field> IntoPortableCommitmentState<F> for ResidentCommitmentState<F> {
             exporters,
         } = self;
         drop(inner);
-        let compression = match compression {
-            Some(state) => Some(
-                exporters
-                    .compression
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "commitment route has no portable compression exporter".into(),
-                        )
-                    })?
-                    .consume_compression_state(state)?,
-            ),
-            None => None,
-        };
-        assemble_portable_hint(binding, mode, material.into_rows(), compression)
+        drop(compression);
+        drop(exporters);
+        assemble_portable_hint(binding, mode, material.into_rows(), compression_material)
     }
 }
 
@@ -751,7 +867,8 @@ impl<F: Field> CommitmentStatePolicy<F> for ResidentStatePolicy {
             binding,
             mode,
             inner: Arc::new(Mutex::new(ResidentInnerState::Image(image))),
-            compression,
+            compression: compression
+                .map(|state| Arc::new(Mutex::new(ResidentCompressionState::Image(state)))),
             exporters,
         })
     }
