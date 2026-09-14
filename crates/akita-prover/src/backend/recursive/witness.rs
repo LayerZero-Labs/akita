@@ -109,8 +109,8 @@ impl RecursiveWitnessFlat {
         self.digits.decode()
     }
 
-    pub(crate) fn packed_digits(&self) -> PackedSignedDigits {
-        self.digits.clone()
+    pub(crate) fn packed_digits(&self) -> &PackedSignedDigits {
+        &self.digits
     }
 
     #[cfg(feature = "response-model-diagnostics")]
@@ -150,13 +150,6 @@ impl RecursiveWitnessFlat {
             bounds.negative_abs_max(),
             bounds.positive_max(),
         )
-    }
-
-    pub(crate) fn packed_commitment_view(
-        &self,
-        physical_len: usize,
-    ) -> Result<PackedSignedDigitView<'_>, AkitaError> {
-        self.digits.zero_padded(physical_len)
     }
 
     #[cfg(test)]

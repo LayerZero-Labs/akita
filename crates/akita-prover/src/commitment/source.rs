@@ -349,6 +349,35 @@ impl<'a> ShortNormRepresentation<'a> {
             packed_view,
         })
     }
+
+    /// Borrow Akita-owned packed digits whose exact bounds were established
+    /// while their immutable storage was built.
+    pub(crate) fn from_validated_packed(
+        digits: &'a crate::backend::packed_digits::PackedSignedDigits,
+        live_coefficient_len: usize,
+        physical_coefficient_len: usize,
+    ) -> Result<Self, AkitaError> {
+        let stored_coefficient_len = digits.len();
+        if live_coefficient_len == 0
+            || live_coefficient_len > stored_coefficient_len
+            || stored_coefficient_len > physical_coefficient_len
+        {
+            return Err(AkitaError::InvalidInput(
+                "packed short-norm extents are inconsistent".into(),
+            ));
+        }
+        let bounds = digits.bounds();
+        Ok(Self {
+            encoded_bytes: digits.encoded_bytes(),
+            live_coefficient_len,
+            stored_coefficient_len,
+            physical_coefficient_len,
+            signed_bit_width: digits.bit_width(),
+            negative_abs_max: bounds.negative_abs_max(),
+            positive_max: bounds.positive_max(),
+            packed_view: Some(digits.zero_padded(physical_coefficient_len)?),
+        })
+    }
 }
 
 /// Borrowed one-hot chunk indices at their stored width.

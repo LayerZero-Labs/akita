@@ -166,6 +166,10 @@ fn recursive_source_exposes_packed_short_norm_without_decoding() {
     assert_eq!(representation.negative_abs_max, 2);
     assert_eq!(representation.positive_max, 3);
     assert!(!representation.encoded_bytes.is_empty());
+    assert!(representation
+        .packed_view
+        .expect("built-in packed view")
+        .uses_vector_safe_storage());
 }
 
 struct CountingSource {

@@ -484,6 +484,11 @@ impl<'a> PackedSignedDigitView<'a> {
         self.len.div_ceil(DIGITS_PER_BLOCK)
     }
 
+    #[cfg(test)]
+    pub(crate) fn uses_vector_safe_storage(self) -> bool {
+        self.vector_safe
+    }
+
     pub(crate) fn bounds(self) -> SignedDigitBounds {
         self.bounds
     }

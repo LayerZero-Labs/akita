@@ -213,20 +213,13 @@ impl<F: Field> CommitmentSource<F> for crate::RecursiveWitnessFlat {
                 "short-norm source received an unadvertised representation selection".into(),
             ));
         }
-        let (encoded_bytes, signed_bit_width, negative_abs_max, positive_max) =
-            self.packed_representation_parts();
         let physical_coefficient_len =
             <Self as CommitmentSource<F>>::descriptor(self)?.total_coefficient_len();
-        let mut representation = ShortNormRepresentation::new(
-            encoded_bytes,
+        let representation = ShortNormRepresentation::from_validated_packed(
+            self.packed_digits(),
             self.live_coeff_len(),
-            self.digits().len(),
             physical_coefficient_len,
-            signed_bit_width,
-            negative_abs_max,
-            positive_max,
         )?;
-        representation.packed_view = Some(self.packed_commitment_view(physical_coefficient_len)?);
         Ok(PolynomialRepresentation::ShortNorm(representation))
     }
 }
