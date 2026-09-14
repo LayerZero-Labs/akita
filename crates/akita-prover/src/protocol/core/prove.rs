@@ -2,7 +2,6 @@ use super::*;
 use crate::backend::RecursiveFoldSource;
 use crate::commitment::{
     CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
-    TerminalBindingState,
 };
 use crate::compute::{
     prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -63,9 +62,7 @@ where
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     SP: CommitmentStatePolicy<Cfg::Field> + 'a,
-    SP::State: InnerRelationState<Cfg::Field>
-        + OuterCompressionState<Cfg::Field>
-        + TerminalBindingState<Cfg::Field>,
+    SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -119,17 +116,20 @@ where
             )?;
         }
     }
+    let commitment_material = claims.prepare_commitment_relation_material(
+        &schedule.root.params,
+        Cfg::EXT_DEGREE,
+        None,
+    )?;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        let fold_level = index
-            .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?;
-        let plan = CommitmentExecutionPlan::for_recursive(&step.params, fold_level, 1)?;
+        let plan = CommitmentExecutionPlan::for_recursive(&step.params, index, 1)?;
         stacks
             .prove_stack_at_level(index)
             .commitment()
             .preflight_prover_state_consumers(&plan)?;
     }
-    let terminal_plan = CommitmentExecutionPlan::for_terminal(&schedule.terminal)?;
+    let terminal_plan =
+        CommitmentExecutionPlan::for_terminal(&schedule.terminal, schedule.recursive_folds.len())?;
     stacks
         .prove_stack_at_level(schedule.recursive_folds.len())
         .commitment()
@@ -166,6 +166,7 @@ where
         stacks,
         &mut grinding_transcript,
         claims,
+        commitment_material,
         &schedule.root,
         next_params,
         next_binding,

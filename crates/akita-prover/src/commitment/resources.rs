@@ -166,8 +166,14 @@ impl CommitmentExecutionPlan {
                 CommitmentNttRoute::InnerOuter
             }
         };
-        CommitmentNttRequirement::new(0, route, CommitmentNttStage::Inner, key, routing_extent)
-            .map(Some)
+        CommitmentNttRequirement::new(
+            self.fold_level(),
+            route,
+            CommitmentNttStage::Inner,
+            key,
+            routing_extent,
+        )
+        .map(Some)
     }
 
     /// Exact B-matrix cache request when this route contains an outer stage.
@@ -185,7 +191,7 @@ impl CommitmentExecutionPlan {
         let routing_extent = checked::product([plan.n_b(), width])
             .ok_or_else(|| AkitaError::InvalidSetup("commitment B extent overflow".into()))?;
         CommitmentNttRequirement::new(
-            0,
+            self.fold_level(),
             CommitmentNttRoute::InnerOuter,
             CommitmentNttStage::Outer,
             key,
@@ -425,22 +431,23 @@ where
                 return Ok(&fused.stage.resources);
             }
         }
-        if self.inner().is_none() && self.outer().is_none() {
-            return self
-                .fused()
-                .map(|fused| &fused.stage.resources)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment route has no A/B resources".into())
-                });
-        }
-        match stage {
-            CommitmentNttStage::Inner => self
+        match (route, stage) {
+            (CommitmentNttRoute::InnerOnly, CommitmentNttStage::Inner) => self
                 .inner()
                 .map(|inner| &inner.stage.resources)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("commitment route has no inner resources".into())
                 }),
-            CommitmentNttStage::Outer => self
+            (CommitmentNttRoute::InnerOnly, CommitmentNttStage::Outer) => Err(
+                AkitaError::InvalidSetup("inner-only route cannot request outer resources".into()),
+            ),
+            (CommitmentNttRoute::InnerOuter, CommitmentNttStage::Inner) => self
+                .inner()
+                .map(|inner| &inner.stage.resources)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment route has no inner resources".into())
+                }),
+            (CommitmentNttRoute::InnerOuter, CommitmentNttStage::Outer) => self
                 .outer()
                 .map(|outer| &outer.stage.resources)
                 .ok_or_else(|| {
@@ -555,5 +562,30 @@ mod tests {
                 .geometry()
                 .physical_input_width()
         );
+    }
+
+    #[test]
+    fn plan_derived_requirements_preserve_nonzero_owner_fold() {
+        let params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q64Offset59,
+            64,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        )
+        .with_decomp(4, 8, 1, 2, 2)
+        .unwrap();
+        let terminal = CommitmentExecutionPlan::for_terminal(
+            &akita_types::TerminalFoldParams::from_expanded_group(params),
+            9,
+        )
+        .unwrap();
+        let inner = terminal
+            .inner_ntt_requirement(PolynomialType::Dense(super::super::DenseType::Coefficients))
+            .unwrap()
+            .unwrap();
+        assert_eq!(inner.fold_level(), 9);
     }
 }

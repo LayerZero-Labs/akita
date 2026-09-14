@@ -2,7 +2,6 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
-use crate::commitment::TerminalBindingState;
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
@@ -64,6 +63,7 @@ where
 {
     stack: &'a ProverComputeStack<'a, F, O, TS, R, SP>,
     block_claims: ProverOpeningData<'a, E, Q, F, S>,
+    commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
     protocol_points: &'a [Vec<E>],
     reduction: Option<ExtensionOpeningReduction<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
@@ -108,6 +108,7 @@ where
     let FinishFoldArgs {
         stack,
         block_claims,
+        commitment_material,
         protocol_points,
         reduction,
         trace_opening_batch,
@@ -200,6 +201,7 @@ where
         opening,
         stack.ring_switch(),
         prepared_group_openings,
+        commitment_material,
         block_claims,
         level_params.clone(),
         transcript,
@@ -354,7 +356,8 @@ where
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     SP: crate::commitment::CommitmentStatePolicy<F>,
-    SP::State: crate::commitment::TerminalBindingState<F>,
+    SP::State:
+        crate::commitment::InnerRelationState<F> + crate::commitment::OuterCompressionState<F>,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let opening_batch = prepared_fold.instance.opening_batch();
@@ -390,14 +393,7 @@ where
                     "recursive successor requires outer-payload binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, _>(
-                &params.params,
-                level
-                    .checked_add(1)
-                    .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
-                stack.commitment(),
-                &logical_w,
-            )?
+            crate::commit_w::<Cfg, _>(&params.params, level, stack.commitment(), &logical_w)?
         }
         FoldSuccessorParams::Terminal(params) => {
             if next_witness_binding
@@ -407,7 +403,7 @@ where
                     "terminal successor requires canonical inner-state binding".into(),
                 ));
             }
-            crate::commit_terminal_w::<Cfg, _>(params, stack.commitment(), &logical_w)?
+            crate::commit_terminal_w::<Cfg, _>(params, level, stack.commitment(), &logical_w)?
         }
     };
     drop(_span);
@@ -416,7 +412,10 @@ where
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
         NextWitnessState::TerminalInnerState => {
-            let message = next_commitment.prover_state.terminal_t_fields_message()?;
+            let [row] = next_commitment.inner_relation_material.rows() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            let message = crate::commitment::TerminalTFieldsMessage::from_row(row)?;
             transcript
                 .absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, message.as_bytes());
         }
@@ -675,6 +674,8 @@ where
         witness: packed_witness,
         binding,
         prover_state: committed_state,
+        inner_relation_material,
+        compression_material,
     } = next_commitment;
     let (proof_binding, next_binding) = match binding {
         NextWitnessState::OuterPayload(commitment) => (
@@ -710,6 +711,8 @@ where
             logical_w,
             binding: next_binding,
             prover_state: committed_state,
+            inner_relation_material,
+            compression_material,
             log_basis: next_params.log_basis_inner(),
             sumcheck_challenges,
             opening: w_eval,

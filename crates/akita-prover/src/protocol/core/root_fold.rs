@@ -1,7 +1,5 @@
 use super::*;
-use crate::commitment::{
-    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
-};
+use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeRingSwitchProveBackend,
 };
@@ -33,6 +31,7 @@ pub(crate) fn prove_root<'stack, F, E, T, P, S, O, TS, R, SP, Cfg>(
     >,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F, S>,
+    commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
     scheduled: &akita_types::FoldParams,
     next_params: super::fold::FoldSuccessorParams<'_>,
     next_witness_binding: akita_types::NextWitnessBindingPolicy,
@@ -66,7 +65,7 @@ where
         + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     SP: CommitmentStatePolicy<F>,
-    SP::State: TerminalBindingState<F>,
+    SP::State: InnerRelationState<F> + OuterCompressionState<F>,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -81,6 +80,7 @@ where
     let prepared_fold = prepare_single_field_fold::<F, E, T, P, S, O, TS, R, SP>(
         stack,
         claims,
+        commitment_material,
         false,
         transcript,
         0,

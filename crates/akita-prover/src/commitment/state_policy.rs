@@ -27,6 +27,35 @@ pub enum PortableCompressionState<F: Field> {
     },
 }
 
+impl<F: Field> PortableCompressionState<F> {
+    pub(crate) fn validate(
+        &self,
+        plan: &CompressionChainPlan,
+        relation_mode: RingRelationMode,
+    ) -> Result<(), AkitaError> {
+        let valid = match (self, relation_mode) {
+            (Self::QuotientLift { witness, quotients }, RingRelationMode::QuotientLift) => {
+                witness.plan() == plan
+                    && quotients.len() == plan.maps().len()
+                    && quotients.iter().zip(plan.maps()).all(|(quotient, map)| {
+                        quotient.ring_dim() == map.ring_dimension()
+                            && quotient.coeff_len() == map.output_coefficients()
+                    })
+            }
+            (Self::ReducedEvaluation { witness }, RingRelationMode::ReducedEvaluation) => {
+                witness.plan() == plan
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(AkitaError::InvalidInput(
+                "compression material does not match its relation mode or chain plan".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Owner-specific export edge for retained compression state.
 pub trait PortableCompressionStateExport<F: Field>: Send + Sync {
     /// Export canonical mode-specific compression material.
@@ -271,9 +300,10 @@ pub struct ResidentCommitmentState<F: Field> {
     exporters: CommitmentStateExporters<F>,
 }
 
-struct ResidentInnerState<F: Field> {
-    image: Option<BackendStateRef<InnerImage>>,
-    material: Option<InnerRelationStateMaterial<F>>,
+enum ResidentInnerState<F: Field> {
+    Image(BackendStateRef<InnerImage>),
+    Material(InnerRelationStateMaterial<F>),
+    Failed,
 }
 
 impl<F: Field> std::fmt::Debug for ResidentCommitmentState<F> {
@@ -293,13 +323,13 @@ impl<F: Field> ResidentCommitmentState<F> {
         let inner = self.inner.lock().map_err(|_| {
             AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
         })?;
-        let inner_bytes = match (&inner.image, &inner.material) {
-            (Some(image), None) => image.retained_bytes(),
-            (None, Some(material)) => material.retained_bytes()?,
-            _ => {
+        let inner_bytes = match &*inner {
+            ResidentInnerState::Image(image) => image.retained_bytes(),
+            ResidentInnerState::Material(material) => material.retained_bytes()?,
+            ResidentInnerState::Failed => {
                 return Err(AkitaError::InvalidInput(
-                    "resident inner state has inconsistent ownership".into(),
-                ))
+                    "resident inner state export previously failed".into(),
+                ));
             }
         };
         let compression_bytes = self
@@ -315,12 +345,19 @@ impl<F: Field> ResidentCommitmentState<F> {
         let mut inner = self.inner.lock().map_err(|_| {
             AkitaError::InvalidInput("resident inner-relation material lock is poisoned".into())
         })?;
-        if let Some(material) = inner.material.as_ref() {
-            return Ok(material.clone());
-        }
-        let image = inner.image.take().ok_or_else(|| {
-            AkitaError::InvalidInput("resident inner state omitted its image".into())
-        })?;
+        let image = match std::mem::replace(&mut *inner, ResidentInnerState::Failed) {
+            ResidentInnerState::Image(image) => image,
+            ResidentInnerState::Material(material) => {
+                let result = material.clone();
+                *inner = ResidentInnerState::Material(material);
+                return Ok(result);
+            }
+            ResidentInnerState::Failed => {
+                return Err(AkitaError::InvalidInput(
+                    "resident inner state export previously failed".into(),
+                ));
+            }
+        };
         let rows = self
             .exporters
             .inner
@@ -332,7 +369,7 @@ impl<F: Field> ResidentCommitmentState<F> {
             })?
             .consume_inner_rows(self.binding.inner_plan(), image)?;
         let material = InnerRelationStateMaterial::from_binding(&self.binding, rows)?;
-        inner.material = Some(material.clone());
+        *inner = ResidentInnerState::Material(material.clone());
         Ok(material)
     }
 }
@@ -352,7 +389,8 @@ pub trait IntoPortableCommitmentState<F: Field> {
 /// Canonical inner rows derived for ring-relation construction.
 #[derive(Clone)]
 pub struct InnerRelationStateMaterial<F: Field> {
-    ring_dimension: usize,
+    plan: CommitInnerPlan,
+    source_count: usize,
     rows: Arc<Vec<RingVec<F>>>,
 }
 
@@ -378,22 +416,8 @@ impl<F: Field> InnerRelationStateMaterial<F> {
             ));
         }
         Ok(Self {
-            ring_dimension: plan.ring_dimension,
-            rows: Arc::new(rows),
-        })
-    }
-
-    pub(crate) fn from_rows(
-        ring_dimension: usize,
-        rows: Vec<RingVec<F>>,
-    ) -> Result<Self, AkitaError> {
-        if rows.iter().any(|row| !row.can_decode_vec(ring_dimension)) {
-            return Err(AkitaError::InvalidInput(
-                "inner-relation rows do not match their ring dimension".into(),
-            ));
-        }
-        Ok(Self {
-            ring_dimension,
+            plan: *plan,
+            source_count,
             rows: Arc::new(rows),
         })
     }
@@ -408,7 +432,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 
     /// Runtime ring dimension of every row.
     pub const fn ring_dimension(&self) -> usize {
-        self.ring_dimension
+        self.plan.ring_dimension
     }
 
     /// Borrow the canonical rows in source order.
@@ -423,17 +447,7 @@ impl<F: Field> InnerRelationStateMaterial<F> {
 
     /// Validate this material against the relation request that consumes it.
     pub fn validate(&self, plan: &CommitInnerPlan, source_count: usize) -> Result<(), AkitaError> {
-        let expected_coefficients =
-            akita_error::checked::product([plan.num_live_blocks, plan.n_a, plan.ring_dimension])
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("inner-relation row length overflow".into())
-                })?;
-        if self.ring_dimension != plan.ring_dimension
-            || self.rows.len() != source_count
-            || self.rows.iter().any(|row| {
-                row.ring_dim() != plan.ring_dimension || row.coeff_len() != expected_coefficients
-            })
-        {
+        if self.plan != *plan || self.source_count != source_count {
             return Err(AkitaError::InvalidInput(
                 "inner-relation material does not match its commitment plan".into(),
             ));
@@ -457,14 +471,18 @@ pub trait InnerRelationState<F: Field> {
     /// Validate that inner-relation material can be produced without exporting it.
     fn preflight_inner_relation(
         &self,
-        plan: &CommitInnerPlan,
-        source_count: usize,
+        _plan: &CommitInnerPlan,
+        _source_count: usize,
     ) -> Result<(), AkitaError> {
-        self.inner_relation_material()?.validate(plan, source_count)
+        Ok(())
     }
 
     /// Derive canonical inner rows without constructing a portable hint.
-    fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError>;
+    fn inner_relation_material(
+        &self,
+        plan: &CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<InnerRelationStateMaterial<F>, AkitaError>;
 }
 
 /// Independent state capability used by outer-compression relations.
@@ -508,55 +526,6 @@ impl TerminalTFieldsMessage {
     }
 }
 
-/// Independent state capability required by the terminal transcript binding.
-pub trait TerminalBindingState<F: Field> {
-    /// Derive the exact terminal inner-state transcript message.
-    fn terminal_t_fields_message(&self) -> Result<TerminalTFieldsMessage, AkitaError>;
-}
-
-fn terminal_message_from_hint<F>(
-    hint: &AkitaCommitmentHint<F>,
-) -> Result<TerminalTFieldsMessage, AkitaError>
-where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
-{
-    let [row] = hint.inner_rows() else {
-        return Err(AkitaError::InvalidProof);
-    };
-    TerminalTFieldsMessage::from_row(row)
-}
-
-fn terminal_message_from_inner_material<F>(
-    material: InnerRelationStateMaterial<F>,
-) -> Result<TerminalTFieldsMessage, AkitaError>
-where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
-{
-    let [row] = material
-        .into_rows()
-        .try_into()
-        .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
-    TerminalTFieldsMessage::from_row(&row)
-}
-
-impl<F> TerminalBindingState<F> for AkitaCommitmentHint<F>
-where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
-{
-    fn terminal_t_fields_message(&self) -> Result<TerminalTFieldsMessage, AkitaError> {
-        terminal_message_from_hint(self)
-    }
-}
-
-impl<F> TerminalBindingState<F> for ResidentCommitmentState<F>
-where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
-{
-    fn terminal_t_fields_message(&self) -> Result<TerminalTFieldsMessage, AkitaError> {
-        terminal_message_from_inner_material(self.inner_relation_material()?)
-    }
-}
-
 impl<F: Field> InnerRelationState<F> for AkitaCommitmentHint<F> {
     fn preflight_inner_relation(
         &self,
@@ -582,8 +551,12 @@ impl<F: Field> InnerRelationState<F> for AkitaCommitmentHint<F> {
         Ok(())
     }
 
-    fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-        InnerRelationStateMaterial::from_rows(self.ring_dim(), self.inner_rows().to_vec())
+    fn inner_relation_material(
+        &self,
+        plan: &CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+        InnerRelationStateMaterial::new(plan, source_count, self.inner_rows().to_vec())
     }
 }
 
@@ -606,7 +579,12 @@ impl<F: Field> InnerRelationState<F> for ResidentCommitmentState<F> {
         Ok(())
     }
 
-    fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+    fn inner_relation_material(
+        &self,
+        plan: &CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+        self.preflight_inner_relation(plan, source_count)?;
         self.frozen_inner_material()
     }
 }
@@ -691,15 +669,7 @@ impl<F: Field> OuterCompressionState<F> for ResidentCommitmentState<F> {
                 )
             })?
             .export_compression_state(compression)?;
-        let witness = match &material {
-            PortableCompressionState::QuotientLift { witness, .. }
-            | PortableCompressionState::ReducedEvaluation { witness } => witness,
-        };
-        if witness.plan() != plan {
-            return Err(AkitaError::InvalidInput(
-                "resident compression state does not match the requested chain plan".into(),
-            ));
-        }
+        material.validate(plan, relation_mode)?;
         Ok(material)
     }
 }
@@ -780,10 +750,7 @@ impl<F: Field> CommitmentStatePolicy<F> for ResidentStatePolicy {
         Ok(ResidentCommitmentState {
             binding,
             mode,
-            inner: Arc::new(Mutex::new(ResidentInnerState {
-                image: Some(image),
-                material: None,
-            })),
+            inner: Arc::new(Mutex::new(ResidentInnerState::Image(image))),
             compression,
             exporters,
         })
@@ -874,5 +841,84 @@ impl<F: Field, S> CommitmentExecutionOutput<F, S> {
     /// Consume into the public payload and prover-private state.
     pub fn into_parts(self) -> (RingVec<F>, S) {
         (self.terminal_payload, self.prover_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commitment::StateOwnerCapability;
+    use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
+    use jolt_field::Prime64Offset59;
+
+    type F = Prime64Offset59;
+
+    struct FailingInnerExport;
+
+    impl InnerImageExportOperation<F> for FailingInnerExport {
+        fn export_inner_rows(
+            &self,
+            _plan: &CommitInnerPlan,
+            _image: &BackendStateRef<InnerImage>,
+        ) -> Result<Vec<RingVec<F>>, AkitaError> {
+            Err(AkitaError::InvalidInput(
+                "intentional export failure".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn failed_resident_freeze_has_stable_lifecycle_state() {
+        let plan = CommitInnerPlan {
+            ring_dimension: 64,
+            num_live_blocks: 1,
+            n_a: 1,
+            num_positions_per_block: 1,
+            num_digits_inner: 1,
+            log_basis_inner: 1,
+        };
+        let binding = CommitmentStateBinding::new(
+            AkitaSetupDescriptor {
+                max_num_vars: 8,
+                max_num_batched_polys: 1,
+                num_field_elements: 64,
+                setup_seed: AkitaSetupSeed::shake256_paged_v1([7; 32]),
+            },
+            plan,
+            1,
+            None,
+            None,
+        )
+        .unwrap();
+        let owner = StateOwnerCapability::<InnerImage>::new();
+        let image = owner.bind(binding.clone(), 0, ());
+        let state = ResidentCommitmentState {
+            binding,
+            mode: CommitmentExecutionMode::InnerOnly,
+            inner: Arc::new(Mutex::new(ResidentInnerState::Image(image))),
+            compression: None,
+            exporters: CommitmentStateExporters {
+                inner: Some(Arc::new(FailingInnerExport)),
+                compression: None,
+            },
+        };
+
+        let first = match state.inner_relation_material(&plan, 1) {
+            Err(error) => error,
+            Ok(_) => panic!("first export must fail"),
+        };
+        assert!(matches!(
+            first,
+            AkitaError::InvalidInput(message) if message.contains("intentional export failure")
+        ));
+        let second = match state.inner_relation_material(&plan, 1) {
+            Err(error) => error,
+            Ok(_) => panic!("failed state must stay failed"),
+        };
+        assert!(matches!(
+            second,
+            AkitaError::InvalidInput(message) if message.contains("previously failed")
+        ));
+        assert!(state.retained_bytes().is_err());
     }
 }

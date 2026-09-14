@@ -9,7 +9,7 @@ use crate::commitment::{
     PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
     PreparedCommitmentResources, PreparedCompression, PreparedFusedCommitment,
     PreparedInnerCommitment, ResidentStatePolicy, ResolvedCommitSource, StageDimensionCapabilities,
-    StageResources, TerminalBindingState, UncompressedCommitPlan, UncompressedCommitmentOutput,
+    StageResources, TerminalTFieldsMessage, UncompressedCommitPlan, UncompressedCommitmentOutput,
 };
 use crate::compute::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
@@ -414,14 +414,24 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let expected = split.execute_full(&plan, &sources).unwrap();
     let actual = fused_executor.execute_full(&plan, &sources).unwrap();
     assert_eq!(actual.terminal_payload(), expected.terminal_payload());
-    let expected_inner = expected.prover_state().inner_relation_material().unwrap();
+    let expected_inner = expected
+        .prover_state()
+        .inner_relation_material(plan.inner(), sources.len())
+        .unwrap();
     let retained_before_freeze = actual.prover_state().retained_bytes().unwrap();
-    actual.prover_state().terminal_t_fields_message().unwrap();
+    let frozen = actual
+        .prover_state()
+        .inner_relation_material(plan.inner(), sources.len())
+        .unwrap();
+    TerminalTFieldsMessage::from_row(&frozen.rows()[0]).unwrap();
     assert_eq!(
         actual.prover_state().retained_bytes().unwrap(),
         retained_before_freeze
     );
-    let actual_inner = actual.prover_state().inner_relation_material().unwrap();
+    let actual_inner = actual
+        .prover_state()
+        .inner_relation_material(plan.inner(), sources.len())
+        .unwrap();
     assert_eq!(
         actual_inner.ring_dimension(),
         expected_inner.ring_dimension()
@@ -469,7 +479,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
 
     events.lock().unwrap().clear();
     let terminal_plan =
-        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params))
+        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params), 0)
             .unwrap();
     split_inner_ensures.store(0, Ordering::SeqCst);
     fused_ensures.store(0, Ordering::SeqCst);
@@ -487,8 +497,12 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
     let actual_inner_state = fused_executor
         .execute_inner(&terminal_plan, &sources)
         .unwrap();
-    let expected_terminal_inner = expected_inner_state.inner_relation_material().unwrap();
-    let actual_terminal_inner = actual_inner_state.inner_relation_material().unwrap();
+    let expected_terminal_inner = expected_inner_state
+        .inner_relation_material(terminal_plan.inner(), sources.len())
+        .unwrap();
+    let actual_terminal_inner = actual_inner_state
+        .inner_relation_material(terminal_plan.inner(), sources.len())
+        .unwrap();
     assert_eq!(
         actual_terminal_inner.ring_dimension(),
         expected_terminal_inner.ring_dimension()
@@ -591,6 +605,33 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
     let executor = builder.build().unwrap();
     let source = DensePoly::from_field_evals(9, vec![F::default(); 512]).unwrap();
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
+
+    let terminal = TerminalFoldParams::from_expanded_group(params.clone());
+    let terminal_plan = CommitmentExecutionPlan::for_terminal(&terminal, 4).unwrap();
+    let terminal_requirement = terminal_plan
+        .inner_ntt_requirement(PolynomialType::Dense(DenseType::Coefficients))
+        .unwrap()
+        .unwrap();
+    assert!(executor
+        .prewarm_routed_requirement(RoutedNttRequirement {
+            fold_level: terminal_requirement.fold_level(),
+            cluster: NttOperationCluster::Commit,
+            commitment_stage: Some(terminal_requirement.stage()),
+            commitment_route: Some(terminal_requirement.route()),
+            key: terminal_requirement.key(),
+            routing_extent: terminal_requirement.routing_extent(),
+        })
+        .is_err());
+    assert!(executor
+        .prewarm_routed_requirement(RoutedNttRequirement {
+            fold_level: terminal_requirement.fold_level(),
+            cluster: NttOperationCluster::Commit,
+            commitment_stage: Some(crate::commitment::CommitmentNttStage::Outer),
+            commitment_route: Some(crate::commitment::CommitmentNttRoute::InnerOnly),
+            key: terminal_requirement.key(),
+            routing_extent: terminal_requirement.routing_extent(),
+        })
+        .is_err());
 
     executor.execute_full(&plan, &sources).unwrap();
     assert_eq!(

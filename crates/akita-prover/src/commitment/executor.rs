@@ -724,7 +724,7 @@ mod tests {
         .with_decomp(4, 8, 1, 2, 2)
         .unwrap();
         let terminal = TerminalFoldParams::from_expanded_group(params);
-        CommitmentExecutionPlan::for_terminal(&terminal).unwrap()
+        CommitmentExecutionPlan::for_terminal(&terminal, 0).unwrap()
     }
 
     fn split_capabilities() -> CommitmentRequestCapabilities {

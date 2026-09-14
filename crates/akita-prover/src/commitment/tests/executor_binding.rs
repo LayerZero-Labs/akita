@@ -9,6 +9,7 @@ use akita_types::{
     CommittedGroupParams, RingVec, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
 };
 use jolt_field::{Prime64Offset59, Ring};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 type F = Prime64Offset59;
@@ -27,7 +28,7 @@ fn inner_relation_material_rejects_incomplete_exported_rows() {
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
     let plan =
-        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params))
+        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params), 0)
             .unwrap();
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
         9,
@@ -51,13 +52,18 @@ fn inner_relation_material_rejects_incomplete_exported_rows() {
 }
 
 #[test]
-fn generic_inner_state_preflight_rejects_incomplete_material() {
+fn generic_inner_state_material_rejects_incomplete_rows() {
     struct MalformedState;
 
     impl InnerRelationState<F> for MalformedState {
-        fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
-            InnerRelationStateMaterial::from_rows(
-                64,
+        fn inner_relation_material(
+            &self,
+            plan: &crate::compute::CommitInnerPlan,
+            source_count: usize,
+        ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+            InnerRelationStateMaterial::new(
+                plan,
+                source_count,
                 vec![RingVec::from_coeffs_with_ring_dim(vec![F::default(); 64], 64).unwrap()],
             )
         }
@@ -71,7 +77,77 @@ fn generic_inner_state_preflight_rejects_incomplete_material() {
         num_digits_inner: 1,
         log_basis_inner: 1,
     };
-    assert!(MalformedState.preflight_inner_relation(&plan, 1).is_err());
+    assert!(MalformedState.inner_relation_material(&plan, 1).is_err());
+}
+
+#[test]
+fn inner_relation_material_rejects_same_size_different_plan() {
+    let plan = crate::compute::CommitInnerPlan {
+        ring_dimension: 64,
+        num_live_blocks: 1,
+        n_a: 2,
+        num_positions_per_block: 1,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    let material = InnerRelationStateMaterial::new(
+        &plan,
+        1,
+        vec![RingVec::from_coeffs_with_ring_dim(vec![F::default(); 128], 64).unwrap()],
+    )
+    .unwrap();
+    let same_size = crate::compute::CommitInnerPlan {
+        num_live_blocks: 2,
+        n_a: 1,
+        ..plan
+    };
+    assert!(material.validate(&same_size, 1).is_err());
+}
+
+#[test]
+fn generic_preflight_does_not_materialize_or_replace_relation_state() {
+    struct CountingState(AtomicUsize);
+
+    impl InnerRelationState<F> for CountingState {
+        fn inner_relation_material(
+            &self,
+            plan: &crate::compute::CommitInnerPlan,
+            source_count: usize,
+        ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let coefficient_count = plan
+                .num_live_blocks
+                .checked_mul(plan.n_a)
+                .and_then(|count| count.checked_mul(plan.ring_dimension))
+                .ok_or_else(|| AkitaError::InvalidSetup("test row length overflow".into()))?;
+            InnerRelationStateMaterial::new(
+                plan,
+                source_count,
+                (0..source_count)
+                    .map(|_| {
+                        RingVec::from_coeffs_with_ring_dim(
+                            vec![F::default(); coefficient_count],
+                            plan.ring_dimension,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+    }
+
+    let plan = crate::compute::CommitInnerPlan {
+        ring_dimension: 64,
+        num_live_blocks: 1,
+        n_a: 2,
+        num_positions_per_block: 1,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+    let state = CountingState(AtomicUsize::new(0));
+    state.preflight_inner_relation(&plan, 1).unwrap();
+    assert_eq!(state.0.load(Ordering::SeqCst), 0);
+    state.inner_relation_material(&plan, 1).unwrap();
+    assert_eq!(state.0.load(Ordering::SeqCst), 1);
 }
 
 struct ReboundInner {
@@ -122,7 +198,7 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
     .with_decomp(4, 8, 1, 2, 2)
     .unwrap();
     let plan =
-        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params))
+        CommitmentExecutionPlan::for_terminal(&TerminalFoldParams::from_expanded_group(params), 0)
             .unwrap();
     let setup = AkitaProverSetup::<F>::generate_with_capacity(
         9,

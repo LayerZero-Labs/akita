@@ -133,12 +133,7 @@ impl CpuBackend {
                             "compiled short-norm group contains another representation".into(),
                         ));
                     };
-                    let digits = short.packed_view.ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "CPU packed inner stage requires a validated zero-copy packed view"
-                                .into(),
-                        )
-                    })?;
+                    let digits = short.packed_view();
                     self.recursive_packed_witness_commit_rows::<F, D>(
                         prepared,
                         digits,

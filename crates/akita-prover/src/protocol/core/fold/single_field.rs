@@ -20,6 +20,7 @@ use jolt_field::{Fold, Unreduced};
 pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, O, TS, R, SP>(
     stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
     block_claims: ProverOpeningData<'a, E, P, F, S>,
+    commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
     pad_base_evals: bool,
     transcript: &mut T,
     level: u32,
@@ -61,6 +62,7 @@ where
     finish_prepared_fold::<F, E, T, P, S, O, TS, R, SP>(FinishFoldArgs {
         stack,
         block_claims,
+        commitment_material,
         protocol_points: &protocol_points,
         reduction: None,
         trace_opening_batch: &opening_batch,

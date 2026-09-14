@@ -1,5 +1,8 @@
 use super::*;
-use crate::commitment::{CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy};
+use crate::commitment::{
+    CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy, InnerRelationState,
+    InnerRelationStateMaterial, OuterCompressionState, PortableCompressionState,
+};
 use akita_types::{dispatch_for_field, CommittedSourceEncoding, TerminalFoldParams};
 
 /// Public state bound for the witness produced by one intermediate fold.
@@ -18,6 +21,8 @@ pub struct NextWitnessStateOutput<F: Field, S> {
     pub binding: NextWitnessState<F>,
     /// Prover hint for opening the physical next-level witness.
     pub prover_state: S,
+    pub(crate) inner_relation_material: InnerRelationStateMaterial<F>,
+    pub(crate) compression_material: Option<PortableCompressionState<F>>,
 }
 
 /// Commit the next recursive witness under config `Cfg`.
@@ -42,6 +47,7 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     SP: CommitmentStatePolicy<Cfg::Field>,
+    SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
     let packed_witness = dispatch_for_field!(
@@ -76,10 +82,27 @@ where
     } else {
         executor.execute_uncompressed(&plan, &sources)?.into_parts()
     };
+    let inner_relation_material = prover_state.inner_relation_material(plan.inner(), 1)?;
+    inner_relation_material.validate(plan.inner(), 1)?;
+    let compression_material = match (plan.compression(), plan.relation_mode()) {
+        (Some(compression), Some(relation_mode)) => {
+            let material = prover_state.outer_compression_material(compression, relation_mode)?;
+            material.validate(compression, relation_mode)?;
+            Some(material)
+        }
+        (None, None) => None,
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "recursive commitment plan has inconsistent compression metadata".into(),
+            ));
+        }
+    };
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
         binding: NextWitnessState::OuterPayload(commitment),
         prover_state,
+        inner_relation_material,
+        compression_material,
     })
 }
 
@@ -88,6 +111,7 @@ where
 #[inline(never)]
 pub fn commit_terminal_w<Cfg, SP>(
     commit_params: &TerminalFoldParams,
+    fold_level: usize,
     executor: &CommitmentExecutor<'_, Cfg::Field, SP>,
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<NextWitnessStateOutput<Cfg::Field, SP::State>, AkitaError>
@@ -95,6 +119,7 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     SP: CommitmentStatePolicy<Cfg::Field>,
+    SP::State: InnerRelationState<Cfg::Field>,
 {
     let ring_dim = commit_params.d_a();
     let packed_witness = dispatch_for_field!(
@@ -115,12 +140,16 @@ where
         }
     )?;
     let witness = packed_witness.as_ref().unwrap_or(logical_w);
-    let plan = CommitmentExecutionPlan::for_terminal(commit_params)?;
+    let plan = CommitmentExecutionPlan::for_terminal(commit_params, fold_level)?;
     let sources: [&dyn crate::commitment::CommitmentSource<Cfg::Field>; 1] = [witness];
     let prover_state = executor.execute_inner(&plan, &sources)?;
+    let inner_relation_material = prover_state.inner_relation_material(plan.inner(), 1)?;
+    inner_relation_material.validate(plan.inner(), 1)?;
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
         binding: NextWitnessState::TerminalInnerState,
         prover_state,
+        inner_relation_material,
+        compression_material: None,
     })
 }

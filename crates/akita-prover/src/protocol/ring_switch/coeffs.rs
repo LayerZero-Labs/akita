@@ -386,7 +386,7 @@ where
                 actual: inner_relation.ring_dimension(),
             });
         }
-        let inner_rows_by_polynomial = inner_relation.into_rows();
+        let inner_rows_by_polynomial = inner_relation.rows();
         let polynomial_count = opening_batch.group_layout(group_index)?.num_polynomials();
         if inner_rows_by_polynomial.len() != polynomial_count {
             return Err(AkitaError::InvalidSize {
@@ -410,7 +410,7 @@ where
                     |D_B| {
                         let mut blocks =
                             Vec::with_capacity(polynomial_count * group_lp.num_live_blocks());
-                        for rows in &inner_rows_by_polynomial {
+                        for rows in inner_rows_by_polynomial {
                             let typed_rows = rows.as_ring_slice::<D_G>()?;
                             if typed_rows.len() != expected_rings_per_polynomial {
                                 return Err(AkitaError::InvalidSize {
@@ -435,14 +435,15 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("commitment hint coefficient count overflow".into())
             })?;
-        let mut inner_rows = inner_rows_by_polynomial.into_iter();
+        let mut inner_rows = inner_rows_by_polynomial.iter();
         let mut inner_coefficients = inner_rows
             .next()
             .ok_or(AkitaError::InvalidProof)?
-            .into_coeffs();
+            .coeffs()
+            .to_vec();
         inner_coefficients.reserve(expected_coefficients - inner_coefficients.len());
         for rows in inner_rows {
-            inner_coefficients.extend(rows.into_coeffs());
+            inner_coefficients.extend_from_slice(rows.coeffs());
         }
         let recomposed_inner_rows =
             RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;

@@ -10,10 +10,10 @@ use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::commitment::{
-    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutor,
-    CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType, InnerRelationState,
-    NoRetainedStatePolicy, OuterCompressionState, PolynomialRepresentation, PolynomialType,
-    PolynomialTypeSelection, PortableCommitmentState, PortableCompressionState,
+    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentExecutionPlan,
+    CommitmentExecutor, CommitmentSource, DenseCoefficientSource, DenseRepresentation, DenseType,
+    InnerRelationState, NoRetainedStatePolicy, OuterCompressionState, PolynomialRepresentation,
+    PolynomialType, PolynomialTypeSelection, PortableCommitmentState, PortableCompressionState,
     PortableStatePolicy, ResidentStatePolicy,
 };
 use akita_prover::compute::{CommitInnerPlan, ComputeBackendSetup};
@@ -206,13 +206,18 @@ fn run_custom_commit_source_contract() {
         resident_output.committed_group,
         contract_output.committed_group
     );
+    let group = params
+        .group_params(&opening_batch, 0)
+        .expect("root group params");
+    let inner_plan =
+        CommitmentExecutionPlan::for_root(&group.profile).expect("root commitment plan");
     let portable_inner = contract_output
         .prover_state
-        .inner_relation_material()
+        .inner_relation_material(inner_plan.inner(), 1)
         .expect("portable inner relation");
     let resident_inner = resident_output
         .prover_state
-        .inner_relation_material()
+        .inner_relation_material(inner_plan.inner(), 1)
         .expect("resident inner relation");
     assert_eq!(
         portable_inner.ring_dimension(),

@@ -130,8 +130,9 @@ fn reduced_group_witness(params: &CommittedGroupParams) -> RingRelationGroupWitn
         .expect("E digits"),
         RingVec::from_coeffs_with_ring_dim(vec![ReducedF::zero(); blocks * REDUCED_D], REDUCED_D)
             .expect("folded opening"),
-        crate::commitment::InnerRelationStateMaterial::from_rows(
-            REDUCED_D,
+        crate::commitment::InnerRelationStateMaterial::new(
+            &crate::compute::CommitInnerPlan::from_profile(&group_params.profile),
+            1,
             vec![inner_rows(params)],
         )
         .expect("inner relation material"),

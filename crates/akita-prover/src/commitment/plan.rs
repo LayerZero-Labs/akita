@@ -122,6 +122,7 @@ pub enum CommitmentExecutionMode {
 /// Canonical checked commitment arithmetic plan.
 #[derive(Debug, Clone)]
 pub struct CommitmentExecutionPlan {
+    fold_level: usize,
     mode: CommitmentExecutionMode,
     uncompressed: Option<UncompressedCommitPlan>,
     inner_only: CommitInnerPlan,
@@ -155,31 +156,42 @@ impl CommitmentExecutionPlan {
         )
     }
 
-    /// Build a root plan from an already-resolved frozen commitment profile.
+    /// Build a standalone root plan, owned by fold-zero resources, from an
+    /// already-resolved frozen commitment profile.
     pub fn for_root(profile: &GroupCommitPhaseParams) -> Result<Self, AkitaError> {
         Self::from_profile(
+            0,
             profile,
             CommitmentPayloadMode::Compressed,
             RingRelationMode::QuotientLift,
         )
     }
 
-    /// Build a recursive plan from its schedule-owned parameters.
+    /// Build a recursive plan for the predecessor fold whose stack performs
+    /// this commitment.
     pub fn for_recursive(
         params: &CommittedGroupParams,
-        fold_level: usize,
+        owner_fold_level: usize,
         num_polynomials: usize,
     ) -> Result<Self, AkitaError> {
-        params.validate_commitment_request(fold_level, num_polynomials)?;
+        let logical_fold_level = owner_fold_level
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?;
+        params.validate_commitment_request(logical_fold_level, num_polynomials)?;
         Self::from_profile(
+            owner_fold_level,
             &params.own_group().profile,
             params.payload_mode,
             params.ring_relation_mode,
         )
     }
 
-    /// Build a terminal A-only plan.
-    pub fn for_terminal(params: &TerminalFoldParams) -> Result<Self, AkitaError> {
+    /// Build a terminal A-only plan for the predecessor fold whose stack
+    /// performs this commitment.
+    pub fn for_terminal(
+        params: &TerminalFoldParams,
+        fold_level: usize,
+    ) -> Result<Self, AkitaError> {
         if params.blocks.live_blocks == 0
             || params.blocks.positions_per_block == 0
             || params.inner.matrix.output_rank() == 0
@@ -198,6 +210,7 @@ impl CommitmentExecutionPlan {
             log_basis_inner: params.inner.digits.log_basis,
         };
         Ok(Self {
+            fold_level,
             mode: CommitmentExecutionMode::InnerOnly,
             uncompressed: None,
             inner_only: inner,
@@ -207,13 +220,15 @@ impl CommitmentExecutionPlan {
         })
     }
 
-    /// Build a full setup-prefix plan from the exact persisted slot identity.
+    /// Build a standalone fold-zero setup-prefix plan from the exact persisted
+    /// slot identity.
     pub fn for_setup_prefix(slot: &SetupPrefixSlotId) -> Result<Self, AkitaError> {
         validate_setup_prefix_domain(slot.natural_len, slot.n_prefix()?)?;
         Self::for_root(&slot.commitment_profile)
     }
 
     fn from_profile(
+        fold_level: usize,
         profile: &GroupCommitPhaseParams,
         payload_mode: CommitmentPayloadMode,
         relation_mode: RingRelationMode,
@@ -244,6 +259,7 @@ impl CommitmentExecutionPlan {
             CommitmentExecutionMode::Uncompressed
         };
         Ok(Self {
+            fold_level,
             mode,
             uncompressed: Some(UncompressedCommitPlan { inner, outer }),
             inner_only: inner,
@@ -256,6 +272,11 @@ impl CommitmentExecutionPlan {
     /// Execution mode.
     pub const fn mode(&self) -> CommitmentExecutionMode {
         self.mode
+    }
+
+    /// Fold whose compute stack owns this commitment execution.
+    pub const fn fold_level(&self) -> usize {
+        self.fold_level
     }
 
     /// A-stage plan shared by every mode.
@@ -311,6 +332,7 @@ mod tests {
     fn canonical_plan_preserves_payload_and_relation_modes() {
         let compressed = recursive_params(CommitmentPayloadMode::Compressed);
         let plan = CommitmentExecutionPlan::from_profile(
+            0,
             &compressed.own_group().profile,
             compressed.payload_mode,
             compressed.ring_relation_mode,
@@ -327,6 +349,7 @@ mod tests {
 
         let raw = recursive_params(CommitmentPayloadMode::Raw);
         let plan = CommitmentExecutionPlan::from_profile(
+            0,
             &raw.own_group().profile,
             raw.payload_mode,
             raw.ring_relation_mode,
@@ -335,6 +358,27 @@ mod tests {
         assert_eq!(plan.mode(), CommitmentExecutionMode::Uncompressed);
         assert!(plan.compression().is_none());
         assert_eq!(plan.relation_mode(), None);
+    }
+
+    #[test]
+    fn recursive_plan_preserves_resource_owner_fold() {
+        let params = recursive_params(CommitmentPayloadMode::Raw);
+        let plan = CommitmentExecutionPlan::from_profile(
+            7,
+            &params.own_group().profile,
+            params.payload_mode,
+            params.ring_relation_mode,
+        )
+        .unwrap();
+        let inner = plan
+            .inner_ntt_requirement(crate::commitment::PolynomialType::Dense(
+                crate::commitment::DenseType::Coefficients,
+            ))
+            .unwrap()
+            .unwrap();
+        let outer = plan.outer_ntt_requirement().unwrap().unwrap();
+        assert_eq!(inner.fold_level(), 7);
+        assert_eq!(outer.fold_level(), 7);
     }
 
     #[test]
