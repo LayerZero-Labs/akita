@@ -8,6 +8,7 @@
 //!
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
+use crate::single::validate_sumcheck_round_messages;
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
@@ -316,13 +317,16 @@ where
         })
         .fold(E::zero(), |a, v| a + v);
 
-    let (output_claim, r_sumcheck) = proof.verify::<F, T, _>(
-        batched_claim,
-        max_num_rounds,
-        max_degree,
-        transcript,
-        |transcript| Ok(sample_challenge(transcript)),
-    )?;
+    validate_sumcheck_round_messages(proof, max_num_rounds, max_degree)?;
+
+    let mut output_claim = batched_claim;
+    let mut r_sumcheck = Vec::with_capacity(max_num_rounds);
+    for poly in &proof.round_polys {
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let r_i = sample_challenge(transcript);
+        r_sumcheck.push(r_i);
+        output_claim = poly.eval_from_hint(&output_claim, &r_i);
+    }
 
     Ok(BatchedSumcheckRoundResult {
         output_claim,

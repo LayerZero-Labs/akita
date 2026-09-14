@@ -13,7 +13,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
+use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
@@ -106,11 +106,8 @@ where
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> Result<E, AkitaError>,
     {
-        let (sumcheck, setup_prefix_point, _final_claim) = <Self as SumcheckInstanceProverExt<
-            E,
-        >>::prove::<F, T, _>(
-            self, transcript, sample_round
-        )?;
+        let (sumcheck, setup_prefix_point, _final_claim) =
+            prove_sumcheck::<F, T, E, _, _>(self, transcript, sample_round)?;
         let setup_prefix_eval = self.setup.folded_table_value()?;
         Ok(AkitaStage3ProverOutput {
             setup_product_claim: self.setup_product_claim,

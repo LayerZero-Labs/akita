@@ -6,7 +6,6 @@
 //! factor; the prover sends `q` with its constant term omitted.
 
 use crate::types::EqFactoredUniPoly;
-use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
 use jolt_field::Field;
@@ -96,62 +95,4 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
 
     /// Optional end-of-protocol hook after the last challenge has been ingested.
     fn finalize(&mut self) {}
-}
-
-/// Mutable verifier round state for an eq-factored sumcheck proof.
-pub trait EqFactoredSumcheckRoundState<E: Field>: Send {
-    /// Equality point coordinate `tau` for the current round.
-    fn current_tau(&self) -> E;
-
-    /// Ingest the verifier challenge `r_round` to bind the current variable.
-    fn ingest_challenge(&mut self, round: usize, r_round: E);
-}
-
-impl<E: Field> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
-    fn current_tau(&self) -> E {
-        self.current_tau()
-    }
-
-    fn ingest_challenge(&mut self, _round: usize, r_round: E) {
-        self.bind(r_round);
-    }
-}
-
-/// Verifier-side interface for eq-factored sumchecks.
-///
-/// The verifier itself is immutable. Any per-round mutable state needed to
-/// track the evolving eq factor lives in [`Self::RoundState`], which is created
-/// fresh for each proof verification.
-pub trait EqFactoredSumcheckInstanceVerifier<E: Field>: Send + Sync {
-    /// Mutable per-proof round state used by the verifier driver.
-    type RoundState: EqFactoredSumcheckRoundState<E>;
-
-    /// Number of rounds (i.e. number of variables bound by sumcheck).
-    fn num_rounds(&self) -> usize;
-
-    /// Maximum allowed degree of the inner polynomial `q(X)` in each round.
-    fn degree_bound(&self) -> usize;
-
-    /// The initial unscaled sum claim proved by the instance.
-    fn input_claim(&self) -> E;
-
-    /// Construct the fresh mutable round state used by the verifier driver.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the instance dimensions cannot construct the
-    /// eq-factored round state.
-    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError>;
-
-    /// Compute the expected final oracle evaluation `f(r_0, ..., r_{n-1})`.
-    ///
-    /// # Errors
-    ///
-    /// May return an error if the verifier cannot evaluate the final folded
-    /// instance at the sampled challenge point.
-    fn expected_output_claim(
-        &self,
-        round_state: &Self::RoundState,
-        challenges: &[E],
-    ) -> Result<E, AkitaError>;
 }

@@ -18,45 +18,6 @@ fn stage2_geometry(
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
-    /// Create a stage-2 instance containing only the virtual range-image term.
-    ///
-    /// This is the standalone companion to
-    /// [`DigitRangeProver`](crate::protocol::sumcheck::DigitRangeProver):
-    /// stage 1 proves that the compact balanced-digit table is pointwise in
-    /// range, while this sumcheck links its carried range-image claim
-    /// `S(r) = range_image_evaluation` to an opening of the same digit table
-    /// through `S = w(w + 1)`. No relation or evaluation-trace term is
-    /// included.
-    pub fn new_virtual_only(
-        w_evals_compact: Vec<i8>,
-        stage1_point: &[E],
-        range_image_evaluation: E,
-        b: usize,
-        live_lane_count: usize,
-        lane_bits: usize,
-        coefficient_bits: usize,
-    ) -> Result<Self, AkitaError> {
-        let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
-        Self::new(
-            E::one(),
-            PackedSignedDigits::from_i8_digits_auto(w_evals_compact),
-            stage1_point,
-            range_image_evaluation,
-            b,
-            RelationWeightOracle::QuotientFactored(RelationWeightFactorization::new(
-                vec![E::zero(); coeff_count],
-                vec![E::zero(); lane_capacity],
-            )?),
-            live_lane_count,
-            lane_bits,
-            coefficient_bits,
-            E::zero(),
-            PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
-            E::zero(),
-            None,
-        )
-    }
-
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]

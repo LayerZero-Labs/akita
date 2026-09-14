@@ -22,6 +22,7 @@ pub struct RelationWeightFactorization<E: Field> {
 }
 
 impl<E: Field> RelationWeightFactorization<E> {
+    #[cfg(test)]
     pub(crate) fn new(
         common_alpha_factor: Vec<E>,
         relation_lane_weights: Vec<E>,

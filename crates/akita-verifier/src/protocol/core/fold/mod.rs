@@ -335,17 +335,22 @@ where
     let mut round = 0u32;
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        stage2_verifier.verify::<F, T, _>(&stage2.sumcheck_proof, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::Stage2,
-                level,
-                0,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-            Ok(challenge)
-        })?
+        verify_sumcheck::<F, T, E, _, _>(
+            &stage2_verifier,
+            &stage2.sumcheck_proof,
+            transcript,
+            |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage2,
+                    level,
+                    0,
+                    round,
+                )?;
+                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                Ok(challenge)
+            },
+        )?
     };
     transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &stage2.next_w_eval());
     Ok(sumcheck_challenges)

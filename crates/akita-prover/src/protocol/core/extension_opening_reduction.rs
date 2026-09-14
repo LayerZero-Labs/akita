@@ -247,19 +247,20 @@ where
     }
     let mut prover = ExtensionOpeningReductionProver::new(groups, true_input_claim)?;
     let mut round = 0u32;
-    let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-            tr,
-            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-            level,
-            0,
-            round,
-        )?;
-        round = round
-            .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
-        Ok(challenge)
-    })?;
+    let (sumcheck, rho, batched_final_claim) =
+        akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut prover, transcript, |tr| {
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                level,
+                0,
+                round,
+            )?;
+            round = round
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
+            Ok(challenge)
+        })?;
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(format!(
             "{path} extension-opening reduction has not reached a final point"

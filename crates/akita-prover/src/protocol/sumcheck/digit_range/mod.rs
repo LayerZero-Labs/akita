@@ -28,7 +28,7 @@ pub use direct_range_leaf::LowBasisRangeCheckProver;
 use crate::backend::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
+use akita_sumcheck::prove_eq_factored_sumcheck;
 use akita_transcript::labels;
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
@@ -78,7 +78,7 @@ where
     )?;
     let mut round = 0u32;
     let (sumcheck_proof, next_equality_point, _final_claim) =
-        stage.prove::<F, T, _>(transcript, |transcript| {
+        prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut stage, transcript, |transcript| {
             let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 transcript,
                 akita_types::SumcheckProtocol::Stage1,
@@ -356,7 +356,7 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             )?;
             let mut round = 0u32;
             let (sumcheck, stage1_point, _final_claim) =
-                leaf_stage.prove::<F, T, _>(transcript, |tr| {
+                prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut leaf_stage, transcript, |tr| {
                     let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                         tr,
                         akita_types::SumcheckProtocol::Stage1,
@@ -426,7 +426,7 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
         let mut round = 0u32;
         let (leaf_sumcheck, stage1_point, _leaf_final_claim) =
-            leaf_stage.prove::<F, T, _>(transcript, |tr| {
+            prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut leaf_stage, transcript, |tr| {
                 let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                     tr,
                     akita_types::SumcheckProtocol::Stage1,

@@ -1,9 +1,14 @@
 use super::*;
-use akita_sumcheck::{advance_eq_factored_claim, multilinear_eval};
+use akita_sumcheck::{multilinear_eval, EqFactoredUniPoly};
 use akita_types::DigitRangeEqualityPoint;
 use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
+
+fn advance_eq_factored_claim(claim: F, tau: F, poly: &EqFactoredUniPoly<F>, challenge: F) -> F {
+    let constant = claim - tau * poly.nonconstant_term_sum_at_one();
+    constant + poly.eval_nonconstant_terms(&challenge)
+}
 
 fn packed(witness: &[i8]) -> PackedSignedDigits {
     PackedSignedDigits::from_i8_digits_auto(witness.to_vec())

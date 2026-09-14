@@ -19,7 +19,7 @@ use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
+use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL,

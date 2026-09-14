@@ -1,14 +1,15 @@
 //! Polynomial containers and evaluation utilities.
 
+#[cfg(feature = "parallel")]
 use super::eq_poly::EqPolynomial;
-use crate::{cfg_fold_reduce, Field, Ring, Zero};
+use crate::Field;
 use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{Fold, Unreduced};
+use jolt_field::Fold;
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};
 
@@ -103,20 +104,6 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDes
         }
         Ok(out)
     }
-}
-
-/// Evaluate the range-check polynomial `Π_{k=−b/2}^{b/2−1} (w − k)`.
-///
-/// This polynomial vanishes exactly on the balanced-digit set `{−b/2, …, b/2−1}`,
-/// matching the output of `balanced_decompose_pow2`.
-/// Total degree in `w` is `b`.
-pub fn range_check_eval<E: Field + Ring>(w: E, b: usize) -> E {
-    let half = (b / 2) as i64;
-    let mut acc = E::one();
-    for k in -half..half {
-        acc *= w - E::from_i64(k);
-    }
-    acc
 }
 
 /// Evaluate a multilinear polynomial (given by boolean-hypercube evaluations in
@@ -231,78 +218,6 @@ pub fn fold_evals_in_place<E: Fold>(evals: &mut Vec<E>, r: E) {
         evals[target] = E::fold_one(&ctx, left, right);
     }
     evals.truncate(next_len);
-}
-
-/// Evaluate a multilinear polynomial with small integer evaluations at a
-/// field point, using the split-eq structure with unreduced accumulation.
-///
-/// Uses `Unreduced::scale_wide` in the inner loop: each eq table entry
-/// is widened, scaled by the small witness value, and accumulated without
-/// reduction. The inner sum is reduced once per outer iteration, then
-/// multiplied by the outer eq factor and accumulated again in wide form.
-///
-/// Overflow budget: each inner accumulation adds at most `0xFFFF * |small|`
-/// to each i32 limb. For `|small| ≤ 128` (b ≤ 256), we can safely
-/// accumulate 256 products before an i32 limb overflows.
-///
-/// # Errors
-///
-/// Returns an error if the table length does not match `2^point.len()`.
-#[tracing::instrument(skip_all, name = "multilinear_eval_small")]
-pub fn multilinear_eval_small<E: Field + Unreduced + Ring>(
-    evals_small: &[i8],
-    point: &[E],
-) -> Result<E, AkitaError> {
-    let n = point.len();
-    let expected_len = 1usize
-        .checked_shl(u32::try_from(n).map_err(|_| AkitaError::InvalidSize {
-            expected: usize::BITS as usize,
-            actual: n,
-        })?)
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("small MLE table dimension overflow".to_string())
-        })?;
-    if evals_small.len() != expected_len {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_len,
-            actual: evals_small.len(),
-        });
-    }
-    if n == 0 {
-        return Ok(E::from_i64(evals_small[0] as i64));
-    }
-
-    let m = n / 2;
-    let (r_first, r_second) = point.split_at(m);
-    let eq_first = EqPolynomial::evals(r_first)?;
-    let eq_second = EqPolynomial::evals(r_second)?;
-    let in_len = eq_first.len();
-
-    // Max safe accumulations per chunk before i32 overflow.
-    // Limbs are 16-bit (0..0xFFFF), scaled by |small| ≤ 128 → 23-bit products.
-    // i32::MAX / (0xFFFF * 128) ≈ 256.
-    const CHUNK: usize = 256;
-
-    let outer_accum = cfg_fold_reduce!(
-        0..eq_second.len(),
-        E::Wide::zero,
-        |acc, x_out| {
-            let base = x_out * in_len;
-            let mut inner_field = E::zero();
-            for chunk_start in (0..in_len).step_by(CHUNK) {
-                let chunk_end = (chunk_start + CHUNK).min(in_len);
-                let mut chunk_acc = E::Wide::zero();
-                for x_in in chunk_start..chunk_end {
-                    chunk_acc += eq_first[x_in].scale_wide(evals_small[base + x_in] as i32);
-                }
-                inner_field += E::reduce_wide(chunk_acc);
-            }
-
-            acc + E::Wide::from(eq_second[x_out] * inner_field)
-        },
-        |a, b| a + b
-    );
-    Ok(E::reduce_wide(outer_accum))
 }
 
 /// Remove trailing zero coefficients from a coefficient vector, preserving

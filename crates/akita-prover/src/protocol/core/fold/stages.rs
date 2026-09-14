@@ -209,8 +209,8 @@ where
     let level = u32::try_from(level)
         .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let mut round = 0u32;
-    let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) = stage2_prover
-        .prove::<F, T, _>(transcript, |tr| {
+    let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) =
+        prove_sumcheck::<F, T, E, _, _>(&mut stage2_prover, transcript, |tr| {
             let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 tr,
                 akita_types::SumcheckProtocol::Stage2,

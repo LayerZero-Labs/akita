@@ -5,7 +5,9 @@ use akita_error::AkitaError;
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
-use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
+use akita_sumcheck::{
+    prove_sumcheck, verify_sumcheck_rounds, SumcheckInstanceProver, SumcheckProof,
+};
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
@@ -42,6 +44,13 @@ fn sample_round(tr: &mut AkitaTranscript<F>) -> Result<F, AkitaError> {
     Ok(tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND))
 }
 
+fn prove_eor(
+    prover: &mut ExtensionOpeningReductionProver<F>,
+    transcript: &mut AkitaTranscript<F>,
+) -> Result<(SumcheckProof<F>, Vec<F>, F), AkitaError> {
+    prove_sumcheck::<F, _, F, _, _>(prover, transcript, sample_round)
+}
+
 fn verify_eor_rounds(
     input_claim: F,
     num_rounds: usize,
@@ -49,7 +58,8 @@ fn verify_eor_rounds(
     transcript: &mut AkitaTranscript<F>,
 ) -> Result<ExtensionOpeningReductionRoundResult<F>, AkitaError> {
     transcript.append_serde(tr_labels::ABSORB_SUMCHECK_CLAIM, &input_claim);
-    let (final_claim, challenges) = proof.verify::<F, _, _>(
+    let (final_claim, challenges) = verify_sumcheck_rounds::<F, _, F, _>(
+        proof,
         input_claim,
         num_rounds,
         EXTENSION_OPENING_REDUCTION_DEGREE,
@@ -264,9 +274,7 @@ fn extension_opening_reduction_proves_witness_factor_claim() {
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
-    let (proof, challenges, final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, sample_round)
-        .unwrap();
+    let (proof, challenges, final_claim) = prove_eor(&mut prover, &mut prover_transcript).unwrap();
 
     let (final_witness, final_factor) = prover.final_witness_and_factor_evals().unwrap();
     assert_eq!(final_claim, final_witness * final_factor);
@@ -305,9 +313,7 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
 
     let mut transcript = new_transcript();
-    let (_proof, challenges, final_claim) = prover
-        .prove::<F, _, _>(&mut transcript, sample_round)
-        .unwrap();
+    let (_proof, challenges, final_claim) = prove_eor(&mut prover, &mut transcript).unwrap();
     let expected_final = prover
         .final_terms()
         .unwrap()
@@ -359,9 +365,7 @@ fn shared_dense_factor_preserves_batched_proof() {
     let prove = |groups| {
         let mut prover = ExtensionOpeningReductionProver::new(groups, input_claim).unwrap();
         let mut transcript = new_transcript();
-        let result = prover
-            .prove::<F, _, _>(&mut transcript, sample_round)
-            .unwrap();
+        let result = prove_eor(&mut prover, &mut transcript).unwrap();
         (result, prover.final_terms().unwrap())
     };
     assert_eq!(prove(vec![shared_group]), prove(separate_groups));
@@ -399,9 +403,7 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
-    let (proof, challenges, final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, sample_round)
-        .unwrap();
+    let (proof, challenges, final_claim) = prove_eor(&mut prover, &mut prover_transcript).unwrap();
     let (final_witness, final_factor) = prover.final_witness_and_factor_evals().unwrap();
     assert_eq!(final_factor, factor.evaluate(&challenges).unwrap());
     check_extension_opening_reduction_output(final_claim, final_witness, final_factor).unwrap();
@@ -425,9 +427,8 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
     let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
     let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
-    let (proof, _challenges, _final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, sample_round)
-        .unwrap();
+    let (proof, _challenges, _final_claim) =
+        prove_eor(&mut prover, &mut prover_transcript).unwrap();
 
     let mut verifier_transcript = new_transcript();
     let verifier_result = verify_eor_rounds(
@@ -466,9 +467,7 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
     let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
     let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
-    let (proof, _, _) = prover
-        .prove::<F, _, _>(&mut prover_transcript, sample_round)
-        .unwrap();
+    let (proof, _, _) = prove_eor(&mut prover, &mut prover_transcript).unwrap();
 
     let bad_factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 10) as u64)).collect();
     let err = verify_eor_full(&witness_evals, &bad_factor_evals, &proof).unwrap_err();
@@ -484,24 +483,22 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
     let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
 
     let mut prover_transcript = new_transcript();
-    let (proof, challenges, final_claim) = prover
-        .prove::<F, _, _>(&mut prover_transcript, sample_round)
-        .unwrap();
+    let (proof, challenges, final_claim) = prove_eor(&mut prover, &mut prover_transcript).unwrap();
 
     let mut verifier_transcript = new_transcript();
     verifier_transcript.append_serde(
         tr_labels::ABSORB_SUMCHECK_CLAIM,
         &proof_claim(&witness_evals, &factor_evals),
     );
-    let (detached_final_claim, detached_challenges) = proof
-        .verify::<F, _, _>(
-            proof_claim(&witness_evals, &factor_evals),
-            challenges.len(),
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-            &mut verifier_transcript,
-            sample_round,
-        )
-        .unwrap();
+    let (detached_final_claim, detached_challenges) = verify_sumcheck_rounds::<F, _, F, _>(
+        &proof,
+        proof_claim(&witness_evals, &factor_evals),
+        challenges.len(),
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+        &mut verifier_transcript,
+        sample_round,
+    )
+    .unwrap();
 
     assert_eq!(detached_challenges, challenges);
     assert_eq!(detached_final_claim, final_claim);

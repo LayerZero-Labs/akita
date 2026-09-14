@@ -220,6 +220,7 @@ where
 
 #[test]
 fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
+    use akita_sumcheck::verify_sumcheck_rounds;
     use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
     use akita_types::{
         sample_akita_setup_seed, AkitaCommitmentHint, AkitaSetupDescriptor, CommittedGroupParams,
@@ -438,30 +439,25 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
         });
     replay.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
     let mut round = 0u32;
-    let (batched_final_claim, rho) =
-        proved
-            .reduction
-            .proof
-            .sumcheck
-            .verify::<Base, _, _>(
-                input_claim,
-                8,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
-                &mut replay,
-                |transcript| {
-                    let challenge =
-                        akita_types::sample_grinded_sumcheck_challenge::<Base, Extension, _>(
-                            transcript,
-                            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                            1,
-                            0,
-                            round,
-                        )?;
-                    round = round.checked_add(1).expect("EOR test round count fits u32");
-                    Ok(challenge)
-                },
-            )
-            .unwrap();
+    let (batched_final_claim, rho) = verify_sumcheck_rounds::<Base, _, Extension, _>(
+        &proved.reduction.proof.sumcheck,
+        input_claim,
+        8,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+        &mut replay,
+        |transcript| {
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<Base, Extension, _>(
+                transcript,
+                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                1,
+                0,
+                round,
+            )?;
+            round = round.checked_add(1).expect("EOR test round count fits u32");
+            Ok(challenge)
+        },
+    )
+    .unwrap();
     replay.finish().unwrap();
 
     let long_final_factor = akita_sumcheck::multilinear_eval(&long_factor, &rho[..8]).unwrap();

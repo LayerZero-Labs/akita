@@ -138,7 +138,8 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     {
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let mut round = 0u32;
-        let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
+        let (final_claim, challenges) = akita_sumcheck::verify_sumcheck_rounds::<F, _, E, _>(
+            &proof.sumcheck,
             proof.claim,
             self.rounds,
             SETUP_SUMCHECK_DEGREE,

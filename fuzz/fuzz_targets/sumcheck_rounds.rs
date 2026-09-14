@@ -1,6 +1,6 @@
 #![no_main]
 
-use akita_sumcheck::{CompressedUniPoly, SumcheckProof};
+use akita_sumcheck::{verify_sumcheck_rounds, CompressedUniPoly, SumcheckProof};
 use akita_transcript::{AkitaTranscript, Transcript};
 use jolt_field::{Prime128Offset275 as F, Ring};
 use libfuzzer_sys::fuzz_target;
@@ -33,7 +33,8 @@ fuzz_target!(|data: &[u8]| {
             .all(|poly| (1..=degree_bound).contains(&poly.coeffs_except_linear_term.len()));
     let mut transcript = AkitaTranscript::<F>::new(b"fuzz/sumcheck-rounds");
     let mut samples = 0;
-    let result = proof.verify::<F, _, _>(
+    let result = verify_sumcheck_rounds::<F, _, F, _>(
+        &proof,
         F::from_u64(u64::from(*claim)),
         num_rounds,
         degree_bound,
