@@ -362,7 +362,7 @@ impl<F: Field> RingRelationWitness<F> {
             .ok_or(AkitaError::InvalidProof)?
             .source(crate::protocol::ring_relation::CompressionSourceId::Opening)?;
         let ring_dim = source
-            .witness
+            .witness()
             .plan()
             .maps()
             .last()

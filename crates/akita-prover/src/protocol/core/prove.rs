@@ -2,7 +2,6 @@ use super::*;
 use crate::backend::RecursiveFoldSource;
 use crate::commitment::{
     CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
-    TerminalBindingState,
 };
 use crate::compute::{
     prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -17,6 +16,7 @@ use jolt_field::{AdditiveGroup, CanonicalEncoding};
 struct AdmittedProverInput<'opening, 'schedule, E: Clone, P, F: Field, S> {
     selection: akita_types::OpeningScheduleSelection,
     claims: ProverOpeningData<'opening, E, P, F, S>,
+    commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
     schedule: &'schedule FoldSchedule,
 }
 
@@ -29,14 +29,12 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
     ) -> Result<AdmittedProverInput<'opening, 'schedule, Cfg::ExtField, P, Cfg::Field, S>, AkitaError>
     where
         Cfg: CommitmentConfig,
-        Cfg::Field: Field,
+        Cfg::Field: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
         Cfg::ExtField: Clone,
         P: RootProverGroupMeta<Cfg::Field>,
         S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
         SP: CommitmentStatePolicy<Cfg::Field> + 'stack,
-        SP::State: InnerRelationState<Cfg::Field>
-            + OuterCompressionState<Cfg::Field>
-            + TerminalBindingState<Cfg::Field>,
+        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
         Stacks: LevelProveStacks<
             'stack,
             Cfg::Field,
@@ -84,17 +82,22 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
                 )?;
             }
         }
+        let commitment_material = claims.prepare_commitment_relation_material(
+            &schedule.root.params,
+            Cfg::EXT_DEGREE,
+            None,
+        )?;
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
-            let fold_level = index
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?;
-            let plan = CommitmentExecutionPlan::for_recursive(&step.params, fold_level, 1)?;
+            let plan = CommitmentExecutionPlan::for_recursive(&step.params, index, 1)?;
             self.stacks
                 .prove_stack_at_level(index)
                 .commitment()
                 .preflight_prover_state_consumers(&plan)?;
         }
-        let terminal_plan = CommitmentExecutionPlan::for_terminal(&schedule.terminal)?;
+        let terminal_plan = CommitmentExecutionPlan::for_terminal(
+            &schedule.terminal,
+            schedule.recursive_folds.len(),
+        )?;
         self.stacks
             .prove_stack_at_level(schedule.recursive_folds.len())
             .commitment()
@@ -102,6 +105,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
         Ok(AdmittedProverInput {
             selection,
             claims,
+            commitment_material,
             schedule,
         })
     }
@@ -182,9 +186,7 @@ where
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     SP: CommitmentStatePolicy<Cfg::Field> + 'a,
-    SP::State: InnerRelationState<Cfg::Field>
-        + OuterCompressionState<Cfg::Field>
-        + TerminalBindingState<Cfg::Field>,
+    SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
@@ -215,6 +217,7 @@ where
     let AdmittedProverInput {
         selection,
         claims,
+        commitment_material,
         schedule,
     } = admitted;
     let opening_batch = claims.opening_layout();
@@ -228,9 +231,17 @@ where
         transcript,
     )?;
 
-    let next_params = schedule.recursive_folds.first().map_or(
-        super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-        super::fold::FoldSuccessorParams::Recursive,
+    let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
+        (
+            super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+        ),
+        |step| {
+            (
+                super::fold::FoldSuccessorParams::Recursive(step),
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
+            )
+        },
     );
 
     let mut grinding_transcript =
@@ -241,8 +252,10 @@ where
             prefix_slots,
             &mut grinding_transcript,
             claims,
+            commitment_material,
             &schedule.root,
             next_params,
+            next_binding,
             basis,
         )
         .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;

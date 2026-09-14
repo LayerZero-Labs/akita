@@ -1,7 +1,5 @@
 use super::*;
-use crate::commitment::{
-    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
-};
+use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeRingSwitchProveBackend,
 };
@@ -27,8 +25,10 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
         prefix_slots: &SetupPrefixProverRegistry<F>,
         transcript: &mut T,
         claims: ProverOpeningData<'_, E, P, F, S>,
+        commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
         scheduled: &akita_types::FoldParams,
         next_params: super::fold::FoldSuccessorParams<'_>,
+        next_witness_binding: akita_types::NextWitnessBindingPolicy,
         basis: BasisMode,
     ) -> Result<ProveLevelOutput<F, E, SP::State>, AkitaError>
     where
@@ -59,7 +59,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
             + 'stack,
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
         SP: CommitmentStatePolicy<F>,
-        SP::State: TerminalBindingState<F>,
+        SP::State: InnerRelationState<F> + OuterCompressionState<F>,
         <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
         <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
         <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -82,6 +82,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
         let prepared_fold = prepare_single_field_fold::<F, E, T, P, S, O, TS, R, SP>(
             stack,
             claims,
+            commitment_material,
             false,
             transcript,
             0,
@@ -99,6 +100,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
             root_params,
             next_params,
             scheduled.output_witness_len,
+            next_witness_binding,
             prepared_fold,
         )
         .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))

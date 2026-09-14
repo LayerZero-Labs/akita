@@ -278,18 +278,20 @@ pub struct PredecomposedDigitPlanes<'a> {
 /// Borrowed packed bounded signed coefficients.
 pub struct ShortNormRepresentation<'a> {
     /// Encoded two's-complement payload, excluding safe-load padding.
-    pub encoded_bytes: &'a [u8],
+    encoded_bytes: &'a [u8],
     /// Number of source-owned live coefficients.
-    pub live_coefficient_len: usize,
+    live_coefficient_len: usize,
+    /// Number of coefficients represented by the encoded payload.
+    stored_coefficient_len: usize,
     /// Commitment-aligned logical coefficient extent.
-    pub physical_coefficient_len: usize,
+    physical_coefficient_len: usize,
     /// Stored two's-complement bit width.
-    pub signed_bit_width: u8,
+    signed_bit_width: u8,
     /// Exact largest negative magnitude.
-    pub negative_abs_max: u8,
+    negative_abs_max: u8,
     /// Exact largest positive value.
-    pub positive_max: u8,
-    pub(crate) packed_view: Option<crate::backend::packed_digits::PackedSignedDigitView<'a>>,
+    positive_max: u8,
+    packed_view: crate::backend::packed_digits::PackedSignedDigitView<'a>,
 }
 
 impl<'a> ShortNormRepresentation<'a> {
@@ -297,57 +299,123 @@ impl<'a> ShortNormRepresentation<'a> {
     pub fn new(
         encoded_bytes: &'a [u8],
         live_coefficient_len: usize,
+        stored_coefficient_len: usize,
         physical_coefficient_len: usize,
         signed_bit_width: u8,
         negative_abs_max: u8,
         positive_max: u8,
     ) -> Result<Self, AkitaError> {
         ShortNormType::new(signed_bit_width)?;
-        if live_coefficient_len == 0 || live_coefficient_len > physical_coefficient_len {
+        if live_coefficient_len == 0
+            || live_coefficient_len > stored_coefficient_len
+            || stored_coefficient_len > physical_coefficient_len
+        {
             return Err(AkitaError::InvalidInput(
                 "packed short-norm extents are inconsistent".into(),
             ));
         }
-        let minimum_bits = checked::product([live_coefficient_len, usize::from(signed_bit_width)])
+        let stored_bits = checked::product([stored_coefficient_len, usize::from(signed_bit_width)])
             .ok_or_else(|| {
                 AkitaError::InvalidInput("packed short-norm bit length overflow".into())
             })?;
-        let maximum_bits =
-            checked::product([physical_coefficient_len, usize::from(signed_bit_width)])
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("packed short-norm bit length overflow".into())
-                })?;
-        let minimum_bytes = checked::div_ceil(minimum_bits, 8).ok_or_else(|| {
+        let stored_bytes = checked::div_ceil(stored_bits, 8).ok_or_else(|| {
             AkitaError::InvalidInput("packed short-norm byte length overflow".into())
         })?;
-        let maximum_bytes = checked::div_ceil(maximum_bits, 8).ok_or_else(|| {
-            AkitaError::InvalidInput("packed short-norm byte length overflow".into())
-        })?;
-        if !(minimum_bytes..=maximum_bytes).contains(&encoded_bytes.len()) {
+        if encoded_bytes.len() != stored_bytes {
             return Err(AkitaError::InvalidSize {
-                expected: maximum_bytes,
+                expected: stored_bytes,
                 actual: encoded_bytes.len(),
             });
         }
-        let packed_view = Some(
-            crate::backend::packed_digits::PackedSignedDigitView::from_encoded(
-                encoded_bytes,
-                live_coefficient_len,
-                physical_coefficient_len,
-                signed_bit_width,
-                negative_abs_max,
-                positive_max,
-            )?,
-        );
+        let packed_view = crate::backend::packed_digits::PackedSignedDigitView::from_encoded(
+            encoded_bytes,
+            live_coefficient_len,
+            stored_coefficient_len,
+            physical_coefficient_len,
+            signed_bit_width,
+            negative_abs_max,
+            positive_max,
+        )?;
         Ok(Self {
             encoded_bytes,
             live_coefficient_len,
+            stored_coefficient_len,
             physical_coefficient_len,
             signed_bit_width,
             negative_abs_max,
             positive_max,
             packed_view,
         })
+    }
+
+    /// Borrow Akita-owned packed digits whose exact bounds were established
+    /// while their immutable storage was built.
+    pub(crate) fn from_validated_packed(
+        digits: &'a crate::backend::packed_digits::PackedSignedDigits,
+        live_coefficient_len: usize,
+        physical_coefficient_len: usize,
+    ) -> Result<Self, AkitaError> {
+        let stored_coefficient_len = digits.len();
+        if live_coefficient_len == 0
+            || live_coefficient_len > stored_coefficient_len
+            || stored_coefficient_len > physical_coefficient_len
+        {
+            return Err(AkitaError::InvalidInput(
+                "packed short-norm extents are inconsistent".into(),
+            ));
+        }
+        let bounds = digits.bounds();
+        Ok(Self {
+            encoded_bytes: digits.encoded_bytes(),
+            live_coefficient_len,
+            stored_coefficient_len,
+            physical_coefficient_len,
+            signed_bit_width: digits.bit_width(),
+            negative_abs_max: bounds.negative_abs_max(),
+            positive_max: bounds.positive_max(),
+            packed_view: digits.zero_padded(physical_coefficient_len)?,
+        })
+    }
+
+    /// Encoded two's-complement payload, excluding safe-load padding.
+    pub const fn encoded_bytes(&self) -> &'a [u8] {
+        self.encoded_bytes
+    }
+
+    /// Number of source-owned live coefficients.
+    pub const fn live_coefficient_len(&self) -> usize {
+        self.live_coefficient_len
+    }
+
+    /// Number of coefficients represented by the encoded payload.
+    pub const fn stored_coefficient_len(&self) -> usize {
+        self.stored_coefficient_len
+    }
+
+    /// Commitment-aligned logical coefficient extent.
+    pub const fn physical_coefficient_len(&self) -> usize {
+        self.physical_coefficient_len
+    }
+
+    /// Stored two's-complement bit width.
+    pub const fn signed_bit_width(&self) -> u8 {
+        self.signed_bit_width
+    }
+
+    /// Exact largest negative magnitude.
+    pub const fn negative_abs_max(&self) -> u8 {
+        self.negative_abs_max
+    }
+
+    /// Exact largest positive value.
+    pub const fn positive_max(&self) -> u8 {
+        self.positive_max
+    }
+
+    pub(crate) const fn packed_view(
+        &self,
+    ) -> crate::backend::packed_digits::PackedSignedDigitView<'a> {
+        self.packed_view
     }
 }
 
@@ -432,7 +500,7 @@ impl<F: Field> PolynomialRepresentation<'_, F> {
                 Ok(PolynomialType::Dense(DenseType::PredecomposedDigits))
             }
             Self::ShortNorm(representation) => Ok(PolynomialType::ShortNorm(ShortNormType::new(
-                representation.signed_bit_width,
+                representation.signed_bit_width(),
             )?)),
             Self::OneHot(representation) => {
                 let width = match representation.positions {

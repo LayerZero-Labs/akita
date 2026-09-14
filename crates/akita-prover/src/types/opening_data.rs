@@ -165,6 +165,12 @@ pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: Field, S = AkitaComm
     group_inputs: Vec<ProverGroupInput<G, S>>,
 }
 
+/// Exact, validated commitment state consumed by one ring-relation group.
+pub(crate) struct PreparedCommitmentRelationMaterial<F: Field> {
+    pub(crate) inner: InnerRelationStateMaterial<F>,
+    pub(crate) compression: Option<PortableCompressionState<F>>,
+}
+
 /// Private state bound to one recursive opening group.
 ///
 /// Setup-prefix persistence remains portable until its Stage 6 cutover, while
@@ -190,10 +196,14 @@ where
         }
     }
 
-    fn inner_relation_material(&self) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
+    fn inner_relation_material(
+        &self,
+        plan: &crate::compute::CommitInnerPlan,
+        source_count: usize,
+    ) -> Result<InnerRelationStateMaterial<F>, AkitaError> {
         match self {
-            Self::Portable(hint) => hint.inner_relation_material(),
-            Self::Selected(state) => state.inner_relation_material(),
+            Self::Portable(hint) => hint.inner_relation_material(plan, source_count),
+            Self::Selected(state) => state.inner_relation_material(plan, source_count),
         }
     }
 }
@@ -409,6 +419,85 @@ where
             .get(index)
             .map(ProverGroupInput::state)
             .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Prepare each group state once, before transcript mutation, under the
+    /// exact relation plan that will consume it.
+    pub(crate) fn prepare_commitment_relation_material(
+        &self,
+        params: &CommittedGroupParams,
+        extension_degree: usize,
+        mut prepared: Option<(usize, PreparedCommitmentRelationMaterial<CommitF>)>,
+    ) -> Result<Vec<PreparedCommitmentRelationMaterial<CommitF>>, AkitaError>
+    where
+        CommitF: CanonicalEncoding + AkitaSerialize,
+        S: InnerRelationState<CommitF> + OuterCompressionState<CommitF>,
+    {
+        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+            params,
+            &self.opening_layout,
+            extension_degree,
+        )?;
+        let result = (0..self.opening_layout.num_groups())
+            .map(|group_index| {
+                let group = params.group_params(&self.opening_layout, group_index)?;
+                let plan = crate::commitment::CommitmentExecutionPlan::for_root(&group.profile)?;
+                let source_count = self
+                    .opening_layout
+                    .group_layout(group_index)?
+                    .num_polynomials();
+                if prepared
+                    .as_ref()
+                    .is_some_and(|(prepared_index, _)| *prepared_index == group_index)
+                {
+                    let (_, material) = prepared.take().ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "prepared commitment material was consumed more than once".into(),
+                        )
+                    })?;
+                    material.inner.validate(plan.inner(), source_count)?;
+                    match (
+                        params.payload_mode.is_compressed(),
+                        material.compression.as_ref(),
+                    ) {
+                        (true, Some(compression)) => {
+                            let chain = relation_geometry
+                                .rhs_layout()
+                                .compression_plan_for_group(group_index)?;
+                            compression.validate(chain, params.ring_relation_mode)?;
+                        }
+                        (false, None) => {}
+                        _ => {
+                            return Err(AkitaError::InvalidInput(
+                                "prepared commitment material disagrees with payload mode".into(),
+                            ));
+                        }
+                    }
+                    return Ok(material);
+                }
+                let state = self.group_state(group_index)?;
+                let inner = state.inner_relation_material(plan.inner(), source_count)?;
+                inner.validate(plan.inner(), source_count)?;
+                let compression = if params.payload_mode.is_compressed() {
+                    let chain = relation_geometry
+                        .rhs_layout()
+                        .compression_plan_for_group(group_index)?;
+                    let material =
+                        state.outer_compression_material(chain, params.ring_relation_mode)?;
+                    material.validate(chain, params.ring_relation_mode)?;
+                    Some(material)
+                } else {
+                    None
+                };
+                Ok(PreparedCommitmentRelationMaterial { inner, compression })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        if prepared.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "prepared commitment material group index is out of range".into(),
+            ));
+        }
+        Ok(result)
     }
 
     /// Borrow one polynomial group.

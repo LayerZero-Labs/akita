@@ -124,9 +124,19 @@ A source can translate itself into one or more Akita-owned representations:
 | `OneHotType` | Complete hot-position slice, chunk size, and variable count |
 
 Dense predecomposed digits remain distinct from packed short-norm coefficients.
-One-hot sources preserve their stored index width (`u8`, `u16`, `u32`, or
-`usize`) and use `None` for an all-zero chunk; the boundary does not widen or
-copy the position buffer.
+Packed short-norm representations carry three exact extents: source-live,
+encoded-stored, and commitment-padded. The encoded byte length must be exactly
+the stored extent, unused final-byte bits must be zero, and supplied positive
+and negative extrema must match every stored coefficient before those bounds
+may select a CPU kernel. Coefficients between the stored and padded extents are
+canonical zeroes. One-hot sources preserve their stored index width (`u8`, `u16`,
+`u32`, or `usize`) and use `None` for an all-zero chunk; the boundary does not
+widen or copy the position buffer.
+
+Every validated short-norm fact is immutable after construction. Backends read
+the encoded bytes, all three extents, width, and extrema through getters backed
+by the same validated packed view. A source therefore cannot advertise one
+shape to admission while exposing a different hidden tail to execution.
 
 Sources that can expose one of these representations reuse Akita's inner
 implementations. Concrete source types may also implement opening and tensor
@@ -320,6 +330,41 @@ Consuming export moves uniquely owned CPU rows and compression buffers; shared
 leases use the borrowed copying fallback. Resident routes do not pay that cost
 unless a later consumer requests export.
 
+The first resident inner-row export consumes and replaces the backend image.
+It is checked against its request binding:
+ring dimension, source count, and the exact per-source coefficient length must
+all match. The validated rows become one shared immutable allocation, so state
+clones, terminal transcript binding, relation construction, and portable export
+observe identical material even when a custom exporter is stateful. The
+backend image and frozen host image are never retained at the same time.
+
+Resident compression follows the same ownership transition. The first
+compression-relation request consumes the opaque backend state, validates the
+relation mode, chain plan, and quotient geometry, and replaces it with one
+shared immutable material allocation. The resident state and the material
+carried to the following fold share that allocation; they do not retain a
+backend image beside a copied portable image. Portable hints perform borrowed
+shape and packed-byte preflight and build owned compression material only once
+at the proof preparation boundary.
+
+If consuming export or validation fails, the resident state enters an explicit
+failed state. Later access reports that failed lifecycle state instead of
+treating an absent image as fresh state.
+
+`InnerRelationStateMaterial::new` requires the expected inner plan and source
+count, stores both, and rejects another plan even when it has the same total row
+length. Preflight checks cheap capabilities and resident binding metadata
+without exporting. Proving prepares each group material once, validates its
+exact inner plan, source count, compression plan, and relation-mode variant
+before transcript mutation, and threads that same value into relation
+construction. A recursive commitment prepares its next relation material before
+absorbing the next-witness binding and carries that value to the next fold.
+
+Terminal message encoding borrows the frozen row. At the final owned handoff,
+the carried state is dropped before row extraction so a unique shared allocation
+can move without a deep copy. Nonterminal ring-switch construction borrows the
+prepared rows while producing its required concatenated relation buffer.
+
 The direct ownership model has no global state slot table, pending deposit,
 generation counter, cleanup callback registry, CPU token map, or second
 composite dispatcher. CPU state directly owns its witness vectors and
@@ -337,9 +382,10 @@ GPU: A + decomposition + slicing + B
 
 This version permits transfer of `u`. It does not require or permit an inner-row
 download merely to finish commitment, run compression, assemble the result, or
-validate the binding. A fused resident route needs no inner exporter. Whether a
-future device proving backend consumes the retained image in place is outside
-this PR.
+validate the binding. A fused resident commitment-only route needs no inner
+exporter. The current CPU proving path requires an exporter because it consumes
+host relation material; a future device proving backend may consume the retained
+image in place without changing commitment execution.
 
 ## Resources, caches, and performance
 
@@ -350,9 +396,14 @@ Resource control exposes setup identity, exact NTT slot preparation,
 cached-versus-streamed policy, cache owner identity, release,
 and optional compression-cache accounting.
 
-`CommitmentNttRequirement` identifies the exact key, routing extent, and owning
-stage. Proof-wide routed requirements also identify whether the request is
-inner-only or A/B. A/B requirements use the fused registration when present;
+`CommitmentNttRequirement` identifies the exact key, routing extent, owning
+fold and stage, and whether the request is inner-only or A/B. Execution plans
+retain that owner: root and standalone setup-prefix commitments use fold zero;
+a recursive or terminal commitment uses the predecessor stack that performs
+the work. The fold and route remain attached when the requirement reaches
+backend cache policy and prewarming. Direct terminal plans derive `InnerOnly`;
+full and uncompressed plans derive `InnerOuter`. A/B requirements use the fused
+registration when present;
 terminal A requirements use split inner. The same resolved route controls
 prewarm, owner selection, and execution. Physical
 owners are deduplicated by `NttCacheOwnerId` when stages share prepared state.

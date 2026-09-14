@@ -456,6 +456,12 @@ impl PackedNegativeBinary {
 
     /// Validate an exact packed representation.
     pub fn from_bytes(map: CompressionMapPlan, bytes: Vec<u8>) -> Result<Self, AkitaError> {
+        Self::validate_bytes(map, &bytes)?;
+        Ok(Self { map, bytes })
+    }
+
+    /// Validate borrowed packed bytes against one exact map.
+    pub fn validate_bytes(map: CompressionMapPlan, bytes: &[u8]) -> Result<(), AkitaError> {
         if bytes.len() != map.packed_digit_bytes() {
             return Err(AkitaError::InvalidSize {
                 expected: map.packed_digit_bytes(),
@@ -471,7 +477,7 @@ impl PackedNegativeBinary {
                 ));
             }
         }
-        Ok(Self { map, bytes })
+        Ok(())
     }
 
     /// Checked map carried by this digit vector.

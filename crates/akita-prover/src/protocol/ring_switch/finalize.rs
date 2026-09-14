@@ -256,13 +256,22 @@ where
 
     #[cfg(feature = "parallel")]
     let (relation_weights_result, w_result) = rayon::join(prepare_relation_weights, || {
-        build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count)
+        build_w_evals_compact(
+            w.packed_digits().clone(),
+            coeff_count,
+            1,
+            live_relation_lane_count,
+        )
     });
     #[cfg(not(feature = "parallel"))]
     let (relation_weights_result, w_result) = {
         let relation_weights = prepare_relation_weights();
-        let w_compact =
-            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count);
+        let w_compact = build_w_evals_compact(
+            w.packed_digits().clone(),
+            coeff_count,
+            1,
+            live_relation_lane_count,
+        );
         (relation_weights, w_compact)
     };
 

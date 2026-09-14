@@ -69,5 +69,5 @@ pub use state_policy::{
     InnerRelationState, InnerRelationStateMaterial, IntoPortableCommitmentState,
     NoRetainedStatePolicy, OuterCompressionState, PortableCommitmentState,
     PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
-    ResidentCommitmentState, ResidentStatePolicy, TerminalBindingState, TerminalTFieldsMessage,
+    ResidentCommitmentState, ResidentStatePolicy, TerminalTFieldsMessage,
 };

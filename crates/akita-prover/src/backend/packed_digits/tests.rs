@@ -294,6 +294,7 @@ fn borrowed_encoded_view_matches_owned_view_without_load_padding() {
     let borrowed = PackedSignedDigitView::from_encoded(
         packed.encoded_bytes(),
         digits.len(),
+        digits.len(),
         256,
         packed.bit_width(),
         bounds.negative_abs_max(),

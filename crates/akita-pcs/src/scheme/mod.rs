@@ -4,7 +4,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::commitment::{
     CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, InnerRelationState,
-    OuterCompressionState, TerminalBindingState,
+    OuterCompressionState,
 };
 use akita_prover::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -201,9 +201,7 @@ where
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
         SP: CommitmentStatePolicy<Cfg::Field> + 'a,
-        SP::State: InnerRelationState<Cfg::Field>
-            + OuterCompressionState<Cfg::Field>
-            + TerminalBindingState<Cfg::Field>,
+        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     {
         let t_prove_total = Instant::now();
         let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, SP>(

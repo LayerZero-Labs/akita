@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::commitment::{
-    CommitmentStatePolicy, InnerRelationState, OuterCompressionState, TerminalBindingState,
+    CommitmentExecutionPlan, CommitmentStatePolicy, InnerRelationState, OuterCompressionState,
+    TerminalTFieldsMessage,
 };
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
@@ -23,6 +24,8 @@ pub struct SuffixProverState<F: Field, E: Field, S = AkitaCommitmentHint<F>> {
     pub binding: NextWitnessState<F>,
     /// Persistent semantic A-ring rows for the current suffix commitment.
     pub prover_state: S,
+    pub(crate) inner_relation_material: crate::commitment::InnerRelationStateMaterial<F>,
+    pub(crate) compression_material: Option<crate::commitment::PortableCompressionState<F>>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -84,9 +87,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
             + MulBaseUnreduced<Cfg::Field>,
         T: akita_types::ProverTranscriptGrinding<Cfg::Field>,
         SP: CommitmentStatePolicy<Cfg::Field> + 'stack,
-        SP::State: InnerRelationState<Cfg::Field>
-            + OuterCompressionState<Cfg::Field>
-            + TerminalBindingState<Cfg::Field>,
+        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
         O: SuffixOpeningProveBackend<Cfg::Field>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
             + RuntimeCoefficientPackingBackendFor<
@@ -130,9 +131,17 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
             let level_params = &step.params;
             let input_witness_len = step.input_witness_len;
             let successor = schedule.recursive_folds.get(recursive_index + 1);
-            let next_params = successor.map_or(
-                super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
-                super::fold::FoldSuccessorParams::Recursive,
+            let (next_params, next_binding) = successor.map_or(
+                (
+                    super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
+                    akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+                ),
+                |next| {
+                    (
+                        super::fold::FoldSuccessorParams::Recursive(next),
+                        akita_types::NextWitnessBindingPolicy::OuterPayload,
+                    )
+                },
             );
             let current_witness_len = current_state.w.live_coeff_len();
             if current_witness_len != input_witness_len {
@@ -169,6 +178,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
                 level_params,
                 next_params,
                 step.output_witness_len,
+                next_binding,
                 prepared_fold,
             )
             .map_err(|err| {
@@ -239,13 +249,15 @@ where
         + ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
     SP: CommitmentStatePolicy<F>,
-    S: InnerRelationState<F> + TerminalBindingState<F>,
+    S: InnerRelationState<F>,
 {
     let SuffixProverState {
         w,
         logical_w,
         binding,
         prover_state,
+        inner_relation_material,
+        compression_material,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -260,9 +272,21 @@ where
         NextWitnessState::TerminalInnerState => {}
         NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
-    let terminal_message = prover_state.terminal_t_fields_message()?;
+    let terminal_plan = CommitmentExecutionPlan::for_terminal(scheduled, level)?;
+    inner_relation_material.validate(terminal_plan.inner(), 1)?;
+    if compression_material.is_some() {
+        return Err(AkitaError::InvalidInput(
+            "terminal commitment state unexpectedly retained compression material".into(),
+        ));
+    }
+    let terminal_material = inner_relation_material;
+    let [terminal_row] = terminal_material.rows() else {
+        return Err(AkitaError::InvalidProof);
+    };
+    let terminal_message = TerminalTFieldsMessage::from_row(terminal_row)?;
     transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, terminal_message.as_bytes());
-    let mut terminal_rows = prover_state.inner_relation_material()?.into_rows();
+    drop(prover_state);
+    let mut terminal_rows = terminal_material.into_rows();
     if terminal_rows.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
@@ -453,6 +477,8 @@ where
         logical_w: optional_logical_w,
         binding,
         prover_state,
+        inner_relation_material,
+        compression_material,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -472,11 +498,6 @@ where
                     payload_geometry.transmitted_coefficients(),
                 )));
             }
-            commitment.append_flat_to_transcript::<T>(
-                ABSORB_COMMITMENT,
-                payload_geometry.transcript_ring_dimension(),
-                transcript,
-            )?;
             commitment
         }
         NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),
@@ -514,6 +535,31 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), prover_state),
     )?;
+    let witness_group_index = block_claims
+        .opening_claims()
+        .num_groups()
+        .checked_sub(1)
+        .ok_or_else(|| AkitaError::InvalidInput("suffix opening has no witness group".into()))?;
+    let commitment_material = block_claims.prepare_commitment_relation_material(
+        level_params,
+        E::DEGREE,
+        Some((
+            witness_group_index,
+            crate::types::PreparedCommitmentRelationMaterial {
+                inner: inner_relation_material,
+                compression: compression_material,
+            },
+        )),
+    )?;
+    block_claims
+        .opening_claims()
+        .group_commitment(witness_group_index)?
+        .rows()
+        .append_flat_to_transcript::<T>(
+            ABSORB_COMMITMENT,
+            payload_geometry.transcript_ring_dimension(),
+            transcript,
+        )?;
     let opening_method = level_params.opening_method();
     let needs_extension_reduction = opening_method.requires_extension_opening_reduction(E::DEGREE);
     let logical_polys = setup_source_storage
@@ -529,6 +575,7 @@ where
         prepare_single_field_fold::<F, E, T, _, _, O, TS, R, SP>(
             stack,
             block_claims,
+            commitment_material,
             true,
             transcript,
             u32::try_from(level)
@@ -541,6 +588,7 @@ where
             stack,
             needs_extension_reduction,
             block_claims,
+            commitment_material,
             ExtensionOpeningSource::Logical(&logical_groups),
             true,
             transcript,

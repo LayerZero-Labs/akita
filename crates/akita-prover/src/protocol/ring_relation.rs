@@ -2,7 +2,7 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
-use crate::commitment::{InnerRelationState, OuterCompressionState, PortableCompressionState};
+use crate::commitment::{InnerRelationState, OuterCompressionState};
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, DigitRowsComputeBackend,
     OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource,
@@ -403,6 +403,7 @@ impl RingRelationProver {
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
+        commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
         block_claims: ProverOpeningData<'a, PointF, P, F, S>,
         lp: CommittedGroupParams,
         transcript: &mut T,
@@ -444,13 +445,16 @@ impl RingRelationProver {
                 "ring relation prover prepared group count mismatch".to_string(),
             ));
         }
+        if commitment_material.len() != num_groups {
+            return Err(AkitaError::InvalidInput(
+                "prepared commitment material group count mismatch".into(),
+            ));
+        }
         let mut inner_relation_material = Vec::with_capacity(num_groups);
-        for group_index in 0..num_groups {
-            inner_relation_material.push(
-                block_claims
-                    .group_state(group_index)?
-                    .inner_relation_material()?,
-            );
+        let mut outer_compression_material = Vec::with_capacity(num_groups);
+        for material in commitment_material {
+            inner_relation_material.push(material.inner);
+            outer_compression_material.push(material.compression);
         }
         let relation_geometry =
             akita_types::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
@@ -460,9 +464,6 @@ impl RingRelationProver {
         // suffix commitments already contain those B images directly.
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         let mut group_payloads = Vec::with_capacity(num_groups);
-        let mut outer_compression_material = (0..num_groups)
-            .map(|_| None::<PortableCompressionState<F>>)
-            .collect::<Vec<_>>();
         let commit_group_order = if lp.has_preceding_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -482,14 +483,15 @@ impl RingRelationProver {
                         "batched prover received a malformed compressed commitment".to_string(),
                     ));
                 }
-                let retained = block_claims
-                    .group_state(group_index)?
-                    .outer_compression_material(plan, lp.ring_relation_mode)?;
-                let witness = match &retained {
-                    PortableCompressionState::QuotientLift { witness, .. }
-                    | PortableCompressionState::ReducedEvaluation { witness } => witness,
-                };
-                let source = witness
+                let retained = outer_compression_material[group_index]
+                    .take()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "prepared commitment material omitted compression state".into(),
+                        )
+                    })?;
+                let source = retained
+                    .witness()
                     .stages()
                     .first()
                     .ok_or(AkitaError::InvalidProof)?
@@ -756,7 +758,7 @@ impl RingRelationProver {
             })?;
             let opening_source = compression.source(CompressionSourceId::Opening)?;
             let opening_terminal_ring_dim = opening_source
-                .witness
+                .witness()
                 .plan()
                 .maps()
                 .last()

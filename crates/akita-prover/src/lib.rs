@@ -54,8 +54,8 @@ pub use commitment::{
     PreparedFusedCommitment, PreparedInnerCommitment, PreparedOuterCommitment,
     ResidentCommitmentState, ResidentStatePolicy, ResolvedCommitSource, ShortNormRepresentation,
     ShortNormType, StageDimensionCapabilities, StageResources, StateOwnerCapability,
-    TerminalBindingState, TerminalTFieldsMessage, UncompressedCommitPlan,
-    UncompressedCommitmentOutput, UnitPositionSlice,
+    TerminalTFieldsMessage, UncompressedCommitPlan, UncompressedCommitmentOutput,
+    UnitPositionSlice,
 };
 pub use compute::{
     prewarm_ntt_requirements, BatchDecomposeFoldOutcome, CommitCluster, ComputeBackendSetup,

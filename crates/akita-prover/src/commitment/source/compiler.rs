@@ -107,9 +107,9 @@ fn validate_materialized_representation<F: Field>(
             }
         }
         PolynomialRepresentation::ShortNorm(representation) => {
-            if representation.live_coefficient_len != descriptor.live_coefficient_len()
-                || representation.physical_coefficient_len != descriptor.total_coefficient_len()
-                || representation.encoded_bytes.is_empty()
+            if representation.live_coefficient_len() != descriptor.live_coefficient_len()
+                || representation.physical_coefficient_len() != descriptor.total_coefficient_len()
+                || representation.encoded_bytes().is_empty()
             {
                 return Err(AkitaError::InvalidInput(
                     "packed short-norm representation disagrees with its source descriptor".into(),
