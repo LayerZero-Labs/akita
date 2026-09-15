@@ -176,7 +176,7 @@ jobs:
       # CPU in that fleet supports AVX2, so `x86-64-v3` is a deterministic
       # floor that still keeps SIMD enabled so bench wall-time stays within the
       # hosted-runner budget.
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           rustflags: -D warnings -C target-cpu=x86-64-v3
           cache: false
