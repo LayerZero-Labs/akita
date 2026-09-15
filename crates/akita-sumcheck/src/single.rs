@@ -188,7 +188,7 @@ where
 }
 
 /// Advance the normalized claim for one equality-factored round.
-fn advance_eq_factored_claim<E: Field>(
+pub fn advance_eq_factored_claim<E: Field>(
     claim: E,
     tau: E,
     poly: &EqFactoredUniPoly<E>,

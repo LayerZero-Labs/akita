@@ -23,8 +23,8 @@ use rayon::prelude::*;
 /// per-round dispatch. Measured on an Apple M3 Max (14 rayon threads) with
 /// product-of-multilinears instances: a 24-instance batch of 2^8-point tables
 /// regresses ~1.7x under unconditional fan-out, while rounds carrying 2^13 or
-/// more live points break even or win; Aerie's fused selector batch enters at
-/// ~23 instances x 2^19 points and gains ~1.9x.
+/// more live points break even or win; a representative fused selector batch
+/// enters at ~23 instances x 2^19 points and gains ~1.9x.
 #[cfg(feature = "parallel")]
 const PARALLEL_MIN_ROUND_WORK: u64 = 1 << 13;
 

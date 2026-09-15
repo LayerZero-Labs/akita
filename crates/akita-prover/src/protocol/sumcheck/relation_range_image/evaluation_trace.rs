@@ -239,7 +239,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         Ok(self.get(0, 0, 1))
     }
 
-    #[cfg(test)]
     pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
         Self {
             lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
