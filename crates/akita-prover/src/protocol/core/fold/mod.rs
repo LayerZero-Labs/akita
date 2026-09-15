@@ -13,8 +13,9 @@ use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
 use jolt_field::AdditiveGroup;
 
 use akita_types::{
-    CoefficientPackingBatchSemantics, DigitRangeEqualityPoint, InnerCommitSecurityRoute,
-    OpeningClaimsLayout, OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
+    batch_l2_virtual_evaluations, CoefficientPackingBatchSemantics, DigitRangeEqualityPoint,
+    InnerCommitSecurityRoute, OpeningClaimsLayout, OpeningFamily, PhysicalResponsePlan,
+    RelationRangeImagePlan,
 };
 
 pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: Field> {
@@ -288,14 +289,8 @@ where
         transcript,
         akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
     );
-    let mut power = E::one();
-    replay.batching = Vec::with_capacity(replay.virtual_evaluations.len());
-    replay.claim = E::zero();
-    for &evaluation in &replay.virtual_evaluations {
-        replay.batching.push(power);
-        replay.claim += evaluation * power;
-        power *= eta;
-    }
+    (replay.claim, replay.batching) =
+        batch_l2_virtual_evaluations(eta, &replay.virtual_evaluations);
     Ok(Some(replay))
 }
 

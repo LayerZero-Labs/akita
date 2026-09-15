@@ -160,8 +160,8 @@ pub use proof::{
     SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
-    append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
-    DigitRangePlan, FlatBooleanDomain,
+    append_digit_range_child_claims, batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram,
+    DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};

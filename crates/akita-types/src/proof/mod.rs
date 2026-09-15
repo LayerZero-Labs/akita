@@ -88,8 +88,8 @@ pub use relation::{
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{
-    reconstruct_l2_sq_from_gram, PhysicalResponsePlan, RelationRangeImageGroupPlan,
-    RelationRangeImagePlan,
+    batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram, PhysicalResponsePlan,
+    RelationRangeImageGroupPlan, RelationRangeImagePlan,
 };
 pub use relation_weight_event::{RelationWeightContribution, RelationWeightEvent};
 pub use ring_relation::{

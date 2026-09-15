@@ -24,7 +24,7 @@ pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
 pub const GRINDING_ENCODING_VERSION: u16 = 1;
 /// Query catalog and loss-policy revision.
-pub const GRINDING_QUERY_POLICY_REVISION: u16 = 1;
+pub const GRINDING_QUERY_POLICY_REVISION: u16 = 2;
 /// Indexed fold-coordinate oracle revision.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
 /// Exclusive upper bound on expanded transcript queries in a complete plan.

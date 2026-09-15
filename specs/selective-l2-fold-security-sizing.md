@@ -560,9 +560,26 @@ z(r) = sum_j B^j * z_hat_j(r).
 LimbGram mode binds the required limb evaluations instead. Group, chunk, row,
 coefficient, and padding selectors come from the shared physical plan.
 
-The transcript samples the Stage 2 batching challenge only after it has
-absorbed the Stage 1 claims. A prover cannot choose two false relations that
-cancel under a challenge known in advance.
+Let `Delta` denote the complete Stage 2 residual that is independent of the
+physical-L2 virtual-batch challenge, and let `E_i` denote the residual for
+virtual evaluation `i`. After absorbing every virtual evaluation, the
+transcript samples `eta` and Stage 2 proves the combined identity
+
+```text
+Delta + eta * E_0 + eta^2 * E_1 + ... + eta^m * E_(m-1) = 0.
+```
+
+The constant coefficient is reserved exclusively for `Delta`. Direct mode has
+`m = 1`; LimbGram mode has one `E_i` per limb. Prover and verifier MUST derive
+the coefficient vector as `[eta, eta^2, ..., eta^m]` from one shared primitive.
+They MUST NOT start this vector at one: doing so would put `Delta` and `E_0` in
+the same constant coefficient and would allow the fixed cancellation
+`Delta = -E_0` independently of `eta`.
+
+The transcript samples `eta` only after it has absorbed all Stage 1 claims and
+virtual evaluations. Consequently, any nonzero combined residual is a
+degree-at-most-`m` polynomial in a challenge unknown when those values were
+fixed. Transcript grinding prices this site with loss factor `max(1, m)`.
 
 ### Transcript and serialization
 
@@ -573,6 +590,9 @@ evaluations.
 
 Serialization remains schedule driven and headerless. Mutation tests cover the
 norm, cap, route, subclaims, virtual evaluations, nonce, and Stage 2 values.
+This coefficient change is transcript- and protocol-breaking: the instance
+descriptor version, grinding query-policy revision, and generated schedule
+artifacts change together. Old proofs and schedule artifacts are rejected.
 
 ## Terminal L2 check
 

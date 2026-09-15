@@ -8,8 +8,8 @@ use super::*;
 use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{
-    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
-    RingRelationGroupOpening,
+    batch_l2_virtual_evaluations, dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan,
+    OpeningFamily, RingRelationGroupOpening,
 };
 
 pub(in crate::protocol::core) use coefficient_packing::{
@@ -237,14 +237,7 @@ where
                     transcript,
                     akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
                 );
-                let mut batching = Vec::with_capacity(evaluations.len());
-                let mut power = E::one();
-                let mut claim = E::zero();
-                for evaluation in evaluations {
-                    batching.push(power);
-                    claim += evaluation * power;
-                    power *= eta;
-                }
+                let (claim, batching) = batch_l2_virtual_evaluations(eta, &evaluations);
                 (claim, plan.virtualization_families(&batching)?)
             }
             (None, None) => (E::zero(), Vec::new()),

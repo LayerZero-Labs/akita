@@ -244,7 +244,7 @@ fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
         .grinding
         .serialize_uncompressed(&mut grinding_bytes)
         .expect("serialize grinding binding");
-    assert_eq!(descriptor.version, 4);
+    assert_eq!(descriptor.version, 5);
     assert_eq!(
         &bytes[offset..offset + grinding_bytes.len()],
         grinding_bytes

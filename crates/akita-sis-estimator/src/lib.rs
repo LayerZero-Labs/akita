@@ -118,9 +118,8 @@ pub fn cost_zeta(
 ///
 /// # Errors
 ///
-/// Returns validation errors for malformed inputs. The actual estimator math is
-/// implemented in later slices, so valid inputs currently return
-/// [`EstimatorError::Unsupported`].
+/// Returns validation errors for malformed inputs or unsupported reduction-cost
+/// configurations.
 pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
     params.validate()?;
     config.validate()?;

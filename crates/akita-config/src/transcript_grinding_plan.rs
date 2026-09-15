@@ -85,8 +85,8 @@ mod tests {
                 50,
                 383,
                 [
-                    236, 232, 157, 232, 43, 58, 62, 68, 118, 58, 218, 127, 36, 83, 166, 123, 31,
-                    133, 157, 222, 197, 92, 67, 6, 62, 148, 191, 98, 57, 29, 78, 210,
+                    107, 30, 172, 121, 31, 162, 187, 172, 226, 118, 12, 84, 146, 62, 115, 70, 210,
+                    111, 145, 53, 40, 179, 23, 203, 221, 199, 187, 42, 76, 113, 32, 198,
                 ],
             )
         );
@@ -200,6 +200,31 @@ mod tests {
                 );
                 assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
+
+                for run in plan.runs() {
+                    let GrindingSite::L2VirtualBatch { level } = run.site() else {
+                        continue;
+                    };
+                    let params = if level == 0 {
+                        &row.schedule().root.params
+                    } else {
+                        &row.schedule().recursive_folds
+                            [usize::try_from(level - 1).expect("fold level fits usize")]
+                        .params
+                    };
+                    let akita_types::InnerCommitSecurityRoute::L2 {
+                        norm_proof_shape, ..
+                    } = params.inner().matrix.security_route()
+                    else {
+                        panic!("L2 virtual-batch query requires an L2 security route");
+                    };
+                    assert_eq!(
+                        run.loss_factor(),
+                        u64::try_from(norm_proof_shape.virtual_evaluation_count())
+                            .expect("virtual evaluation count fits u64"),
+                        "shifted virtual batching must price its highest eta degree"
+                    );
+                }
 
                 // A level's Stage 3 rounds are induced by its *successor's*
                 // setup prefix, and their count is the prefix group's own

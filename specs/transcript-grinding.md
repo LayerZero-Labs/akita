@@ -375,6 +375,7 @@ A singleton or absent check has `L = 1` and `g = 0`.
 | sumcheck round of degree `d` | one round after its prover message | `max(1, d)` | `ceil_log2(max(1, d))` |
 | multilinear point with `n` coordinates | one consecutive point draw | `max(1, n)` | `ceil_log2(max(1, n))` |
 | powers of one scalar batching `m` values | one scalar | `max(1, m - 1)` | `ceil_log2(max(1, m - 1))` |
+| physical-L2 virtual batching after an independent constant residual | one scalar | `max(1, m)` | `ceil_log2(max(1, m))` |
 | independent random coefficients | one consecutive coefficient vector | `1` | `0` |
 | one random linear merge | one scalar | `1` | `0` |
 | subring packing consistency at `alpha` | one scalar | `2s - 1` | `ceil_log2(2s - 1)` |
@@ -532,7 +533,7 @@ not the byte label alone, select the rule.
 | `CHALLENGE_SUMCHECK_INTERSTAGE_BATCH` | powers batching of child claims | `max(1, child_claims - 1)` |
 | `CHALLENGE_L2_NORM_BATCH` | powers batching of norm subclaims | `max(1, subclaims - 1)` |
 | `CHALLENGE_L2_NORM_MERGE` | range and norm merge | one linear merge, `g = 0` |
-| `CHALLENGE_L2_VIRTUAL_BATCH` | powers batching of virtual evaluations | `max(1, evaluations - 1)` |
+| `CHALLENGE_L2_VIRTUAL_BATCH` | shifted powers batching of virtual evaluations, with the independent Stage-2 residual at degree zero | `max(1, evaluations)` |
 | `CHALLENGE_COMPRESSION_BINARY` | support-restricted binary relation merge | one linear merge, `g = 0` |
 
 `CHALLENGE_LINEAR_RELATION` and `CHALLENGE_STOP_CONDITION` remain registered
@@ -716,7 +717,7 @@ predicate bytes                  = u8(32)
 predicate bit-order tag          = u8(0)  // little-endian
 fold-response attempt bits       = u8(12)
 fold-response attempts           = le_u32(4096)
-query-policy revision            = le_u16(1)
+query-policy revision            = le_u16(2)
 fold-coordinate oracle revision  = le_u16(1)
 ```
 
@@ -1001,9 +1002,9 @@ drift tests protect the generated output.
       for nonzero proof-of-work queries, rejects `g > 25`, and proves the stated
       `exp(-128)` per-query exhaustion bound in unit tests.
 - [x] The plan catalog distinguishes degree checks, sumcheck rounds,
-      multilinear points, powers batching, independent coefficient vectors,
-      sparse challenge draws, and fold-response search using the loss rules in
-      this specification.
+      multilinear points, ordinary and shifted physical-L2 powers batching,
+      independent coefficient vectors, sparse challenge draws, and
+      fold-response search using the loss rules in this specification.
 - [x] A security test or executable table checks for every admitted site that
       `2^-g * L / 2^C <= 2^-128` under the nominal convention and separately
       reports the exact `2^-g * L / |E|` value and pseudo-Mersenne deficit. The

@@ -301,7 +301,7 @@ fn append_nonterminal(
         }
         push(GrindingRun::proof_of_work(
             GrindingSite::L2VirtualBatch { level },
-            powers_batch_loss_factor(norm.virtual_evaluations)?,
+            polynomial_identity_loss_factor(norm.virtual_evaluations)?,
             capacity,
         )?)?;
     }

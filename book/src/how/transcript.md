@@ -265,7 +265,7 @@ accounting.
 
 ## Integration and regression checks
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `4`. Validation rejects
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently `5`. Validation rejects
 other versions. Pin an exact Akita revision and rerun prove and verify
 integration tests when upgrading; the repository does not promise
 compatibility across revisions.

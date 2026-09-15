@@ -19,6 +19,24 @@ struct PhysicalResponseSegment {
     witness_start: usize,
 }
 
+/// Batch physical-L2 virtual evaluations while reserving the constant term.
+///
+/// Stage 2 adds this batch to an independently constructed relation/opening
+/// residual. That residual owns the constant coefficient, so virtual
+/// evaluation `i` receives `eta^(i + 1)`, not `eta^i`.
+#[must_use]
+pub fn batch_l2_virtual_evaluations<E: Field>(eta: E, evaluations: &[E]) -> (E, Vec<E>) {
+    let mut claim = E::zero();
+    let mut coefficients = Vec::with_capacity(evaluations.len());
+    let mut power = eta;
+    for &evaluation in evaluations {
+        coefficients.push(power);
+        claim += evaluation * power;
+        power *= eta;
+    }
+    (claim, coefficients)
+}
+
 /// Checked map from the canonical physical folded response to the Z digit
 /// addresses in the Stage-1/Stage-2 witness table.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -629,6 +647,41 @@ mod tests {
         dyadic_block_ranges, CommitmentSliceCount, PolynomialGroupLayout, RelationGroupRows,
         RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout, WitnessUnitLayout,
     };
+    use jolt_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn l2_virtual_batch_reserves_the_constant_coefficient() {
+        type E = Prime128OffsetA7F7;
+        let eta = E::from_u64(3);
+        let evaluations = [E::from_u64(5), E::from_u64(7), E::from_u64(11)];
+
+        let (one_claim, one) = batch_l2_virtual_evaluations(eta, &evaluations[..1]);
+        assert_eq!(one, vec![E::from_u64(3)]);
+        assert_eq!(one_claim, E::from_u64(15));
+
+        let (two_claim, two) = batch_l2_virtual_evaluations(eta, &evaluations[..2]);
+        assert_eq!(two, vec![E::from_u64(3), E::from_u64(9)]);
+        assert_eq!(two_claim, E::from_u64(78));
+
+        let (three_claim, three) = batch_l2_virtual_evaluations(eta, &evaluations);
+        assert_eq!(three, vec![E::from_u64(3), E::from_u64(9), E::from_u64(27)]);
+        assert_eq!(three_claim, E::from_u64(375));
+    }
+
+    #[test]
+    fn l2_virtual_batch_cannot_cancel_the_stage2_constant_at_eta_zero() {
+        type E = Prime128OffsetA7F7;
+        let relation_opening_residual = E::from_u64(17);
+        let virtual_residuals = [-relation_opening_residual, E::from_u64(29)];
+        let zero = E::from_u64(0);
+        let (virtual_batch, coefficients) = batch_l2_virtual_evaluations(zero, &virtual_residuals);
+
+        assert_eq!(coefficients, vec![zero, zero]);
+        assert_eq!(
+            relation_opening_residual + virtual_batch,
+            relation_opening_residual
+        );
+    }
 
     fn test_relation_geometry(
         opening_batch: &OpeningClaimsLayout,
