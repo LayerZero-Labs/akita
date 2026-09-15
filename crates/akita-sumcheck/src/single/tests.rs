@@ -1,6 +1,7 @@
 use super::*;
 use crate::{CompressedUniPoly, UniPoly};
 use akita_algebra::poly::multilinear_eval;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use jolt_field::{Field, One, Prime128Offset275 as F, Ring, Zero};
 
@@ -130,20 +131,180 @@ fn malformed_standard_rounds_fail_before_sampling() {
         ),
     ];
     for (proof, expected) in cases {
-        let mut samples = 0;
-        let result = verify_sumcheck_rounds::<F, _, F, _>(
+        for verify_full in [false, true] {
+            let mut verifier_transcript = transcript();
+            let mut samples = 0;
+            let result = if verify_full {
+                let verifier = DenseInstance::new(vec![F::zero(); 2], 1, F::zero());
+                verify_sumcheck::<F, _, F, _, _>(
+                    &verifier,
+                    &proof,
+                    &mut verifier_transcript,
+                    |_| {
+                        samples += 1;
+                        Ok(F::zero())
+                    },
+                )
+                .map(|_| ())
+            } else {
+                verify_sumcheck_rounds::<F, _, F, _>(
+                    &proof,
+                    F::zero(),
+                    1,
+                    1,
+                    &mut verifier_transcript,
+                    |_| {
+                        samples += 1;
+                        Ok(F::zero())
+                    },
+                )
+                .map(|_| ())
+            };
+            assert_eq!(result, Err(expected.clone()));
+            assert_eq!(samples, 0);
+            assert_eq!(
+                verifier_transcript.challenge_bytes(b"test/rejected-round-state", 32),
+                transcript().challenge_bytes(b"test/rejected-round-state", 32)
+            );
+        }
+    }
+}
+
+struct OneRoundEqInstance {
+    tau: F,
+    split: GruenSplitEq<F>,
+    q_coeffs: Vec<F>,
+}
+
+impl OneRoundEqInstance {
+    fn new(tau: F, q_coeffs: Vec<F>) -> Self {
+        Self {
+            tau,
+            split: GruenSplitEq::new(&[tau]).unwrap(),
+            q_coeffs,
+        }
+    }
+
+    fn q_at(&self, point: F) -> F {
+        UniPoly::from_coeffs(self.q_coeffs.clone()).evaluate(&point)
+    }
+
+    fn claim(&self) -> F {
+        let q_zero = self.q_at(F::zero());
+        let q_one = self.q_at(F::one());
+        (F::one() - self.tau) * q_zero + self.tau * q_one
+    }
+}
+
+impl EqFactoredSumcheckInstanceProver<F> for OneRoundEqInstance {
+    fn num_rounds(&self) -> usize {
+        1
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.q_coeffs.len().saturating_sub(1)
+    }
+
+    fn input_claim(&self) -> F {
+        self.claim()
+    }
+
+    fn current_tau(&self) -> F {
+        self.split.current_tau()
+    }
+
+    fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<F> {
+        EqFactoredUniPoly::from_q_coeffs(self.q_coeffs.clone())
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+        self.split.bind(challenge);
+    }
+}
+
+#[test]
+fn equality_factored_rejects_old_wire_forgery_when_tau_is_zero() {
+    let q_coeffs = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
+    let instance = OneRoundEqInstance::new(F::zero(), q_coeffs);
+    let proof = EqFactoredSumcheckProof {
+        round_polys: vec![EqFactoredUniPoly {
+            // Under the old `[q_0, q_2]` convention, choosing `q_0 = T`
+            // collapsed the scaled claim to zero and left `q_2` unconstrained.
+            coeffs_except_constant_term: vec![instance.claim(), F::from_u64(101)],
+        }],
+    };
+    let challenge = F::from_u64(11);
+
+    assert_eq!(
+        verify_eq_factored_sumcheck::<F, _, F, _, _>(
             &proof,
-            F::zero(),
-            1,
-            1,
+            &[instance.tau],
+            instance.claim(),
+            instance.degree_bound(),
             &mut transcript(),
-            |_| {
-                samples += 1;
-                Ok(F::zero())
-            },
-        );
-        assert_eq!(result, Err(expected));
-        assert_eq!(samples, 0);
+            |_| Ok(challenge),
+            |_| Ok(instance.q_at(challenge)),
+        ),
+        Err(AkitaError::InvalidProof)
+    );
+}
+
+#[test]
+fn equality_factored_wire_contains_every_nonconstant_coefficient() {
+    let q_coeffs = vec![
+        F::from_u64(3),
+        F::from_u64(5),
+        F::from_u64(7),
+        F::from_u64(11),
+    ];
+    let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs.clone());
+    let mut encoded = Vec::new();
+    poly.serialize_uncompressed(&mut encoded).unwrap();
+
+    let mut expected = Vec::new();
+    for coefficient in &q_coeffs[1..] {
+        coefficient.serialize_uncompressed(&mut expected).unwrap();
+    }
+    assert_eq!(encoded, expected);
+    assert_eq!(
+        EqFactoredUniPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
+        poly
+    );
+}
+
+#[test]
+fn equality_factored_degree_zero_round_has_an_empty_message() {
+    for tau in [F::zero(), F::one(), F::from_u64(7)] {
+        for challenge in [F::zero(), F::one(), F::from_u64(11)] {
+            let q_coeffs = vec![F::from_u64(23)];
+            let mut prover = OneRoundEqInstance::new(tau, q_coeffs.clone());
+            let input_claim = prover.claim();
+            let (proof, _, final_claim) =
+                prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut prover, &mut transcript(), |_| {
+                    Ok(challenge)
+                })
+                .unwrap();
+
+            assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
+            let mut encoded = Vec::new();
+            proof.round_polys[0]
+                .serialize_uncompressed(&mut encoded)
+                .unwrap();
+            assert!(encoded.is_empty());
+            assert_eq!(final_claim, q_coeffs[0]);
+            assert_eq!(
+                verify_eq_factored_sumcheck::<F, _, F, _, _>(
+                    &proof,
+                    &[tau],
+                    input_claim,
+                    0,
+                    &mut transcript(),
+                    |_| Ok(challenge),
+                    |_| Ok(q_coeffs[0]),
+                ),
+                Ok(vec![challenge])
+            );
+        }
     }
 }
 

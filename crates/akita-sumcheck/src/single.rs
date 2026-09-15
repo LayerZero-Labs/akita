@@ -36,6 +36,28 @@ pub(crate) fn validate_sumcheck_round_messages<E: Field>(
     Ok(())
 }
 
+fn replay_validated_sumcheck_rounds<F, T, E, S>(
+    proof: &SumcheckProof<E>,
+    mut claim: E,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<(E, Vec<E>), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    T: Transcript<F>,
+    E: Field + AkitaSerialize,
+    S: FnMut(&mut T) -> Result<E, AkitaError>,
+{
+    let mut challenges = Vec::with_capacity(proof.round_polys.len());
+    for poly in &proof.round_polys {
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let challenge = sample_challenge(transcript)?;
+        challenges.push(challenge);
+        claim = poly.eval_from_hint(&claim, &challenge);
+    }
+    Ok((claim, challenges))
+}
+
 /// Prove one standard sumcheck instance.
 #[tracing::instrument(skip_all, name = "prove_sumcheck")]
 #[inline(never)]
@@ -104,11 +126,11 @@ where
 /// Validate and replay standard sumcheck rounds without a terminal oracle check.
 pub fn verify_sumcheck_rounds<F, T, E, S>(
     proof: &SumcheckProof<E>,
-    mut claim: E,
+    claim: E,
     num_rounds: usize,
     degree_bound: usize,
     transcript: &mut T,
-    mut sample_challenge: S,
+    sample_challenge: S,
 ) -> Result<(E, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -117,14 +139,7 @@ where
     S: FnMut(&mut T) -> Result<E, AkitaError>,
 {
     validate_sumcheck_round_messages(proof, num_rounds, degree_bound)?;
-    let mut challenges = Vec::with_capacity(num_rounds);
-    for poly in &proof.round_polys {
-        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-        let challenge = sample_challenge(transcript)?;
-        challenges.push(challenge);
-        claim = poly.eval_from_hint(&claim, &challenge);
-    }
-    Ok((claim, challenges))
+    replay_validated_sumcheck_rounds::<F, T, E, _>(proof, claim, transcript, sample_challenge)
 }
 
 /// Verify one standard sumcheck instance, including its terminal oracle claim.
@@ -144,6 +159,8 @@ where
     V: SumcheckInstanceVerifier<E> + ?Sized,
 {
     let num_rounds = verifier.num_rounds();
+    let degree_bound = verifier.degree_bound();
+    validate_sumcheck_round_messages(proof, num_rounds, degree_bound)?;
     let input_claim = verifier.input_claim();
     tracing::debug!(
         is_zero = input_claim.is_zero(),
@@ -151,11 +168,9 @@ where
         "verify_sumcheck input_claim"
     );
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &input_claim);
-    let (final_claim, challenges) = verify_sumcheck_rounds::<F, T, E, _>(
+    let (final_claim, challenges) = replay_validated_sumcheck_rounds::<F, T, E, _>(
         proof,
         input_claim,
-        num_rounds,
-        verifier.degree_bound(),
         transcript,
         sample_challenge,
     )?;
@@ -163,7 +178,7 @@ where
     if final_claim != expected {
         tracing::error!(
             rounds = num_rounds,
-            degree_bound = verifier.degree_bound(),
+            degree_bound,
             diff_is_zero = (final_claim - expected).is_zero(),
             "verify_sumcheck MISMATCH"
         );
