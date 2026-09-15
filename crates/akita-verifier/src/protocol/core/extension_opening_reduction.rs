@@ -29,7 +29,8 @@ where
     S: FnMut(&mut T) -> Result<E, AkitaError>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
-    proof.verify::<F, T, _>(
+    akita_sumcheck::verify_sumcheck_rounds::<F, T, E, _>(
+        proof,
         input_claim,
         num_rounds,
         EXTENSION_OPENING_REDUCTION_DEGREE,

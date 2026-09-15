@@ -5,11 +5,10 @@
 //! prover-side compact witness scans and two-round-prefix kernels stay in the
 //! prover/root path.
 
-use akita_algebra::split_eq::GruenSplitEq;
 use akita_challenges::LiveFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
+use akita_sumcheck::verify_eq_factored_sumcheck;
 use akita_transcript::labels;
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
@@ -80,91 +79,6 @@ where
     Ok(group_challenges)
 }
 
-struct ProductSubcheckVerifier<'a, E: Field> {
-    equality_point: Vec<E>,
-    input_claim: E,
-    child_claims: &'a [E],
-    batch_weights: Vec<E>,
-    arity: usize,
-}
-
-impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier<'_, E> {
-    type RoundState = GruenSplitEq<E>;
-
-    fn num_rounds(&self) -> usize {
-        self.equality_point.len()
-    }
-
-    fn degree_bound(&self) -> usize {
-        self.arity
-    }
-
-    fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
-        GruenSplitEq::new(&self.equality_point)
-    }
-
-    fn expected_output_claim(
-        &self,
-        _round_state: &Self::RoundState,
-        _challenges: &[E],
-    ) -> Result<E, AkitaError> {
-        let batched_output = self
-            .batch_weights
-            .iter()
-            .zip(self.child_claims.chunks_exact(self.arity))
-            .fold(E::zero(), |acc, (&weight, child_claims)| {
-                let product = child_claims
-                    .iter()
-                    .copied()
-                    .fold(E::one(), |prod, claim| prod * claim);
-                acc + weight * product
-            });
-        Ok(batched_output)
-    }
-}
-
-struct RangePolynomialLeafVerifier<E: Field> {
-    plan: DigitRangePlan,
-    equality_point: Vec<E>,
-    input_claim: E,
-    poly_coeffs: Vec<E>,
-    range_image_evaluation: E,
-}
-
-impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeafVerifier<E> {
-    type RoundState = GruenSplitEq<E>;
-
-    fn num_rounds(&self) -> usize {
-        self.equality_point.len()
-    }
-
-    fn degree_bound(&self) -> usize {
-        self.poly_coeffs.len().saturating_sub(1)
-    }
-
-    fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
-        GruenSplitEq::new(&self.equality_point)
-    }
-
-    fn expected_output_claim(
-        &self,
-        _round_state: &Self::RoundState,
-        _challenges: &[E],
-    ) -> Result<E, AkitaError> {
-        Ok(self
-            .plan
-            .evaluate_leaf_polynomial(&self.poly_coeffs, self.range_image_evaluation))
-    }
-}
-
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
 pub struct AkitaStage1Verifier<E: Field> {
     equality_point: DigitRangeEqualityPoint<E>,
@@ -225,17 +139,23 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             .zip(product_stage_proofs.iter())
             .enumerate()
         {
-            let product_verifier = ProductSubcheckVerifier {
-                equality_point: current_equality_point,
-                input_claim: current_claim,
-                child_claims: &stage_proof.child_claims,
-                batch_weights: current_weights,
-                arity,
-            };
+            let expected_output = current_weights
+                .iter()
+                .zip(stage_proof.child_claims.chunks_exact(arity))
+                .fold(E::zero(), |acc, (&weight, child_claims)| {
+                    let product = child_claims
+                        .iter()
+                        .copied()
+                        .fold(E::one(), |product, claim| product * claim);
+                    acc + weight * product
+                });
             let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
             let mut round = 0u32;
-            current_equality_point = product_verifier.verify::<F, T, _>(
+            current_equality_point = verify_eq_factored_sumcheck::<F, T, E, _, _>(
                 &stage_proof.sumcheck_proof,
+                &current_equality_point,
+                current_claim,
+                arity,
                 transcript,
                 |tr| {
                     let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
@@ -248,6 +168,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                     round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
                     Ok(challenge)
                 },
+                |_| Ok(expected_output),
             )?;
             append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
             transcript
@@ -298,26 +219,31 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         };
         debug_assert_eq!(product_stage_proofs.len(), product_stage_arities.len());
         let leaf = self.verify_product_prefix::<F, T>(product_stage_proofs, transcript, level)?;
-        let leaf_verifier = RangePolynomialLeafVerifier {
-            plan: self.plan,
-            equality_point: leaf.equality_point,
-            input_claim: leaf.input_claim,
-            poly_coeffs: leaf.polynomial_coefficients,
-            range_image_evaluation: proof.range_image_evaluation,
-        };
         let stage =
             u32::try_from(product_stage_proofs.len()).map_err(|_| AkitaError::InvalidProof)?;
         let mut round = 0u32;
-        leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::Stage1,
-                level,
-                stage,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-            Ok(challenge)
-        })
+        let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
+        let expected_output = self
+            .plan
+            .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, proof.range_image_evaluation);
+        verify_eq_factored_sumcheck::<F, T, E, _, _>(
+            &leaf_stage_proof.sumcheck_proof,
+            &leaf.equality_point,
+            leaf.input_claim,
+            degree_bound,
+            transcript,
+            |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage1,
+                    level,
+                    stage,
+                    round,
+                )?;
+                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                Ok(challenge)
+            },
+            |_| Ok(expected_output),
+        )
     }
 }

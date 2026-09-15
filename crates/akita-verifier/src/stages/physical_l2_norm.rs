@@ -3,7 +3,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt};
+use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
     CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
@@ -268,7 +268,7 @@ where
         norm_merge,
     };
     let mut round = 0u32;
-    let point = verifier.verify::<F, T, _>(&proof.sumcheck, transcript, |tr| {
+    let point = verify_sumcheck::<F, T, E, _, _>(&verifier, &proof.sumcheck, transcript, |tr| {
         let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
             tr,
             akita_types::SumcheckProtocol::PhysicalL2,

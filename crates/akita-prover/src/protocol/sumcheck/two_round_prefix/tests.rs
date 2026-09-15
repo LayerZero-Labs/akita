@@ -1028,7 +1028,6 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
     let r0 = F::from_u64(9);
-    let _ = akita_sumcheck::advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
     prover.ingest_challenge(0, r0);
 
     let round1 = prover.compute_round_eq_factored(1);

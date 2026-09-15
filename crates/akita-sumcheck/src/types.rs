@@ -1,13 +1,10 @@
 //! Sumcheck proof containers and round-message types.
 
 use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_transcript::labels;
-use akita_transcript::Transcript;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::Field;
 use std::io::{Read, Write};
 
 /// Eq-factored round message storing `q(X)` without its constant coefficient.
@@ -194,80 +191,6 @@ impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Sum
             out.check()?;
         }
         Ok(out)
-    }
-}
-
-impl<E: Field> SumcheckProof<E> {
-    /// Verifier-side sumcheck transcript driver.
-    ///
-    /// This method:
-    /// - absorbs the per-round prover message (compressed univariate),
-    /// - samples one challenge per round via `sample_challenge`,
-    /// - updates the running claim using `eval_from_hint`.
-    ///
-    /// It does **not** perform the final oracle check `final_claim == f(r*)`.
-    /// Callers (e.g. ring-switching) must compute `f(r*)` themselves and compare.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the proof length does not match `num_rounds`, a round
-    /// message is empty, or its degree estimate exceeds `degree_bound`. Nonempty
-    /// proofs require a degree bound of at least one, including constant rounds.
-    pub fn verify<F, T, S>(
-        &self,
-        mut claim: E,
-        num_rounds: usize,
-        degree_bound: usize,
-        transcript: &mut T,
-        mut sample_challenge: S,
-    ) -> Result<(E, Vec<E>), AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        T: Transcript<F>,
-        E: AkitaSerialize,
-        S: FnMut(&mut T) -> Result<E, AkitaError>,
-    {
-        self.validate_round_messages(num_rounds, degree_bound)?;
-
-        let mut r = Vec::with_capacity(num_rounds);
-        for poly in &self.round_polys {
-            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-            let r_i = sample_challenge(transcript)?;
-            r.push(r_i);
-
-            claim = poly.eval_from_hint(&claim, &r_i);
-        }
-
-        Ok((claim, r))
-    }
-
-    /// Validate both standard drivers' messages before transcript replay.
-    /// Empty messages must be rejected: their evaluator ignores the incoming
-    /// claim and returns zero instead of reconstructing the linear coefficient.
-    pub(crate) fn validate_round_messages(
-        &self,
-        num_rounds: usize,
-        degree_bound: usize,
-    ) -> Result<(), AkitaError> {
-        if self.round_polys.len() != num_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: num_rounds,
-                actual: self.round_polys.len(),
-            });
-        }
-        for poly in &self.round_polys {
-            if poly.coeffs_except_linear_term.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-            if poly.degree() > degree_bound {
-                return Err(AkitaError::InvalidInput(format!(
-                    "sumcheck round poly degree {} exceeds bound {}",
-                    poly.degree(),
-                    degree_bound
-                )));
-            }
-        }
-        Ok(())
     }
 }
 

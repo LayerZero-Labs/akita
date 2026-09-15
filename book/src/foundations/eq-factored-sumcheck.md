@@ -111,10 +111,11 @@ No inverse or accumulated claim scale appears, and the formula remains valid
 when $\tau_j=0$ or when an earlier equality evaluation vanishes. The final
 verifier check compares $T_n$ directly with the expected folded oracle value.
 
-The function `advance_eq_factored_claim` in
-`akita-sumcheck/src/drivers/eq_factored.rs` implements these equations directly.
-Both prover and verifier call that one function, so the transcript replay and
-the generated proof cannot drift onto different update rules.
+The public function `advance_eq_factored_claim` in
+`akita-sumcheck/src/single.rs` implements these equations directly. The direct
+`prove_eq_factored_sumcheck` and `verify_eq_factored_sumcheck` functions both
+call it, so transcript replay and proof generation cannot drift onto different
+update rules.
 
 ## Avoiding a full equality table
 
@@ -170,9 +171,9 @@ matching verifier equation.
 | --- | --- |
 | Equality polynomial definition and tables | `akita-algebra/src/eq_poly.rs` |
 | Split equality state and suffix caches | `akita-algebra/src/split_eq.rs` |
-| Factored prover and verifier interfaces | `akita-sumcheck/src/traits.rs` |
+| Factored prover interface | `akita-sumcheck/src/traits.rs` |
 | Factored round message and proof encoding | `akita-sumcheck/src/types.rs` |
-| Normalized claim update and transcript driver | `akita-sumcheck/src/drivers/eq_factored.rs` |
+| Direct prover/verifier functions and normalized claim update | `akita-sumcheck/src/single.rs` |
 
 For a review, check these facts together:
 

@@ -5,9 +5,7 @@ use super::digit_range::exact_prefix::ExactPrefixTable;
 use akita_algebra::UniPoly;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{
-    EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceProverExt,
-};
+use akita_sumcheck::{prove_sumcheck, EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
     CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
@@ -379,19 +377,20 @@ where
         rounds_completed: 0,
     };
     let mut round = 0u32;
-    let (sumcheck, point, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-            tr,
-            akita_types::SumcheckProtocol::PhysicalL2,
-            level,
-            0,
-            round,
-        )?;
-        round = round
-            .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidSetup("physical L2 round overflow".into()))?;
-        Ok(challenge)
-    })?;
+    let (sumcheck, point, final_claim) =
+        prove_sumcheck::<F, T, E, _, _>(&mut prover, transcript, |tr| {
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::PhysicalL2,
+                level,
+                0,
+                round,
+            )?;
+            round = round
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("physical L2 round overflow".into()))?;
+            Ok(challenge)
+        })?;
     let expected_final_claim =
         prover.range.final_range_claim() + norm_merge * prover.norm.final_claim()?;
     if final_claim != expected_final_claim {

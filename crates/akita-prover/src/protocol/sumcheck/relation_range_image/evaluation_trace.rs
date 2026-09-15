@@ -239,13 +239,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         Ok(self.get(0, 0, 1))
     }
 
-    /// A trace of the given geometry whose weight function is identically zero.
-    ///
-    /// Used by virtual-only stage-2 instances that carry no committed
-    /// evaluation-trace term: every lane has empty support, so `get` returns
-    /// zero everywhere, coefficient/lane folds are no-ops over the empty
-    /// source set, and [`Self::final_value`] resolves to zero once folding
-    /// completes.
     pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
         Self {
             lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
