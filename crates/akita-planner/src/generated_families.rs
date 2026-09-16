@@ -115,6 +115,15 @@ macro_rules! onehot_keys {
     };
 }
 
+// Dense setup-offload coverage for the PCS benchmark payload ladder.
+const FP128_DENSE_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(22),
+    PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+];
+
 const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::new(15, 2),
@@ -174,6 +183,16 @@ const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(26),
 ];
 
+// Dense setup-offload coverage for the PCS benchmark payload ladder.
+const FP32_DENSE_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(22),
+    PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
+];
+
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
@@ -189,6 +208,15 @@ const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
     (28, 1),
     (30, 1),
     (34, 1)
+];
+
+// Dense setup-offload coverage for the PCS benchmark payload ladder.
+const FP64_DENSE_RECURSIVE_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(21),
+    PolynomialGroupLayout::singleton(23),
+    PolynomialGroupLayout::singleton(25),
+    PolynomialGroupLayout::singleton(27),
+    PolynomialGroupLayout::singleton(29),
 ];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
@@ -659,6 +687,13 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     family_row!(FP128_DENSE_KEYS, fp128::Dense, fp128_dense_grouped_requests),
     family_row!(
+        recursive,
+        FP128_DENSE_RECURSIVE_KEYS,
+        RecursiveCommitmentConfig<fp128::Dense>,
+        fp128::Dense,
+        no_grouped_requests
+    ),
+    family_row!(
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
         fp128::OneHotMultiChunk,
         fp128_onehot_multichunk_grouped_requests
@@ -684,8 +719,22 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         no_grouped_requests
     ),
     family_row!(FP64_DENSE_KEYS, fp64::Dense, fp64_dense_grouped_requests),
+    family_row!(
+        recursive,
+        FP64_DENSE_RECURSIVE_KEYS,
+        RecursiveCommitmentConfig<fp64::Dense>,
+        fp64::Dense,
+        no_grouped_requests
+    ),
     family_row!(FP64_ONEHOT_KEYS, fp64::OneHot, no_grouped_requests),
     family_row!(FP32_DENSE_KEYS, fp32::Dense, fp32_dense_grouped_requests),
+    family_row!(
+        recursive,
+        FP32_DENSE_RECURSIVE_KEYS,
+        RecursiveCommitmentConfig<fp32::Dense>,
+        fp32::Dense,
+        no_grouped_requests
+    ),
     family_row!(FP32_ONEHOT_KEYS, fp32::OneHot, fp32_onehot_grouped_requests),
 ];
 
