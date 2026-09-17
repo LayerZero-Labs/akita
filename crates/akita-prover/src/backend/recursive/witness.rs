@@ -18,7 +18,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::backend::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 use crate::backend::poly_helpers::{
-    build_decompose_fold_witness, packed_tight_digit_fold_partitioned,
+    build_decompose_fold_witness, packed_tight_digit_fold_partitioned, sparse_mul_acc,
 };
 use crate::compute::CpuBackend;
 use akita_types::WitnessLayout;
@@ -434,6 +434,45 @@ where
         );
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
+
+    pub(crate) fn decompose_fold_chunked(
+        &self,
+        challenges: &[SparseChallenge],
+        chunk_ranges: &[std::ops::Range<usize>],
+        num_positions_per_block: usize,
+        num_digits: usize,
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        if challenges.len() != num_live_blocks || num_digits != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "recursive chunked fold plan disagrees with tight witness geometry".into(),
+            ));
+        }
+        let mut accumulators = vec![vec![[0i32; D]; num_positions_per_block]; chunk_ranges.len()];
+        let mut chunk = 0usize;
+        for ring_index in 0..self.live_ring_elems {
+            let block = ring_index / num_positions_per_block;
+            while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
+                chunk += 1;
+            }
+            if chunk_ranges[chunk].contains(&block) {
+                let ring = self.ring_elem(ring_index).ok_or(AkitaError::InvalidProof)?;
+                sparse_mul_acc(
+                    &ring,
+                    &challenges[block],
+                    &mut accumulators[chunk][ring_index % num_positions_per_block],
+                );
+            }
+        }
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
+        Ok(accumulators
+            .into_iter()
+            .map(|coefficients| build_decompose_fold_witness::<F, D>(coefficients, q))
+            .collect())
+    }
 }
 
 // ===========================================================================
@@ -625,33 +664,68 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<crate::compute::CpuFoldResponses<F>, AkitaError> {
         let challenges_per_poly = plan.challenges_per_poly(source.polys.len())?;
-        let DecomposeFoldBatchPlan::Sparse {
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        } = plan;
-        aggregate_decompose_fold_witnesses::<F, D>(
-            source
-                .polys
-                .iter()
-                .zip(challenges.chunks_exact(challenges_per_poly))
-                .map(|(poly, poly_challenges)| {
-                    <Self as OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D>>::decompose_fold(
-                        self,
-                        prepared,
-                        poly.opening_view()?,
-                        DecomposeFoldPlan {
-                            challenges: poly_challenges,
-                            num_positions_per_block,
-                            num_digits,
-                            log_basis,
-                        },
-                    )
-                }),
-        )
+        let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
+        match plan {
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
+                Ok(crate::compute::CpuFoldResponses::sparse(
+                    aggregate_decompose_fold_witnesses::<F, D>(
+                        source
+                            .polys
+                            .iter()
+                            .zip(challenges.chunks_exact(challenges_per_poly))
+                            .map(|(poly, poly_challenges)| {
+                                <Self as OpeningFoldKernel<
+                                    SuffixWitnessView<'_, F, D>, F, D,
+                                >>::decompose_fold(
+                                    self,
+                                    prepared,
+                                    poly.opening_view()?,
+                                    DecomposeFoldPlan {
+                                        challenges: poly_challenges,
+                                        num_positions_per_block,
+                                        num_digits,
+                                        log_basis,
+                                    },
+                                )
+                            }),
+                    )?,
+                ))
+            }
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges,
+                chunk_ranges,
+                ..
+            } => {
+                let mut by_chunk = (0..chunk_ranges.len())
+                    .map(|_| Vec::with_capacity(source.polys.len()))
+                    .collect::<Vec<_>>();
+                for (poly, poly_challenges) in source
+                    .polys
+                    .iter()
+                    .zip(challenges.as_slice().chunks_exact(challenges_per_poly))
+                {
+                    for (chunk, witness) in by_chunk.iter_mut().zip(
+                        <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_view(poly)?
+                            .decompose_fold_chunked(
+                                poly_challenges,
+                                chunk_ranges,
+                                num_positions_per_block,
+                                num_digits,
+                            )?,
+                    ) {
+                        chunk.push(Ok(witness));
+                    }
+                }
+                crate::compute::CpuFoldResponses::chunked::<D>(
+                    by_chunk
+                        .into_iter()
+                        .map(aggregate_decompose_fold_witnesses::<F, D>)
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
+        }
     }
 }
 

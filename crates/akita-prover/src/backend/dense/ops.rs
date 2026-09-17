@@ -6,8 +6,8 @@
 use super::poly::DensePoly;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
-    DecomposeParams,
+    cached_digit_decompose_fold_partitioned, decompose_ring_interleaved,
+    decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
 };
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -22,6 +22,68 @@ impl<F> DensePoly<F>
 where
     F: Field + CanonicalEncoding,
 {
+    pub(crate) fn decompose_fold_chunked<const D: usize>(
+        &self,
+        challenges: &[SparseChallenge],
+        chunk_ranges: &[std::ops::Range<usize>],
+        num_positions_per_block: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Vec<DecomposeFoldWitness<F>> {
+        let coeffs = self
+            .ring_coeffs::<D>()
+            .expect("DensePoly::decompose_fold_chunked: invalid ring view");
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
+        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+        let inner_width = num_positions_per_block * num_digits;
+        let mut accumulators = vec![vec![[0i32; D]; inner_width]; chunk_ranges.len()];
+        let cached = self.digit_planes_for::<D>(num_digits, log_basis);
+        let mut scratch = vec![[0i8; D]; num_digits];
+        let mut chunk = 0usize;
+        for (ring_index, ring) in coeffs.iter().enumerate() {
+            let block = ring_index / num_positions_per_block;
+            if block >= challenges.len() {
+                break;
+            }
+            while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
+                chunk += 1;
+            }
+            if !chunk_ranges[chunk].contains(&block) {
+                continue;
+            }
+            let digits = if let Some(planes) = cached {
+                &planes[ring_index * num_digits..(ring_index + 1) * num_digits]
+            } else {
+                decompose_ring_interleaved(ring, &mut scratch, num_digits, &params);
+                &scratch
+            };
+            let position = ring_index % num_positions_per_block;
+            for (digit, coefficients) in digits.iter().enumerate() {
+                sparse_mul_acc(
+                    coefficients,
+                    &challenges[block],
+                    &mut accumulators[chunk][position * num_digits + digit],
+                );
+            }
+        }
+        accumulators
+            .into_iter()
+            .map(|coefficients| build_decompose_fold_witness::<F, D>(coefficients, q))
+            .collect()
+    }
+
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],

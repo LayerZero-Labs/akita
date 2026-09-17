@@ -2,6 +2,7 @@
 
 use crate::commitment::InnerRelationStateMaterial;
 use crate::protocol::ring_relation::CompressionWitnessMaterialization;
+#[cfg(test)]
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
@@ -17,13 +18,16 @@ pub(crate) type GroupFoldedOpening<F> = OpeningFamily<RingVec<F>, CoefficientPac
 /// One distributed fold window's centered coefficients and signed extrema.
 pub(crate) struct CenteredFoldChunk {
     coefficients: Vec<i32>,
+    #[cfg(test)]
     min: i32,
+    #[cfg(test)]
     max: i32,
 }
 
 impl CenteredFoldChunk {
     /// Retain one chunk's centered coefficients and the extrema computed by
     /// its canonical fold-witness constructor.
+    #[cfg(test)]
     pub(crate) fn from_witness<F: Field>(witness: &DecomposeFoldWitness<F>) -> Self {
         let (min, max) = witness.centered_signed_extrema();
         Self {
@@ -33,10 +37,26 @@ impl CenteredFoldChunk {
         }
     }
 
+    pub(crate) fn from_coefficients(coefficients: Vec<i32>) -> Self {
+        #[cfg(test)]
+        let (min, max) = coefficients
+            .iter()
+            .copied()
+            .fold((0, 0), |(min, max), value| (min.min(value), max.max(value)));
+        Self {
+            coefficients,
+            #[cfg(test)]
+            min,
+            #[cfg(test)]
+            max,
+        }
+    }
+
     pub(crate) fn coefficients(&self) -> &[i32] {
         &self.coefficients
     }
 
+    #[cfg(test)]
     pub(crate) fn signed_extrema(&self) -> (i32, i32) {
         (self.min, self.max)
     }
@@ -103,6 +123,7 @@ impl FoldChunkCoefficients {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn all_extrema_within(
         &self,
         global: &DecomposeFoldWitness<impl Field>,
@@ -120,20 +141,7 @@ impl FoldChunkCoefficients {
         }
     }
 
-    fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        if let FoldChunkStorage::Chunked(chunks) = &self.storage {
-            for chunk in chunks {
-                if !chunk.coefficients.len().is_multiple_of(D) {
-                    return Err(AkitaError::InvalidSize {
-                        expected: D,
-                        actual: chunk.coefficients.len(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
+    #[cfg(test)]
     pub(crate) fn try_for_each(
         &self,
         global: &[i32],
@@ -193,8 +201,7 @@ impl FoldChunkCoefficients {
 
 /// Per-group secret witness for the ring relation at one fold level.
 pub struct RingRelationGroupWitness<F: Field> {
-    pub z_folded_rings: DecomposeFoldWitness<F>,
-    pub(crate) z_folded_coefficients: FoldChunkCoefficients,
+    pub(crate) fold: crate::compute::CpuAcceptedFold<F>,
     pub e_hat: DigitBlocks,
     pub(crate) folded_opening: GroupFoldedOpening<F>,
     pub inner_relation: InnerRelationStateMaterial<F>,
@@ -204,16 +211,14 @@ pub struct RingRelationGroupWitness<F: Field> {
 impl<F: Field> RingRelationGroupWitness<F> {
     /// Construct one group witness from D-free carriers.
     pub(crate) fn from_parts(
-        z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_coefficients: FoldChunkCoefficients,
+        fold: crate::compute::CpuAcceptedFold<F>,
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
         inner_relation: InnerRelationStateMaterial<F>,
         role_dims: CommitmentRingDims,
     ) -> Self {
         Self {
-            z_folded_rings,
-            z_folded_coefficients,
+            fold,
             e_hat,
             folded_opening: OpeningFamily::EvaluationTrace(e_folded),
             inner_relation,
@@ -223,16 +228,14 @@ impl<F: Field> RingRelationGroupWitness<F> {
 
     /// Construct one coefficient-packing group witness from checked physical coordinates.
     pub(crate) fn from_coefficient_packing_parts(
-        z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_coefficients: FoldChunkCoefficients,
+        fold: crate::compute::CpuAcceptedFold<F>,
         e_hat: DigitBlocks,
         product: CoefficientPackingFoldProduct<F>,
         inner_relation: InnerRelationStateMaterial<F>,
         role_dims: CommitmentRingDims,
     ) -> Self {
         Self {
-            z_folded_rings,
-            z_folded_coefficients,
+            fold,
             e_hat,
             folded_opening: OpeningFamily::SubringCoefficientPacking(product),
             inner_relation,
@@ -255,7 +258,7 @@ impl<F: Field> RingRelationGroupWitness<F> {
         }
         match role {
             RingRole::Inner => {
-                self.z_folded_rings.ensure_ring_dim::<D>()?;
+                self.fold.ensure_ring_dim::<D>()?;
                 if let OpeningFamily::EvaluationTrace(e_folded) = &self.folded_opening {
                     if !e_folded.can_decode_vec(D) {
                         return Err(AkitaError::InvalidSize {
@@ -264,7 +267,6 @@ impl<F: Field> RingRelationGroupWitness<F> {
                         });
                     }
                 }
-                self.z_folded_coefficients.ensure_ring_dim::<D>()?;
             }
             RingRole::Opening => {
                 if self.e_hat.digit_stride() != D {

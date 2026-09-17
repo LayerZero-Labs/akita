@@ -48,12 +48,15 @@ pub use cpu::{
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub(crate) use kernels::aggregate_decompose_fold_witnesses;
 pub use kernels::{
+    CpuAcceptedFold, CpuAcceptedTerminalFold, CpuFoldResponses, FoldResponseKernel,
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
     SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, FoldProbeDiagnostics,
+    FoldProbeGeometry, FoldProbeOutcome, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    ValidatedFoldAcceptancePlan, ValidatedFoldProbePlan,
 };
 pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};

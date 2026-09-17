@@ -212,36 +212,53 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<crate::compute::CpuFoldResponses<F>, AkitaError> {
         let challenges_per_poly = plan.challenges_per_poly(source.polys.len())?;
-        let DecomposeFoldBatchPlan::Sparse {
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        } = plan;
-        match OneHotPoly::decompose_fold_batched::<D>(
-            source.polys,
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        ) {
-            Some(witness) => Ok(witness),
-            None => aggregate_decompose_fold_witnesses::<F, D>(
-                source
-                    .polys
-                    .iter()
-                    .zip(challenges.chunks_exact(challenges_per_poly))
-                    .map(|(poly, poly_challenges)| {
-                        Ok(poly.decompose_fold::<D>(
-                            poly_challenges,
-                            num_positions_per_block,
-                            num_digits,
-                            log_basis,
-                        ))
-                    }),
-            ),
+        let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
+        match plan {
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
+                let witness = match OneHotPoly::decompose_fold_batched::<D>(
+                    source.polys,
+                    challenges,
+                    num_positions_per_block,
+                    num_digits,
+                    log_basis,
+                ) {
+                    Some(witness) => witness,
+                    None => aggregate_decompose_fold_witnesses::<F, D>(
+                        source
+                            .polys
+                            .iter()
+                            .zip(challenges.chunks_exact(challenges_per_poly))
+                            .map(|(poly, poly_challenges)| {
+                                Ok(poly.decompose_fold::<D>(
+                                    poly_challenges,
+                                    num_positions_per_block,
+                                    num_digits,
+                                    log_basis,
+                                ))
+                            }),
+                    )?,
+                };
+                Ok(crate::compute::CpuFoldResponses::sparse(witness))
+            }
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges,
+                chunk_ranges,
+                ..
+            } => {
+                let chunks = OneHotPoly::decompose_fold_batched_chunked_onehot::<D>(
+                    source.polys,
+                    challenges.as_slice(),
+                    chunk_ranges,
+                    num_positions_per_block,
+                    num_digits,
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("one-hot chunked fold source is empty".into())
+                })?;
+                crate::compute::CpuFoldResponses::chunked::<D>(chunks)
+            }
         }
     }
 }

@@ -95,6 +95,48 @@ pub fn decompose_ring_interleaved<F: Field + CanonicalEncoding, const D: usize>(
     }
 }
 
+pub(crate) fn balanced_ring_decompose_fold_chunked<F, const D: usize>(
+    rings: &[CyclotomicRing<F, D>],
+    challenges: &[SparseChallenge],
+    chunk_ranges: &[std::ops::Range<usize>],
+    num_positions_per_block: usize,
+    num_digits: usize,
+    params: &DecomposeParams,
+) -> Vec<DecomposeFoldWitness<F>>
+where
+    F: Field + CanonicalEncoding,
+{
+    let mut accumulators =
+        vec![vec![[0i32; D]; num_positions_per_block * num_digits]; chunk_ranges.len()];
+    let mut digits = vec![[0i8; D]; num_digits];
+    let mut chunk = 0usize;
+    for (ring_index, ring) in rings.iter().enumerate() {
+        let block = ring_index / num_positions_per_block;
+        if block >= challenges.len() {
+            break;
+        }
+        while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
+            chunk += 1;
+        }
+        if !chunk_ranges[chunk].contains(&block) {
+            continue;
+        }
+        decompose_ring_interleaved(ring, &mut digits, num_digits, params);
+        let position = ring_index % num_positions_per_block;
+        for (digit, coefficients) in digits.iter().enumerate() {
+            sparse_mul_acc(
+                coefficients,
+                &challenges[block],
+                &mut accumulators[chunk][position * num_digits + digit],
+            );
+        }
+    }
+    accumulators
+        .into_iter()
+        .map(|coefficients| build_decompose_fold_witness(coefficients, params.q))
+        .collect()
+}
+
 /// Signed-i16 counterpart of [`decompose_ring_interleaved`] for bases above 8.
 #[inline(never)]
 pub fn decompose_ring_interleaved_i16<F: Field + CanonicalEncoding, const D: usize>(

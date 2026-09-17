@@ -172,6 +172,45 @@ where
     compressed
 }
 
+fn accumulate_indices_chunked<F, I, const D: usize>(
+    sources: &[DecomposeSource<'_, F, I>],
+    challenges: &[SparseChallenge],
+    chunk_ranges: &[std::ops::Range<usize>],
+    num_positions_per_block: usize,
+) -> Vec<Vec<[i32; D]>>
+where
+    F: Field,
+    I: OneHotIndex,
+{
+    let rotations = prepare_rotations::<D>(challenges);
+    let mut chunks = vec![vec![[0i32; D]; num_positions_per_block]; chunk_ranges.len()];
+    for source in sources {
+        let mut chunk = 0usize;
+        for block in 0..source.active_blocks {
+            while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
+                chunk += 1;
+            }
+            if !chunk_ranges[chunk].contains(&block) {
+                continue;
+            }
+            let block_start = block * num_positions_per_block;
+            let block_end = (block_start + num_positions_per_block).min(source.ring_elems);
+            if block_start < block_end {
+                accumulate_ring_range(
+                    source,
+                    block_start,
+                    block_end,
+                    block_start,
+                    source.challenge_start + block,
+                    &mut chunks[chunk],
+                    &rotations,
+                );
+            }
+        }
+    }
+    chunks
+}
+
 fn expand_onehot_accum<const D: usize>(
     compressed: Vec<[i32; D]>,
     num_digits: usize,
@@ -207,6 +246,45 @@ pub(super) fn finish_decompose_fold<F: Field + CanonicalEncoding, const D: usize
 }
 
 impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
+    pub(super) fn decompose_fold_batched_chunked_onehot<const D: usize>(
+        polys: &[&Self],
+        challenges: &[SparseChallenge],
+        chunk_ranges: &[std::ops::Range<usize>],
+        num_positions_per_block: usize,
+        num_digits: usize,
+    ) -> Option<Vec<DecomposeFoldWitness<F>>>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        let mut challenge_start = 0usize;
+        let mut sources = Vec::with_capacity(polys.len());
+        for &poly in polys {
+            if challenge_start == challenges.len() {
+                break;
+            }
+            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
+            let active_blocks = num_blocks.min(challenges.len() - challenge_start);
+            sources.push(DecomposeSource {
+                poly,
+                challenge_start,
+                active_blocks,
+                ring_elems,
+            });
+            challenge_start += active_blocks;
+        }
+        (!sources.is_empty()).then(|| {
+            accumulate_indices_chunked::<F, I, D>(
+                &sources,
+                &challenges[..challenge_start],
+                chunk_ranges,
+                num_positions_per_block,
+            )
+            .into_iter()
+            .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
+            .collect()
+        })
+    }
+
     pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],

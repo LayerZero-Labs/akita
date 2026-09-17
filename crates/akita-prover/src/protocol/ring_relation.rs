@@ -257,6 +257,7 @@ where
             log_basis: log_basis_inner,
         },
     )
+    .map(|responses| responses.global)
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
@@ -264,36 +265,6 @@ where
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &CommittedGroupParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()
-}
-
-/// Restrict sparse fold challenges to one chunk's exact global block range,
-/// zeroing all other blocks. Folding under these yields the partial response
-/// `z_i = Σ_{j∈I_i} c_j s_j`.
-pub(super) fn window_sparse_challenges(
-    challenges: &Challenges,
-    fold_range: std::ops::Range<usize>,
-) -> Result<Challenges, AkitaError> {
-    let windowed: Vec<SparseChallenge> = challenges
-        .as_slice()
-        .iter()
-        .enumerate()
-        .map(|(index, challenge)| {
-            let block = index % challenges.num_live_blocks_per_claim();
-            if fold_range.contains(&block) {
-                challenge.clone()
-            } else {
-                SparseChallenge {
-                    positions: Vec::new().into(),
-                    coeffs: Vec::new().into(),
-                }
-            }
-        })
-        .collect();
-    Challenges::from_sparse(
-        windowed,
-        challenges.num_live_blocks_per_claim(),
-        challenges.num_claims(),
-    )
 }
 
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
@@ -823,8 +794,7 @@ impl RingRelationProver {
                         material.ring_multiplier_point,
                     ));
                     group_witnesses.push(RingRelationGroupWitness::from_parts(
-                        output.witness,
-                        output.coefficients,
+                        output.fold,
                         e_hat,
                         material.e_folded,
                         inner_relation,
@@ -844,8 +814,7 @@ impl RingRelationProver {
                     relation_group_openings
                         .push(RingRelationGroupOpening::coefficient_packing(challenges));
                     group_witnesses.push(RingRelationGroupWitness::from_coefficient_packing_parts(
-                        output.witness,
-                        output.coefficients,
+                        output.fold,
                         e_hat,
                         product,
                         inner_relation,

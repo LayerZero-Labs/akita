@@ -63,7 +63,11 @@ where
         challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &akita_types::GroupOpenPhaseParams,
-    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
+        acceptance: crate::compute::ValidatedFoldAcceptancePlan,
+    ) -> Result<
+        crate::compute::FoldProbeOutcome<crate::protocol::fold_grind::FoldProbeOutput<F>>,
+        AkitaError,
+    >;
 }
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
@@ -270,7 +274,11 @@ where
         challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &akita_types::GroupOpenPhaseParams,
-    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
+        acceptance: crate::compute::ValidatedFoldAcceptancePlan,
+    ) -> Result<
+        crate::compute::FoldProbeOutcome<crate::protocol::fold_grind::FoldProbeOutput<F>>,
+        AkitaError,
+    > {
         let ring_dimension = params.inner_commit_matrix_params().ring_dimension();
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -278,21 +286,30 @@ where
             ring_dimension,
             |D| {
                 let point_indices = (0..self.num_polynomials()).collect::<Vec<_>>();
-                let (witness, coefficients) =
-                    crate::protocol::fold_grind::fold_probe_witness_kernel::<F, P, B, D>(
-                        ctx.backend(),
-                        Some(ctx.prepared()),
-                        challenges.ambient_a(),
-                        self.polynomial_refs(),
-                        &point_indices,
-                        root_params,
-                        params,
-                    )?;
-                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldProbeOutput {
-                    witness,
-                    coefficients,
-                    challenges: challenges.clone(),
-                })
+                match crate::protocol::fold_grind::fold_probe_witness_kernel::<F, P, B, D>(
+                    ctx.backend(),
+                    Some(ctx.prepared()),
+                    challenges.ambient_a(),
+                    self.polynomial_refs(),
+                    &point_indices,
+                    root_params,
+                    params,
+                    acceptance,
+                )? {
+                    crate::compute::FoldProbeOutcome::Rejected => {
+                        Ok(crate::compute::FoldProbeOutcome::Rejected)
+                    }
+                    crate::compute::FoldProbeOutcome::Accepted { fold, diagnostics } => {
+                        Ok(crate::compute::FoldProbeOutcome::Accepted {
+                            fold: crate::protocol::fold_grind::FoldProbeOutput {
+                                fold,
+                                challenges: challenges.clone(),
+                                diagnostics,
+                            },
+                            diagnostics,
+                        })
+                    }
+                }
             }
         )
     }

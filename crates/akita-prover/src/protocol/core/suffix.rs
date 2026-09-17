@@ -404,12 +404,13 @@ where
             ))
         }
     )?;
-    let terminal_response = akita_types::build_terminal_response(
+    let terminal_response = fold_output.fold.build_response(
+        stack.opening().backend(),
+        Some(stack.opening().prepared()),
         params,
         &scheduled.response_shape,
         &e_folded,
         t_state,
-        fold_output.witness.centered_coeffs_flat(),
     )?;
     let transcript_parts = terminal_response.terminal_transcript_parts()?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &transcript_parts.response);

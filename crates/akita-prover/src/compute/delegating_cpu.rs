@@ -176,7 +176,7 @@ macro_rules! delegate_opening_kernels {
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 plan: DecomposeFoldBatchPlan<'_>,
-            ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+            ) -> Result<super::kernels::CpuFoldResponses<F>, AkitaError> {
                 CpuBackend::DEFAULT.decompose_fold_batch(prepared, source, plan)
             }
         }

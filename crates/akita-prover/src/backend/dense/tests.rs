@@ -6,6 +6,65 @@ use akita_error::AkitaError;
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::{CanonicalEncoding, Ring, Zero};
 
+#[test]
+fn chunked_fold_matches_windowed_reference_and_global() {
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    let poly =
+        DensePoly::<F>::from_ring_coeffs((0..8).map(|index| ring::<D>(index * 10)).collect())
+            .unwrap();
+    let challenges = (0..4)
+        .map(|block| SparseChallenge {
+            positions: vec![(block * 2) as u32, (block * 2 + 1) as u32].into(),
+            coeffs: vec![1, -1].into(),
+        })
+        .collect::<Vec<_>>();
+    let global = poly.decompose_fold::<D>(&challenges, POSITIONS, 2, 4);
+
+    for chunk_count in [2, 4, 8] {
+        let ranges = akita_types::dyadic_block_ranges(challenges.len(), chunk_count).unwrap();
+        let chunks = poly.decompose_fold_chunked::<D>(&challenges, &ranges, POSITIONS, 2, 4);
+        assert_eq!(chunks.len(), chunk_count);
+        for (range, chunk) in ranges.iter().zip(&chunks) {
+            let window = challenges
+                .iter()
+                .enumerate()
+                .map(|(block, challenge)| {
+                    range
+                        .contains(&block)
+                        .then_some(challenge.clone())
+                        .unwrap_or(SparseChallenge {
+                            positions: Vec::new().into(),
+                            coeffs: Vec::new().into(),
+                        })
+                })
+                .collect::<Vec<_>>();
+            let expected = poly.decompose_fold::<D>(&window, POSITIONS, 2, 4);
+            assert_eq!(
+                chunk.centered_coeffs_flat(),
+                expected.centered_coeffs_flat()
+            );
+            assert_eq!(chunk.z_folded_rings, expected.z_folded_rings);
+        }
+        let combined = crate::compute::aggregate_decompose_fold_witnesses::<F, D>(
+            chunks.iter().map(|chunk| {
+                crate::DecomposeFoldWitness::from_owned_flat_parts::<D>(
+                    chunk.z_folded_rings.clone(),
+                    chunk.centered_coeffs_flat().to_vec(),
+                )
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            combined.centered_coeffs_flat(),
+            global.centered_coeffs_flat()
+        );
+        assert_eq!(combined.z_folded_rings, global.z_folded_rings);
+    }
+}
+
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
         F::from_u64(offset + idx as u64 + 1)

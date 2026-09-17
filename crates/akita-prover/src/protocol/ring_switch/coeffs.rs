@@ -9,8 +9,8 @@ use crate::protocol::ring_relation::{
     RelationQuotientOutput,
 };
 use crate::protocol::ring_relation_witness::{
-    FoldChunkCoefficients, GroupFoldedOpening, RelationDQuotientWitness, RingRelationGroupWitness,
-    RingRelationWitness,
+    CenteredFoldChunk, FoldChunkCoefficients, GroupFoldedOpening, RelationDQuotientWitness,
+    RingRelationGroupWitness, RingRelationWitness,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
@@ -325,14 +325,16 @@ fn emit_unit_z_segment<const D: usize>(
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, B>(
+pub fn ring_switch_build_w<F, O, B>(
     instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F>,
+    opening_ctx: &OperationCtx<'_, F, O>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &CommittedGroupParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: Field + CanonicalEncoding + Ring + AkitaSerialize,
+    O: crate::compute::ComputeBackendSetup<F>,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
@@ -373,13 +375,27 @@ where
             |D_G| group.ensure_role_dim::<D_G>(RingRole::Opening)
         )?;
         let RingRelationGroupWitness {
-            z_folded_rings,
-            z_folded_coefficients,
+            fold,
             e_hat,
             folded_opening,
             inner_relation,
             ..
         } = group;
+        fold.validate_context(
+            opening_ctx.backend(),
+            Some(opening_ctx.prepared()),
+            group_lp.opening_method(),
+        )?;
+        let (z_folded_rings, chunks) = fold.into_parts();
+        let z_folded_coefficients = match chunks {
+            None => FoldChunkCoefficients::single(),
+            Some(chunks) => FoldChunkCoefficients::chunked(
+                chunks
+                    .into_iter()
+                    .map(CenteredFoldChunk::from_coefficients)
+                    .collect(),
+            )?,
+        };
         if inner_relation.ring_dimension() != group_dims.d_a() {
             return Err(AkitaError::InvalidSize {
                 expected: group_dims.d_a(),

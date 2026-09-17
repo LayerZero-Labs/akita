@@ -1,11 +1,12 @@
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_types::{
     CommittedGroupParams, GroupCommitPhaseParams, PreparedSubringCoefficientPackingPoint,
     SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
 };
 use jolt_field::Field;
+use std::ops::Range;
 
 // ===========================================================================
 // Open, source-typed proving boundary
@@ -275,9 +276,39 @@ pub enum DecomposeFoldBatchPlan<'a> {
         /// Logarithm of the gadget basis.
         log_basis: u32,
     },
+    /// Chunk-aware sparse fold with full challenges and canonical ranges.
+    SparseChunked {
+        /// Full claim-major challenge carrier.
+        challenges: &'a Challenges,
+        /// Exact canonical ranges for one claim.
+        chunk_ranges: &'a [Range<usize>],
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
+        /// Number of balanced digits.
+        num_digits: usize,
+        /// Logarithm of the gadget basis.
+        log_basis: u32,
+    },
 }
 
 impl DecomposeFoldBatchPlan<'_> {
+    pub(crate) fn scalar_params(self) -> (usize, usize, u32) {
+        match self {
+            Self::Sparse {
+                num_positions_per_block,
+                num_digits,
+                log_basis,
+                ..
+            }
+            | Self::SparseChunked {
+                num_positions_per_block,
+                num_digits,
+                log_basis,
+                ..
+            } => (num_positions_per_block, num_digits, log_basis),
+        }
+    }
+
     /// Validate a uniform batch and return each polynomial's challenge count.
     pub fn challenges_per_poly(self, num_polys: usize) -> Result<usize, AkitaError> {
         if num_polys == 0 {
@@ -285,7 +316,10 @@ impl DecomposeFoldBatchPlan<'_> {
                 "batched decompose_fold requires at least one polynomial".to_string(),
             ));
         }
-        let Self::Sparse { challenges, .. } = self;
+        let challenges = match self {
+            Self::Sparse { challenges, .. } => challenges,
+            Self::SparseChunked { challenges, .. } => challenges.as_slice(),
+        };
         if challenges.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold requires at least one challenge per polynomial".to_string(),
@@ -299,6 +333,184 @@ impl DecomposeFoldBatchPlan<'_> {
         }
         Ok(challenges.len() / num_polys)
     }
+}
+
+/// Canonical response geometry for one validated fold probe.
+#[derive(Debug, Clone, Copy)]
+pub enum FoldProbeGeometry<'a> {
+    /// One ordinary, unpartitioned response.
+    Sparse,
+    /// One response per canonical dyadic block range.
+    SparseChunked { chunk_ranges: &'a [Range<usize>] },
+}
+
+impl FoldProbeGeometry<'_> {
+    /// Canonical ranges for a chunked probe, or `None` for an ordinary probe.
+    pub fn chunk_ranges(&self) -> Option<&[Range<usize>]> {
+        match self {
+            Self::Sparse => None,
+            Self::SparseChunked { chunk_ranges } => Some(chunk_ranges),
+        }
+    }
+}
+
+/// Schedule-derived fold-response admission policy.
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedFoldAcceptancePlan {
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
+    response_l2_sq_cap: Option<u128>,
+    collect_l2_diagnostic: bool,
+}
+
+impl ValidatedFoldAcceptancePlan {
+    pub(crate) fn new(
+        digit_negative_abs_bound: u128,
+        digit_positive_bound: u128,
+        response_l2_sq_cap: Option<u128>,
+        collect_l2_diagnostic: bool,
+    ) -> Self {
+        Self {
+            digit_negative_abs_bound,
+            digit_positive_bound,
+            response_l2_sq_cap,
+            collect_l2_diagnostic,
+        }
+    }
+
+    /// Largest admitted absolute value on the negative side.
+    pub const fn digit_negative_abs_bound(&self) -> u128 {
+        self.digit_negative_abs_bound
+    }
+
+    /// Largest admitted value on the positive side.
+    pub const fn digit_positive_bound(&self) -> u128 {
+        self.digit_positive_bound
+    }
+
+    /// Optional squared-L2 admission cap.
+    pub const fn response_l2_sq_cap(&self) -> Option<u128> {
+        self.response_l2_sq_cap
+    }
+
+    /// Whether the backend must return the observed squared L2 norm.
+    pub const fn collect_l2_diagnostic(&self) -> bool {
+        self.collect_l2_diagnostic
+    }
+}
+
+/// Akita-validated, context-free inputs for one backend fold probe.
+///
+/// Construction is crate-private so external kernels can inspect, but cannot
+/// forge, challenge geometry or admission policy.
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedFoldProbePlan<'a> {
+    challenges: &'a Challenges,
+    geometry: FoldProbeGeometry<'a>,
+    num_positions_per_block: usize,
+    num_digits: usize,
+    log_basis: u32,
+    opening_method: akita_types::OpeningMethod,
+    acceptance: ValidatedFoldAcceptancePlan,
+}
+
+impl<'a> ValidatedFoldProbePlan<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new<const D: usize>(
+        challenges: &'a Challenges,
+        source_claims: usize,
+        expected_live_blocks: usize,
+        geometry: FoldProbeGeometry<'a>,
+        num_positions_per_block: usize,
+        num_digits: usize,
+        log_basis: u32,
+        opening_method: akita_types::OpeningMethod,
+        acceptance: ValidatedFoldAcceptancePlan,
+    ) -> Result<Self, AkitaError> {
+        if challenges.is_empty()
+            || source_claims == 0
+            || challenges.num_claims() != source_claims
+            || challenges.num_live_blocks_per_claim() != expected_live_blocks
+            || num_positions_per_block == 0
+            || num_digits == 0
+        {
+            return Err(AkitaError::InvalidInput(
+                "fold probe plan has malformed source or response geometry".into(),
+            ));
+        }
+        for challenge in challenges.as_slice() {
+            challenge.validate::<D>()?;
+        }
+        num_positions_per_block
+            .checked_mul(num_digits)
+            .and_then(|rows| rows.checked_mul(D))
+            .ok_or_else(|| AkitaError::InvalidInput("fold response size overflow".into()))?;
+        if let FoldProbeGeometry::SparseChunked { chunk_ranges } = geometry {
+            if chunk_ranges.len() < 2
+                || chunk_ranges
+                    != akita_types::dyadic_block_ranges(expected_live_blocks, chunk_ranges.len())?
+            {
+                return Err(AkitaError::InvalidInput(
+                    "chunked fold probe requires the canonical dyadic ranges".into(),
+                ));
+            }
+        }
+        Ok(Self {
+            challenges,
+            geometry,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+            opening_method,
+            acceptance,
+        })
+    }
+
+    /// Full, unwindowed typed challenge batch.
+    pub const fn challenges(&self) -> &Challenges {
+        self.challenges
+    }
+
+    /// Validated response geometry.
+    pub const fn geometry(&self) -> FoldProbeGeometry<'a> {
+        self.geometry
+    }
+
+    pub const fn num_positions_per_block(&self) -> usize {
+        self.num_positions_per_block
+    }
+
+    pub const fn num_digits(&self) -> usize {
+        self.num_digits
+    }
+
+    pub const fn log_basis(&self) -> u32 {
+        self.log_basis
+    }
+
+    pub const fn opening_method(&self) -> akita_types::OpeningMethod {
+        self.opening_method
+    }
+
+    pub const fn acceptance(&self) -> &ValidatedFoldAcceptancePlan {
+        &self.acceptance
+    }
+}
+
+/// Non-authoritative response-model metadata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FoldProbeDiagnostics {
+    /// Squared L2 norm when explicitly requested by the plan.
+    pub observed_l2_sq: Option<u128>,
+}
+
+/// Result of one backend-owned fold computation and admission decision.
+pub enum FoldProbeOutcome<H> {
+    Rejected,
+    Accepted {
+        fold: H,
+        diagnostics: FoldProbeDiagnostics,
+    },
 }
 
 /// Scalar operation parameters for the fused ring-switch relation rows.

@@ -5,9 +5,9 @@ use crate::backend::coefficient_packing::{
     coefficient_packing_partials_from_position_source, FusedPackingWeights,
 };
 use crate::compute::{
-    aggregate_decompose_fold_witnesses, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyMeta,
-    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    aggregate_decompose_fold_witnesses, CpuBackend, CpuFoldResponses, DecomposeFoldBatchPlan,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootPolyMeta, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan,
 };
 use crate::DecomposeFoldWitness;
@@ -80,28 +80,59 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<CpuFoldResponses<F>, AkitaError> {
         let challenges_per_poly = plan.challenges_per_poly(source.polys.len())?;
-        let DecomposeFoldBatchPlan::Sparse {
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        } = plan;
-        aggregate_decompose_fold_witnesses::<F, D>(
-            source
-                .polys
-                .iter()
-                .zip(challenges.chunks_exact(challenges_per_poly))
-                .map(|(poly, poly_challenges)| {
-                    Ok(poly.decompose_fold::<D>(
-                        poly_challenges,
-                        num_positions_per_block,
-                        num_digits,
-                        log_basis,
-                    ))
-                }),
-        )
+        let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
+        match plan {
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => Ok(CpuFoldResponses::sparse(
+                aggregate_decompose_fold_witnesses::<F, D>(
+                    source
+                        .polys
+                        .iter()
+                        .zip(challenges.chunks_exact(challenges_per_poly))
+                        .map(|(poly, poly_challenges)| {
+                            Ok(poly.decompose_fold::<D>(
+                                poly_challenges,
+                                num_positions_per_block,
+                                num_digits,
+                                log_basis,
+                            ))
+                        }),
+                )?,
+            )),
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges,
+                chunk_ranges,
+                ..
+            } => {
+                let mut by_chunk = (0..chunk_ranges.len())
+                    .map(|_| Vec::with_capacity(source.polys.len()))
+                    .collect::<Vec<_>>();
+                for (poly, poly_challenges) in source
+                    .polys
+                    .iter()
+                    .zip(challenges.as_slice().chunks_exact(challenges_per_poly))
+                {
+                    for (chunk, witness) in
+                        by_chunk.iter_mut().zip(poly.decompose_fold_chunked::<D>(
+                            poly_challenges,
+                            chunk_ranges,
+                            num_positions_per_block,
+                            num_digits,
+                            log_basis,
+                        ))
+                    {
+                        chunk.push(Ok(witness));
+                    }
+                }
+                CpuFoldResponses::chunked::<D>(
+                    by_chunk
+                        .into_iter()
+                        .map(aggregate_decompose_fold_witnesses::<F, D>)
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
+        }
     }
 }
 

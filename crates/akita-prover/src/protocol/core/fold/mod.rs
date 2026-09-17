@@ -475,10 +475,11 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let next_opening_ring_dim = next_params.inner_ring_dimension();
-    let logical_w = ring_switch_build_w::<F, R>(instance, witness, stack.ring_switch(), lp)
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
-        })?;
+    let logical_w =
+        ring_switch_build_w::<F, O, R>(instance, witness, stack.opening(), stack.ring_switch(), lp)
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
+            })?;
     let committed_witness_len = akita_types::witness_commitment_domain_len(
         logical_w.live_coeff_len(),
         next_opening_ring_dim,

@@ -164,8 +164,13 @@ where
         challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &akita_types::CommittedGroupParams,
         params: &akita_types::GroupOpenPhaseParams,
-    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
-        self.inner.probe_fold(ctx, challenges, root_params, params)
+        acceptance: crate::compute::ValidatedFoldAcceptancePlan,
+    ) -> Result<
+        crate::compute::FoldProbeOutcome<crate::protocol::fold_grind::FoldProbeOutput<F>>,
+        AkitaError,
+    > {
+        self.inner
+            .probe_fold(ctx, challenges, root_params, params, acceptance)
     }
 }
 

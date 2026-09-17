@@ -13,7 +13,7 @@ use crate::protocol::ring_relation::{
     multi_group_quotient_calls, reset_multi_group_quotient_calls,
 };
 use crate::protocol::ring_relation_witness::{
-    FoldChunkCoefficients, RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
+    RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
 use crate::{AkitaProverSetup, DecomposeFoldWitness};
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
@@ -117,11 +117,12 @@ fn reduced_group_witness(params: &CommittedGroupParams) -> RingRelationGroupWitn
         .checked_mul(group_params.num_digits_open())
         .expect("E plane count");
     RingRelationGroupWitness::from_parts(
-        DecomposeFoldWitness::from_coefficient_parts::<REDUCED_D>(
-            vec![[ReducedF::zero(); REDUCED_D]; z_rows],
-            vec![[0; REDUCED_D]; z_rows],
+        crate::compute::CpuAcceptedFold::from_global(
+            DecomposeFoldWitness::from_coefficient_parts::<REDUCED_D>(
+                vec![[ReducedF::zero(); REDUCED_D]; z_rows],
+                vec![[0; REDUCED_D]; z_rows],
+            ),
         ),
-        FoldChunkCoefficients::single(),
         DigitBlocks::new(
             vec![-1; e_planes * REDUCED_D],
             vec![group_params.num_digits_open(); blocks],
@@ -443,7 +444,7 @@ fn build_reduced_without_quotients(
 ) -> crate::RecursiveWitnessFlat {
     reset_multi_group_quotient_calls();
     reset_quotient_decomposition_calls();
-    let flat = ring_switch_build_w(instance, witness, ctx, params)
+    let flat = ring_switch_build_w(instance, witness, ctx, ctx, params)
         .expect("valid reduced-evaluation witness");
     assert_eq!(multi_group_quotient_calls(), 0);
     assert_eq!(quotient_decomposition_calls(), 0);
@@ -608,7 +609,7 @@ fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
         );
         reset_multi_group_quotient_calls();
         reset_quotient_decomposition_calls();
-        assert!(ring_switch_build_w(&instance, witness, ctx, &params).is_err());
+        assert!(ring_switch_build_w(&instance, witness, ctx, ctx, &params).is_err());
         assert_eq!(multi_group_quotient_calls(), 0);
         assert_eq!(quotient_decomposition_calls(), 0);
     });
