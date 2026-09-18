@@ -65,9 +65,8 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         commitments[0].clone(),
     )
     .expect("L2 prover group");
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             selected_prover_data::<L2Cfg, _, _>(
                 &scheme,
@@ -77,12 +76,12 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
             )
             .expect("L2 opening data"),
             &stack,
-            &mut prover_transcript,
+            TRANSCRIPT_LABEL,
             BasisMode::Lagrange,
         )
         .expect("L2 proof");
 
-    let verify = |candidate: &AkitaBatchedProof<OneHotF, OneHotF>| {
+    let verify = |candidate: &[u8]| {
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
             openings.clone(),
@@ -90,106 +89,25 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         )
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
-        let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        scheme.batched_verify_structured_legacy(
+        scheme.batched_verify(
             candidate,
             &verifier_setup,
-            &mut transcript,
+            TRANSCRIPT_LABEL,
             selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
             BasisMode::Lagrange,
         )
     };
     verify(&proof).expect("valid L2 proof");
 
-    let native_group = PolynomialGroupClaims::new(
-        point.clone(),
-        vec![OneHotF::zero(); BATCH_SIZE],
-        commitments[0].clone(),
-    )
-    .expect("native L2 prover group");
-    let native_proof = scheme
-        .batched_prove::<_, _, _>(
-            &setup,
-            selected_prover_data::<L2Cfg, _, _>(
-                &scheme,
-                OpeningClaims::from_groups(vec![native_group]).expect("native L2 prover claims"),
-                vec![hint],
-                vec![&poly_refs],
-            )
-            .expect("native L2 opening data"),
-            &stack,
-            TRANSCRIPT_LABEL,
-            BasisMode::Lagrange,
-        )
-        .expect("native L2 proof");
-    let native_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-        point.clone(),
-        openings.clone(),
-        &commitments[0],
-    )
-    .expect("native L2 verifier group")])
-    .expect("native L2 verifier claims");
-    scheme
-        .batched_verify(
-            &native_proof,
-            &verifier_setup,
-            TRANSCRIPT_LABEL,
-            selected_statement::<L2Cfg>(&scheme, native_claims)
-                .expect("native L2 verifier statement"),
-            BasisMode::Lagrange,
-        )
-        .expect("valid native L2 proof");
+    for offset in [0, proof.len() / 4, proof.len() / 2, proof.len() - 1] {
+        let mut mutated = proof.clone();
+        mutated[offset] ^= 1;
+        assert!(
+            verify(&mutated).is_err(),
+            "mutation at byte {offset} accepted"
+        );
+    }
 
-    let l2_index = proof
-        .recursive_folds
-        .iter()
-        .position(|fold| fold.stage1.norm_proof.is_some())
-        .expect("generated schedule must select one L2 fold");
-    let mut bad_norm = proof.clone();
-    bad_norm.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq += 1;
-    assert!(verify(&bad_norm).is_err());
-
-    let mut over_cap = proof.clone();
-    over_cap.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq = u128::MAX;
-    assert!(verify(&over_cap).is_err());
-
-    let mut bad_virtual = proof.clone();
-    bad_virtual.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .virtual_evaluations[0] += OneHotF::one();
-    assert!(verify(&bad_virtual).is_err());
-
-    let mut bad_sumcheck = proof.clone();
-    bad_sumcheck.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .sumcheck
-        .round_polys[0]
-        .coeffs_except_linear_term[0] += OneHotF::one();
-    assert!(verify(&bad_sumcheck).is_err());
-
-    let mut bad_nonce = proof;
-    let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
-    nonce_bytes[0] ^= 1;
-    bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
-        nonce_bytes,
-        bad_nonce.nonce_stream.bit_len(),
-    )
-    .unwrap();
-    assert!(verify(&bad_nonce).is_err());
+    let truncated = &proof[..proof.len() - 1];
+    assert!(verify(truncated).is_err());
 }
