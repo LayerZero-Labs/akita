@@ -18,10 +18,7 @@ use akita_prover::{
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, UniformProverStack,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
-use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-};
+use akita_types::{BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
@@ -33,7 +30,7 @@ use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 /// protocol tests can mutate the exact proof that was already produced.
 pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
     pub(super) scheme: AkitaCommitmentScheme<Cfg>,
-    pub(super) proof: AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    pub(super) proof: Vec<u8>,
     pub(super) verifier_setup: akita_types::AkitaVerifierSetup<Cfg::Field>,
     pub(super) selection: akita_types::OpeningScheduleSelection,
     pub(super) commitment: akita_types::CommittedGroup<Cfg::Field>,
@@ -117,25 +114,9 @@ where
     .expect("prover data");
     let selection = prover_data.selection();
 
-    let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
-            &setup,
-            prover_data,
-            &stack,
-            &mut pt,
-            BasisMode::Lagrange,
-        )
+        .batched_prove::<_, _, _>(&setup, prover_data, &stack, label, BasisMode::Lagrange)
         .expect("prove");
-
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).expect("serialize");
-    let decoded = AkitaBatchedProof::<Cfg::Field, Cfg::ExtField>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize");
 
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
@@ -144,12 +125,11 @@ where
     )
     .expect("verifier group")])
     .expect("verifier claims");
-    let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
     scheme
-        .batched_verify_structured_legacy(
-            &decoded,
+        .batched_verify(
+            &proof,
             &verifier_setup,
-            &mut vt,
+            label,
             GroupBatchStatement::new(selection, verify_claims).expect("statement"),
             BasisMode::Lagrange,
         )
@@ -157,7 +137,7 @@ where
 
     SingleGroupRoundtrip {
         scheme,
-        proof: decoded,
+        proof,
         verifier_setup,
         selection,
         commitment,
