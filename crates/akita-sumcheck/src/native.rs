@@ -31,6 +31,15 @@ pub trait NativeSumcheckVerifierChannel<'proof, E> {
     fn round_challenge(&mut self, round: u32) -> Result<E, AkitaError>;
 }
 
+/// Verifier output after native round replay and before an oracle check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeSumcheckRoundResult<E: Field> {
+    /// Claim obtained after replaying every round.
+    pub output_claim: E,
+    /// Fiat--Shamir point sampled during replay.
+    pub challenges: Vec<E>,
+}
+
 fn site_id(invocation: u32, round: u32, role: u32) -> [u8; 32] {
     ProtocolSiteId {
         family: SITE_FAMILY_SUMCHECK,
@@ -207,9 +216,32 @@ where
     C: NativeSumcheckVerifierChannel<'proof, E>,
     V: SumcheckInstanceVerifier<E> + ?Sized,
 {
-    let num_rounds = verifier.num_rounds();
-    let degree_bound = verifier.degree_bound();
-    let mut claim = verifier.input_claim();
+    let replay = verify_sumcheck_rounds_native::<F, E, C>(
+        channel,
+        invocation,
+        verifier.input_claim(),
+        verifier.num_rounds(),
+        verifier.degree_bound(),
+    )?;
+    if replay.output_claim != verifier.expected_output_claim(&replay.challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(replay.challenges)
+}
+
+/// Receive and replay standard sumcheck rounds before the terminal oracle check.
+pub fn verify_sumcheck_rounds_native<'proof, F, E, C>(
+    channel: &mut C,
+    invocation: u32,
+    mut claim: E,
+    num_rounds: usize,
+    degree_bound: usize,
+) -> Result<NativeSumcheckRoundResult<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: NativeSumcheckVerifierChannel<'proof, E>,
+{
     public_claim_verifier::<F, E>(channel.state_mut(), invocation, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
@@ -258,10 +290,10 @@ where
         challenges.push(challenge);
     }
 
-    if claim != verifier.expected_output_claim(&challenges)? {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(challenges)
+    Ok(NativeSumcheckRoundResult {
+        output_claim: claim,
+        challenges,
+    })
 }
 
 #[cfg(test)]
