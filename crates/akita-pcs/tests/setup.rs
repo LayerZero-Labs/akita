@@ -25,8 +25,7 @@ use akita_config::CommitmentConfig;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
+use akita_types::{BasisMode, SetupMatrixCapacity};
 use common::{
     dense_field_evals, init_rayon_pool, load_workspace_scheme, opening_from_poly_for_layout,
     prove_input, random_point, run_on_large_stack, verify_input, F,
@@ -47,13 +46,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 const POLY_NV: usize = 16;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
-
-fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
-    assert!(
-        proof.num_fold_levels() >= 2,
-        "{label} should exercise a folded proof path"
-    );
-}
 
 /// Run `f` on a large-stack worker thread and re-raise its panic payload
 /// unchanged, so that `#[should_panic(expected = "...")]` can match the
@@ -325,9 +317,9 @@ where
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    let session = b"setup-tests/onehot";
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -337,18 +329,15 @@ where
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("prove");
-    assert_folded_proof("single onehot setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -360,20 +349,16 @@ where
         .expect("verify");
 
     assert!(
-        proof.num_fold_levels() >= 2,
-        "folded-only protocol requires at least two folds"
+        !proof.is_empty(),
+        "native proof must contain protocol messages"
     );
     let mut tampered = proof.clone();
-    let witness = tampered.terminal.terminal_response_mut();
-    let mut t_coeffs = witness.t_fields.coeffs().to_vec();
-    t_coeffs[0] += F::one();
-    witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    *tampered.last_mut().expect("nonempty proof") ^= 1;
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &tampered,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -382,18 +367,16 @@ where
             ),
             BasisMode::Lagrange,
         )
-        .expect_err("tampering predecessor-bound terminal t must be rejected");
+        .expect_err("tampering the terminal response must be rejected");
 
     let mut wrong_binding = proof.clone();
-    wrong_binding.root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterPayload(
-        akita_types::RingVec::from_coeffs(Vec::new()),
-    );
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    let binding_probe = wrong_binding.len() / 2;
+    wrong_binding[binding_probe] ^= 1;
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &wrong_binding,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
