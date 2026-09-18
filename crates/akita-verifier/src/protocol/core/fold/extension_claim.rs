@@ -27,9 +27,178 @@ struct EorSumcheckReplay<E: Field> {
     final_factors: Vec<E>,
 }
 
+struct EorPrefix<E: Field> {
+    partials: Vec<E>,
+    eta: Vec<E>,
+    claim_coefficients: Vec<E>,
+}
+
+trait EorVerifierStream<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        openings: &[E],
+        partial_count: usize,
+        split_bits: usize,
+    ) -> Result<EorPrefix<E>, AkitaError>;
+
+    fn verify_sumcheck(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+    ) -> Result<(E, Vec<E>), AkitaError>;
+
+    fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
+}
+
+struct LegacyEorVerifierStream<'a, T, E: Field> {
+    transcript: &'a mut T,
+    reduction: &'a ExtensionOpeningReductionProof<E>,
+    level: u32,
+}
+
+impl<F, E, T> EorVerifierStream<F, E> for LegacyEorVerifierStream<'_, T, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
+{
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        _openings: &[E],
+        partial_count: usize,
+        split_bits: usize,
+    ) -> Result<EorPrefix<E>, AkitaError> {
+        if self.reduction.partials.len() != partial_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        for partial in &self.reduction.partials {
+            append_ext_field::<F, E, T>(self.transcript, ABSORB_EVALUATION_CLAIMS, partial);
+        }
+        self.transcript
+            .grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level: self.level })?;
+        let eta = (0..split_bits)
+            .map(|_| sample_ext_challenge::<F, E, T>(self.transcript, CHALLENGE_SUMCHECK_BATCH))
+            .collect::<Vec<_>>();
+        let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+            opening_batch,
+            akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: self.level },
+            self.transcript,
+        )?;
+        Ok(EorPrefix {
+            partials: self.reduction.partials.clone(),
+            eta,
+            claim_coefficients,
+        })
+    }
+
+    fn verify_sumcheck(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+    ) -> Result<(E, Vec<E>), AkitaError> {
+        let mut round = 0u32;
+        verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
+            input_claim,
+            num_rounds,
+            &self.reduction.sumcheck,
+            self.transcript,
+            |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    self.level,
+                    0,
+                    round,
+                )?;
+                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                Ok(challenge)
+            },
+        )
+    }
+
+    fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
+        if self.reduction.final_claims.len() != opening_batch.num_total_polynomials() {
+            return Err(AkitaError::InvalidProof);
+        }
+        for final_claim in &self.reduction.final_claims {
+            append_ext_field::<F, E, T>(self.transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
+        }
+        Ok(self.reduction.final_claims.clone())
+    }
+}
+
+#[allow(dead_code)] // Used by the native fold verifier during the production cutover.
+struct NativeEorVerifierStream<'a, 'proof, 'plan> {
+    grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+    level: u32,
+}
+
+impl<F, E> EorVerifierStream<F, E> for NativeEorVerifierStream<'_, '_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        openings: &[E],
+        partial_count: usize,
+        split_bits: usize,
+    ) -> Result<EorPrefix<E>, AkitaError> {
+        let prefix = akita_types::native_eor_verifier_prefix::<F, E>(
+            self.grinding,
+            opening_batch,
+            openings,
+            self.level,
+        )?;
+        if prefix.partials.len() != partial_count || prefix.eta.len() != split_bits {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(EorPrefix {
+            partials: prefix.partials,
+            eta: prefix.eta,
+            claim_coefficients: prefix.claim_coefficients,
+        })
+    }
+
+    fn verify_sumcheck(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+    ) -> Result<(E, Vec<E>), AkitaError> {
+        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+            self.grinding,
+            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            self.level,
+            0,
+        );
+        let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+            &mut channel,
+            akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+            input_claim,
+            num_rounds,
+            akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+        )?;
+        Ok((replay.output_claim, replay.challenges))
+    }
+
+    fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError> {
+        akita_types::native_eor_verifier_final_claims::<F, E>(
+            self.grinding,
+            opening_batch,
+            self.level,
+        )
+    }
+}
+
 fn eor_reduction_shape<F, E>(
     opening_batch: &OpeningClaimsLayout,
-    reduction: &ExtensionOpeningReductionProof<E>,
 ) -> Result<EorReductionShape, AkitaError>
 where
     F: Field,
@@ -39,7 +208,7 @@ where
         tensor_opening_split::<F, E>().map_err(|_| AkitaError::InvalidProof)?;
     let expected = canonical_extension_opening_reduction_shape(opening_batch, width)
         .map_err(|_| AkitaError::InvalidProof)?;
-    if width == 1 || reduction.shape() != expected {
+    if width == 1 {
         return Err(AkitaError::InvalidProof);
     }
     Ok(EorReductionShape {
@@ -84,10 +253,6 @@ where
     E: ExtField<F> + AkitaSerialize,
     T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    let num_claims = opening_batch.num_total_polynomials();
-    if openings.len() != num_claims || group_points.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidProof);
-    }
     // Exact presence: the per-level predicate is the sole authority, so a
     // missing required payload and an unsolicited payload both fail closed.
     if extension_opening_reduction.is_some() != requires_reduction {
@@ -96,7 +261,86 @@ where
     let Some(reduction) = extension_opening_reduction else {
         return Ok(None);
     };
-    let shape = eor_reduction_shape::<F, E>(opening_batch, reduction)?;
+    let expected = canonical_extension_opening_reduction_shape(opening_batch, E::DEGREE)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    if reduction.shape() != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    let shape = eor_reduction_shape::<F, E>(opening_batch)?;
+    let mut stream = LegacyEorVerifierStream {
+        transcript,
+        reduction,
+        level,
+    };
+    verify_eor_sumcheck_with_stream::<F, E, _>(
+        group_points,
+        openings,
+        opening_batch,
+        shape,
+        &mut stream,
+    )
+    .map(Some)
+}
+
+#[allow(dead_code)] // Called by the native fold verifier in the production cutover.
+fn verify_eor_sumcheck_native<F, E>(
+    group_points: &[&[E]],
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    requires_reduction: bool,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    if !requires_reduction {
+        return Ok(None);
+    }
+    let shape = eor_reduction_shape::<F, E>(opening_batch)?;
+    let mut stream = NativeEorVerifierStream { grinding, level };
+    verify_eor_sumcheck_with_stream::<F, E, _>(
+        group_points,
+        openings,
+        opening_batch,
+        shape,
+        &mut stream,
+    )
+    .map(Some)
+}
+
+fn verify_eor_sumcheck_with_stream<F, E, S>(
+    group_points: &[&[E]],
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    shape: EorReductionShape,
+    stream: &mut S,
+) -> Result<EorSumcheckReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: EorVerifierStream<F, E>,
+{
+    let num_claims = opening_batch.num_total_polynomials();
+    if openings.len() != num_claims || group_points.len() != opening_batch.num_groups() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let partial_count = shape
+        .width
+        .checked_mul(num_claims)
+        .ok_or(AkitaError::InvalidProof)?;
+    let EorPrefix {
+        partials,
+        eta,
+        claim_coefficients,
+    } = stream.prefix(opening_batch, openings, partial_count, shape.split_bits)?;
+    if partials.len() != partial_count
+        || eta.len() != shape.split_bits
+        || claim_coefficients.len() != num_claims
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut claim_offset = 0usize;
     for (group_index, group_point) in group_points.iter().enumerate() {
         let group_layout = opening_batch.group_layout(group_index)?;
@@ -115,17 +359,15 @@ where
             let partial_end = partial_start
                 .checked_add(shape.width)
                 .ok_or(AkitaError::InvalidProof)?;
-            let partials = reduction
-                .partials
+            let claim_partials = partials
                 .get(partial_start..partial_end)
                 .ok_or(AkitaError::InvalidProof)?;
-            let expected =
-                derive_tensor_extension_opening_claim_from_partials::<F, E>(group_point, partials)?;
+            let expected = derive_tensor_extension_opening_claim_from_partials::<F, E>(
+                group_point,
+                claim_partials,
+            )?;
             if expected != *opening {
                 return Err(AkitaError::InvalidProof);
-            }
-            for partial in partials {
-                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
             }
             claim_offset = claim_offset
                 .checked_add(1)
@@ -135,45 +377,23 @@ where
     if claim_offset != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
-    let eta = (0..shape.split_bits)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
-        .collect::<Vec<_>>();
-    let input_claims = eor_input_claims_from_partials::<F, E>(&reduction.partials, shape, &eta)?;
-    if input_claims.len() != num_claims || reduction.final_claims.len() != num_claims {
+    let input_claims = eor_input_claims_from_partials::<F, E>(&partials, shape, &eta)?;
+    if input_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
-        opening_batch,
-        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
-        transcript,
-    )?;
     let batched_input_claim = input_claims
         .iter()
         .zip(&claim_coefficients)
         .fold(E::zero(), |acc, (&claim, &coefficient)| {
             acc + coefficient * claim
         });
-    let mut round = 0u32;
-    let (batched_final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
-        batched_input_claim,
-        shape.num_rounds,
-        &reduction.sumcheck,
-        transcript,
-        |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                level,
-                0,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-            Ok(challenge)
-        },
-    )?;
-    let expected_batched_final = reduction
-        .final_claims
+    let (batched_final_claim, rho) =
+        stream.verify_sumcheck(batched_input_claim, shape.num_rounds)?;
+    let final_claims = stream.final_claims(opening_batch)?;
+    if final_claims.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    let expected_batched_final = final_claims
         .iter()
         .zip(&claim_coefficients)
         .fold(E::zero(), |acc, (&claim, &coefficient)| {
@@ -181,9 +401,6 @@ where
         });
     if batched_final_claim != expected_batched_final {
         return Err(AkitaError::InvalidProof);
-    }
-    for final_claim in &reduction.final_claims {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
     }
     let mut final_factors = Vec::with_capacity(group_points.len());
     for group_point in group_points {
@@ -202,11 +419,11 @@ where
         }
         final_factors.push(factor);
     }
-    Ok(Some(EorSumcheckReplay {
+    Ok(EorSumcheckReplay {
         rho,
-        final_claims: reduction.final_claims.clone(),
+        final_claims,
         final_factors,
-    }))
+    })
 }
 
 /// Verify the terminal fold's single-group extension-opening reduction.
@@ -488,13 +705,37 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CompressedUniPoly;
-    use akita_sumcheck::SumcheckProof;
-    use akita_transcript::AkitaTranscript;
+    use akita_sumcheck::{SumcheckInstanceProver, SumcheckProof, UniPoly};
+    use akita_transcript::{new_native_prover, new_native_verifier, AkitaTranscript};
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, One, Prime32Offset99, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
+
+    struct ZeroEorProver {
+        rounds: usize,
+    }
+
+    impl SumcheckInstanceProver<E> for ZeroEorProver {
+        fn num_rounds(&self) -> usize {
+            self.rounds
+        }
+
+        fn degree_bound(&self) -> usize {
+            EXTENSION_OPENING_REDUCTION_DEGREE
+        }
+
+        fn input_claim(&self) -> E {
+            E::zero()
+        }
+
+        fn compute_round_univariate(&mut self, _round: usize, _claim: E) -> UniPoly<E> {
+            UniPoly::from_coeffs(vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE + 1])
+        }
+
+        fn ingest_challenge(&mut self, _round: usize, _challenge: E) {}
+    }
 
     fn extension_point(num_vars: usize, offset: u64) -> Vec<E> {
         (0..num_vars)
@@ -708,5 +949,92 @@ mod tests {
             matches!(unsolicited_result, Err(AkitaError::InvalidProof)),
             "unsolicited EOR at a gate-off level must reject"
         );
+    }
+
+    #[test]
+    fn native_eor_verifier_replays_stream_and_checks_eof() {
+        const NUM_VARS: usize = 12;
+        let level = 1;
+        let opening_batch =
+            OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::singleton(NUM_VARS)])
+                .unwrap();
+        let group_point = extension_point(NUM_VARS, 10);
+        let group_points = [group_point.as_slice()];
+        let openings = vec![E::zero()];
+        let (split_bits, width) = tensor_opening_split::<F, E>().unwrap();
+        let rounds = NUM_VARS - split_bits;
+        let partials = vec![E::zero(); width];
+        let plan = {
+            let mut runs = vec![akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningPoint { level },
+                1,
+                128,
+            )
+            .unwrap()];
+            for round in 0..rounds {
+                runs.push(
+                    akita_types::GrindingRun::proof_of_work(
+                        akita_types::GrindingSite::SumcheckRound {
+                            protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                            level,
+                            stage: 0,
+                            round: u32::try_from(round).unwrap(),
+                        },
+                        1,
+                        128,
+                    )
+                    .unwrap(),
+                );
+            }
+            akita_types::GrindingPlan::new(runs, 128).unwrap()
+        };
+
+        let state = new_native_prover(b"native-eor-verifier", b"fixture").unwrap();
+        let mut prover = akita_types::NativeProverGrinding::new(state, &plan);
+        akita_types::native_eor_prover_prefix::<F, E>(
+            &mut prover,
+            &opening_batch,
+            &openings,
+            &partials,
+            level,
+        )
+        .unwrap();
+        let mut sumcheck = ZeroEorProver { rounds };
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            &mut prover,
+            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            level,
+            0,
+        );
+        akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+            &mut sumcheck,
+            &mut channel,
+            akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+        )
+        .unwrap();
+        akita_types::native_eor_prover_final_claims::<F, E>(
+            &mut prover,
+            &opening_batch,
+            &[E::zero()],
+            level,
+        )
+        .unwrap();
+        let proof = prover.finish().unwrap();
+
+        let state = new_native_verifier(b"native-eor-verifier", b"fixture", &proof).unwrap();
+        let mut verifier = akita_types::NativeVerifierGrinding::new(state, &plan);
+        let replay = verify_eor_sumcheck_native::<F, E>(
+            &group_points,
+            &openings,
+            &opening_batch,
+            true,
+            &mut verifier,
+            level,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(replay.rho.len(), rounds);
+        assert_eq!(replay.final_claims, vec![E::zero()]);
+        verifier.finish().unwrap();
     }
 }
