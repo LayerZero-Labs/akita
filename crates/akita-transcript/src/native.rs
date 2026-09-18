@@ -36,6 +36,9 @@ pub const SITE_FAMILY_PHYSICAL_L2: u32 = 5;
 /// Stable family identifier for recursive setup-product stage 3.
 pub const SITE_FAMILY_STAGE3: u32 = 6;
 
+/// Stable family identifier for indexed sparse fold-challenge roots.
+pub const SITE_FAMILY_FOLD_CHALLENGE: u32 = 7;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -531,6 +534,73 @@ pub fn verifier_context(state: &mut NativeVerifierState<'_>, record: ProtocolCon
     state.public_message(&record);
 }
 
+/// A prover-side clone of only the public duplex state used to preview a
+/// fold-response candidate.
+///
+/// The type deliberately exposes only the fold transition needed by Akita. It
+/// cannot mutate the live argument string, the prover's private RNG, or a
+/// grinding-plan cursor.
+pub struct NativeFoldPreview {
+    sponge: TranscriptSponge,
+}
+
+impl NativeFoldPreview {
+    /// Clone the public state and absorb one candidate native nonce message.
+    #[must_use]
+    pub fn new(state: &NativeProverState, nonce_record: ProtocolContextRecord, nonce: u32) -> Self {
+        let mut sponge = state.duplex_sponge_state.clone();
+        sponge.absorb(nonce_record.encode().as_ref());
+        sponge.absorb(nonce.encode().as_ref());
+        Self { sponge }
+    }
+
+    /// Absorb one public, context-framed fold payload and squeeze its root.
+    #[must_use]
+    pub fn fold_root(
+        &mut self,
+        record: ProtocolContextRecord,
+        payload: &[u8],
+    ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
+        self.sponge.absorb(record.encode().as_ref());
+        for &byte in payload {
+            self.sponge.absorb([byte].encode().as_ref());
+        }
+        let mut root = [0u8; crate::FOLD_CHALLENGE_SEED_LEN];
+        self.sponge.squeeze(&mut root);
+        root
+    }
+}
+
+/// Absorb one public, context-framed fold payload and draw its root live on the
+/// prover side.
+#[must_use]
+pub fn native_prover_fold_root(
+    state: &mut NativeProverState,
+    record: ProtocolContextRecord,
+    payload: &[u8],
+) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
+    prover_context(state, record);
+    for &byte in payload {
+        state.public_message(&[byte]);
+    }
+    state.verifier_message()
+}
+
+/// Absorb one public, context-framed fold payload and draw its root live on the
+/// verifier side.
+#[must_use]
+pub fn native_verifier_fold_root(
+    state: &mut NativeVerifierState<'_>,
+    record: ProtocolContextRecord,
+    payload: &[u8],
+) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
+    verifier_context(state, record);
+    for &byte in payload {
+        state.public_message(&[byte]);
+    }
+    state.verifier_message()
+}
+
 fn extension_group_record<F, E>(
     site: ProtocolSiteId,
     kind: ProtocolMessageKind,
@@ -791,6 +861,56 @@ mod tests {
         .unwrap();
         assert_eq!(verifier_challenge, prover_challenge);
         assert!(verifier.check_eof().is_ok());
+    }
+
+    #[test]
+    fn native_fold_preview_matches_live_prover_and_verifier() {
+        let nonce_site = ProtocolSiteId {
+            family: SITE_FAMILY_FOLD_CHALLENGE,
+            level: 3,
+            detail: 12,
+            ..ProtocolSiteId::default()
+        };
+        let nonce_record = ProtocolContextRecord::new(
+            nonce_site.to_bytes(),
+            ProtocolMessageKind::FoldResponseNonce as u32,
+            1,
+            4,
+            0,
+        );
+        let root_record = ProtocolContextRecord::new(
+            ProtocolSiteId {
+                family: SITE_FAMILY_FOLD_CHALLENGE,
+                level: 3,
+                group: 2,
+                ..ProtocolSiteId::default()
+            }
+            .to_bytes(),
+            ProtocolMessageKind::Challenge as u32,
+            3,
+            3,
+            crate::FOLD_CHALLENGE_SEED_LEN as u64,
+        );
+        let payload = [5, 8, 13];
+        let nonce = 7u32;
+        let mut prover = new_native_prover(b"fold-preview", b"fixture").unwrap();
+        let preview =
+            NativeFoldPreview::new(&prover, nonce_record, nonce).fold_root(root_record, &payload);
+        prover_context(&mut prover, nonce_record);
+        prover.prover_message(&nonce);
+        let live = native_prover_fold_root(&mut prover, root_record, &payload);
+        assert_eq!(preview, live);
+        let proof = prover.narg_string().to_vec();
+        assert_eq!(proof.len(), 4);
+
+        let mut verifier = new_native_verifier(b"fold-preview", b"fixture", &proof).unwrap();
+        verifier_context(&mut verifier, nonce_record);
+        assert_eq!(verifier.prover_message::<u32>().unwrap(), nonce);
+        assert_eq!(
+            native_verifier_fold_root(&mut verifier, root_record, &payload),
+            live
+        );
+        verifier.check_eof().unwrap();
     }
 
     #[test]

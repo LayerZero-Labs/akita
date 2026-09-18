@@ -105,6 +105,15 @@ impl<'a> GrindingPlanCursor<'a> {
         Some(entry)
     }
 
+    pub(super) fn peek(&self) -> Option<GrindingPlanEntry> {
+        let run = *self.plan.runs.get(self.run_index)?;
+        Some(GrindingPlanEntry {
+            site: run.site,
+            grind_bits: run.grind_bits,
+            nonce_bits: run.nonce_bits,
+        })
+    }
+
     pub(super) fn consume_run(
         &mut self,
         site: GrindingSite,

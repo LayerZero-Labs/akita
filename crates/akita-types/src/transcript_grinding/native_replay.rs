@@ -8,8 +8,8 @@ use akita_transcript::{
     commit_native_grinding_nonce, grinding_predicate_accepts, native_prover_ext_challenge,
     native_verifier_ext_challenge, preview_native_grinding_predicate, prover_context,
     receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
+    NativeFoldPreview, NativeProverState, NativeVerifierState, ProtocolContextRecord,
+    ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -197,6 +197,27 @@ impl<'plan> NativeProverGrinding<'plan> {
         );
         self.state.prover_message(&counter);
         Ok(())
+    }
+
+    /// Preview a fold-response candidate from the current native public state
+    /// without advancing either the live state or the grinding plan.
+    pub fn preview_fold_response(
+        &self,
+        site: GrindingSite,
+        counter: u32,
+    ) -> Result<NativeFoldPreview, AkitaError> {
+        let entry = self.cursor.peek().ok_or(AkitaError::InvalidProof)?;
+        if entry.site != site
+            || site.kind() != GrindingQueryKind::FoldResponse
+            || !value_fits(counter, entry.nonce_bits)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(NativeFoldPreview::new(
+            &self.state,
+            fold_response_record(site, entry.nonce_bits),
+            counter,
+        ))
     }
 
     /// Consume the plan entries for one sparse fold group.

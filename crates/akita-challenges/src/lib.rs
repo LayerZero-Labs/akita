@@ -35,6 +35,7 @@ pub use config::{
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
 pub use fold_draw::{
-    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw,
+    NativePreviewFoldDraw, NativeProverFoldDraw, NativeVerifierFoldDraw, PreviewFoldDraw,
 };
 pub use sampler::sample_sparse_challenges;
