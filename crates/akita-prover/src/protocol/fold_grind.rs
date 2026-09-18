@@ -4,7 +4,10 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
     RuntimeOpeningSource,
 };
-use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+use akita_challenges::{
+    Challenges, FoldDraw, LiveFoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw,
+    PreviewFoldDraw,
+};
 use akita_error::AkitaError;
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::ProverTranscriptGrinding;
@@ -130,6 +133,64 @@ pub(crate) struct TerminalFoldGrindOutput<F: Field> {
     pub(crate) witness: DecomposeFoldWitness<F>,
 }
 
+#[allow(clippy::too_many_arguments)]
+fn probe_terminal_response<F, P, B>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    challenges: &Challenges,
+    params: &TerminalFoldParams,
+    poly: &P,
+    linf_cap: Option<u128>,
+    response_l2_sq_cap: Option<u128>,
+    z_rice_low_bits: u32,
+    z_payload_bytes: usize,
+) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    P: RuntimeOpeningSource<F> + crate::compute::RootPolyMeta<F>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+{
+    let polys = [poly];
+    let point_indices = [0usize];
+    let witness = dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        params.d_a(),
+        |D| {
+            build_point_decompose_fold_witness::<F, P, B, D>(
+                backend,
+                prepared,
+                challenges,
+                &polys,
+                &point_indices,
+                params.blocks.positions_per_block,
+                params.inner.digits.num_digits,
+                params.inner.digits.log_basis,
+            )
+        }
+    )?;
+    let centered = witness.centered_coeffs_flat();
+    if let Some(cap) = linf_cap {
+        if golomb_rice_values_within_cap(centered, cap).is_err() {
+            return Ok(None);
+        }
+    } else if centered.iter().any(|&value| i16::try_from(value).is_err()) {
+        return Ok(None);
+    }
+    if response_l2_sq_cap.is_some_and(|cap| {
+        akita_types::sis::checked_centered_l2_sq(centered).is_none_or(|norm| norm > cap)
+    }) {
+        return Ok(None);
+    }
+    let zigzag_width = golomb_rice_zigzag_width(linf_cap.unwrap_or(i16::MAX as u128));
+    let wire_bits = golomb_rice_total_wire_bits(centered, z_rice_low_bits, zigzag_width)?;
+    if wire_bits > z_payload_bytes.saturating_mul(8) {
+        return Ok(None);
+    }
+    Ok(Some(witness))
+}
+
 /// Sample the flat scalar terminal fold against its capacity-based response
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
@@ -179,8 +240,6 @@ where
     } else {
         None
     };
-    let polys = [poly];
-    let point_indices = [0usize];
     let (nonce, (witness, challenges)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview = PreviewFoldDraw::new(transcript);
@@ -194,46 +253,18 @@ where
                 nonce,
                 operator_rejection,
             )?;
-            let witness = dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                F,
-                params.d_a(),
-                |D| {
-                    build_point_decompose_fold_witness::<F, P, B, D>(
-                        backend,
-                        prepared,
-                        &challenges,
-                        &polys,
-                        &point_indices,
-                        params.blocks.positions_per_block,
-                        params.inner.digits.num_digits,
-                        params.inner.digits.log_basis,
-                    )
-                }
-            )?;
-            let centered = witness.centered_coeffs_flat();
-            if let Some(cap) = linf_cap {
-                if golomb_rice_values_within_cap(centered, cap).is_err() {
-                    return Ok(None);
-                }
-            } else if centered.iter().any(|&value| i16::try_from(value).is_err()) {
-                return Ok(None);
-            }
-            if response_l2_sq_cap.is_some_and(|cap| {
-                akita_types::sis::checked_centered_l2_sq(centered).is_none_or(|norm| norm > cap)
-            }) {
-                return Ok(None);
-            }
-            let zigzag_width = golomb_rice_zigzag_width(linf_cap.unwrap_or(i16::MAX as u128));
-            let wire_bits = golomb_rice_total_wire_bits(
-                centered,
+            let witness = probe_terminal_response(
+                backend,
+                prepared,
+                &challenges,
+                params,
+                poly,
+                linf_cap,
+                response_l2_sq_cap,
                 expected_group.z_rice_low_bits,
-                zigzag_width,
+                expected_group.z_payload_bytes,
             )?;
-            if wire_bits > expected_group.z_payload_bytes.saturating_mul(8) {
-                return Ok(None);
-            }
-            Ok(Some((witness, challenges)))
+            Ok(witness.map(|witness| (witness, challenges)))
         })?;
     transcript.commit_fold_response(akita_types::GrindingSite::FoldResponse { level }, nonce)?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
@@ -282,6 +313,102 @@ where
             "terminal fold response model sample"
         );
     }
+    Ok(TerminalFoldGrindOutput { witness })
+}
+
+/// Native Spongefish terminal fold-response search and live replay.
+#[allow(dead_code)] // Called by the native outer proof driver during cutover.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sample_terminal_fold_response_native<F, P, B>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    params: &TerminalFoldParams,
+    sparse: &akita_challenges::SparseChallengeConfig,
+    poly: &P,
+    shape: &TerminalResponseShape,
+) -> Result<TerminalFoldGrindOutput<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    P: RuntimeOpeningSource<F> + crate::compute::RootPolyMeta<F>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+{
+    let expected_group =
+        shape.layout.groups.first().ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal response shape has no group".into())
+        })?;
+    if shape.layout.groups.len() != 1
+        || expected_group.z_coords
+            != params
+                .inner_width()
+                .checked_mul(params.d_a())
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal z width overflow".into()))?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "terminal response shape does not match terminal A width".into(),
+        ));
+    }
+    let linf_cap = expected_group.z_linf_cap;
+    params.validate_terminal_linf_cap(linf_cap)?;
+    let response_l2_sq_cap = params.response_l2_sq_cap();
+    let operator_rejection = if response_l2_sq_cap.is_some() {
+        Some(
+            akita_challenges::selective_l2_operator_norm_rejection(params.d_a(), sparse)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
+                })?,
+        )
+    } else {
+        None
+    };
+    let site = akita_types::GrindingSite::FoldResponse { level };
+    let (nonce, (witness, challenges)) =
+        first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
+            let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+            let mut preview = NativePreviewFoldDraw::new(&mut preview_state, level, 0);
+            let challenges = preview.draw_folding_challenges_with_rejection(
+                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
+                params.d_a(),
+                0,
+                params.blocks.live_blocks,
+                1,
+                sparse,
+                nonce,
+                operator_rejection,
+            )?;
+            let witness = probe_terminal_response(
+                backend,
+                prepared,
+                &challenges,
+                params,
+                poly,
+                linf_cap,
+                response_l2_sq_cap,
+                expected_group.z_rice_low_bits,
+                expected_group.z_payload_bytes,
+            )?;
+            Ok(witness.map(|witness| (witness, challenges)))
+        })?;
+    grinding.commit_fold_response(site, nonce)?;
+    let live_challenges = NativeProverFoldDraw::new(grinding.state_mut(), level, 0)
+        .draw_folding_challenges_with_rejection(
+            akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
+            params.d_a(),
+            0,
+            params.blocks.live_blocks,
+            1,
+            sparse,
+            nonce,
+            operator_rejection,
+        )?;
+    if live_challenges != challenges {
+        return Err(AkitaError::InvalidInput(
+            "terminal grind preview did not match native replay".into(),
+        ));
+    }
+    grinding.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     Ok(TerminalFoldGrindOutput { witness })
 }
 
@@ -375,7 +502,7 @@ fn first_jointly_accepted_nonce<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
+fn sample_multi_group_fold_decompose_witnesses_legacy<F, E, G, B, T>(
     opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     level: u32,
@@ -517,20 +644,14 @@ where
         .collect())
 }
 
-/// Probe all root groups off-sponge and commit the first jointly accepted nonce.
-///
-/// Every preset probes `nonce = 0, 1, …` and commits the minimum accepting nonce.
-/// When `tail_t_vectors` is set, the terminal response must fit the exact cap
-/// and Golomb-Rice byte budget carried by its scheduled response shape.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
+fn sample_multi_group_fold_decompose_witnesses_native_inner<F, E, G, B>(
     opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
     root_lp: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-    groups: &[FoldGrindGroup<'_, G>],
-    _tail_t_vectors: Option<usize>,
+    groups: &[PreparedFoldGrindGroup<'_, G>],
+    max_grind_attempts: u32,
 ) -> Result<Vec<FoldProbeOutput<F>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
@@ -540,7 +661,99 @@ where
         + akita_serialization::AkitaSerialize,
     G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
-    T: ProverTranscriptGrinding<F>,
+{
+    if groups.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "fold grind batch has no groups".to_string(),
+        ));
+    }
+    let site = akita_types::GrindingSite::FoldResponse { level };
+    let (nonce, mut candidate_outputs) =
+        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+            let mut preview_state = grinding.preview_fold_response(site, nonce)?;
+            let mut candidate_outputs = Vec::with_capacity(groups.len());
+            for prepared_group in groups {
+                let group = &prepared_group.input;
+                let group_u32 = u32::try_from(group.group_index)
+                    .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
+                let challenges = {
+                    let mut preview =
+                        NativePreviewFoldDraw::new(&mut preview_state, level, group_u32);
+                    draw_group_fold_challenges::<F, E, _>(
+                        &mut preview,
+                        &group.params,
+                        group.group_index,
+                        group.group.num_polynomials(),
+                        nonce,
+                    )?
+                };
+                let output =
+                    group
+                        .group
+                        .probe_fold(opening_ctx, &challenges, root_lp, &group.params)?;
+                let observed_l2_sq = accepts_fold_witness_flat(
+                    &prepared_group.acceptance,
+                    &output.witness,
+                    &output.coefficients,
+                );
+                let Some(observed_l2_sq) = observed_l2_sq else {
+                    return Ok(None);
+                };
+                candidate_outputs.push((output, observed_l2_sq));
+            }
+            Ok(Some(candidate_outputs))
+        })?;
+
+    grinding.commit_fold_response(site, nonce)?;
+    for (prepared_group, (output, observed_l2_sq)) in
+        groups.iter().zip(candidate_outputs.iter_mut())
+    {
+        let group = &prepared_group.input;
+        let group_u32 = u32::try_from(group.group_index)
+            .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
+        let challenges = {
+            let mut live = NativeProverFoldDraw::new(grinding.state_mut(), level, group_u32);
+            draw_group_fold_challenges::<F, E, _>(
+                &mut live,
+                &group.params,
+                group.group_index,
+                group.group.num_polynomials(),
+                nonce,
+            )?
+        };
+        if challenges != output.challenges {
+            return Err(AkitaError::InvalidInput(
+                "fold grind preview did not match native replay".to_string(),
+            ));
+        }
+        let coordinate_count = group
+            .params
+            .num_live_blocks()
+            .checked_mul(group.group.num_polynomials())
+            .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
+        grinding.record_fold_challenges(level, group_u32, coordinate_count)?;
+        tracing::info!(
+            group_index = group.group_index,
+            nonce,
+            attempts = nonce + 1,
+            response_l2_sq = ?observed_l2_sq,
+            response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
+            "selected native physical fold response"
+        );
+    }
+    Ok(candidate_outputs
+        .into_iter()
+        .map(|(output, _)| output)
+        .collect())
+}
+
+fn prepare_fold_grind_groups<'group, F, G>(
+    opening_batch: &OpeningClaimsLayout,
+    groups: &[FoldGrindGroup<'group, G>],
+) -> Result<Vec<PreparedFoldGrindGroup<'group, G>>, AkitaError>
+where
+    F: Field,
+    G: crate::protocol::core::RootProverGroupMeta<F>,
 {
     if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSetup(
@@ -588,9 +801,71 @@ where
             ),
         });
     }
-    sample_multi_group_fold_decompose_witnesses_native::<F, E, G, B, T>(
+    Ok(prepared_groups)
+}
+
+/// Probe all root groups off-sponge and commit the first jointly accepted nonce.
+///
+/// Every preset probes `nonce = 0, 1, …` and commits the minimum accepting nonce.
+/// When `tail_t_vectors` is set, the terminal response must fit the exact cap
+/// and Golomb-Rice byte budget carried by its scheduled response shape.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
+    transcript: &mut T,
+    level: u32,
+    root_lp: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    groups: &[FoldGrindGroup<'_, G>],
+    _tail_t_vectors: Option<usize>,
+) -> Result<Vec<FoldProbeOutput<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: akita_types::FpExtEncoding<F>
+        + jolt_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
+    T: ProverTranscriptGrinding<F>,
+{
+    let prepared_groups = prepare_fold_grind_groups::<F, G>(opening_batch, groups)?;
+    sample_multi_group_fold_decompose_witnesses_legacy::<F, E, G, B, T>(
         opening_ctx,
         transcript,
+        level,
+        root_lp,
+        &prepared_groups,
+        FOLD_RESPONSE_ATTEMPTS,
+    )
+}
+
+/// Probe all groups with a native Spongefish candidate transaction and commit
+/// the first jointly accepted fold-response nonce.
+#[allow(dead_code)] // Called by the native outer proof driver during cutover.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    root_lp: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    groups: &[FoldGrindGroup<'_, G>],
+    _tail_t_vectors: Option<usize>,
+) -> Result<Vec<FoldProbeOutput<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: akita_types::FpExtEncoding<F>
+        + jolt_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
+{
+    let prepared_groups = prepare_fold_grind_groups::<F, G>(opening_batch, groups)?;
+    sample_multi_group_fold_decompose_witnesses_native_inner::<F, E, G, B>(
+        opening_ctx,
+        grinding,
         level,
         root_lp,
         &prepared_groups,

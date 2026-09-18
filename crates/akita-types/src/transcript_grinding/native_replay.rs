@@ -535,6 +535,10 @@ where
 mod tests {
     use super::*;
     use crate::GrindingRun;
+    use akita_challenges::{
+        FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw, NativeVerifierFoldDraw,
+        SparseChallengeConfig,
+    };
     use akita_transcript::{new_native_prover, new_native_verifier};
     use jolt_field::Prime128Offset275 as F;
 
@@ -626,5 +630,61 @@ mod tests {
             Err(AkitaError::InvalidProof)
         );
         assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn native_fold_candidate_replays_all_groups_as_one_transaction() {
+        let plan = GrindingPlan::new(
+            vec![
+                GrindingRun::fold_response(3),
+                GrindingRun::fold_challenge_group(3, 0, 2).unwrap(),
+                GrindingRun::fold_challenge_group(3, 1, 2).unwrap(),
+            ],
+            128,
+        )
+        .unwrap();
+        let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let site = GrindingSite::FoldResponse { level: 3 };
+        let nonce = 7;
+        let state = new_native_prover(b"native-fold-transaction", b"fixture").unwrap();
+        let mut prover = NativeProverGrinding::new(state, &plan);
+        let (preview_first, preview_second) = {
+            let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
+            let first = NativePreviewFoldDraw::new(&mut preview_state, 3, 0)
+                .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+                .unwrap();
+            let second = NativePreviewFoldDraw::new(&mut preview_state, 3, 1)
+                .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+                .unwrap();
+            (first, second)
+        };
+        prover.commit_fold_response(site, nonce).unwrap();
+        let live_first = NativeProverFoldDraw::new(prover.state_mut(), 3, 0)
+            .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+            .unwrap();
+        prover.record_fold_challenges(3, 0, 2).unwrap();
+        let live_second = NativeProverFoldDraw::new(prover.state_mut(), 3, 1)
+            .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+            .unwrap();
+        prover.record_fold_challenges(3, 1, 2).unwrap();
+        assert_eq!(
+            (preview_first, preview_second),
+            (live_first.clone(), live_second.clone())
+        );
+        let proof = prover.finish().unwrap();
+
+        let state = new_native_verifier(b"native-fold-transaction", b"fixture", &proof).unwrap();
+        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
+        let verified_first = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 0)
+            .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+            .unwrap();
+        verifier.record_fold_challenges(3, 0, 2).unwrap();
+        let verified_second = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 1)
+            .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+            .unwrap();
+        verifier.record_fold_challenges(3, 1, 2).unwrap();
+        assert_eq!((verified_first, verified_second), (live_first, live_second));
+        verifier.finish().unwrap();
     }
 }
