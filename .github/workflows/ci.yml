@@ -50,6 +50,8 @@ jobs:
         run: scripts/test-rust-file-lines.sh
       - name: Enforce Rust file line cap (zero exceptions)
         run: scripts/check-rust-file-lines.sh --no-baseline
+      - name: Enforce native proof-input guardrails
+        run: scripts/check-native-proof-guardrails.sh
 
   clippy:
     name: Clippy
