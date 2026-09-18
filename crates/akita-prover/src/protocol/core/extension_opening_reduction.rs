@@ -3,9 +3,18 @@ use crate::compute::{
     ComputeBackendSetup, RootTensorSource, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 
-pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: Field> {
-    pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
+pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<
+    E: Field,
+    R = ExtensionOpeningReduction<E>,
+> {
+    pub(in crate::protocol::core) reduction: R,
     pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
+}
+
+#[allow(dead_code)] // Removed once the production fold caller switches to this native result.
+pub(in crate::protocol::core) struct NativeExtensionOpeningReduction<E: Field> {
+    pub(in crate::protocol::core) final_claims: Vec<E>,
+    pub(in crate::protocol::core) final_factors: Vec<E>,
 }
 
 pub(crate) struct PreparedExtensionOpeningGroup<E: Field> {
@@ -23,6 +32,210 @@ pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'group, 'point, 
     pub(in crate::protocol::core) group: &'group G,
     pub(in crate::protocol::core) point: &'point [E],
     pub(in crate::protocol::core) ring_dimension: usize,
+}
+
+trait EorProverStream<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Sumcheck;
+    type Reduction;
+
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        openings: &[E],
+        partials: &[E],
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>;
+
+    fn prove_sumcheck<P>(
+        &mut self,
+        prover: &mut P,
+    ) -> Result<(Self::Sumcheck, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized;
+
+    fn final_claims(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        final_claims: &[E],
+    ) -> Result<(), AkitaError>;
+
+    fn build_reduction(
+        partials: Vec<E>,
+        sumcheck: Self::Sumcheck,
+        final_claims: Vec<E>,
+        final_factors: Vec<E>,
+    ) -> Self::Reduction;
+}
+
+struct LegacyEorProverStream<'a, T> {
+    transcript: &'a mut T,
+    level: u32,
+}
+
+impl<F, E, T> EorProverStream<F, E> for LegacyEorProverStream<'_, T>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
+{
+    type Sumcheck = SumcheckProof<E>;
+    type Reduction = ExtensionOpeningReduction<E>;
+
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        openings: &[E],
+        partials: &[E],
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError> {
+        append_claim_values_to_transcript::<F, E, T>(openings, self.transcript);
+        for partial in partials {
+            append_ext_field::<F, E, T>(self.transcript, ABSORB_EVALUATION_CLAIMS, partial);
+        }
+        self.transcript
+            .grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level: self.level })?;
+        let (split_bits, _) = tensor_opening_split::<F, E>()?;
+        let eta = (0..split_bits)
+            .map(|_| sample_ext_challenge::<F, E, T>(self.transcript, CHALLENGE_SUMCHECK_BATCH))
+            .collect::<Vec<_>>();
+        let coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+            opening_batch,
+            akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: self.level },
+            self.transcript,
+        )?;
+        Ok((eta, coefficients))
+    }
+
+    fn prove_sumcheck<P>(
+        &mut self,
+        prover: &mut P,
+    ) -> Result<(Self::Sumcheck, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut round = 0u32;
+        let (proof, point, final_claim) =
+            akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(prover, self.transcript, |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    self.level,
+                    0,
+                    round,
+                )?;
+                round = round
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
+                Ok(challenge)
+            })?;
+        Ok((proof, point, final_claim))
+    }
+
+    fn final_claims(
+        &mut self,
+        _opening_batch: &OpeningClaimsLayout,
+        final_claims: &[E],
+    ) -> Result<(), AkitaError> {
+        for final_claim in final_claims {
+            append_ext_field::<F, E, T>(self.transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
+        }
+        Ok(())
+    }
+
+    fn build_reduction(
+        partials: Vec<E>,
+        sumcheck: Self::Sumcheck,
+        final_claims: Vec<E>,
+        final_factors: Vec<E>,
+    ) -> Self::Reduction {
+        ExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials,
+                sumcheck,
+                final_claims,
+            },
+            final_factors,
+        }
+    }
+}
+
+#[allow(dead_code)] // Constructed by the native migration entry point below.
+struct NativeEorProverStream<'a, 'plan> {
+    grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
+    level: u32,
+}
+
+impl<F, E> EorProverStream<F, E> for NativeEorProverStream<'_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Sumcheck = ();
+    type Reduction = NativeExtensionOpeningReduction<E>;
+
+    fn prefix(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        openings: &[E],
+        partials: &[E],
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError> {
+        let prefix = akita_types::native_eor_prover_prefix::<F, E>(
+            self.grinding,
+            opening_batch,
+            openings,
+            partials,
+            self.level,
+        )?;
+        Ok((prefix.eta, prefix.claim_coefficients))
+    }
+
+    fn prove_sumcheck<P>(
+        &mut self,
+        prover: &mut P,
+    ) -> Result<(Self::Sumcheck, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            self.grinding,
+            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            self.level,
+            0,
+        );
+        let (point, final_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+            prover,
+            &mut channel,
+            akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+        )?;
+        Ok(((), point, final_claim))
+    }
+
+    fn final_claims(
+        &mut self,
+        opening_batch: &OpeningClaimsLayout,
+        final_claims: &[E],
+    ) -> Result<(), AkitaError> {
+        akita_types::native_eor_prover_final_claims::<F, E>(
+            self.grinding,
+            opening_batch,
+            final_claims,
+            self.level,
+        )
+    }
+
+    fn build_reduction(
+        _partials: Vec<E>,
+        (): Self::Sumcheck,
+        final_claims: Vec<E>,
+        final_factors: Vec<E>,
+    ) -> Self::Reduction {
+        NativeExtensionOpeningReduction {
+            final_claims,
+            final_factors,
+        }
+    }
 }
 
 pub(in crate::protocol::core) fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
@@ -93,6 +306,60 @@ where
     G: RootProverGroupTensor<F, E, B>,
     B: ComputeBackendSetup<F>,
 {
+    let mut stream = LegacyEorProverStream { transcript, level };
+    prove_extension_opening_reduction_with_stream::<F, E, _, G, B>(
+        tensor_backend,
+        tensor_prepared,
+        group_inputs,
+        &mut stream,
+        path,
+    )
+}
+
+/// Prove EOR directly into the authoritative native Spongefish stream.
+#[allow(dead_code)] // Called by the production native fold driver in the next cutover slice.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prove_extension_opening_reduction_native<F, E, G, B>(
+    tensor_backend: &B,
+    tensor_prepared: Option<&B::PreparedSetup>,
+    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    path: &'static str,
+) -> Result<ProvedExtensionOpeningReduction<E, NativeExtensionOpeningReduction<E>>, AkitaError>
+where
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
+    G: RootProverGroupTensor<F, E, B>,
+    B: ComputeBackendSetup<F>,
+{
+    let mut stream = NativeEorProverStream { grinding, level };
+    prove_extension_opening_reduction_with_stream::<F, E, _, G, B>(
+        tensor_backend,
+        tensor_prepared,
+        group_inputs,
+        &mut stream,
+        path,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_extension_opening_reduction_with_stream<F, E, S, G, B>(
+    tensor_backend: &B,
+    tensor_prepared: Option<&B::PreparedSetup>,
+    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
+    stream: &mut S,
+    path: &'static str,
+) -> Result<ProvedExtensionOpeningReduction<E, S::Reduction>, AkitaError>
+where
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
+    S: EorProverStream<F, E>,
+    G: RootProverGroupTensor<F, E, B>,
+    B: ComputeBackendSetup<F>,
+{
     let opening_batch = OpeningClaimsLayout::from_groups(
         group_inputs
             .iter()
@@ -147,7 +414,6 @@ where
             actual: openings.len(),
         });
     }
-    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let proof_partials = prepared_groups
         .iter()
         .flat_map(|group| group.proof_partials.iter().copied())
@@ -161,23 +427,15 @@ where
             actual: proof_partials.len(),
         });
     }
-    for partial in &proof_partials {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
+    let (eta, claim_coefficients) = stream.prefix(&opening_batch, &openings, &proof_partials)?;
+    if eta.len() != split_bits || claim_coefficients.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
-    let eta = (0..split_bits)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
-        .collect::<Vec<_>>();
     let true_input_claims = prepared_groups
         .iter()
         .flat_map(|group| group.row_partials_by_claim.iter())
         .map(|row_partials| tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta))
         .collect::<Result<Vec<_>, _>>()?;
-    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
-        &opening_batch,
-        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
-        transcript,
-    )?;
     let true_input_claim = true_input_claims
         .iter()
         .zip(&claim_coefficients)
@@ -246,21 +504,7 @@ where
         );
     }
     let mut prover = ExtensionOpeningReductionProver::new(groups, true_input_claim)?;
-    let mut round = 0u32;
-    let (sumcheck, rho, batched_final_claim) =
-        akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut prover, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                level,
-                0,
-                round,
-            )?;
-            round = round
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
-            Ok(challenge)
-        })?;
+    let (sumcheck, rho, batched_final_claim) = stream.prove_sumcheck(&mut prover)?;
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(format!(
             "{path} extension-opening reduction has not reached a final point"
@@ -319,19 +563,11 @@ where
         final_factors.push(factor);
         protocol_points.push(protocol_point);
     }
-    for final_claim in &final_claims {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
-    }
+    stream.final_claims(&opening_batch, &final_claims)?;
+    let reduction = S::build_reduction(proof_partials, sumcheck, final_claims, final_factors);
 
     Ok(ProvedExtensionOpeningReduction {
-        reduction: ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: proof_partials,
-                sumcheck,
-                final_claims,
-            },
-            final_factors,
-        },
+        reduction,
         protocol_points,
     })
 }

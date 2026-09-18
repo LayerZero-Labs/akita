@@ -101,6 +101,40 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
+fn native_extension_opening_reduction_streams_without_a_proof_object() {
+    let logical_w = RecursiveWitnessFlat::from_i8_digits(vec![1; 3 * 64]);
+    let point = (0..8)
+        .map(|index| E::new(F::from_u64(index + 2), F::from_u64(index + 17)))
+        .collect::<Vec<_>>();
+    let logical_polys = [&logical_w];
+    let logical_group = PreparedProverGroup::from_refs(&logical_polys).expect("logical group");
+    let groups = vec![ExtensionOpeningGroupInput {
+        group: &logical_group,
+        point: &point,
+        ring_dimension: 64,
+    }];
+    let plan = eor_test_plan(point.len() - 1, false);
+    let state = akita_transcript::new_native_prover(b"native-eor-prover", b"fixture").unwrap();
+    let mut grinding = akita_types::NativeProverGrinding::new(state, &plan);
+
+    let proved = prove_extension_opening_reduction_native::<F, E, _, _>(
+        &crate::compute::CpuBackend::DEFAULT,
+        None,
+        &groups,
+        &mut grinding,
+        1,
+        "recursive",
+    )
+    .expect("native EOR proving should stream every proof value");
+    let proof = grinding.finish().unwrap();
+
+    assert!(!proof.is_empty());
+    assert_eq!(proved.protocol_points.len(), 1);
+    assert_eq!(proved.reduction.final_claims.len(), 1);
+    assert_eq!(proved.reduction.final_factors.len(), 1);
+}
+
+#[test]
 fn extension_opening_reduction_shares_challenges_across_groups() {
     let short_witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 64]);
     let mut long_digits = vec![0; 3 * 64];
