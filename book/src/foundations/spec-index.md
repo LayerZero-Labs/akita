@@ -32,6 +32,7 @@ policy and the checker use the same live set in
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
 | [`transcript-grinding`](../../../specs/transcript-grinding.md) | proposed | Defines the planned public proof-of-work policy and packed nonce stream. |
+| [`spongefish-integration`](../../../specs/spongefish-integration.md) | proposed | Defines native Spongefish proof streams and new transcript encoding, preserving grinding and soundness obligations. |
 
 ## Archived records
 

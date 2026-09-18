@@ -155,6 +155,7 @@ live_specs=(
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md
   specs/transcript-grinding.md
+  specs/spongefish-integration.md
 )
 
 missing_live=()
