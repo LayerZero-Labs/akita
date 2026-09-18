@@ -12,7 +12,7 @@ pub mod sumcheck;
 
 pub use akita_types::RingRelationInstance;
 pub use core::{
-    batched_prove, batched_prove_native, ProveLevelOutput, RecursiveSuffixOutcome,
+    batched_prove, batched_prove_structured_legacy, ProveLevelOutput, RecursiveSuffixOutcome,
     SuffixProverState,
 };
 pub use ring_relation::RingRelationProver;

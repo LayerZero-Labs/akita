@@ -266,7 +266,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove::<_, _, _, _>(
+                    let proof = scheme.batched_prove_structured_legacy::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -464,7 +464,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove::<_, _, _, _>(
+                    let proof = scheme.batched_prove_structured_legacy::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -677,7 +677,7 @@ fn fp32_onehot_multi_group() {
         let mut prover_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prover_data,
                 &stack,
@@ -703,7 +703,7 @@ fn fp32_onehot_multi_group() {
         let mut verifier_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,

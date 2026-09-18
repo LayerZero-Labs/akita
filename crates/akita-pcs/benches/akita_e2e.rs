@@ -188,7 +188,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     scheme
-                        .batched_prove::<_, _, _, _>(
+                        .batched_prove_structured_legacy::<_, _, _, _>(
                             &setup,
                             prover_claims::<Cfg, _>(
                                 scheme.schedules(),
@@ -210,7 +210,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prover_claims::<Cfg, _>(
                 scheme.schedules(),
@@ -229,7 +229,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         b.iter(|| {
             let mut transcript = AkitaTranscript::<F>::new(b"bench");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
@@ -251,7 +251,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         relation_phase_timing::report(label, nv, 3, || {
             let mut transcript = AkitaTranscript::<F>::new(b"bench");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &proof,
                     &verifier_setup,
                     &mut transcript,
@@ -266,7 +266,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 relation_phase_timing::measure_complete_stage2(iterations, || {
                     let mut transcript = AkitaTranscript::<F>::new(b"bench");
                     scheme
-                        .batched_verify(
+                        .batched_verify_structured_legacy(
                             black_box(&proof),
                             black_box(&verifier_setup),
                             &mut transcript,
@@ -300,7 +300,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = scheme
-                .batched_prove::<_, _, _, _>(
+                .batched_prove_structured_legacy::<_, _, _, _>(
                     &setup,
                     prover_claims::<Cfg, _>(
                         scheme.schedules(),
@@ -316,7 +316,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 .unwrap();
             let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,
@@ -442,7 +442,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     scheme
-                        .batched_prove::<_, _, _, _>(
+                        .batched_prove_structured_legacy::<_, _, _, _>(
                             &setup,
                             prover_claims::<Cfg, _>(
                                 scheme.schedules(),
@@ -464,7 +464,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prover_claims::<Cfg, _>(
                 scheme.schedules(),
@@ -483,7 +483,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         b.iter(|| {
             let mut transcript = AkitaTranscript::<F>::new(b"bench");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
@@ -515,7 +515,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = scheme
-                .batched_prove::<_, _, _, _>(
+                .batched_prove_structured_legacy::<_, _, _, _>(
                     &setup,
                     prover_claims::<Cfg, _>(
                         scheme.schedules(),
@@ -531,7 +531,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 .unwrap();
             let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,

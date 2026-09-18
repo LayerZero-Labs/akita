@@ -319,7 +319,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 };
                 let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
                 let proof = scheme
-                    .batched_prove::<_, _, _, _>(
+                    .batched_prove_structured_legacy::<_, _, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -351,7 +351,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                 let mut verifier_transcript = AkitaTranscript::<PackingField>::new(label);
                 scheme
-                    .batched_verify(
+                    .batched_verify_structured_legacy(
                         &proof,
                         &verifier_setup,
                         &mut verifier_transcript,
@@ -386,7 +386,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     #[cfg(not(feature = "logging-transcript"))]
                     let mut transcript = AkitaTranscript::<PackingField>::new(label);
                     assert!(scheme
-                        .batched_verify(
+                        .batched_verify_structured_legacy(
                             &malformed,
                             &verifier_setup,
                             &mut transcript,

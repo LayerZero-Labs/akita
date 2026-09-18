@@ -478,7 +478,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     )
     .expect("valid one-hot prover group");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             selected_prover_data::<OneHotCfg, _, _>(
                 &scheme,
@@ -539,7 +539,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,

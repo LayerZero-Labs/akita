@@ -112,7 +112,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prover_data,
                 &stack,
@@ -146,7 +146,7 @@ where
         .expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -205,7 +205,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     &pt[..],
@@ -232,7 +232,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let openings = [expected_opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -281,7 +281,7 @@ where
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     &pt[..],
@@ -308,7 +308,7 @@ where
         let openings = [expected_opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -422,7 +422,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,
@@ -457,7 +457,7 @@ where
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -547,7 +547,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,
@@ -582,7 +582,7 @@ where
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,

@@ -25,7 +25,7 @@ fn verify(
         &roundtrip.commitment,
     )?])?;
     let mut transcript = AkitaTranscript::<fp32::Field>::new(label);
-    roundtrip.scheme.batched_verify(
+    roundtrip.scheme.batched_verify_structured_legacy(
         proof,
         &roundtrip.verifier_setup,
         &mut transcript,

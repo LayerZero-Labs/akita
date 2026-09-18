@@ -161,7 +161,7 @@ where
     /// Returns an error if any opening point is invalid or proof generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    pub fn batched_prove<'a, T, P, B, SP>(
+    pub fn batched_prove_structured_legacy<'a, T, P, B, SP>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         opening: SelectedProverOpeningData<
@@ -204,7 +204,7 @@ where
         SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     {
         let t_prove_total = Instant::now();
-        let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, SP>(
+        let proof = akita_prover::batched_prove_structured_legacy::<Cfg, T, P, _, B, B, B, SP>(
             &setup.expanded,
             &setup.prefix_slots,
             &self.schedules,
@@ -225,7 +225,7 @@ where
 
     /// Produce the canonical native Spongefish argument stream.
     #[allow(clippy::too_many_arguments)]
-    pub fn batched_prove_native<'a, P, B, SP>(
+    pub fn batched_prove<'a, P, B, SP>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         opening: SelectedProverOpeningData<
@@ -266,7 +266,7 @@ where
         SP: CommitmentStatePolicy<Cfg::Field> + 'a,
         SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     {
-        akita_prover::batched_prove_native::<Cfg, P, _, B, B, B, SP>(
+        akita_prover::batched_prove::<Cfg, P, _, B, B, B, SP>(
             &setup.expanded,
             &setup.prefix_slots,
             &self.schedules,
@@ -283,7 +283,7 @@ where
     ///
     /// Returns an error when verification fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    pub fn batched_verify<T: Transcript<Cfg::Field>>(
+    pub fn batched_verify_structured_legacy<T: Transcript<Cfg::Field>>(
         &self,
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
@@ -295,7 +295,7 @@ where
     }
 
     /// Verify the canonical native Spongefish argument stream.
-    pub fn batched_verify_native(
+    pub fn batched_verify(
         &self,
         proof: &[u8],
         setup: &AkitaVerifierSetup<Cfg::Field>,
@@ -303,7 +303,7 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        akita_verifier::batched_verify_native::<Cfg>(
+        akita_verifier::batched_verify::<Cfg>(
             proof,
             setup,
             &self.schedules,
@@ -337,7 +337,7 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(
+    akita_verifier::batched_verify_structured_legacy::<Cfg, T>(
         proof, setup, schedules, transcript, statement, basis,
     )?;
 

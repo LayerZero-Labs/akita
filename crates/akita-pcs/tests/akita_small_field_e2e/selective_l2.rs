@@ -137,7 +137,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         .expect("L2 prover claims");
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 selected_prover_data::<Cfg, _>(
                     prover_claims,
@@ -185,7 +185,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .expect("L2 verifier group")])
             .expect("L2 verifier claims");
             let mut transcript = AkitaTranscript::<F>::new(LABEL);
-            scheme.batched_verify(
+            scheme.batched_verify_structured_legacy(
                 candidate,
                 &verifier_setup,
                 &mut transcript,
@@ -307,7 +307,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         .expect("terminal L2 prover claims");
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 selected_prover_data::<Cfg, _>(
                     prover_claims,
@@ -330,7 +330,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .expect("terminal L2 verifier group")])
             .expect("terminal L2 verifier claims");
             let mut transcript = AkitaTranscript::<F>::new(LABEL);
-            scheme.batched_verify(
+            scheme.batched_verify_structured_legacy(
                 candidate,
                 &verifier_setup,
                 &mut transcript,

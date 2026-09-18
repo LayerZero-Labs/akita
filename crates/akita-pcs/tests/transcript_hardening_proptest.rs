@@ -73,7 +73,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = scheme
-        .batched_prove(
+        .batched_prove_structured_legacy(
             &setup,
             prove_input::<DenseCfg, _>(
                 &opening_point,
@@ -91,7 +91,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

@@ -97,7 +97,7 @@ fn event_stream_equality_small() {
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &point,
@@ -116,7 +116,7 @@ fn event_stream_equality_small() {
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -361,7 +361,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         let mut proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &point,
@@ -379,7 +379,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -447,7 +447,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &point,

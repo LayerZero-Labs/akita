@@ -353,7 +353,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .expect("multi-group prover data");
         let selection = prover_data.selection();
         let proof = proof_scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prover_data,
                 &stack,
@@ -456,7 +456,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
     let verify = |statement| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        proof_scheme.batched_verify(
+        proof_scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

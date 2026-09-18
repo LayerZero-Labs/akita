@@ -89,9 +89,9 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_prover::{
-    batched_prove, CommitmentExecutor, ComputeBackendSetup, CpuBackend, ErasedPreparedProverGroup,
-    OpeningCluster, PortableStatePolicy, ProverComputeStack, RingSwitchCluster, TensorCluster,
-    UniformProverStack,
+    batched_prove_structured_legacy, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
+    ErasedPreparedProverGroup, OpeningCluster, PortableStatePolicy, ProverComputeStack,
+    RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -364,7 +364,7 @@ fn fp128_onehot_batched() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &pt[..],
@@ -391,7 +391,7 @@ fn fp128_onehot_batched() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -447,7 +447,7 @@ fn fp128_dense_batched() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<DenseCfg, _>(
                     &pt[..],
@@ -474,7 +474,7 @@ fn fp128_dense_batched() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -553,7 +553,7 @@ fn fp128_onehot_oversized_setup() {
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &pt[..],
@@ -581,7 +581,7 @@ fn fp128_onehot_oversized_setup() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -634,7 +634,7 @@ fn fp128_dense_monomial_basis() {
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<DenseCfg, _>(
                     &pt[..],
@@ -662,7 +662,7 @@ fn fp128_dense_monomial_basis() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,

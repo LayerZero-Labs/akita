@@ -54,7 +54,7 @@ mod terminal_direct;
 mod terminal_ntt;
 use root_fold::verify_root;
 
-pub use verify::{batched_verify, batched_verify_native};
+pub use verify::{batched_verify, batched_verify_structured_legacy};
 
 pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);

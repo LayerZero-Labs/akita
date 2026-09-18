@@ -216,7 +216,7 @@ use akita_types::{
 ///
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape or proof replay fails.
-pub fn batched_verify<Cfg, T>(
+pub fn batched_verify_structured_legacy<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -376,7 +376,7 @@ where
 /// Verify one authoritative native Spongefish argument under config `Cfg`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn batched_verify_native<Cfg>(
+pub fn batched_verify<Cfg>(
     proof: &[u8],
     setup: &AkitaVerifierSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,

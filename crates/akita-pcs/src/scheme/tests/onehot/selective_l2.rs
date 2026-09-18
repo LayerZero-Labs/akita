@@ -67,7 +67,7 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             selected_prover_data::<L2Cfg, _, _>(
                 &scheme,
@@ -91,7 +91,7 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
         let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        scheme.batched_verify(
+        scheme.batched_verify_structured_legacy(
             candidate,
             &verifier_setup,
             &mut transcript,
@@ -108,7 +108,7 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     )
     .expect("native L2 prover group");
     let native_proof = scheme
-        .batched_prove_native::<_, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             selected_prover_data::<L2Cfg, _, _>(
                 &scheme,
@@ -130,7 +130,7 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     .expect("native L2 verifier group")])
     .expect("native L2 verifier claims");
     scheme
-        .batched_verify_native(
+        .batched_verify(
             &native_proof,
             &verifier_setup,
             TRANSCRIPT_LABEL,

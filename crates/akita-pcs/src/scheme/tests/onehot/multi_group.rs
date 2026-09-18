@@ -263,7 +263,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     let proof = scheme
-        .batched_prove(
+        .batched_prove_structured_legacy(
             &setup,
             prover_claims,
             &stack,
@@ -322,7 +322,7 @@ where
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -351,7 +351,7 @@ where
         let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &decoded,
                     &verifier_setup,
                     &mut swapped_transcript,
@@ -375,7 +375,7 @@ where
         let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &decoded,
                     &verifier_setup,
                     &mut tampered_transcript,

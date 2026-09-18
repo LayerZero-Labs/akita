@@ -201,7 +201,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -219,7 +219,7 @@ where
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -330,7 +330,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -348,7 +348,7 @@ where
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -373,7 +373,7 @@ where
     witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &tampered,
             &verifier_setup,
             &mut verifier_transcript,
@@ -393,7 +393,7 @@ where
     );
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &wrong_binding,
             &verifier_setup,
             &mut verifier_transcript,
@@ -485,7 +485,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -503,7 +503,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -599,7 +599,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -617,7 +617,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

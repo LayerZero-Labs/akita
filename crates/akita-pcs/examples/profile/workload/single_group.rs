@@ -113,7 +113,7 @@ fn run_prove<
         let t0 = Instant::now();
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 setup,
                 prover_claims::<Cfg, _>(
                     scheme.schedules(),
@@ -253,7 +253,7 @@ fn run_prove<
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        scheme.batched_verify(
+        scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

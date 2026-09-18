@@ -79,7 +79,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
             &stack,
@@ -90,7 +90,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -143,7 +143,7 @@ fn packed_fold_response_nonce_tampering_rejects() {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         fixture
             .scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &roundtrip,
                 &fixture.verifier_setup,
                 &mut verifier_transcript,
@@ -168,7 +168,7 @@ fn packed_fold_response_nonce_tampering_rejects() {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let err = fixture
             .scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &roundtrip,
                 &fixture.verifier_setup,
                 &mut verifier_transcript,
@@ -255,7 +255,7 @@ fn packed_proof_of_work_nonce_matches_public_predicate() {
 
             let mut transcript =
                 LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/onehot"));
-            let result = fixture.scheme.batched_verify(
+            let result = fixture.scheme.batched_verify_structured_legacy(
                 &mutated,
                 &fixture.verifier_setup,
                 &mut transcript,
@@ -352,7 +352,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<OneHotCfg, _>(
                     &point,
@@ -372,7 +372,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,

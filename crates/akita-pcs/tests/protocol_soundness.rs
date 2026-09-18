@@ -248,7 +248,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 selection,
@@ -357,7 +357,7 @@ fn typed_verifier_rejects_empty_stage2_round_messages() {
             make_dense_fixture::<F, 256, Cfg>(&scheme, DENSE_TEST_NV, LABEL);
         let statement = verify_input::<Cfg>(selection, &point, &[opening], &commitment);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &setup,
                 &mut AkitaTranscript::<F>::new(LABEL),
@@ -375,7 +375,7 @@ fn typed_verifier_rejects_empty_stage2_round_messages() {
                 .clear();
             assert_invalid_proof(
                 "empty typed Stage 2 round",
-                scheme.batched_verify(
+                scheme.batched_verify_structured_legacy(
                     &malformed,
                     &setup,
                     &mut AkitaTranscript::<F>::new(LABEL),
@@ -404,7 +404,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/root-trace-tamper");
-        let result = scheme.batched_verify(
+        let result = scheme.batched_verify_structured_legacy(
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
@@ -495,7 +495,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -520,7 +520,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
-        let result = scheme.batched_verify(
+        let result = scheme.batched_verify_structured_legacy(
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
@@ -552,7 +552,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/terminal-trace-tamper");
-        let result = scheme.batched_verify(
+        let result = scheme.batched_verify_structured_legacy(
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
@@ -697,7 +697,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -719,7 +719,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
-        let result = scheme.batched_verify(
+        let result = scheme.batched_verify_structured_legacy(
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
@@ -831,7 +831,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -890,7 +890,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let mut vt = akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
         #[cfg(not(feature = "logging-transcript"))]
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        let honest_result = scheme.batched_verify(
+        let honest_result = scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut vt,
@@ -999,7 +999,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         wrong[1] += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut vt,
@@ -1020,7 +1020,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             .expect("terminal EOR must carry a partial evaluation") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &tampered,
                 &verifier_setup,
                 &mut vt,
@@ -1042,7 +1042,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             .expect("terminal EOR must carry a terminal handle") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &tampered,
                 &verifier_setup,
                 &mut vt,
@@ -1056,7 +1056,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         stripped.terminal.extension_opening_reduction = None;
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &stripped,
                 &verifier_setup,
                 &mut vt,
@@ -1116,7 +1116,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -1134,7 +1134,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
 
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut vt,
@@ -1149,7 +1149,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "wrong second batched opening",
-            scheme.batched_verify(
+            scheme.batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut vt,
@@ -1170,7 +1170,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "oversized opening payload",
-            scheme.batched_verify(
+            scheme.batched_verify_structured_legacy(
                 &oversized,
                 &verifier_setup,
                 &mut vt,
@@ -1278,7 +1278,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prove_input::<Cfg, _>(
                     selection,
@@ -1316,7 +1316,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
 
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut vt,
@@ -1335,7 +1335,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert!(
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &truncated,
                     &verifier_setup,
                     &mut vt,
@@ -1368,7 +1368,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         // Sanity: the honest statement verifies.
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut vt,
@@ -1383,7 +1383,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "mismatched committed-group profile geometry",
-            scheme.batched_verify(
+            scheme.batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut vt,

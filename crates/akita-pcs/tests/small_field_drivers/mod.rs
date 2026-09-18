@@ -119,7 +119,13 @@ where
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .batched_prove_structured_legacy::<_, _, _, _>(
+            &setup,
+            prover_data,
+            &stack,
+            &mut pt,
+            BasisMode::Lagrange,
+        )
         .expect("prove");
 
     let shape = proof.shape();
@@ -140,7 +146,7 @@ where
     .expect("verifier claims");
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &decoded,
             &verifier_setup,
             &mut vt,
@@ -225,7 +231,7 @@ pub(super) fn native_single_group_roundtrip<Cfg, P>(
     .expect("prover data");
     let selection = prover_data.selection();
     let proof = scheme
-        .batched_prove_native::<_, _, _>(&setup, prover_data, &stack, session, BasisMode::Lagrange)
+        .batched_prove::<_, _, _>(&setup, prover_data, &stack, session, BasisMode::Lagrange)
         .expect("native prove");
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
@@ -235,7 +241,7 @@ pub(super) fn native_single_group_roundtrip<Cfg, P>(
     .expect("verifier group")])
     .expect("verifier claims");
     scheme
-        .batched_verify_native(
+        .batched_verify(
             &proof,
             &verifier_setup,
             session,
@@ -319,7 +325,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
 
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &decoded,
             verifier_setup,
             &mut vt,

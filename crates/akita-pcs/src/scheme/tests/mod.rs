@@ -308,7 +308,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prover_claims(
                 &scheme,

@@ -124,7 +124,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
                 let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_prove::<_, _, _, _>(
+                    .batched_prove_structured_legacy::<_, _, _, _>(
                         &setup,
                         selected_prover_data(scheme, claims, vec![hint.clone()], vec![&poly_refs])
                             .expect("cross-mode prover data"),
@@ -153,7 +153,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             ] {
                 let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_verify(
+                    .batched_verify_structured_legacy(
                         proof,
                         &verifier_setup,
                         &mut transcript,
@@ -179,7 +179,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
                     let mut transcript = AkitaTranscript::<F>::new(LABEL);
-                    scheme.batched_verify(
+                    scheme.batched_verify_structured_legacy(
                         proof,
                         &verifier_setup,
                         &mut transcript,

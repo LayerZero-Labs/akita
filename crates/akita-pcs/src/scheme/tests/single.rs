@@ -44,7 +44,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             let openings = [opening];
             let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &proof,
                     &verifier_setup,
                     &mut verifier_transcript,
@@ -66,7 +66,7 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             *coefficient += F::one();
             let mut tampered_transcript = AkitaTranscript::<F>::new(b"test/prove");
             scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &proof,
                     &verifier_setup,
                     &mut tampered_transcript,
@@ -123,7 +123,7 @@ fn verify_rejects_wrong_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove_structured_legacy::<_, _, _, _>(
             &setup,
             prover_claims(
                 &scheme,
@@ -141,7 +141,7 @@ fn verify_rejects_wrong_opening() {
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = scheme.batched_verify(
+    let result = scheme.batched_verify_structured_legacy(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -206,7 +206,7 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         .fold(F::zero(), |sum, (&value, &weight)| sum + value * weight);
     let poly_refs = [&poly];
     let proof = scheme
-        .batched_prove_native::<_, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             prover_claims(
                 &scheme,
@@ -221,7 +221,7 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         )
         .expect("native proof");
     scheme
-        .batched_verify_native(
+        .batched_verify(
             &proof,
             &verifier_setup,
             b"test/prove",
@@ -230,7 +230,7 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         )
         .expect("native verification");
     scheme
-        .batched_verify_native(
+        .batched_verify(
             &proof,
             &verifier_setup,
             b"test/prove",
@@ -254,7 +254,7 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        scheme.batched_verify(
+        scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -307,7 +307,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     scheme
-        .batched_verify(
+        .batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

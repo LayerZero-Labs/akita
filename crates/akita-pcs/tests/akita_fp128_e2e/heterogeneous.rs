@@ -197,7 +197,7 @@ fn heterogeneous_group_types() {
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
         let proof = onehot_scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prover_data,
                 &stack,
@@ -238,7 +238,7 @@ fn heterogeneous_group_types() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
         onehot_scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -413,7 +413,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         let proof = onehot_scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prover_data,
                 &stack,
@@ -444,7 +444,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         onehot_scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -474,7 +474,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         assert!(
             onehot_scheme
-                .batched_verify(
+                .batched_verify_structured_legacy(
                     &decoded,
                     &verifier_setup,
                     &mut tampered_transcript,
@@ -833,7 +833,7 @@ fn heterogeneous_compute_backends() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let proof = batched_prove::<Cfg, _, _, _, _, _, _, _>(
+        let proof = batched_prove_structured_legacy::<Cfg, _, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
             scheme.schedules(),
@@ -856,7 +856,7 @@ fn heterogeneous_compute_backends() {
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
         scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,

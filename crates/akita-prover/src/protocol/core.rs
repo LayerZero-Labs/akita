@@ -100,7 +100,7 @@ pub(in crate::protocol::core) use fold::{
     PreparedFold,
 };
 pub(in crate::protocol) use fold_kernels::*;
-pub use prove::{batched_prove, batched_prove_native};
+pub use prove::{batched_prove, batched_prove_structured_legacy};
 #[allow(unused_imports)]
 pub(crate) use root_group::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,

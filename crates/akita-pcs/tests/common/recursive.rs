@@ -164,7 +164,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = recursive_scheme
-            .batched_prove(
+            .batched_prove_structured_legacy(
                 &setup,
                 prover_claims,
                 &stack,
@@ -227,7 +227,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
         recursive_scheme
-            .batched_verify(
+            .batched_verify_structured_legacy(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -242,7 +242,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             &first_setup_prefix_slot(&schedule),
         ) {
             let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let alternate_result = recursive_scheme.batched_verify(
+            let alternate_result = recursive_scheme.batched_verify_structured_legacy(
                 &proof,
                 &alternate_verifier_setup,
                 &mut alternate_transcript,
@@ -257,7 +257,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let result = recursive_scheme.batched_verify(
+            let result = recursive_scheme.batched_verify_structured_legacy(
                 &tampered_proof,
                 &verifier_setup,
                 &mut transcript,
@@ -299,7 +299,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut tampered = final_openings;
         tampered[0] += F::from_u128_reduced(1);
         let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let tampered_result = recursive_scheme.batched_verify(
+        let tampered_result = recursive_scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut tampered_transcript,

@@ -130,7 +130,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove_structured_legacy::<_, _, _, _>(
                 &setup,
                 prover_claims::<Cfg, _>(
                     scheme.schedules(),
@@ -260,7 +260,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        scheme.batched_verify(
+        scheme.batched_verify_structured_legacy(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
