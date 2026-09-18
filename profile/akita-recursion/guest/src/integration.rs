@@ -4,7 +4,6 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{BasisMode, FpExtEncoding};
 use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
@@ -93,11 +92,6 @@ where
         }
     }
 
-    start_cycle_tracking("transcript_init");
-    let mut transcript =
-        AkitaTranscript::<Cfg::Field>::unbound_verifier(&decoded.transcript_domain);
-    end_cycle_tracking("transcript_init");
-
     start_cycle_tracking("akita_verify");
     let statement = match decoded.verifier_statement() {
         Ok(statement) => statement,
@@ -106,11 +100,11 @@ where
             return GuestStatus::InputRejected.code();
         }
     };
-    let result = batched_verify::<Cfg, _>(
+    let result = batched_verify::<Cfg>(
         &decoded.proof,
         &decoded.verifier_setup,
         &schedules,
-        &mut transcript,
+        &decoded.transcript_domain,
         statement,
         BasisMode::Lagrange,
     );

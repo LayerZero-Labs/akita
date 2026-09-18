@@ -31,7 +31,6 @@ guest = { package = "akita-recursion-guest", path = "../guest", features = [
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }
 tracing = "0.1"

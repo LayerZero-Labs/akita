@@ -24,7 +24,6 @@ akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, feat
   "parallel",
 ] }
 akita-prover = { path = "../../../crates/akita-prover" }
-akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier" }
 

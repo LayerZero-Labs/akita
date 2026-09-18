@@ -43,6 +43,5 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "solinas",
 ] }
 akita-serialization = { path = "../../../crates/akita-serialization" }
-akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }

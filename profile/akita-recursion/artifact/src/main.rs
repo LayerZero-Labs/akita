@@ -15,7 +15,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitOutput, CommitmentExecutor, ComputeBackendSetup,
@@ -24,7 +24,6 @@ use akita_prover::{
 };
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup, FpExtEncoding,
     GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
@@ -82,7 +81,6 @@ type Cfg = RecursiveCommitmentConfig<BaseCfg>;
 /// The Akita schedule may select different B and D dimensions internally.
 const SOURCE_VIEW_D: usize = 512;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
-type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const PRE_GROUPS: usize = 2;
 const PRE_NUM_VARS: usize = 16;
 const FINAL_POLYS: usize = 2;
@@ -308,17 +306,17 @@ fn publish_blob(output_path: &std::path::Path, blob: &[u8]) -> Result<(), String
 }
 
 fn verify_proof(
-    proof: &akita_types::AkitaBatchedProof<F, Challenge>,
+    proof: &[u8],
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
-    transcript: &mut AkitaTranscript<F>,
+    session: &[u8],
     statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
-    batched_verify::<Cfg, _>(
+    batched_verify::<Cfg>(
         proof,
         verifier_setup,
         schedules,
-        transcript,
+        session,
         statement,
         BasisMode::Lagrange,
     )
@@ -429,14 +427,13 @@ macro_rules! generate_scalar_case {
         )
         .map_err(|err| format!("{} prover opening data: {err}", case))?;
         let schedule_selection = prove_input.selection();
-        let mut prover_transcript = AkitaTranscript::<ScalarField>::new(TRANSCRIPT_DOMAIN);
         let t0 = Instant::now();
         let proof = scheme
             .batched_prove(
                 &prover_setup,
                 prove_input,
                 &stack,
-                &mut prover_transcript,
+                TRANSCRIPT_DOMAIN,
                 BasisMode::Lagrange,
             )
         .map_err(|err| format!("{} prove: {err}", case))?;
@@ -457,27 +454,16 @@ macro_rules! generate_scalar_case {
                 .map_err(|err| format!("{} verifier opening claims: {err}", case))?,
         )
         .map_err(|err| format!("{} verifier statement: {err}", case))?;
-        let mut verifier_transcript =
-            AkitaTranscript::<ScalarField>::unbound_verifier(TRANSCRIPT_DOMAIN);
-        batched_verify::<ScalarCfg, _>(
+        batched_verify::<ScalarCfg>(
             &proof,
             &verifier_setup,
             scheme.schedules(),
-            &mut verifier_transcript,
+            TRANSCRIPT_DOMAIN,
             statement,
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
-        let grinding_plan = derive_transcript_grinding_plan::<ScalarCfg>(
-            schedule.schedule(),
-            &opening_layout,
-        )
-        .map_err(|err| format!("{} derive grinding plan: {err}", case))?;
-        let proof_shape = proof.shape();
-        proof_shape
-            .validate_grinding_plan(&grinding_plan)
-            .map_err(|err| format!("{} validate proof grinding shape: {err}", case))?;
         let inputs: AkitaJoltInputs<ScalarField, $d, ScalarExt> = AkitaJoltInputs {
             case,
             transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
@@ -488,7 +474,6 @@ macro_rules! generate_scalar_case {
             schedule_selection,
             commitment,
             verifier_setup,
-            proof_shape,
             proof,
         };
         let inner_blob = inputs
@@ -499,13 +484,11 @@ macro_rules! generate_scalar_case {
             scheme.schedules(),
         )
         .map_err(|err| format!("{} strict blob round-trip: {err}", case))?;
-        let mut transcript =
-            AkitaTranscript::<ScalarField>::unbound_verifier(&decoded.transcript_domain);
-        batched_verify::<ScalarCfg, _>(
+        batched_verify::<ScalarCfg>(
             &decoded.proof,
             &decoded.verifier_setup,
             scheme.schedules(),
-            &mut transcript,
+            &decoded.transcript_domain,
             decoded
                 .verifier_statement()
                 .map_err(|err| format!("{} decoded statement: {err}", case))?,
@@ -782,7 +765,6 @@ fn run() -> Result<(), String> {
     );
     let mut prover_hints = pre_hints;
     prover_hints.push(final_hint);
-    let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let prove_input = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         OpeningClaims::from_groups(prover_groups)
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
@@ -797,7 +779,7 @@ fn run() -> Result<(), String> {
             &prover_setup,
             prove_input,
             &stack,
-            &mut prover_transcript,
+            TRANSCRIPT_DOMAIN,
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("batched_prove failed: {err}"))?;
@@ -809,12 +791,11 @@ fn run() -> Result<(), String> {
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
-    let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
     verify_proof(
         &proof,
         &verifier_setup,
         scheme.schedules(),
-        &mut verifier_transcript,
+        TRANSCRIPT_DOMAIN,
         build_statement(
             schedule_selection,
             &pre_points,
@@ -831,13 +812,6 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
-    let grinding_plan =
-        derive_transcript_grinding_plan::<Cfg>(schedule.schedule(), &opening_layout)
-            .map_err(|err| format!("derive grinding plan failed: {err}"))?;
-    let proof_shape = proof.shape();
-    proof_shape
-        .validate_grinding_plan(&grinding_plan)
-        .map_err(|err| format!("validate proof grinding shape failed: {err}"))?;
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         case: AkitaJoltCase::OneHotFp128MultiGroupRecursive,
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
@@ -859,7 +833,6 @@ fn run() -> Result<(), String> {
         schedule_selection,
         commitment: final_commitment,
         verifier_setup,
-        proof_shape,
         proof,
     };
 
@@ -873,13 +846,11 @@ fn run() -> Result<(), String> {
         scheme.schedules(),
     )
     .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
-    let mut roundtrip_transcript =
-        AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     verify_proof(
         &decoded.proof,
         &decoded.verifier_setup,
         scheme.schedules(),
-        &mut roundtrip_transcript,
+        &decoded.transcript_domain,
         decoded
             .verifier_statement()
             .map_err(|err| format!("decoded verifier statement failed: {err}"))?,
