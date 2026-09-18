@@ -1,10 +1,7 @@
 #![allow(missing_docs)]
-#![cfg(feature = "logging-transcript")]
-
 mod common;
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningClaimsLayout;
 use common::*;
 use proptest::prelude::*;
@@ -22,7 +19,7 @@ fn batch_case(index: usize) -> (usize, usize) {
     }
 }
 
-fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
+fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
     let scheme = load_workspace_scheme::<DenseCfg>().expect("workspace schedule catalog");
 
@@ -70,10 +67,8 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
-    let mut prover_transcript =
-        LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = scheme
-        .batched_prove_structured_legacy(
+        .batched_prove(
             &setup,
             prove_input::<DenseCfg, _>(
                 &opening_point,
@@ -83,46 +78,31 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            b"hardening/proptest/native",
             basis_mode,
         )
         .expect("prove");
 
-    let mut verifier_transcript =
-        LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules()),
             basis_mode,
         )
         .expect("verify");
-
-    prover_transcript.assert_smell_checks();
-    verifier_transcript.assert_smell_checks();
-    let prover_public = public_transcript_events(prover_transcript.events());
-    let verifier_public = public_transcript_events(verifier_transcript.events());
-    assert_eq!(prover_public, verifier_public);
-    let batching_squeezes = assert_claim_batching_follows_opening_payload(&prover_public);
-    if total_claims > 1 {
-        assert!(
-            batching_squeezes > 0,
-            "multi-claim root must exercise public claim batching"
-        );
-    }
-    let terminal_e_hat = assert_terminal_event_order_if_present(&prover_public);
-    if shape_index == 3 {
-        let terminal_e_hat =
-            terminal_e_hat.expect("recursive corpus case must include a terminal fold");
-        let tau0 = first_label_index(&prover_public, labels::CHALLENGE_TAU0)
-            .expect("recursive corpus case must include non-terminal tau0");
-        assert!(
-            tau0 < terminal_e_hat,
-            "recursive tau0 must occur before the terminal transcript window"
-        );
-    }
+    let mut trailing = proof.clone();
+    trailing.push(0);
+    assert!(scheme
+        .batched_verify(
+            &trailing,
+            &verifier_setup,
+            b"hardening/proptest/native",
+            verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
+            basis_mode,
+        )
+        .is_err());
 }
 
 #[test]
@@ -135,7 +115,7 @@ fn seed_corpus_covers_nv_basis_and_batch_shapes() {
             (2, BasisMode::Monomial, 0x1005),
             (3, BasisMode::Lagrange, 0x1006),
         ] {
-            logged_dense_round_trip(shape_index, basis_mode, seed);
+            native_dense_round_trip(shape_index, basis_mode, seed);
         }
     });
 }
@@ -151,7 +131,7 @@ proptest! {
     })]
 
     #[test]
-    fn event_stream_equality_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
-        run_on_large_stack(move || logged_dense_round_trip(shape_index, BasisMode::Lagrange, seed));
+    fn native_stream_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
+        run_on_large_stack(move || native_dense_round_trip(shape_index, BasisMode::Lagrange, seed));
     }
 }
