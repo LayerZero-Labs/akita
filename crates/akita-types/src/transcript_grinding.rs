@@ -637,7 +637,10 @@ impl GrindingPlanAccumulator {
 mod native_replay;
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
-pub use native_replay::{NativeProverGrinding, NativeVerifierGrinding};
+pub use native_replay::{
+    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProverGrinding,
+    NativeVerifierGrinding,
+};
 pub use replay::{
     ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptGrinding, TranscriptNonceReader,
     TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,

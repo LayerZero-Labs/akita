@@ -3,6 +3,7 @@
 use super::replay::{value_fits, GrindingPlanCursor, GrindingPlanEntry};
 use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
+use akita_sumcheck::{NativeSumcheckProverChannel, NativeSumcheckVerifierChannel};
 use akita_transcript::{
     commit_native_grinding_nonce, grinding_predicate_accepts, native_prover_ext_challenge,
     native_verifier_ext_challenge, preview_native_grinding_predicate, prover_context,
@@ -11,6 +12,7 @@ use akita_transcript::{
     GRINDING_PREDICATE_LEN,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+use std::marker::PhantomData;
 use std::num::NonZeroU8;
 
 fn next_entry(
@@ -292,6 +294,103 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             return Err(AkitaError::InvalidProof);
         }
         self.state.check_eof().map_err(|_| AkitaError::InvalidProof)
+    }
+}
+
+/// Standard-sumcheck channel borrowing a native prover grinding context.
+pub struct NativeGrindingSumcheckProver<'context, 'plan, F, E> {
+    grinding: &'context mut NativeProverGrinding<'plan>,
+    protocol: super::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    _fields: PhantomData<fn() -> (F, E)>,
+}
+
+impl<'context, 'plan, F, E> NativeGrindingSumcheckProver<'context, 'plan, F, E> {
+    /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
+    #[must_use]
+    pub fn new(
+        grinding: &'context mut NativeProverGrinding<'plan>,
+        protocol: super::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+    ) -> Self {
+        Self {
+            grinding,
+            protocol,
+            level,
+            stage,
+            _fields: PhantomData,
+        }
+    }
+}
+
+impl<F, E> NativeSumcheckProverChannel<E> for NativeGrindingSumcheckProver<'_, '_, F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn state_mut(&mut self) -> &mut NativeProverState {
+        self.grinding.state_mut()
+    }
+
+    fn round_challenge(&mut self, round: u32) -> Result<E, AkitaError> {
+        self.grinding
+            .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
+                protocol: self.protocol,
+                level: self.level,
+                stage: self.stage,
+                round,
+            })
+    }
+}
+
+/// Standard-sumcheck channel borrowing a native verifier grinding context.
+pub struct NativeGrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+    grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
+    protocol: super::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    _fields: PhantomData<fn() -> (F, E)>,
+}
+
+impl<'context, 'proof, 'plan, F, E> NativeGrindingSumcheckVerifier<'context, 'proof, 'plan, F, E> {
+    /// Bind one sumcheck invocation to its scheduled grinding-site coordinates.
+    #[must_use]
+    pub fn new(
+        grinding: &'context mut NativeVerifierGrinding<'proof, 'plan>,
+        protocol: super::SumcheckProtocol,
+        level: u32,
+        stage: u32,
+    ) -> Self {
+        Self {
+            grinding,
+            protocol,
+            level,
+            stage,
+            _fields: PhantomData,
+        }
+    }
+}
+
+impl<'proof, F, E> NativeSumcheckVerifierChannel<'proof, E>
+    for NativeGrindingSumcheckVerifier<'_, 'proof, '_, F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+        self.grinding.state_mut()
+    }
+
+    fn round_challenge(&mut self, round: u32) -> Result<E, AkitaError> {
+        self.grinding
+            .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
+                protocol: self.protocol,
+                level: self.level,
+                stage: self.stage,
+                round,
+            })
     }
 }
 

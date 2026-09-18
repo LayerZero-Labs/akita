@@ -21,7 +21,10 @@ pub use batched_sumcheck::{
     verify_batched_sumcheck, verify_batched_sumcheck_rounds, BatchedSumcheckRoundResult,
 };
 pub use compact_fold::CompactPairFoldLut;
-pub use native::{prove_sumcheck_native, verify_sumcheck_native};
+pub use native::{
+    prove_sumcheck_native, verify_sumcheck_native, NativeSumcheckProverChannel,
+    NativeSumcheckVerifierChannel,
+};
 pub use single::{
     advance_eq_factored_claim, prove_eq_factored_sumcheck, prove_sumcheck,
     verify_eq_factored_sumcheck, verify_sumcheck, verify_sumcheck_rounds,
