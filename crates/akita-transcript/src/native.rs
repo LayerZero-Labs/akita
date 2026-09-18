@@ -21,6 +21,9 @@ pub const NATIVE_FIELD_CHALLENGE_BYTES: u64 = 64;
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;
 
+/// Stable family identifier for extension-opening reduction messages.
+pub const SITE_FAMILY_EXTENSION_OPENING_REDUCTION: u32 = 2;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]

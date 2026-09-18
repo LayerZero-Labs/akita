@@ -24,6 +24,7 @@ pub mod instance_descriptor;
 pub mod layout;
 pub mod lhl_blinding;
 pub(crate) mod narrowing;
+mod native_eor;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
@@ -94,6 +95,10 @@ pub use layout::{
     PrecommittedGroupAdmissionPolicy, RingMatrixView, RingOpeningPoint, RingRole, RoleParams,
     MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
     SUPPORTED_COMMITMENT_RING_DIMS,
+};
+pub use native_eor::{
+    native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
+    native_eor_verifier_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
