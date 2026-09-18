@@ -1,6 +1,73 @@
 use super::*;
 use jolt_field::MulBaseUnreduced;
 
+trait RingSwitchChallengeSource<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError>;
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+}
+
+struct LegacyRingSwitchChallenges<'a, T>(&'a mut T);
+
+impl<F, E, T> RingSwitchChallengeSource<F, E> for LegacyRingSwitchChallenges<'_, T>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
+        self.0
+            .grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
+        Ok(sample_ext_challenge::<F, E, T>(
+            self.0,
+            CHALLENGE_RING_SWITCH,
+        ))
+    }
+
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grind_query(akita_types::GrindingSite::Tau0Point { level })?;
+        Ok((0..count)
+            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU0))
+            .collect())
+    }
+
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grind_query(akita_types::GrindingSite::Tau1Point { level })?;
+        Ok((0..count)
+            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU1))
+            .collect())
+    }
+}
+
+struct NativeRingSwitchChallenges<'a, 'plan>(&'a mut akita_types::NativeProverGrinding<'plan>);
+
+impl<F, E> RingSwitchChallengeSource<F, E> for NativeRingSwitchChallenges<'_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
+        self.0
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })
+    }
+
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau0Point { level }, count)
+    }
+
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
+    }
+}
+
 /// Complete the ring switch after the caller has bound the next witness.
 ///
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
@@ -34,6 +101,76 @@ where
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: akita_types::ProverTranscriptGrinding<F>,
 {
+    let mut challenges = LegacyRingSwitchChallenges(transcript);
+    ring_switch_finalize_with_challenges::<F, E, _>(
+        instance,
+        setup,
+        &mut challenges,
+        level,
+        w,
+        lp,
+        opening_source_len,
+        opening_ring_dim,
+        gamma,
+        opening_claim_coefficients,
+        prepared_relation_groups,
+    )
+}
+
+#[allow(dead_code)] // Called by the native fold driver during production cutover.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ring_switch_finalize_native<F, E>(
+    instance: &RingRelationInstance<F>,
+    setup: &AkitaExpandedSetup<F>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    w: &RecursiveWitnessFlat,
+    lp: &CommittedGroupParams,
+    opening_source_len: usize,
+    opening_ring_dim: usize,
+    gamma: Option<&[E]>,
+    opening_claim_coefficients: &[E],
+    prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
+) -> Result<RingSwitchFinalization<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+{
+    let mut challenges = NativeRingSwitchChallenges(grinding);
+    ring_switch_finalize_with_challenges::<F, E, _>(
+        instance,
+        setup,
+        &mut challenges,
+        level,
+        w,
+        lp,
+        opening_source_len,
+        opening_ring_dim,
+        gamma,
+        opening_claim_coefficients,
+        prepared_relation_groups,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ring_switch_finalize_with_challenges<F, E, C>(
+    instance: &RingRelationInstance<F>,
+    setup: &AkitaExpandedSetup<F>,
+    challenges: &mut C,
+    level: u32,
+    w: &RecursiveWitnessFlat,
+    lp: &CommittedGroupParams,
+    opening_source_len: usize,
+    opening_ring_dim: usize,
+    gamma: Option<&[E]>,
+    opening_claim_coefficients: &[E],
+    prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
+) -> Result<RingSwitchFinalization<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    C: RingSwitchChallengeSource<F, E>,
+{
     let default_gamma;
     let gamma = if let Some(gamma) = gamma {
         gamma
@@ -53,8 +190,7 @@ where
         opening_batch,
         instance,
     )?;
-    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
-    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
+    let alpha = challenges.alpha(level)?;
 
     let opening_capacity = opening_source_len
         .checked_mul(opening_ring_dim)
@@ -109,14 +245,8 @@ where
         .checked_mul(opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
 
-    transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-    let tau0: Vec<E> = (0..num_sc_vars)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-        .collect();
-    transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-    let tau1: Vec<E> = (0..num_i)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-        .collect();
+    let tau0 = challenges.tau0(level, num_sc_vars)?;
+    let tau1 = challenges.tau1(level, num_i)?;
     if gamma.len() != instance.opening_batch().num_total_polynomials() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
