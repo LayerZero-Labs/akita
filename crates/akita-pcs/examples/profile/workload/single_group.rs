@@ -7,7 +7,7 @@ use super::{
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
@@ -18,7 +18,6 @@ use akita_prover::compute::{
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout,
@@ -111,9 +110,8 @@ fn run_prove<
             .expect("select generated schedule row")
             .selection();
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = scheme
-            .batched_prove_structured_legacy(
+            .batched_prove(
                 setup,
                 prover_claims::<Cfg, _>(
                     scheme.schedules(),
@@ -124,7 +122,7 @@ fn run_prove<
                     hint,
                 ),
                 stack,
-                &mut prover_transcript,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -132,7 +130,7 @@ fn run_prove<
         (commitments, proof)
     };
 
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let runtime_schedule = if plan.is_none() {
@@ -154,12 +152,7 @@ fn run_prove<
     });
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(effective_schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -185,12 +178,7 @@ fn run_prove<
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            plan,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         let schedule = effective_schedule;
         if validate_against_planner {
@@ -211,12 +199,7 @@ fn run_prove<
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            schedule,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, schedule, Cfg::decomposition().field_bits());
     }
 
     let t_verifier_setup = Instant::now();
@@ -252,11 +235,10 @@ fn run_prove<
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        scheme.batched_verify_structured_legacy(
+        scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             claims,
             BasisMode::Lagrange,
         )

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
@@ -21,6 +23,46 @@ mod grinding;
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+pub(crate) fn print_native_proof_summary(
+    label: &str,
+    proof: &[u8],
+    schedule: &FoldSchedule,
+    grinding_plan: &GrindingPlan,
+) {
+    let levels = schedule.num_fold_levels();
+    let nonce_bytes = grinding_plan.native_nonce_bytes();
+    tracing::info!(
+        label,
+        levels,
+        proof_size_bytes = proof.len(),
+        native_nonce_bytes = nonce_bytes,
+        "native proof summary"
+    );
+    eprintln!(
+        "[{label}] proof: native_total={} bytes, native_nonce_messages={} bytes, levels={levels}",
+        proof.len(),
+        nonce_bytes,
+    );
+}
+
+pub(crate) fn emit_native_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {
+    let response = &schedule.terminal.response_shape;
+    let planned_bytes = akita_types::terminal_response_planner_bytes(
+        field_bits,
+        response,
+        schedule.terminal.response_l2_sq_cap(),
+    );
+    tracing::info!(
+        label,
+        planned_terminal_response_bytes = planned_bytes,
+        "native terminal response plan"
+    );
+    eprintln!(
+        "[{label}] terminal_response: planned_max={planned_bytes} bytes, ring_dimension={}",
+        response.layout.ring_dimension,
+    );
 }
 
 /// Structured tail witness report for profile bench / CI (`scripts/profile_bench_report.py`).

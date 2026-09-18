@@ -6,7 +6,7 @@ use super::{
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::load_workspace_scheme;
@@ -16,7 +16,6 @@ use akita_prover::{
     CpuPreparedSetup, DenseType, PolynomialType, PortableStatePolicy,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
@@ -336,7 +335,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
         let t_prove = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -353,13 +351,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .expect("multi-group prover data");
         let selection = prover_data.selection();
         let proof = proof_scheme
-            .batched_prove_structured_legacy::<_, _, _, _>(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove::<_, _, _>(&setup, prover_data, &stack, b"profile", BasisMode::Lagrange)
             .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = prepared
@@ -379,15 +371,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
     };
 
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(&schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,
         &proof,
@@ -404,12 +391,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         Cfg::EXT_DEGREE,
     )
     .expect("runtime schedule report geometry");
-    emit_proof_tail_report::<FF, Cfg::ExtField>(
-        label,
-        &proof,
-        &schedule,
-        Cfg::decomposition().field_bits(),
-    );
+    emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -455,11 +437,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .expect("verifier statement")
     };
     let verify = |statement| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        proof_scheme.batched_verify_structured_legacy(
+        proof_scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             statement,
             BasisMode::Lagrange,
         )

@@ -6,14 +6,13 @@ use super::{
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
@@ -122,7 +121,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -130,7 +128,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let proof = scheme
-            .batched_prove_structured_legacy::<_, _, _, _>(
+            .batched_prove::<_, _, _>(
                 &setup,
                 prover_claims::<Cfg, _>(
                     scheme.schedules(),
@@ -141,7 +139,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                     hints.into_iter().next().unwrap(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -153,7 +151,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         drop(stack);
         (commitments, proof, setup)
     };
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = scheme
@@ -165,12 +163,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let effective_schedule = plan.unwrap_or(&schedule);
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(effective_schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,
@@ -188,12 +181,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            plan,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         report_proof_size_against_planner(
             label,
@@ -211,12 +199,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            &schedule,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     }
     tracing::info!(
         label,
@@ -228,7 +211,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     tracing::info!(
         label,
         root_output_witness_len = root_step.output_witness_len,
-        observed_total_bytes = proof.size(),
+        observed_total_bytes = proof.len(),
         "batched planner root-fold summary"
     );
 
@@ -259,11 +242,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        scheme.batched_verify_structured_legacy(
+        scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             claims,
             BasisMode::Lagrange,
         )
