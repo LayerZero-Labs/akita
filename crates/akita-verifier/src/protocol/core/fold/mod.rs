@@ -288,6 +288,117 @@ where
     })
 }
 
+struct Stage2RoundReplay<E: Field> {
+    output_claim: E,
+    challenges: Vec<E>,
+    witness_eval: E,
+}
+
+trait Stage2VerifierStream<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn replay(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+        degree_bound: usize,
+    ) -> Result<Stage2RoundReplay<E>, AkitaError>;
+}
+
+struct LegacyStage2VerifierStream<'a, T, F: Field, E: Field> {
+    transcript: &'a mut T,
+    proof: &'a AkitaStage2Proof<F, E>,
+    level: u32,
+}
+
+impl<F, E, T> Stage2VerifierStream<F, E> for LegacyStage2VerifierStream<'_, T, F, E>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
+{
+    fn replay(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+        degree_bound: usize,
+    ) -> Result<Stage2RoundReplay<E>, AkitaError> {
+        let mut round = 0u32;
+        self.transcript.append_serde(
+            akita_transcript::labels::ABSORB_SUMCHECK_CLAIM,
+            &input_claim,
+        );
+        let (output_claim, challenges) = akita_sumcheck::verify_sumcheck_rounds::<F, T, E, _>(
+            &self.proof.sumcheck_proof,
+            input_claim,
+            num_rounds,
+            degree_bound,
+            self.transcript,
+            |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage2,
+                    self.level,
+                    0,
+                    round,
+                )?;
+                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                Ok(challenge)
+            },
+        )?;
+        let witness_eval = self.proof.next_w_eval();
+        self.transcript
+            .absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &witness_eval);
+        Ok(Stage2RoundReplay {
+            output_claim,
+            challenges,
+            witness_eval,
+        })
+    }
+}
+
+#[allow(dead_code)] // Constructed by the native fold verifier during cutover.
+struct NativeStage2VerifierStream<'a, 'proof, 'plan> {
+    grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+    level: u32,
+}
+
+impl<F, E> Stage2VerifierStream<F, E> for NativeStage2VerifierStream<'_, '_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn replay(
+        &mut self,
+        input_claim: E,
+        num_rounds: usize,
+        degree_bound: usize,
+    ) -> Result<Stage2RoundReplay<E>, AkitaError> {
+        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+            self.grinding,
+            akita_types::SumcheckProtocol::Stage2,
+            self.level,
+            0,
+        );
+        let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+            &mut channel,
+            0,
+            input_claim,
+            num_rounds,
+            degree_bound,
+        )?;
+        let witness_eval =
+            akita_types::native_stage2_verifier_w_eval::<F, E>(self.grinding, self.level)?;
+        Ok(Stage2RoundReplay {
+            output_claim: replay.output_claim,
+            challenges: replay.challenges,
+            witness_eval,
+        })
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_stage2<F, E, T>(
     transcript: &mut T,
@@ -305,7 +416,72 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    let witness_eval = stage2.next_w_eval();
+    let mut stream = LegacyStage2VerifierStream {
+        transcript,
+        proof: stage2,
+        level,
+    };
+    verify_stage2_with_stream::<F, E, _>(
+        &mut stream,
+        setup,
+        stage1,
+        rs,
+        relation_claim,
+        setup_claim,
+        opening_semantics,
+    )
+}
+
+#[allow(dead_code)] // Called by the native fold verifier during production cutover.
+#[allow(clippy::too_many_arguments)]
+fn verify_stage2_native<F, E>(
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+    setup: &AkitaVerifierSetup<F>,
+    stage1: Stage1Replay<'_, E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    relation_claim: E,
+    setup_claim: Option<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let mut stream = NativeStage2VerifierStream { grinding, level };
+    verify_stage2_with_stream::<F, E, _>(
+        &mut stream,
+        setup,
+        stage1,
+        rs,
+        relation_claim,
+        setup_claim,
+        opening_semantics,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_stage2_with_stream<F, E, S>(
+    stream: &mut S,
+    setup: &AkitaVerifierSetup<F>,
+    stage1: Stage1Replay<'_, E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    relation_claim: E,
+    setup_claim: Option<E>,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    S: Stage2VerifierStream<F, E>,
+{
+    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
+        + relation_claim
+        + opening_semantics.opening_claim()
+        + stage1.physical_l2_claim;
+    let num_rounds = stage1.stage1_point.len();
+    let replay = stream.replay(input_claim, num_rounds, 3)?;
+    let witness_eval = replay.witness_eval;
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
         stage1.range_image_evaluation,
@@ -325,28 +501,14 @@ where
         stage1.physical_l2_families,
     )?;
 
-    let mut round = 0u32;
-    let sumcheck_challenges = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, T, E, _, _>(
-            &stage2_verifier,
-            &stage2.sumcheck_proof,
-            transcript,
-            |tr| {
-                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                    tr,
-                    akita_types::SumcheckProtocol::Stage2,
-                    level,
-                    0,
-                    round,
-                )?;
-                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-                Ok(challenge)
-            },
-        )?
-    };
-    transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &stage2.next_w_eval());
-    Ok(sumcheck_challenges)
+    let expected = akita_sumcheck::SumcheckInstanceVerifier::expected_output_claim(
+        &stage2_verifier,
+        &replay.challenges,
+    )?;
+    if replay.output_claim != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(replay.challenges)
 }
 
 fn verify_stage3<F, E, T>(

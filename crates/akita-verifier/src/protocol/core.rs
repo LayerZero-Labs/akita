@@ -16,7 +16,6 @@ use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheck
 use akita_challenges::{FoldDraw, LiveFoldDraw};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::verify_sumcheck;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_OPENING_PAYLOAD, ABSORB_RANGE_IMAGE_EVALUATION,
