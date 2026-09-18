@@ -7,7 +7,7 @@ use akita_transcript::{
     NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
     ProtocolSiteId, SITE_FAMILY_SUMCHECK,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_CLAIM: u32 = 1;
 const ROLE_ROUND_LENGTH: u32 = 2;
@@ -53,29 +53,65 @@ fn field_bytes<F: CanonicalEncoding>(count: usize) -> Result<usize, AkitaError> 
     checked::product([count, F::NUM_BYTES]).ok_or(AkitaError::InvalidProof)
 }
 
-fn public_claim_prover<E: CanonicalEncoding>(
+fn extension_atom_count<E, F>(count: usize) -> Result<usize, AkitaError>
+where
+    F: Field,
+    E: ExtField<F>,
+{
+    checked::product([count, E::DEGREE]).ok_or(AkitaError::InvalidProof)
+}
+
+fn public_claim_prover<F, E>(
     state: &mut NativeProverState,
     invocation: u32,
     claim: E,
-) -> Result<(), AkitaError> {
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let coefficients = claim.to_base_vec();
     prover_context(
         state,
-        context(invocation, 0, ROLE_CLAIM, 1, E::NUM_BYTES, 0)?,
+        context(
+            invocation,
+            0,
+            ROLE_CLAIM,
+            coefficients.len(),
+            field_bytes::<F>(coefficients.len())?,
+            0,
+        )?,
     );
-    state.public_message(&NativeField::new(claim));
+    for coefficient in coefficients {
+        state.public_message(&NativeField::new(coefficient));
+    }
     Ok(())
 }
 
-fn public_claim_verifier<E: CanonicalEncoding>(
+fn public_claim_verifier<F, E>(
     state: &mut NativeVerifierState<'_>,
     invocation: u32,
     claim: E,
-) -> Result<(), AkitaError> {
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let coefficients = claim.to_base_vec();
     verifier_context(
         state,
-        context(invocation, 0, ROLE_CLAIM, 1, E::NUM_BYTES, 0)?,
+        context(
+            invocation,
+            0,
+            ROLE_CLAIM,
+            coefficients.len(),
+            field_bytes::<F>(coefficients.len())?,
+            0,
+        )?,
     );
-    state.public_message(&NativeField::new(claim));
+    for coefficient in coefficients {
+        state.public_message(&NativeField::new(coefficient));
+    }
     Ok(())
 }
 
@@ -84,7 +120,7 @@ fn public_claim_verifier<E: CanonicalEncoding>(
 /// `invocation` is the schedule-derived identity of this sumcheck within the
 /// enclosing Akita proof. `challenge_bytes` is recorded before every draw and
 /// must describe the bytes consumed by `sample_challenge`.
-pub fn prove_sumcheck_native<E, S, P>(
+pub fn prove_sumcheck_native<F, E, S, P>(
     prover: &mut P,
     state: &mut NativeProverState,
     invocation: u32,
@@ -92,14 +128,15 @@ pub fn prove_sumcheck_native<E, S, P>(
     mut sample_challenge: S,
 ) -> Result<(Vec<E>, E), AkitaError>
 where
-    E: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
     S: FnMut(&mut NativeProverState) -> E,
     P: SumcheckInstanceProver<E> + ?Sized,
 {
     let num_rounds = prover.num_rounds();
     let degree_bound = prover.degree_bound();
     let mut claim = prover.input_claim();
-    public_claim_prover(state, invocation, claim)?;
+    public_claim_prover::<F, E>(state, invocation, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -118,19 +155,22 @@ where
             context(invocation, round_id, ROLE_ROUND_LENGTH, 1, 4, 0)?,
         );
         state.prover_message(&coefficient_count_u32);
+        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
         prover_context(
             state,
             context(
                 invocation,
                 round_id,
                 ROLE_ROUND_BODY,
-                coefficient_count,
-                field_bytes::<E>(coefficient_count)?,
+                atom_count,
+                field_bytes::<F>(atom_count)?,
                 0,
             )?,
         );
         for coefficient in &compressed.coeffs_except_linear_term {
-            send_native_field(state, *coefficient);
+            for base in coefficient.to_base_vec() {
+                send_native_field(state, base);
+            }
         }
         prover_context(
             state,
@@ -156,7 +196,7 @@ where
 ///
 /// This function does not accept a structured proof. Counts are bounded by the
 /// verifier's public sumcheck parameters before allocation.
-pub fn verify_sumcheck_native<E, S, V>(
+pub fn verify_sumcheck_native<F, E, S, V>(
     verifier: &V,
     state: &mut NativeVerifierState<'_>,
     invocation: u32,
@@ -164,14 +204,15 @@ pub fn verify_sumcheck_native<E, S, V>(
     mut sample_challenge: S,
 ) -> Result<Vec<E>, AkitaError>
 where
-    E: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
     S: FnMut(&mut NativeVerifierState<'_>) -> E,
     V: SumcheckInstanceVerifier<E> + ?Sized,
 {
     let num_rounds = verifier.num_rounds();
     let degree_bound = verifier.degree_bound();
     let mut claim = verifier.input_claim();
-    public_claim_verifier(state, invocation, claim)?;
+    public_claim_verifier::<F, E>(state, invocation, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
@@ -188,14 +229,15 @@ where
         if coefficient_count == 0 || coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
         }
+        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
         verifier_context(
             state,
             context(
                 invocation,
                 round_id,
                 ROLE_ROUND_BODY,
-                coefficient_count,
-                field_bytes::<E>(coefficient_count)?,
+                atom_count,
+                field_bytes::<F>(atom_count)?,
                 0,
             )?,
         );
@@ -204,7 +246,15 @@ where
             .try_reserve_exact(coefficient_count)
             .map_err(|_| AkitaError::InvalidProof)?;
         for _ in 0..coefficient_count {
-            coefficients.push(receive_native_field(state).map_err(|_| AkitaError::InvalidProof)?);
+            let mut base_coefficients = Vec::new();
+            base_coefficients
+                .try_reserve_exact(E::DEGREE)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            for _ in 0..E::DEGREE {
+                base_coefficients
+                    .push(receive_native_field::<F>(state).map_err(|_| AkitaError::InvalidProof)?);
+            }
+            coefficients.push(E::from_base_slice(&base_coefficients));
         }
         let compressed = CompressedUniPoly {
             coeffs_except_linear_term: coefficients,

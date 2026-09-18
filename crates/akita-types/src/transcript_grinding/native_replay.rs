@@ -4,11 +4,13 @@ use super::replay::{value_fits, GrindingPlanCursor, GrindingPlanEntry};
 use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
 use akita_transcript::{
-    commit_native_grinding_nonce, grinding_predicate_accepts, preview_native_grinding_predicate,
-    prover_context, receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
+    commit_native_grinding_nonce, grinding_predicate_accepts, native_prover_ext_challenge,
+    native_verifier_ext_challenge, preview_native_grinding_predicate, prover_context,
+    receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
     NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
     GRINDING_PREDICATE_LEN,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::num::NonZeroU8;
 
 fn next_entry(
@@ -78,6 +80,20 @@ impl<'plan> NativeProverGrinding<'plan> {
     /// Search, emit, and verify one scheduled proof-of-work nonce.
     pub fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let result = self.grind_query_inner(site);
+        self.invalid |= result.is_err();
+        result
+    }
+
+    /// Apply scheduled work and draw the site's extension-field challenge.
+    pub fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        let result =
+            native_prover_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
+                .map_err(|_| AkitaError::InvalidProof);
         self.invalid |= result.is_err();
         result
     }
@@ -196,6 +212,20 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         result
     }
 
+    /// Verify scheduled work and draw the site's extension-field challenge.
+    pub fn grinded_ext_challenge<F, E>(&mut self, site: GrindingSite) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        let result =
+            native_verifier_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
+                .map_err(|_| AkitaError::InvalidProof);
+        self.invalid |= result.is_err();
+        result
+    }
+
     fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
         let Some(bits) = NonZeroU8::new(entry.grind_bits) else {
@@ -270,6 +300,7 @@ mod tests {
     use super::*;
     use crate::GrindingRun;
     use akita_transcript::{new_native_prover, new_native_verifier};
+    use jolt_field::Prime128Offset275 as F;
 
     fn plan() -> GrindingPlan {
         GrindingPlan::new(
@@ -284,28 +315,14 @@ mod tests {
         .unwrap()
     }
 
-    fn protected_challenge_record() -> ProtocolContextRecord {
-        ProtocolContextRecord::new(
-            GrindingSite::EvaluationBatch { level: 0 }
-                .native_site_id(64)
-                .to_bytes(),
-            ProtocolMessageKind::Challenge as u32,
-            0,
-            0,
-            64,
-        )
-    }
-
     #[test]
     fn native_grinding_roundtrip_uses_inline_u32_nonces_and_eof() {
         let plan = plan();
         let state = new_native_prover(b"native-grinding", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
-        prover
-            .grind_query(GrindingSite::EvaluationBatch { level: 0 })
+        let prover_challenge = prover
+            .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
-        prover_context(prover.state_mut(), protected_challenge_record());
-        let prover_challenge = prover.state_mut().verifier_message::<[u8; 64]>();
         prover
             .commit_fold_response(GrindingSite::FoldResponse { level: 0 }, 7)
             .unwrap();
@@ -317,11 +334,9 @@ mod tests {
         assert_eq!(proof.len(), 8);
         let state = new_native_verifier(b"native-grinding", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
-        verifier
-            .grind_query(GrindingSite::EvaluationBatch { level: 0 })
+        let verifier_challenge = verifier
+            .grinded_ext_challenge::<F, F>(GrindingSite::EvaluationBatch { level: 0 })
             .unwrap();
-        verifier_context(verifier.state_mut(), protected_challenge_record());
-        let verifier_challenge = verifier.state_mut().verifier_message::<[u8; 64]>();
         assert_eq!(verifier_challenge, prover_challenge);
         assert_eq!(
             verifier

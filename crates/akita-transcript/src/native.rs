@@ -1,6 +1,6 @@
 //! Native Spongefish state construction and canonical Akita message codecs.
 
-use jolt_field::CanonicalEncoding;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
     protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
     VerificationError, VerifierState, WithoutInstance,
@@ -131,6 +131,18 @@ impl fmt::Display for NativeInitializationError {
 }
 
 impl Error for NativeInitializationError {}
+
+/// A public native context cannot be represented by the fixed site grammar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeContextError;
+
+impl fmt::Display for NativeContextError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("native protocol context coordinate exceeds u32")
+    }
+}
+
+impl Error for NativeContextError {}
 
 #[derive(Clone, Copy)]
 struct FramedBytes<'a> {
@@ -265,6 +277,68 @@ pub fn native_verifier_field_challenge<F: CanonicalEncoding>(
 ) -> F {
     let bytes = state.verifier_message::<[u8; NATIVE_FIELD_CHALLENGE_BYTES as usize]>();
     F::from_challenge_bytes(&bytes)
+}
+
+/// Draw a context-bound extension-field challenge on the prover side.
+pub fn native_prover_ext_challenge<F, E>(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+) -> Result<E, NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(E::DEGREE)
+        .map_err(|_| NativeContextError)?;
+    for limb in 0..E::DEGREE {
+        let mut limb_site = site;
+        limb_site.limb = u32::try_from(limb).map_err(|_| NativeContextError)?;
+        prover_context(
+            state,
+            ProtocolContextRecord::new(
+                limb_site.to_bytes(),
+                ProtocolMessageKind::Challenge as u32,
+                0,
+                0,
+                NATIVE_FIELD_CHALLENGE_BYTES,
+            ),
+        );
+        coefficients.push(native_prover_field_challenge(state));
+    }
+    Ok(E::from_base_slice(&coefficients))
+}
+
+/// Draw a context-bound extension-field challenge on the verifier side.
+pub fn native_verifier_ext_challenge<F, E>(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+) -> Result<E, NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(E::DEGREE)
+        .map_err(|_| NativeContextError)?;
+    for limb in 0..E::DEGREE {
+        let mut limb_site = site;
+        limb_site.limb = u32::try_from(limb).map_err(|_| NativeContextError)?;
+        verifier_context(
+            state,
+            ProtocolContextRecord::new(
+                limb_site.to_bytes(),
+                ProtocolMessageKind::Challenge as u32,
+                0,
+                0,
+                NATIVE_FIELD_CHALLENGE_BYTES,
+            ),
+        );
+        coefficients.push(native_verifier_field_challenge(state));
+    }
+    Ok(E::from_base_slice(&coefficients))
 }
 
 /// Fixed-width public record separating logical message and challenge groups.
