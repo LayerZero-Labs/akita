@@ -11,6 +11,7 @@ pub mod relation_range_image;
 pub mod two_round_prefix;
 
 pub use akita_stage3::AkitaStage3Prover;
+pub(crate) use akita_stage3::NativeAkitaStage3ProverOutput;
 pub use digit_range::{DigitRangeProver, LowBasisRangeCheckProver};
 pub(crate) use relation_range_image::AdditionalRelationTerms;
 pub use relation_range_image::RelationRangeImageProver;

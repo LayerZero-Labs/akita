@@ -39,10 +39,10 @@ pub struct AkitaStage3ProverOutput<E: Field> {
 }
 
 #[allow(dead_code)] // Consumed by the native fold driver during production cutover.
-pub(in crate::protocol::sumcheck) struct NativeAkitaStage3ProverOutput<E: Field> {
-    pub(in crate::protocol::sumcheck) setup_product_claim: E,
-    pub(in crate::protocol::sumcheck) setup_prefix_eval: E,
-    pub(in crate::protocol::sumcheck) setup_prefix_point: Vec<E>,
+pub(crate) struct NativeAkitaStage3ProverOutput<E: Field> {
+    pub(in crate::protocol) setup_product_claim: E,
+    pub(in crate::protocol) setup_prefix_eval: E,
+    pub(in crate::protocol) setup_prefix_point: Vec<E>,
 }
 
 /// Stage-3 setup-product sumcheck prover.
@@ -59,7 +59,7 @@ where
     /// Construct stage 3 while binding its selected setup slot natively.
     #[allow(dead_code)] // Called by the native fold driver during production cutover.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::protocol::sumcheck) fn new_native(
+    pub(in crate::protocol) fn new_native(
         expanded: &'a AkitaExpandedSetup<F>,
         prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &CommittedGroupParams,
@@ -175,7 +175,7 @@ where
 
     /// Stream stage 3 without retaining a structured sumcheck proof.
     #[allow(dead_code)] // Called by the native fold driver during production cutover.
-    pub(in crate::protocol::sumcheck) fn prove_native(
+    pub(in crate::protocol) fn prove_native(
         &mut self,
         grinding: &mut akita_types::NativeProverGrinding<'_>,
         level: u32,

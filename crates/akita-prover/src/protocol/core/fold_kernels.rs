@@ -21,13 +21,13 @@ pub(in crate::protocol) struct PreparedEvaluationTraceClaim<E: Field> {
 }
 
 pub(in crate::protocol) fn resolve_evaluation_trace_claim<E: Field>(
-    reduction: Option<&ExtensionOpeningReduction<E>>,
+    reduction: Option<ExtensionOpeningReductionBinding<'_, E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     row_coefficients: &[E],
 ) -> Result<PreparedEvaluationTraceClaim<E>, AkitaError> {
     if reduction.is_some_and(|reduction| {
-        reduction.proof.final_claims.len() != opening_batch.num_total_polynomials()
+        reduction.final_claims.len() != opening_batch.num_total_polynomials()
             || reduction.final_factors.len() != opening_batch.num_groups()
     }) {
         return Err(AkitaError::InvalidProof);
@@ -35,8 +35,7 @@ pub(in crate::protocol) fn resolve_evaluation_trace_claim<E: Field>(
     let claim_coefficients = reduction.map_or_else(
         || Ok(row_coefficients.to_vec()),
         |reduction| {
-            opening_batch
-                .scale_row_coefficients_by_group(row_coefficients, &reduction.final_factors)
+            opening_batch.scale_row_coefficients_by_group(row_coefficients, reduction.final_factors)
         },
     )?;
     let expected = opening_batch
@@ -46,7 +45,7 @@ pub(in crate::protocol) fn resolve_evaluation_trace_claim<E: Field>(
         })?;
     let claimed = match reduction {
         Some(reduction) => opening_batch
-            .batched_eval_target(row_coefficients, &reduction.proof.final_claims)
+            .batched_eval_target(row_coefficients, reduction.final_claims)
             .map_err(|_| AkitaError::InvalidProof)?,
         None => expected,
     };
@@ -239,7 +238,86 @@ where
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(
-        reduction.as_ref(),
+        reduction
+            .as_ref()
+            .map(ExtensionOpeningReductionBinding::from),
+        &openings,
+        opening_batch,
+        &row_coefficients,
+    )?;
+    Ok((
+        TraceTarget {
+            trace_eval_target: resolved.claimed_evaluation,
+        },
+        row_coefficients,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn compute_trace_target_native<F, E, const D: usize>(
+    reduction: Option<&NativeExtensionOpeningReduction<E>>,
+    folded_rings: &[CyclotomicRing<F, D>],
+    prepared_points: &[PreparedOpeningPoint<F, E>],
+    protocol_point: &[E],
+    alpha_bits: usize,
+    basis: BasisMode,
+    opening_batch: &OpeningClaimsLayout,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
+    E: FpExtEncoding<F> + ExtField<F>,
+{
+    if prepared_points.len() != opening_batch.num_groups()
+        || folded_rings.len() != opening_batch.num_total_polynomials()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let inner_claim_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
+    let mut openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    let mut claim_offset = 0usize;
+    for (group_index, prepared_point) in prepared_points.iter().enumerate() {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let end = claim_offset
+            .checked_add(group_layout.num_polynomials())
+            .ok_or(AkitaError::InvalidProof)?;
+        let group_folded_rings = folded_rings
+            .get(claim_offset..end)
+            .ok_or(AkitaError::InvalidProof)?;
+        for folded_ring in group_folded_rings {
+            openings.push(scalar_opening_from_folded_ring::<F, E, D>(
+                folded_ring,
+                prepared_point,
+                inner_claim_point,
+                basis,
+            )?);
+        }
+        claim_offset = end;
+    }
+    if reduction.is_none() {
+        akita_transcript::public_native_extensions_prover::<F, E>(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                level,
+                stage: 4,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            &openings,
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
+    }
+    let row_coefficients = akita_types::sample_row_coefficients_native::<F, E>(
+        opening_batch,
+        akita_types::GrindingSite::EvaluationBatch { level },
+        grinding,
+    )?;
+    let resolved = resolve_evaluation_trace_claim(
+        reduction.map(|reduction| ExtensionOpeningReductionBinding {
+            final_claims: &reduction.final_claims,
+            final_factors: &reduction.final_factors,
+        }),
         &openings,
         opening_batch,
         &row_coefficients,
@@ -343,7 +421,9 @@ where
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(
-        reduction.as_ref(),
+        reduction
+            .as_ref()
+            .map(ExtensionOpeningReductionBinding::from),
         openings,
         opening_batch,
         &row_coefficients,
@@ -392,9 +472,13 @@ mod tests {
             vec![TestF::one(), -TestF::one()],
         );
 
-        let resolved =
-            resolve_evaluation_trace_claim(Some(&reduction), &openings, &layout, &row_coefficients)
-                .expect("valid grouped trace claim");
+        let resolved = resolve_evaluation_trace_claim(
+            Some((&reduction).into()),
+            &openings,
+            &layout,
+            &row_coefficients,
+        )
+        .expect("valid grouped trace claim");
 
         assert_eq!(resolved.claimed_evaluation, TestF::one());
         assert_eq!(
@@ -428,7 +512,7 @@ mod tests {
         for malformed in [&short_claims, &short_factors] {
             assert!(matches!(
                 resolve_evaluation_trace_claim(
-                    Some(malformed),
+                    Some(malformed.into()),
                     &openings,
                     &layout,
                     &row_coefficients,
@@ -450,7 +534,7 @@ mod tests {
 
         assert!(matches!(
             resolve_evaluation_trace_claim(
-                Some(&inconsistent),
+                Some((&inconsistent).into()),
                 &openings,
                 &layout,
                 &row_coefficients,

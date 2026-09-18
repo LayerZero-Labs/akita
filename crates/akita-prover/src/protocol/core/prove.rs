@@ -284,3 +284,125 @@ where
         terminal: suffix.terminal,
     })
 }
+
+/// Drive batched proving into one authoritative native Spongefish argument.
+#[allow(dead_code)] // Swapped into the public PCS endpoint with the native verifier.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn batched_prove_native<'a, Cfg, P, S, O, TS, R, SP>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog<Cfg>,
+    stacks: &'a impl LevelProveStacks<
+        'a,
+        Cfg::Field,
+        Opening = O,
+        Tensor = TS,
+        RingSwitch = R,
+        CommitmentStatePolicy = SP,
+    >,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, S>,
+    session: &[u8],
+    basis: BasisMode,
+) -> Result<Vec<u8>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + PseudoMersenne
+        + Ring
+        + 'static,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
+    S: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+    SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    O: ComputeBackendSetup<Cfg::Field>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + SuffixOpeningProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    TS: ComputeBackendSetup<Cfg::Field>
+        + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
+        + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+        + 'a,
+    R: ComputeBackendSetup<Cfg::Field>
+        + RuntimeRingSwitchProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+{
+    let executor = ProverExecutor { stacks };
+    let admitted = executor.validate_params::<Cfg, P, S, O, TS, R, SP>(
+        expanded.as_ref(),
+        schedules,
+        opening,
+    )?;
+    let AdmittedProverInput {
+        selection,
+        claims,
+        commitment_material,
+        schedule,
+    } = admitted;
+    let opening_batch = claims.opening_layout();
+    executor.prepare_resources::<Cfg, O, TS, R, SP>(schedule)?;
+    let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
+        expanded.as_ref(),
+        opening_batch,
+        selection,
+        schedule,
+        basis,
+    )?;
+    let state = akita_transcript::new_native_prover(session, &descriptor_bytes)
+        .map_err(|_| AkitaError::InvalidSetup("native transcript initialization failed".into()))?;
+    let mut grinding = akita_types::NativeProverGrinding::new(state, &grinding_plan);
+    let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
+        (
+            super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+        ),
+        |step| {
+            (
+                super::fold::FoldSuccessorParams::Recursive(step),
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
+            )
+        },
+    );
+    let root = executor.prove_root_native::<Cfg::Field, Cfg::ExtField, P, S, O, TS, R, SP, Cfg>(
+        expanded,
+        prefix_slots,
+        &mut grinding,
+        claims,
+        commitment_material,
+        &schedule.root,
+        next_params,
+        next_binding,
+        basis,
+    )?;
+    stacks.after_root_fold()?;
+    let suffix = executor.prove_suffix_native::<Cfg, O, TS, R, SP>(
+        expanded,
+        prefix_slots,
+        &mut grinding,
+        root.next_state,
+        schedule,
+    )?;
+    if suffix.num_levels != schedule.num_fold_levels() {
+        return Err(AkitaError::InvalidProof);
+    }
+    grinding.finish()
+}

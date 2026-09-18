@@ -573,6 +573,9 @@ impl RingRelationProver {
         RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     {
         let mut stream = LegacyRingRelationStream { transcript };
+        let reduction_binding = reduction
+            .as_ref()
+            .map(crate::protocol::core::ExtensionOpeningReductionBinding::from);
         Self::prepare_with_stream(
             opening_ctx,
             ring_switch_ctx,
@@ -582,7 +585,7 @@ impl RingRelationProver {
             lp,
             &mut stream,
             level,
-            reduction,
+            reduction_binding,
             scalar_openings,
             trace_opening_batch,
         )
@@ -600,7 +603,7 @@ impl RingRelationProver {
         lp: CommittedGroupParams,
         grinding: &mut akita_types::NativeProverGrinding<'_>,
         level: u32,
-        reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
+        reduction: Option<crate::protocol::core::ExtensionOpeningReductionBinding<'_, PointF>>,
         scalar_openings: &[PointF],
         trace_opening_batch: &akita_types::OpeningClaimsLayout,
     ) -> Result<PreparedRingRelationOutput<F, PointF>, AkitaError>
@@ -669,7 +672,7 @@ impl RingRelationProver {
         lp: CommittedGroupParams,
         stream: &mut Stream,
         level: u32,
-        reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
+        reduction: Option<crate::protocol::core::ExtensionOpeningReductionBinding<'_, PointF>>,
         scalar_openings: &[PointF],
         trace_opening_batch: &akita_types::OpeningClaimsLayout,
     ) -> Result<PreparedRingRelationOutput<F, PointF>, AkitaError>
@@ -1057,7 +1060,7 @@ impl RingRelationProver {
                 AkitaError::InvalidInput(format!("prepare row coefficients failed: {err:?}"))
             })?;
         let trace_claim = crate::protocol::core::resolve_evaluation_trace_claim(
-            reduction.as_ref(),
+            reduction,
             scalar_openings,
             trace_opening_batch,
             &row_coefficients,

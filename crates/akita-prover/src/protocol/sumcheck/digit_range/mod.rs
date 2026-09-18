@@ -44,11 +44,10 @@ use jolt_field::{Fold, Unreduced};
 type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
 #[allow(dead_code)] // Consumed by the native fold driver during production cutover.
-pub(in crate::protocol::sumcheck) struct NativeDigitRangeProveOutput<E: Field> {
-    pub(in crate::protocol::sumcheck) point: Vec<E>,
-    pub(in crate::protocol::sumcheck) range_image_evaluation: E,
-    pub(in crate::protocol::sumcheck) physical_l2:
-        Option<super::physical_l2_norm::NativePhysicalL2Proof<E>>,
+pub(in crate::protocol) struct NativeDigitRangeProveOutput<E: Field> {
+    pub(in crate::protocol) point: Vec<E>,
+    pub(in crate::protocol) range_image_evaluation: E,
+    pub(in crate::protocol) physical_l2: Option<super::physical_l2_norm::NativePhysicalL2Proof<E>>,
 }
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
@@ -430,7 +429,7 @@ impl<E: Field + Ring> DigitRangeProver<E> {
 impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
     /// Stream the non-L2 stage-1 range proof directly into Spongefish.
     #[allow(dead_code)] // Called by the native fold driver during production cutover.
-    pub(in crate::protocol::sumcheck) fn prove_native<F>(
+    pub(in crate::protocol) fn prove_native<F>(
         self,
         grinding: &mut akita_types::NativeProverGrinding<'_>,
         physical_plan: Option<&PhysicalResponsePlan>,

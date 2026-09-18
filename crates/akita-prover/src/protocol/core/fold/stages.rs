@@ -174,6 +174,78 @@ where
     })
 }
 
+#[allow(dead_code)] // Called by the native fold driver during cutover.
+pub(super) fn prove_stage1_native<F, E>(
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    rs: &mut RingSwitchOutput<E>,
+    lp: &CommittedGroupParams,
+    plan: &RelationRangeImagePlan,
+) -> Result<NativeStage1ProveOutput<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+{
+    let domain = plan.digit_witness_domain();
+    if plan.relation_address_geometry() != rs.relation_address_geometry
+        || domain.live_len() != rs.w_evals_compact.len()
+        || plan.digit_range_plan().basis() != rs.b
+    {
+        return Err(AkitaError::InvalidSetup(
+            "ring-switch output disagrees with the relation/range-image plan".into(),
+        ));
+    }
+    let digit_range_equality_col_bits = rs
+        .tau0
+        .len()
+        .checked_sub(rs.digit_range_equality_low_variable_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("digit-range equality width overflow".into()))?;
+    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        &rs.tau0,
+        digit_range_equality_col_bits,
+        rs.digit_range_equality_low_variable_count,
+    )?;
+    let stage1_prover = DigitRangeProver::from_packed_digits(
+        rs.w_evals_compact.clone(),
+        plan.digit_range_plan(),
+        domain,
+        equality_point,
+    )?;
+    let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
+    let output = stage1_prover.prove_native::<F>(grinding, physical_plan.as_ref(), level)?;
+    let physical_l2 = match (physical_plan, output.physical_l2) {
+        (Some(plan), Some(proof)) => {
+            let InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } = lp.inner().matrix.security_route()
+            else {
+                return Err(AkitaError::InvalidSetup(
+                    "physical L2 plan disagrees with the A security route".into(),
+                ));
+            };
+            if proof.response_l2_sq > response_l2_sq_cap {
+                return Err(AkitaError::InvalidInput(
+                    "folded response exceeds the scheduled L2 cap".into(),
+                ));
+            }
+            Some(PhysicalL2ProverReplay {
+                plan,
+                point: output.point.clone(),
+                virtual_evaluations: proof.virtual_evaluations,
+                batching: Vec::new(),
+                claim: E::zero(),
+            })
+        }
+        (None, None) => None,
+        _ => return Err(AkitaError::InvalidProof),
+    };
+    Ok(NativeStage1ProveOutput {
+        point: output.point,
+        range_image_evaluation: output.range_image_evaluation,
+        physical_l2,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prove_stage2<F, E, T>(
     level: usize,
@@ -452,6 +524,54 @@ where
                 },
                 setup_prefix_point: output.setup_prefix_point,
             }))
+        }
+        SetupContributionMode::Direct => Ok(None),
+    }
+}
+
+#[allow(dead_code)] // Called by the native fold driver during cutover.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prove_stage3_native<F, E>(
+    level: usize,
+    setup_contribution_mode: SetupContributionMode,
+    expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
+    lp: &CommittedGroupParams,
+    next_level_params: &CommittedGroupParams,
+    instance: &RingRelationInstance<F>,
+    tau1: &[E],
+    alpha: E,
+    sumcheck_challenges: &[E],
+    relation_address_geometry: akita_types::RelationAddressGeometry,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+) -> Result<Option<crate::protocol::sumcheck::NativeAkitaStage3ProverOutput<E>>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F>
+        + Ring
+        + ExtField<F>
+        + AkitaSerialize
+        + jolt_field::Unreduced
+        + jolt_field::MulBaseUnreduced<F>,
+{
+    match setup_contribution_mode {
+        SetupContributionMode::Recursive => {
+            let level = u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+            let mut prover = AkitaStage3Prover::new_native(
+                expanded,
+                prefix_slots,
+                lp,
+                next_level_params,
+                instance,
+                tau1,
+                alpha,
+                sumcheck_challenges,
+                relation_address_geometry,
+                grinding,
+                level,
+            )?;
+            Ok(Some(prover.prove_native(grinding, level)?))
         }
         SetupContributionMode::Direct => Ok(None),
     }

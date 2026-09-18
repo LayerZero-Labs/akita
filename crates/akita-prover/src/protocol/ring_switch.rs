@@ -27,7 +27,7 @@ pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
 pub(crate) use evals::build_w_evals_compact;
-pub(crate) use finalize::ring_switch_finalize;
+pub(crate) use finalize::{ring_switch_finalize, ring_switch_finalize_native};
 pub use relation_weights::{
     build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,

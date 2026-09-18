@@ -4,8 +4,8 @@ use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
-    RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_native, NextWitnessState,
+    NextWitnessStateOutput, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weights;
 use crate::protocol::sumcheck::AkitaStage3Prover;
@@ -58,6 +58,23 @@ pub(in crate::protocol) struct ExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol) final_factors: Vec<E>,
 }
 
+#[derive(Clone, Copy)]
+pub(in crate::protocol) struct ExtensionOpeningReductionBinding<'a, E: Field> {
+    pub(in crate::protocol) final_claims: &'a [E],
+    pub(in crate::protocol) final_factors: &'a [E],
+}
+
+impl<'a, E: Field> From<&'a ExtensionOpeningReduction<E>>
+    for ExtensionOpeningReductionBinding<'a, E>
+{
+    fn from(reduction: &'a ExtensionOpeningReduction<E>) -> Self {
+        Self {
+            final_claims: &reduction.proof.final_claims,
+            final_factors: &reduction.final_factors,
+        }
+    }
+}
+
 mod extension_opening_reduction;
 mod fold;
 mod fold_kernels;
@@ -78,11 +95,12 @@ struct ProverExecutor<'stack, Stacks: ?Sized> {
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
-    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, ExtensionOpeningSource,
+    prepare_extension_claim_fold, prepare_extension_claim_fold_native, prepare_single_field_fold,
+    prepare_single_field_fold_native, prove_fold, prove_fold_native, ExtensionOpeningSource,
     PreparedFold,
 };
 pub(in crate::protocol) use fold_kernels::*;
-pub use prove::batched_prove;
+pub use prove::{batched_prove, batched_prove_native};
 #[allow(unused_imports)]
 pub(crate) use root_group::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
@@ -98,6 +116,10 @@ pub struct ProveLevelOutput<F: Field, E: Field, S> {
     pub next_state: SuffixProverState<F, E, S>,
 }
 
+pub struct NativeProveLevelOutput<F: Field, E: Field, S> {
+    pub next_state: SuffixProverState<F, E, S>,
+}
+
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     /// Non-terminal recursive folds following the root.
@@ -106,6 +128,10 @@ pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     pub terminal: TerminalLevelProof<F, E>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
+    pub num_levels: usize,
+}
+
+pub struct NativeRecursiveSuffixOutcome {
     pub num_levels: usize,
 }
 

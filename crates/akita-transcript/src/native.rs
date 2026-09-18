@@ -42,6 +42,18 @@ pub const SITE_FAMILY_FOLD_CHALLENGE: u32 = 7;
 /// Stable family identifier for ring-relation opening payloads.
 pub const SITE_FAMILY_OPENING_PAYLOAD: u32 = 8;
 
+/// Stable family identifier for derived fold-opening values.
+pub const SITE_FAMILY_FOLD_BINDING: u32 = 9;
+
+/// Stable family identifier for the successor witness binding.
+pub const SITE_FAMILY_NEXT_WITNESS: u32 = 10;
+
+/// Stable family identifier for root public commitments and opening points.
+pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
+
+/// Stable family identifier for terminal response messages.
+pub const SITE_FAMILY_TERMINAL: u32 = 12;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -366,6 +378,105 @@ pub fn receive_native_bytes(
         bytes.push(state.prover_message::<[u8; 1]>()?[0]);
     }
     Ok(bytes)
+}
+
+/// Emit a schedule-bounded byte sequence as one context-framed proof group.
+pub fn send_native_byte_group(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    bytes: &[u8],
+) -> Result<(), NativeContextError> {
+    let len = u64::try_from(bytes.len()).map_err(|_| NativeContextError)?;
+    prover_context(
+        state,
+        ProtocolContextRecord::new(
+            site.to_bytes(),
+            ProtocolMessageKind::ProofAtoms as u32,
+            len,
+            len,
+            0,
+        ),
+    );
+    send_native_bytes(state, bytes);
+    Ok(())
+}
+
+/// Receive an exact schedule-bounded context-framed byte proof group.
+pub fn receive_native_byte_group(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    len: usize,
+) -> Result<Vec<u8>, VerificationError> {
+    let len_u64 = u64::try_from(len).map_err(|_| VerificationError)?;
+    verifier_context(
+        state,
+        ProtocolContextRecord::new(
+            site.to_bytes(),
+            ProtocolMessageKind::ProofAtoms as u32,
+            len_u64,
+            len_u64,
+            0,
+        ),
+    );
+    receive_native_bytes(state, len)
+}
+
+/// Emit a bounded variable byte payload with a native `u32` length atom.
+pub fn send_native_bounded_bytes(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    bytes: &[u8],
+    max_len: usize,
+) -> Result<(), NativeContextError> {
+    if bytes.len() > max_len {
+        return Err(NativeContextError);
+    }
+    let len = u32::try_from(bytes.len()).map_err(|_| NativeContextError)?;
+    let mut length_site = site;
+    length_site.stage = 0;
+    prover_context(
+        state,
+        ProtocolContextRecord::new(
+            length_site.to_bytes(),
+            ProtocolMessageKind::ProofLength as u32,
+            1,
+            4,
+            0,
+        ),
+    );
+    state.prover_message(&len);
+    let mut payload_site = site;
+    payload_site.stage = 1;
+    send_native_byte_group(state, payload_site, bytes)
+}
+
+/// Receive a bounded variable byte payload after validating its native length
+/// atom and before allocating its body.
+pub fn receive_native_bounded_bytes(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    max_len: usize,
+) -> Result<Vec<u8>, VerificationError> {
+    let mut length_site = site;
+    length_site.stage = 0;
+    verifier_context(
+        state,
+        ProtocolContextRecord::new(
+            length_site.to_bytes(),
+            ProtocolMessageKind::ProofLength as u32,
+            1,
+            4,
+            0,
+        ),
+    );
+    let len = state.prover_message::<u32>()?;
+    let len = usize::try_from(len).map_err(|_| VerificationError)?;
+    if len > max_len {
+        return Err(VerificationError);
+    }
+    let mut payload_site = site;
+    payload_site.stage = 1;
+    receive_native_byte_group(state, payload_site, len)
 }
 
 fn public_bytes_record(
