@@ -15,8 +15,6 @@ use akita_prover::compute::{
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::{Transcript, TranscriptChallengePreview};
-use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
     BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
@@ -24,7 +22,6 @@ use akita_types::{
 };
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
-use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
@@ -154,75 +151,6 @@ where
         )
     }
 
-    /// Produce a fused batched opening proof over ordered commitment groups.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any opening point is invalid or proof generation fails.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    pub fn batched_prove_structured_legacy<'a, T, P, B, SP>(
-        &self,
-        setup: &AkitaProverSetup<Cfg::Field>,
-        opening: SelectedProverOpeningData<
-            'a,
-            Cfg::ExtField,
-            P,
-            Cfg::Field,
-            impl InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
-        >,
-        stacks: &'a impl LevelProveStacks<
-            'a,
-            Cfg::Field,
-            Opening = B,
-            Tensor = B,
-            RingSwitch = B,
-            CommitmentStatePolicy = SP,
-        >,
-        transcript: &mut T,
-        basis: BasisMode,
-    ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
-    where
-        T: Transcript<Cfg::Field> + TranscriptChallengePreview,
-        Cfg::Field: Ring + Unreduced + Field + 'static,
-        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
-        B: ComputeBackendSetup<Cfg::Field>
-            + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-            + RuntimeCoefficientPackingBackendFor<
-                Cfg::Field,
-                RecursiveFoldSource<Cfg::Field>,
-                Cfg::ExtField,
-            > + SuffixOpeningProveBackend<Cfg::Field>
-            + DigitRowsComputeBackend<Cfg::Field>
-            + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-            + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
-            + RuntimeRingSwitchProveBackend<Cfg::Field>
-            + 'a,
-        <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
-        SP: CommitmentStatePolicy<Cfg::Field> + 'a,
-        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
-    {
-        let t_prove_total = Instant::now();
-        let proof = akita_prover::batched_prove_structured_legacy::<Cfg, T, P, _, B, B, B, SP>(
-            &setup.expanded,
-            &setup.prefix_slots,
-            &self.schedules,
-            stacks,
-            opening,
-            transcript,
-            basis,
-        )?;
-
-        tracing::info!(
-            levels = proof.num_fold_levels(),
-            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "akita batched prove complete"
-        );
-
-        Ok(proof)
-    }
-
     /// Produce the canonical native Spongefish argument stream.
     #[allow(clippy::too_many_arguments)]
     pub fn batched_prove<'a, P, B, SP>(
@@ -277,23 +205,6 @@ where
         )
     }
 
-    /// Verify a fused batched opening proof over ordered commitment groups.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when verification fails.
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    pub fn batched_verify_structured_legacy<T: Transcript<Cfg::Field>>(
-        &self,
-        proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
-        setup: &AkitaVerifierSetup<Cfg::Field>,
-        transcript: &mut T,
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        basis: BasisMode,
-    ) -> Result<(), AkitaError> {
-        batched_verify_inner::<Cfg, T>(proof, setup, &self.schedules, transcript, statement, basis)
-    }
-
     /// Verify the canonical native Spongefish argument stream.
     pub fn batched_verify(
         &self,
@@ -318,36 +229,6 @@ where
     pub fn protocol_name() -> &'static [u8] {
         PROTOCOL_NAME
     }
-}
-
-fn batched_verify_inner<Cfg, T>(
-    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
-    setup: &AkitaVerifierSetup<Cfg::Field>,
-    schedules: &TrustedScheduleCatalog<Cfg>,
-    transcript: &mut T,
-    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-    basis: BasisMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field:
-        Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
-    T: Transcript<Cfg::Field>,
-{
-    let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify_structured_legacy::<Cfg, T>(
-        proof, setup, schedules, transcript, statement, basis,
-    )?;
-
-    tracing::info!(
-        levels = proof.num_fold_levels(),
-        elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
-        "akita batched verify complete"
-    );
-
-    Ok(())
 }
 
 const PROTOCOL_NAME: &[u8] = b"Akita";

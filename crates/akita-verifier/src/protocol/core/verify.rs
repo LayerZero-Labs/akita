@@ -216,6 +216,7 @@ use akita_types::{
 ///
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape or proof replay fails.
+#[cfg(any())]
 pub fn batched_verify_structured_legacy<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,

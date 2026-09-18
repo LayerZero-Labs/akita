@@ -6,7 +6,7 @@ pub(crate) mod core;
 pub(crate) mod evaluation_trace;
 pub(crate) mod ring_switch;
 
-pub use core::{batched_verify, batched_verify_structured_legacy};
+pub use core::batched_verify;
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use evaluation_trace::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 pub use ring_switch::{

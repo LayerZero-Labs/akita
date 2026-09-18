@@ -148,6 +148,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
 /// Returns an error if claim preparation, schedule selection, transcript
 /// binding, or folded proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[cfg(any())]
 pub fn batched_prove_structured_legacy<'a, Cfg, T, P, S, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
@@ -286,7 +287,6 @@ where
 }
 
 /// Drive batched proving into one authoritative native Spongefish argument.
-#[allow(dead_code)] // Swapped into the public PCS endpoint with the native verifier.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn batched_prove<'a, Cfg, P, S, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
