@@ -25,9 +25,7 @@ pub(in crate::protocol::core) use single_field::{
     prepare_single_field_terminal_suffix,
 };
 
-/// Common prepared fold prefix produced by the single-field and
-/// extension-claim geometry modules, consumed by root and suffix finishing
-/// logic.
+/// Common prepared fold prefix consumed by root and suffix finishing logic.
 pub(in crate::protocol::core) struct FoldPrefix<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,

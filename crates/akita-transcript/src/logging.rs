@@ -473,7 +473,7 @@ where
 mod tests {
     use super::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
     use crate::{append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript};
-    use jolt_field::{Fp32, Fp64, FpExt2, NegOneNr};
+    use jolt_field::{Fp32, Fp64, FpExt2, NegOneNr, Ring};
 
     type F = Fp64<4294967197>;
     type Base = Fp32<251>;
