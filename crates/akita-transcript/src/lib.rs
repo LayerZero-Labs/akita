@@ -41,7 +41,7 @@ pub use native::{
     receive_native_field_group, receive_native_grinding_nonce, search_native_grinding_nonce,
     send_native_bounded_bytes, send_native_byte_group, send_native_bytes, send_native_extension,
     send_native_extension_group, send_native_field, send_native_field_group, verifier_context,
-    NativeContextError, NativeField, NativeFoldPreview, NativeInitializationError,
+    NativeContextError, NativeExtension, NativeField, NativeFoldPreview, NativeInitializationError,
     NativeProverState, NativeU128, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
     ProtocolSiteId, NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES,
     NATIVE_FIELD_SAMPLING_DRAW_LIMIT, NATIVE_FIELD_SAMPLING_SECURITY_BITS, NATIVE_PROTOCOL_VERSION,

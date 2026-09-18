@@ -5,6 +5,7 @@ use spongefish::{
     protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
     VerificationError, VerifierState, WithoutInstance,
 };
+use std::marker::PhantomData;
 use std::{error::Error, fmt};
 
 use crate::TranscriptSponge;
@@ -285,6 +286,68 @@ impl<F: CanonicalEncoding> NativeField<F> {
     }
 }
 
+/// Canonical extension-field proof atom with transactional decoding.
+///
+/// All base coordinates are decoded against a local cursor. The caller's
+/// cursor advances only after every coordinate is present and canonical.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeExtension<F, E> {
+    value: E,
+    _base: PhantomData<F>,
+}
+
+impl<F, E> NativeExtension<F, E> {
+    /// Wrap one extension element for native proof transport.
+    #[must_use]
+    pub const fn new(value: E) -> Self {
+        Self {
+            value,
+            _base: PhantomData,
+        }
+    }
+
+    /// Return the wrapped extension element.
+    #[must_use]
+    pub fn into_inner(self) -> E {
+        self.value
+    }
+}
+
+impl<F, E> Encoding<[u8]> for NativeExtension<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
+        for coefficient in self.value.to_base_vec() {
+            out.extend_from_slice(NativeField::new(coefficient).encode().as_ref());
+        }
+        out
+    }
+}
+
+impl<F, E> NargDeserialize for NativeExtension<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
+        let mut remaining = *buf;
+        let mut coefficients = Vec::new();
+        coefficients
+            .try_reserve_exact(E::DEGREE)
+            .map_err(|_| VerificationError)?;
+        for _ in 0..E::DEGREE {
+            coefficients
+                .push(NativeField::<F>::deserialize_from_narg(&mut remaining)?.into_inner());
+        }
+        let value = E::from_base_slice(&coefficients);
+        *buf = remaining;
+        Ok(Self::new(value))
+    }
+}
+
 impl<F: CanonicalEncoding> Encoding<[u8]> for NativeField<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.0.to_bytes_le_vec()
@@ -355,9 +418,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    for coefficient in value.to_base_vec() {
-        send_native_field(state, coefficient);
-    }
+    state.prover_message(&NativeExtension::<F, E>::new(value));
 }
 
 /// Receive one extension-field proof atom from canonical base coordinates.
@@ -368,14 +429,9 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    let mut coefficients = Vec::new();
-    coefficients
-        .try_reserve_exact(E::DEGREE)
-        .map_err(|_| VerificationError)?;
-    for _ in 0..E::DEGREE {
-        coefficients.push(receive_native_field(state)?);
-    }
-    Ok(E::from_base_slice(&coefficients))
+    state
+        .prover_message::<NativeExtension<F, E>>()
+        .map(NativeExtension::into_inner)
 }
 
 /// Emit a schedule-bounded byte sequence as native one-byte proof atoms.
@@ -1189,6 +1245,28 @@ mod tests {
         let original = bytes;
         assert!(NativeField::<F>::deserialize_from_narg(&mut bytes).is_err());
         assert_eq!(bytes, original);
+    }
+
+    #[test]
+    fn native_extension_failure_does_not_consume_cursor() {
+        type E = jolt_field::FpExt4<F>;
+
+        let encoded = NativeExtension::<F, E>::new(E::from_u64(9))
+            .encode()
+            .as_ref()
+            .to_vec();
+        let truncated = &encoded[..encoded.len() - 1];
+        let mut cursor = truncated;
+        let original = cursor;
+        assert!(NativeExtension::<F, E>::deserialize_from_narg(&mut cursor).is_err());
+        assert_eq!(cursor, original);
+
+        let mut noncanonical = encoded;
+        noncanonical[F::NUM_BYTES..2 * F::NUM_BYTES].fill(u8::MAX);
+        let mut cursor = noncanonical.as_slice();
+        let original = cursor;
+        assert!(NativeExtension::<F, E>::deserialize_from_narg(&mut cursor).is_err());
+        assert_eq!(cursor, original);
     }
 
     #[test]
