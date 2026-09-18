@@ -1215,6 +1215,58 @@ mod tests {
         assert_eq!(record.encode().as_ref().len(), 96);
     }
 
+    #[cfg(feature = "transcript-keccak")]
+    #[test]
+    fn challenge_width_records_prevent_keccak_reconvergence() {
+        let mut short = new_native_prover(b"width", b"substrate").unwrap();
+        let mut long = new_native_prover(b"width", b"substrate").unwrap();
+        let _: [u8; 1] = short.verifier_message();
+        let _: [u8; 2] = long.verifier_message();
+        short.public_message(&[17u8]);
+        long.public_message(&[17u8]);
+        assert_eq!(
+            short.verifier_message::<[u8; 32]>(),
+            long.verifier_message::<[u8; 32]>(),
+            "the Keccak substrate forgets distinct nonzero squeeze widths after absorb",
+        );
+
+        let mut framed_short = new_native_prover(b"width", b"framed").unwrap();
+        let mut framed_long = new_native_prover(b"width", b"framed").unwrap();
+        let site = ProtocolSiteId {
+            family: 31,
+            ..ProtocolSiteId::default()
+        };
+        prover_context(
+            &mut framed_short,
+            ProtocolContextRecord::new(
+                site.to_bytes(),
+                ProtocolMessageKind::Challenge as u32,
+                0,
+                0,
+                1,
+            ),
+        );
+        prover_context(
+            &mut framed_long,
+            ProtocolContextRecord::new(
+                site.to_bytes(),
+                ProtocolMessageKind::Challenge as u32,
+                0,
+                0,
+                2,
+            ),
+        );
+        let _: [u8; 1] = framed_short.verifier_message();
+        let _: [u8; 2] = framed_long.verifier_message();
+        framed_short.public_message(&[17u8]);
+        framed_long.public_message(&[17u8]);
+        assert_ne!(
+            framed_short.verifier_message::<[u8; 32]>(),
+            framed_long.verifier_message::<[u8; 32]>(),
+            "Akita context records must bind the prescribed squeeze width",
+        );
+    }
+
     #[test]
     fn grinding_preview_matches_live_replay_without_mutation() {
         let nonce_record = ProtocolContextRecord::new(
