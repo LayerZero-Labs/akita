@@ -5,6 +5,7 @@ mod label;
 pub mod labels;
 #[cfg(feature = "logging-transcript")]
 mod logging;
+mod native;
 #[cfg(any(
     all(feature = "transcript-blake2b", not(feature = "transcript-keccak")),
     all(feature = "transcript-keccak", not(feature = "transcript-blake2b"))
@@ -28,6 +29,15 @@ pub use grinding::{
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
+pub use native::{
+    commit_native_grinding_nonce, native_prover_field_challenge, native_verifier_field_challenge,
+    new_native_prover, new_native_verifier, preview_native_grinding_predicate, prover_context,
+    receive_native_field, receive_native_grinding_nonce, search_native_grinding_nonce,
+    send_native_field, verifier_context, NativeField, NativeInitializationError, NativeProverState,
+    NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_PROTOCOL_VERSION,
+    SITE_FAMILY_SUMCHECK,
+};
 #[cfg(any(
     all(feature = "transcript-blake2b", not(feature = "transcript-keccak")),
     all(feature = "transcript-keccak", not(feature = "transcript-blake2b"))

@@ -81,6 +81,16 @@ pub fn search_grinding_nonce(
     grind_bits: u8,
     nonce_bits: u8,
 ) -> Option<u32> {
+    search_grinding_nonce_with(grind_bits, nonce_bits, |counter| {
+        preview_grinding_predicate(preview, grind_bits, nonce_bits, counter)
+    })
+}
+
+pub(crate) fn search_grinding_nonce_with(
+    grind_bits: u8,
+    nonce_bits: u8,
+    mut predicate_for_candidate: impl FnMut(u32) -> Option<[u8; GRINDING_PREDICATE_LEN]>,
+) -> Option<u32> {
     let Some(grind_bits_nonzero) = NonZeroU8::new(grind_bits) else {
         return (nonce_bits == 0).then_some(u32::default());
     };
@@ -93,7 +103,7 @@ pub fn search_grinding_nonce(
     let attempts = 1u64.checked_shl(u32::from(nonce_bits))?;
     (0..attempts).find_map(|candidate| {
         let counter = u32::try_from(candidate).ok()?;
-        let predicate = preview_grinding_predicate(preview, grind_bits, nonce_bits, counter)?;
+        let predicate = predicate_for_candidate(counter)?;
         grinding_predicate_accepts(&predicate, grind_bits_nonzero).then_some(counter)
     })
 }
