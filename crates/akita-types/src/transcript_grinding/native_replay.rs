@@ -256,6 +256,15 @@ pub struct NativeVerifierGrinding<'proof, 'plan> {
     invalid: bool,
 }
 
+/// Evidence that native replay consumed the complete grinding plan and proof.
+///
+/// The private field makes this value constructible only by the consuming
+/// verifier finish boundary.
+#[derive(Debug)]
+pub struct NativeProofAcceptance {
+    _private: (),
+}
+
 impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     /// Attach a native verifier state to its public grinding plan.
     #[must_use]
@@ -394,11 +403,14 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     }
 
     /// Require grinding-plan completion and consume the verifier for EOF.
-    pub fn finish(self) -> Result<(), AkitaError> {
+    pub fn finish(self) -> Result<NativeProofAcceptance, AkitaError> {
         if self.invalid || !self.cursor.is_finished() {
             return Err(AkitaError::InvalidProof);
         }
-        self.state.check_eof().map_err(|_| AkitaError::InvalidProof)
+        self.state
+            .check_eof()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        Ok(NativeProofAcceptance { _private: () })
     }
 }
 

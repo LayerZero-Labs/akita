@@ -655,8 +655,8 @@ mod native_replay;
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
 pub use native_replay::{
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProverGrinding,
-    NativeVerifierGrinding,
+    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
+    NativeProverGrinding, NativeVerifierGrinding,
 };
 pub use replay::{
     ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptGrinding, TranscriptNonceReader,

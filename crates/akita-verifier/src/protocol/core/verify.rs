@@ -521,7 +521,7 @@ where
         },
     )
     .map_err(|error| AkitaError::InvalidInput(format!("native suffix replay failed: {error:?}")))?;
-    grinding.finish().map_err(|error| {
+    grinding.finish().map(|_accepted| ()).map_err(|error| {
         AkitaError::InvalidInput(format!("native proof completion failed: {error:?}"))
     })
 }
