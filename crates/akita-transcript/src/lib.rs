@@ -32,12 +32,14 @@ pub use logging::{clear_thread_events, thread_events, LoggingTranscript, Transcr
 pub use native::{
     commit_native_grinding_nonce, native_prover_ext_challenge, native_prover_field_challenge,
     native_verifier_ext_challenge, native_verifier_field_challenge, new_native_prover,
-    new_native_verifier, preview_native_grinding_predicate, prover_context, receive_native_bytes,
-    receive_native_extension, receive_native_field, receive_native_grinding_nonce,
-    search_native_grinding_nonce, send_native_bytes, send_native_extension, send_native_field,
-    verifier_context, NativeContextError, NativeField, NativeInitializationError,
-    NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_PROTOCOL_VERSION,
+    new_native_verifier, preview_native_grinding_predicate, prover_context,
+    public_native_extensions_prover, public_native_extensions_verifier, receive_native_bytes,
+    receive_native_extension, receive_native_extension_group, receive_native_field,
+    receive_native_grinding_nonce, search_native_grinding_nonce, send_native_bytes,
+    send_native_extension, send_native_extension_group, send_native_field, verifier_context,
+    NativeContextError, NativeField, NativeInitializationError, NativeProverState,
+    NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
+    NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_PROTOCOL_VERSION,
     SITE_FAMILY_SUMCHECK,
 };
 #[cfg(any(

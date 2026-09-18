@@ -100,6 +100,50 @@ impl<'plan> NativeProverGrinding<'plan> {
         result
     }
 
+    /// Apply one scheduled grinding query and draw `count` independently
+    /// context-bound extension challenges protected by that query.
+    pub fn grinded_ext_challenges<F, E>(
+        &mut self,
+        site: GrindingSite,
+        count: usize,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        let mut challenges = Vec::new();
+        challenges
+            .try_reserve_exact(count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for index in 0..count {
+            let mut challenge_site = site.native_site_id(u32::default());
+            challenge_site.group = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
+            challenges.push(self.ext_challenge_at::<F, E>(challenge_site)?);
+        }
+        Ok(challenges)
+    }
+
+    /// Draw a context-bound extension challenge after its governing grinding
+    /// query has already been consumed.
+    ///
+    /// Some Akita query sites protect a vector of independent field draws with
+    /// one proof-of-work nonce. Callers must supply a distinct, public
+    /// schedule-derived `site` for every draw.
+    pub fn ext_challenge_at<F, E>(
+        &mut self,
+        site: akita_transcript::ProtocolSiteId,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let result = native_prover_ext_challenge(&mut self.state, site)
+            .map_err(|_| AkitaError::InvalidProof);
+        self.invalid |= result.is_err();
+        result
+    }
+
     fn grind_query_inner(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let entry = next_entry(&mut self.cursor, site, GrindingQueryKind::ProofOfWork)?;
         let Some(bits) = NonZeroU8::new(entry.grind_bits) else {
@@ -224,6 +268,46 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         let result =
             native_verifier_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
                 .map_err(|_| AkitaError::InvalidProof);
+        self.invalid |= result.is_err();
+        result
+    }
+
+    /// Verify one scheduled grinding query and draw `count` independently
+    /// context-bound extension challenges protected by that query.
+    pub fn grinded_ext_challenges<F, E>(
+        &mut self,
+        site: GrindingSite,
+        count: usize,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.grind_query(site)?;
+        let mut challenges = Vec::new();
+        challenges
+            .try_reserve_exact(count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for index in 0..count {
+            let mut challenge_site = site.native_site_id(u32::default());
+            challenge_site.group = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
+            challenges.push(self.ext_challenge_at::<F, E>(challenge_site)?);
+        }
+        Ok(challenges)
+    }
+
+    /// Draw a context-bound extension challenge after its governing grinding
+    /// query has already been consumed.
+    pub fn ext_challenge_at<F, E>(
+        &mut self,
+        site: akita_transcript::ProtocolSiteId,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let result = native_verifier_ext_challenge(&mut self.state, site)
+            .map_err(|_| AkitaError::InvalidProof);
         self.invalid |= result.is_err();
         result
     }
@@ -444,6 +528,35 @@ mod tests {
             7
         );
         verifier.record_fold_challenges(0, 0, 2).unwrap();
+        verifier.finish().unwrap();
+    }
+
+    #[test]
+    fn one_native_grinding_query_can_protect_multiple_draws() {
+        let plan = GrindingPlan::new(
+            vec![GrindingRun::proof_of_work(
+                GrindingSite::ExtensionOpeningPoint { level: 4 },
+                2,
+                128,
+            )
+            .unwrap()],
+            128,
+        )
+        .unwrap();
+        let state = new_native_prover(b"native-vector-grinding", b"fixture").unwrap();
+        let mut prover = NativeProverGrinding::new(state, &plan);
+        let prover_challenges = prover
+            .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
+            .unwrap();
+        let proof = prover.finish().unwrap();
+        assert_eq!(proof.len(), 4);
+
+        let state = new_native_verifier(b"native-vector-grinding", b"fixture", &proof).unwrap();
+        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        let verifier_challenges = verifier
+            .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
+            .unwrap();
+        assert_eq!(verifier_challenges, prover_challenges);
         verifier.finish().unwrap();
     }
 

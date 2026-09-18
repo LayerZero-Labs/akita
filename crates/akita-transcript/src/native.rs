@@ -443,6 +443,117 @@ pub fn verifier_context(state: &mut NativeVerifierState<'_>, record: ProtocolCon
     state.public_message(&record);
 }
 
+fn extension_group_record<F, E>(
+    site: ProtocolSiteId,
+    kind: ProtocolMessageKind,
+    value_count: usize,
+) -> Result<ProtocolContextRecord, NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let atom_count = value_count
+        .checked_mul(E::DEGREE)
+        .ok_or(NativeContextError)?;
+    let encoded_bytes = atom_count
+        .checked_mul(F::NUM_BYTES)
+        .ok_or(NativeContextError)?;
+    Ok(ProtocolContextRecord::new(
+        site.to_bytes(),
+        kind as u32,
+        u64::try_from(atom_count).map_err(|_| NativeContextError)?,
+        u64::try_from(encoded_bytes).map_err(|_| NativeContextError)?,
+        0,
+    ))
+}
+
+/// Absorb a fixed-count group of public extension-field values.
+pub fn public_native_extensions_prover<F, E>(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    values: &[E],
+) -> Result<(), NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    prover_context(
+        state,
+        extension_group_record::<F, E>(site, ProtocolMessageKind::PublicValue, values.len())?,
+    );
+    for value in values {
+        for coefficient in value.to_base_vec() {
+            state.public_message(&NativeField::new(coefficient));
+        }
+    }
+    Ok(())
+}
+
+/// Absorb a fixed-count group of public extension-field values.
+pub fn public_native_extensions_verifier<F, E>(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    values: &[E],
+) -> Result<(), NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    verifier_context(
+        state,
+        extension_group_record::<F, E>(site, ProtocolMessageKind::PublicValue, values.len())?,
+    );
+    for value in values {
+        for coefficient in value.to_base_vec() {
+            state.public_message(&NativeField::new(coefficient));
+        }
+    }
+    Ok(())
+}
+
+/// Emit a fixed-count group of extension-field proof values.
+pub fn send_native_extension_group<F, E>(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    values: &[E],
+) -> Result<(), NativeContextError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    prover_context(
+        state,
+        extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, values.len())?,
+    );
+    for &value in values {
+        send_native_extension::<F, E>(state, value);
+    }
+    Ok(())
+}
+
+/// Receive a schedule-fixed group of extension-field proof values.
+pub fn receive_native_extension_group<F, E>(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    value_count: usize,
+) -> Result<Vec<E>, VerificationError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let record = extension_group_record::<F, E>(site, ProtocolMessageKind::ProofAtoms, value_count)
+        .map_err(|_| VerificationError)?;
+    verifier_context(state, record);
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(value_count)
+        .map_err(|_| VerificationError)?;
+    for _ in 0..value_count {
+        values.push(receive_native_extension::<F, E>(state)?);
+    }
+    Ok(values)
+}
+
 /// Preview the native predicate produced by a candidate grinding nonce.
 ///
 /// Only the public duplex state is cloned. The live state, private prover RNG,
@@ -540,6 +651,57 @@ mod tests {
             receive_native_field::<F>(&mut verifier).unwrap(),
             F::from_u64(42)
         );
+        assert!(verifier.check_eof().is_ok());
+    }
+
+    #[test]
+    fn native_extension_groups_share_context_and_fixed_shape() {
+        type E = jolt_field::FpExt4<F>;
+
+        let public = [E::from_u64(3), E::from_u64(5)];
+        let private = [E::from_u64(8), E::from_u64(13)];
+        let public_site = ProtocolSiteId {
+            family: 27,
+            stage: 1,
+            ..ProtocolSiteId::default()
+        };
+        let private_site = ProtocolSiteId {
+            family: 27,
+            stage: 2,
+            ..ProtocolSiteId::default()
+        };
+        let mut prover = new_native_prover(b"groups", b"fixture").unwrap();
+        public_native_extensions_prover::<F, E>(&mut prover, public_site, &public).unwrap();
+        send_native_extension_group::<F, E>(&mut prover, private_site, &private).unwrap();
+        let prover_challenge = native_prover_ext_challenge::<F, E>(
+            &mut prover,
+            ProtocolSiteId {
+                family: 27,
+                stage: 3,
+                ..ProtocolSiteId::default()
+            },
+        )
+        .unwrap();
+        let proof = prover.narg_string().to_vec();
+        assert_eq!(proof.len(), private.len() * E::DEGREE * F::NUM_BYTES);
+
+        let mut verifier = new_native_verifier(b"groups", b"fixture", &proof).unwrap();
+        public_native_extensions_verifier::<F, E>(&mut verifier, public_site, &public).unwrap();
+        assert_eq!(
+            receive_native_extension_group::<F, E>(&mut verifier, private_site, private.len())
+                .unwrap(),
+            private
+        );
+        let verifier_challenge = native_verifier_ext_challenge::<F, E>(
+            &mut verifier,
+            ProtocolSiteId {
+                family: 27,
+                stage: 3,
+                ..ProtocolSiteId::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(verifier_challenge, prover_challenge);
         assert!(verifier.check_eof().is_ok());
     }
 
