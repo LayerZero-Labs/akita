@@ -161,6 +161,86 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
+fn native_spongefish_roundtrip_and_statement_binding() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(native_spongefish_roundtrip_and_statement_binding_inner)
+        .expect("native test thread")
+        .join()
+        .expect("native test thread panicked");
+}
+
+fn native_spongefish_roundtrip_and_statement_binding_inner() {
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let layout = singleton_layout(&scheme, 16);
+    let num_vars =
+        layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+    let (poly, evals) = make_dense_poly(num_vars);
+    let setup = scheme.setup_prover(num_vars, 1).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        prover_state,
+    } = scheme
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            stack.commitment(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
+    let opening_point = (0..num_vars)
+        .map(|index| F::from_u64((index + 2) as u64))
+        .collect::<Vec<_>>();
+    let weights = lagrange_weights(&opening_point).unwrap();
+    let opening = evals
+        .iter()
+        .zip(&weights)
+        .fold(F::zero(), |sum, (&value, &weight)| sum + value * weight);
+    let poly_refs = [&poly];
+    let proof = scheme
+        .batched_prove_native::<_, _, _>(
+            &setup,
+            prover_claims(
+                &scheme,
+                &opening_point,
+                &poly_refs,
+                &commitment,
+                prover_state,
+            ),
+            &stack,
+            b"test/prove",
+            BasisMode::Lagrange,
+        )
+        .expect("native proof");
+    scheme
+        .batched_verify_native(
+            &proof,
+            &verifier_setup,
+            b"test/prove",
+            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("native verification");
+    scheme
+        .batched_verify_native(
+            &proof,
+            &verifier_setup,
+            b"test/prove",
+            verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("native verification must bind the claimed opening");
+}
+
+#[test]
 fn verify_rejects_malformed_v_dimension_without_panicking() {
     let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);

@@ -223,6 +223,60 @@ where
         Ok(proof)
     }
 
+    /// Produce the canonical native Spongefish argument stream.
+    #[allow(clippy::too_many_arguments)]
+    pub fn batched_prove_native<'a, P, B, SP>(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        opening: SelectedProverOpeningData<
+            'a,
+            Cfg::ExtField,
+            P,
+            Cfg::Field,
+            impl InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+        >,
+        stacks: &'a impl LevelProveStacks<
+            'a,
+            Cfg::Field,
+            Opening = B,
+            Tensor = B,
+            RingSwitch = B,
+            CommitmentStatePolicy = SP,
+        >,
+        session: &[u8],
+        basis: BasisMode,
+    ) -> Result<Vec<u8>, AkitaError>
+    where
+        Cfg::Field: Ring + Unreduced + Field + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
+        B: ComputeBackendSetup<Cfg::Field>
+            + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
+            + RuntimeCoefficientPackingBackendFor<
+                Cfg::Field,
+                RecursiveFoldSource<Cfg::Field>,
+                Cfg::ExtField,
+            > + SuffixOpeningProveBackend<Cfg::Field>
+            + DigitRowsComputeBackend<Cfg::Field>
+            + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
+            + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+            + RuntimeRingSwitchProveBackend<Cfg::Field>
+            + 'a,
+        <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+        SP: CommitmentStatePolicy<Cfg::Field> + 'a,
+        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+    {
+        akita_prover::batched_prove_native::<Cfg, P, _, B, B, B, SP>(
+            &setup.expanded,
+            &setup.prefix_slots,
+            &self.schedules,
+            stacks,
+            opening,
+            session,
+            basis,
+        )
+    }
+
     /// Verify a fused batched opening proof over ordered commitment groups.
     ///
     /// # Errors
@@ -238,6 +292,25 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         batched_verify_inner::<Cfg, T>(proof, setup, &self.schedules, transcript, statement, basis)
+    }
+
+    /// Verify the canonical native Spongefish argument stream.
+    pub fn batched_verify_native(
+        &self,
+        proof: &[u8],
+        setup: &AkitaVerifierSetup<Cfg::Field>,
+        session: &[u8],
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
+        basis: BasisMode,
+    ) -> Result<(), AkitaError> {
+        akita_verifier::batched_verify_native::<Cfg>(
+            proof,
+            setup,
+            &self.schedules,
+            session,
+            statement,
+            basis,
+        )
     }
 
     /// Protocol identifier.

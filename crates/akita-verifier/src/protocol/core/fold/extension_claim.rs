@@ -310,6 +310,140 @@ where
     .map(Some)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix_native<F, E>(
+    group_points: &[&[E]],
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    lp: &CommittedGroupParams,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+{
+    let replay = verify_eor_sumcheck_native::<F, E>(
+        group_points,
+        openings,
+        opening_batch,
+        E::DEGREE > 1,
+        grinding,
+        level,
+    )?
+    .ok_or(AkitaError::InvalidProof)?;
+    let mut prepared_points = Vec::with_capacity(group_points.len());
+    let mut protocol_points = Vec::with_capacity(group_points.len());
+    for (group_index, group_point) in group_points.iter().enumerate() {
+        let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let tail_vars = group_point
+            .len()
+            .checked_sub(tensor_opening_split::<F, E>()?.0)
+            .ok_or(AkitaError::InvalidProof)?;
+        let local_rho = replay
+            .rho
+            .get(..tail_vars)
+            .ok_or(AkitaError::InvalidProof)?;
+        let (prepared, protocol_point) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D| {
+                let protocol_point = ring_subfield_packed_extension_opening_point::<F, E, D>(
+                    local_rho.len(),
+                    local_rho,
+                )?;
+                let prepared = prepare_opening_point::<F, E, D>(
+                    &protocol_point,
+                    basis,
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
+                    alpha_bits,
+                )?;
+                Ok::<_, AkitaError>((prepared, protocol_point))
+            }
+        )?;
+        prepared_points.push(PreparedFoldOpeningPoint::EvaluationTrace(prepared));
+        protocol_points.push(protocol_point);
+    }
+    for (group_index, protocol_point) in protocol_points.iter().enumerate() {
+        akita_transcript::public_native_extensions_verifier::<F, E>(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                level,
+                stage: 1,
+                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            protocol_point,
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
+    }
+    Ok(FoldClaimMaterial {
+        prepared_points,
+        openings: openings.to_vec(),
+        reduction_final_claims: Some(replay.final_claims),
+        reduction_factors: Some(replay.final_factors),
+    })
+}
+
+pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix_native<F, E>(
+    opening_point: &[E],
+    opening: E,
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    params: &TerminalFoldParams,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+{
+    let replay = verify_eor_sumcheck_native::<F, E>(
+        &[opening_point],
+        &[opening],
+        opening_batch,
+        E::DEGREE > 1,
+        grinding,
+        level,
+    )?
+    .ok_or(AkitaError::InvalidProof)?;
+    let protocol_point = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        params.d_a(),
+        |D| {
+            ring_subfield_packed_extension_opening_point::<F, E, D>(replay.rho.len(), &replay.rho)
+        }
+    )?;
+    let prepared = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        params.d_a(),
+        |D| {
+            prepare_opening_point::<F, E, D>(
+                &protocol_point,
+                basis,
+                params.blocks.positions_per_block,
+                params.blocks.live_blocks,
+                params.d_a().trailing_zeros() as usize,
+            )
+        }
+    )?;
+    Ok(FoldEorReplay {
+        groups: vec![PreparedProtocolPoint {
+            prepared,
+            protocol: protocol_point,
+        }],
+        final_relation: Some((replay.final_claims, replay.final_factors)),
+    })
+}
+
 fn verify_eor_sumcheck_with_stream<F, E, S>(
     group_points: &[&[E]],
     openings: &[E],

@@ -8,9 +8,12 @@ mod extension_opening_reduction;
 mod verify;
 use crate::protocol::evaluation_trace::prepare_evaluation_trace;
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
+    ring_switch_verifier, ring_switch_verifier_native, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage1::{
+    derive_multi_group_stage1_challenges, derive_multi_group_stage1_challenges_native,
+    AkitaStage1Verifier,
+};
 use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};
@@ -51,17 +54,21 @@ mod terminal_direct;
 mod terminal_ntt;
 use root_fold::verify_root;
 
-pub use verify::batched_verify;
+pub use verify::{batched_verify, batched_verify_native};
 
 pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
     absorb_protocol_opening_points, bind_opening_payload_and_finalize_claims,
-    prepare_single_field_suffix_groups, prepare_single_field_terminal_suffix,
-    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix,
-    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
-    FoldClaimMaterial, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
+    finalize_native_claims, prepare_single_field_suffix_groups,
+    prepare_single_field_terminal_suffix, verify_coefficient_packing_root_prefix,
+    verify_coefficient_packing_suffix_prefix, verify_coefficient_packing_suffix_prefix_native,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_suffix_prefix_native,
+    verify_extension_claim_terminal_suffix, verify_extension_claim_terminal_suffix_native,
+    verify_fold, verify_fold_native, FoldClaimMaterial, NativeFoldVerifyOutput,
+    NativeNextWitnessPlan, NativePreparedFoldReplay, PreparedFoldOpeningPoint, PreparedFoldPayload,
+    PreparedFoldReplay, PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

@@ -11,7 +11,10 @@ pub mod ring_switch;
 pub mod sumcheck;
 
 pub use akita_types::RingRelationInstance;
-pub use core::{batched_prove, ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState};
+pub use core::{
+    batched_prove, batched_prove_native, ProveLevelOutput, RecursiveSuffixOutcome,
+    SuffixProverState,
+};
 pub use ring_relation::RingRelationProver;
 pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{
