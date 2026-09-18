@@ -33,6 +33,9 @@ pub const SITE_FAMILY_STAGE1: u32 = 4;
 /// Stable family identifier for physical-L2 proof values.
 pub const SITE_FAMILY_PHYSICAL_L2: u32 = 5;
 
+/// Stable family identifier for recursive setup-product stage 3.
+pub const SITE_FAMILY_STAGE3: u32 = 6;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -357,6 +360,46 @@ pub fn receive_native_bytes(
         bytes.push(state.prover_message::<[u8; 1]>()?[0]);
     }
     Ok(bytes)
+}
+
+fn public_bytes_record(
+    site: ProtocolSiteId,
+    len: usize,
+) -> Result<ProtocolContextRecord, NativeContextError> {
+    let len = u64::try_from(len).map_err(|_| NativeContextError)?;
+    Ok(ProtocolContextRecord::new(
+        site.to_bytes(),
+        ProtocolMessageKind::PublicValue as u32,
+        len,
+        len,
+        0,
+    ))
+}
+
+/// Absorb one context-framed public byte string on the prover side.
+pub fn public_native_bytes_prover(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    bytes: &[u8],
+) -> Result<(), NativeContextError> {
+    prover_context(state, public_bytes_record(site, bytes.len())?);
+    for &byte in bytes {
+        state.public_message(&[byte]);
+    }
+    Ok(())
+}
+
+/// Absorb one context-framed public byte string on the verifier side.
+pub fn public_native_bytes_verifier(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    bytes: &[u8],
+) -> Result<(), NativeContextError> {
+    verifier_context(state, public_bytes_record(site, bytes.len())?);
+    for &byte in bytes {
+        state.public_message(&[byte]);
+    }
+    Ok(())
 }
 
 /// Draw one base-field challenge from 512 random-oracle bits.

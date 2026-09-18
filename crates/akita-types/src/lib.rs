@@ -28,6 +28,7 @@ mod native_eor;
 mod native_l2;
 mod native_stage1;
 mod native_stage2;
+mod native_stage3;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
@@ -112,6 +113,11 @@ pub use native_stage1::{
     native_stage1_verifier_child_claims, native_stage1_verifier_range_image,
 };
 pub use native_stage2::{native_stage2_prover_w_eval, native_stage2_verifier_w_eval};
+pub use native_stage3::{
+    native_stage3_prover_claim, native_stage3_prover_prefix_eval, native_stage3_public_slot_prover,
+    native_stage3_public_slot_verifier, native_stage3_verifier_claim,
+    native_stage3_verifier_prefix_eval,
+};
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
     centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_ifma52,

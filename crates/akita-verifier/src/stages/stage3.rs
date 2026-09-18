@@ -35,6 +35,13 @@ pub(crate) struct SetupSumcheckVerifier<E: Field> {
     rounds: usize,
 }
 
+#[allow(dead_code)] // Consumed by the native fold verifier during production cutover.
+pub(crate) struct NativeSetupSumcheckReplay<E: Field> {
+    pub(crate) claim: E,
+    pub(crate) setup_prefix_eval: E,
+    pub(crate) challenges: Vec<E>,
+}
+
 impl<E: Field> SetupSumcheckVerifier<E> {
     /// Prepare the setup-product sumcheck verifier for the setup contribution
     /// at `x_challenges`.
@@ -124,6 +131,69 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         )
     }
 
+    /// Replay stage 3 directly from the native Spongefish stream.
+    #[allow(dead_code)] // Called by the native fold verifier during production cutover.
+    pub(crate) fn verify_stage3_native<F>(
+        &self,
+        setup: &AkitaVerifierSetup<F>,
+        next_fold_level_params: &CommittedGroupParams,
+        grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        level: u32,
+    ) -> Result<NativeSetupSumcheckReplay<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
+    {
+        let ring_d = self
+            .setup_contribution_plan
+            .projection_geometry()
+            .base_ring_dim();
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup ring dimension must be nonzero".into(),
+            ));
+        }
+        setup_eval_len_native(
+            setup,
+            next_fold_level_params,
+            self.setup_contribution_plan
+                .projection_geometry()
+                .natural_field_len(),
+            ring_d,
+            grinding,
+            level,
+        )?;
+        let claim = akita_types::native_stage3_verifier_claim::<F, E>(grinding, level)?;
+        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage3,
+            level,
+            0,
+        );
+        let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+            &mut channel,
+            0,
+            claim,
+            self.rounds,
+            SETUP_SUMCHECK_DEGREE,
+        )?;
+        let setup_prefix_eval =
+            akita_types::native_stage3_verifier_prefix_eval::<F, E>(grinding, level)?;
+        let (rho_y, rho_setup_idx) = replay.challenges.split_at(self.ring_bits);
+        let setup_index_weight = self
+            .setup_contribution_plan
+            .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?;
+        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
+        if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(NativeSetupSumcheckReplay {
+            claim,
+            setup_prefix_eval,
+            challenges: replay.challenges,
+        })
+    }
+
     fn verify_stage3_kernel<F, T, const D: usize>(
         &self,
         proof: &SetupSumcheckProof<E>,
@@ -209,6 +279,44 @@ where
         "verifier setup-prefix slot does not cover setup product",
     )?;
     transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+    Ok(setup_eval_len)
+}
+
+fn setup_eval_len_native<F>(
+    setup: &AkitaVerifierSetup<F>,
+    next_fold_level_params: &CommittedGroupParams,
+    natural_field_len: usize,
+    ring_d: usize,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<usize, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+{
+    let selected_prefix = next_fold_level_params.setup_prefix().ok_or_else(|| {
+        AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+    })?;
+    let selected_slot_id = selected_prefix.slot_id().ok_or_else(|| {
+        AkitaError::InvalidSetup("selected setup-prefix group has no slot identity".to_string())
+    })?;
+    let slot = setup.prefix_slots().get(&selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from verifier setup".to_string(),
+        )
+    })?;
+    let setup_eval_len = setup_prefix_coverage_eval_len(
+        None,
+        &slot.id,
+        next_fold_level_params,
+        natural_field_len,
+        ring_d,
+        "verifier setup-prefix slot does not cover setup product",
+    )?;
+    let mut encoded_slot = Vec::new();
+    slot.id
+        .serialize_compressed(&mut encoded_slot)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    akita_types::native_stage3_public_slot_verifier(grinding, level, &encoded_slot)?;
     Ok(setup_eval_len)
 }
 

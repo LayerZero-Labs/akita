@@ -38,6 +38,13 @@ pub struct AkitaStage3ProverOutput<E: Field> {
     pub sumcheck: SumcheckProof<E>,
 }
 
+#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
+pub(in crate::protocol::sumcheck) struct NativeAkitaStage3ProverOutput<E: Field> {
+    pub(in crate::protocol::sumcheck) setup_product_claim: E,
+    pub(in crate::protocol::sumcheck) setup_prefix_eval: E,
+    pub(in crate::protocol::sumcheck) setup_prefix_point: Vec<E>,
+}
+
 /// Stage-3 setup-product sumcheck prover.
 pub struct AkitaStage3Prover<'a, F: Field, E: Field> {
     setup: RectangularSetupProductTerm<'a, F, E>,
@@ -49,6 +56,54 @@ where
     F: Field,
     E: Field + Ring + MulBaseUnreduced<F>,
 {
+    /// Construct stage 3 while binding its selected setup slot natively.
+    #[allow(dead_code)] // Called by the native fold driver during production cutover.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::protocol::sumcheck) fn new_native(
+        expanded: &'a AkitaExpandedSetup<F>,
+        prefix_slots: &SetupPrefixProverRegistry<F>,
+        lp: &CommittedGroupParams,
+        next_fold_level_params: &CommittedGroupParams,
+        relation: &RingRelationInstance<F>,
+        tau1: &[E],
+        alpha: E,
+        stage2_challenges: &[E],
+        relation_address_geometry: RelationAddressGeometry,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        level: u32,
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+        E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
+    {
+        let setup_coefficient_bits =
+            relation_address_geometry.relation_coefficient_variable_count();
+        let setup_x_challenges = stage2_challenges
+            .get(setup_coefficient_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
+        let (setup, slot_id) = build_setup_product_term::<F, E>(
+            expanded,
+            prefix_slots,
+            lp,
+            next_fold_level_params,
+            relation,
+            tau1,
+            alpha,
+            setup_x_challenges,
+            relation_address_geometry,
+        )?;
+        let mut encoded_slot = Vec::new();
+        slot_id
+            .serialize_compressed(&mut encoded_slot)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        akita_types::native_stage3_public_slot_prover(grinding, level, &encoded_slot)?;
+        let setup_product_claim = setup.input_claim();
+        Ok(Self {
+            setup,
+            setup_product_claim,
+        })
+    }
+
     /// Construct a recursive setup-product sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     pub fn new<T>(
@@ -75,7 +130,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let setup_term = {
             let _span = tracing::info_span!("stage3_setup_term_prepare").entered();
-            build_setup_product_term::<F, E, T>(
+            let (term, slot_id) = build_setup_product_term::<F, E>(
                 expanded,
                 prefix_slots,
                 lp,
@@ -85,8 +140,9 @@ where
                 alpha,
                 setup_x_challenges,
                 relation_address_geometry,
-                transcript,
-            )?
+            )?;
+            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot_id);
+            term
         };
         let setup_product_claim = setup_term.input_claim();
         Ok(Self {
@@ -114,6 +170,35 @@ where
             setup_prefix_eval,
             setup_prefix_point,
             sumcheck,
+        })
+    }
+
+    /// Stream stage 3 without retaining a structured sumcheck proof.
+    #[allow(dead_code)] // Called by the native fold driver during production cutover.
+    pub(in crate::protocol::sumcheck) fn prove_native(
+        &mut self,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        level: u32,
+    ) -> Result<NativeAkitaStage3ProverOutput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        akita_types::native_stage3_prover_claim::<F, E>(grinding, level, self.setup_product_claim)?;
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage3,
+            level,
+            0,
+        );
+        let (setup_prefix_point, _) =
+            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(self, &mut channel, 0)?;
+        let setup_prefix_eval = self.setup.folded_table_value()?;
+        akita_types::native_stage3_prover_prefix_eval::<F, E>(grinding, level, setup_prefix_eval)?;
+        Ok(NativeAkitaStage3ProverOutput {
+            setup_product_claim: self.setup_product_claim,
+            setup_prefix_eval,
+            setup_prefix_point,
         })
     }
 }
@@ -145,7 +230,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_term<'a, F, E, T>(
+fn build_setup_product_term<'a, F, E>(
     expanded: &'a AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &CommittedGroupParams,
@@ -155,12 +240,16 @@ fn build_setup_product_term<'a, F, E, T>(
     alpha: E,
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
-    transcript: &mut T,
-) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
+) -> Result<
+    (
+        RectangularSetupProductTerm<'a, F, E>,
+        akita_types::SetupPrefixSlotId,
+    ),
+    AkitaError,
+>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
-    T: Transcript<F>,
 {
     let (geometry, mut setup_index_weight, alpha_pows) = {
         let _span = tracing::info_span!("stage3_setup_weights_prepare").entered();
@@ -202,7 +291,6 @@ where
         ring_d,
         "selected setup-prefix slot does not cover setup product",
     )?;
-    transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
     // ring view that would immediately be flattened back into the table. The
@@ -227,12 +315,13 @@ where
     })?;
     drop(_source_span);
 
-    RectangularSetupProductTerm::new(
+    let term = RectangularSetupProductTerm::new(
         setup_source,
         active_weight_rows,
         setup_index_weight,
         alpha_pows.to_vec(),
-    )
+    )?;
+    Ok((term, slot.id.clone()))
 }
 
 /// Derive the factored product-sumcheck terms `(required, setup_index_weight, alpha_pows)`
