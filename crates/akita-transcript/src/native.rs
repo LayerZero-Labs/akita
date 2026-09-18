@@ -27,6 +27,9 @@ pub const SITE_FAMILY_EXTENSION_OPENING_REDUCTION: u32 = 2;
 /// Stable family identifier for stage-2 terminal claims.
 pub const SITE_FAMILY_STAGE2: u32 = 3;
 
+/// Stable family identifier for stage-1 late oracle claims.
+pub const SITE_FAMILY_STAGE1: u32 = 4;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]

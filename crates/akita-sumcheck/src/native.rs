@@ -369,6 +369,32 @@ where
     C: NativeSumcheckVerifierChannel<'proof, E>,
     O: FnOnce(&[E]) -> Result<E, AkitaError>,
 {
+    let replay = verify_eq_factored_sumcheck_rounds_native::<F, E, C>(
+        equality_point,
+        input_claim,
+        degree_bound,
+        channel,
+        invocation,
+    )?;
+    if replay.output_claim != expected_output_claim(&replay.challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(replay.challenges)
+}
+
+/// Replay equality-factored rounds before receiving and checking a late oracle claim.
+pub fn verify_eq_factored_sumcheck_rounds_native<'proof, F, E, C>(
+    equality_point: &[E],
+    input_claim: E,
+    degree_bound: usize,
+    channel: &mut C,
+    invocation: u32,
+) -> Result<NativeSumcheckRoundResult<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: NativeSumcheckVerifierChannel<'proof, E>,
+{
     let mut equality = GruenSplitEq::new(equality_point)?;
     let mut claim = input_claim;
     let claim_site = channel.sumcheck_site(invocation, 0, ROLE_CLAIM);
@@ -421,10 +447,10 @@ where
         equality.bind(challenge);
         challenges.push(challenge);
     }
-    if claim != expected_output_claim(&challenges)? {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(challenges)
+    Ok(NativeSumcheckRoundResult {
+        output_claim: claim,
+        challenges,
+    })
 }
 
 #[cfg(test)]

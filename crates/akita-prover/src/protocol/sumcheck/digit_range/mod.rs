@@ -43,6 +43,12 @@ use jolt_field::{Fold, Unreduced};
 
 type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
+#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
+pub(in crate::protocol::sumcheck) struct NativeDigitRangeProveOutput<E: Field> {
+    pub(in crate::protocol::sumcheck) point: Vec<E>,
+    pub(in crate::protocol::sumcheck) range_image_evaluation: E,
+}
+
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 const MAX_QUARTET_TABLE_CLASS_COUNT: usize = 8;
 
@@ -100,6 +106,39 @@ where
     ))
 }
 
+fn prove_class_indexed_product_subcheck_native<F, E, const LANES: usize>(
+    input: ProductSubcheckInput<'_, E>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+    stage_index: u32,
+) -> Result<(Vec<E>, Vec<E>), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
+{
+    let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
+        input.source,
+        input.plan,
+        input.leaf_polynomials,
+        input.stage_index,
+        input.parent_weights,
+        input.equality_point,
+        input.input_claim,
+    )?;
+    let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::Stage1,
+        level,
+        stage_index,
+    );
+    let (next_equality_point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
+        &mut stage,
+        &mut channel,
+        0,
+    )?;
+    Ok((stage.final_child_claims(), next_equality_point))
+}
+
 struct ProductPrefix<E: Field> {
     digit_source: CompactDigitSource,
     plan: DigitRangePlan,
@@ -108,6 +147,91 @@ struct ProductPrefix<E: Field> {
     equality_point: Vec<E>,
     claim: E,
     weights: Vec<E>,
+}
+
+struct NativeProductPrefix<E: Field> {
+    digit_source: CompactDigitSource,
+    plan: DigitRangePlan,
+    leaf_coeffs: Vec<Vec<E>>,
+    equality_point: Vec<E>,
+    claim: E,
+    weights: Vec<E>,
+    stage_count: usize,
+}
+
+fn prove_product_prefix_native<F, E>(
+    digit_source: CompactDigitSource,
+    plan: DigitRangePlan,
+    equality_point: Vec<E>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+) -> Result<NativeProductPrefix<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
+{
+    let leaf_coeffs = plan.leaf_coeffs::<E>();
+    let mut current_equality_point = equality_point;
+    let mut current_claim = E::zero();
+    let mut current_weights = vec![E::one()];
+    for (stage_index, &_arity) in plan.product_stage_arities().iter().enumerate() {
+        let lane_count = plan
+            .product_stage_lane_count(stage_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let product_input = ProductSubcheckInput {
+            source: digit_source.clone(),
+            plan,
+            leaf_polynomials: &leaf_coeffs,
+            stage_index,
+            parent_weights: current_weights,
+            equality_point: &current_equality_point,
+            input_claim: current_claim,
+        };
+        let stage = u32::try_from(stage_index)
+            .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
+        let (child_claims, next_equality_point) = match lane_count {
+            2 => prove_class_indexed_product_subcheck_native::<F, E, 2>(
+                product_input,
+                grinding,
+                level,
+                stage,
+            )?,
+            4 => prove_class_indexed_product_subcheck_native::<F, E, 4>(
+                product_input,
+                grinding,
+                level,
+                stage,
+            )?,
+            8 => prove_class_indexed_product_subcheck_native::<F, E, 8>(
+                product_input,
+                grinding,
+                level,
+                stage,
+            )?,
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        akita_types::native_stage1_prover_child_claims::<F, E>(
+            grinding,
+            level,
+            stage,
+            &child_claims,
+        )?;
+        let gamma = grinding.grinded_ext_challenge::<F, E>(
+            akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+        )?;
+        current_weights = plan.interstage_batch_weights(gamma, child_claims.len());
+        current_claim = plan.batch_claims(&current_weights, &child_claims)?;
+        current_equality_point = next_equality_point;
+    }
+    Ok(NativeProductPrefix {
+        digit_source,
+        plan,
+        leaf_coeffs,
+        equality_point: current_equality_point,
+        claim: current_claim,
+        weights: current_weights,
+        stage_count: plan.product_stage_arities().len(),
+    })
 }
 
 fn prove_product_prefix<F, E, T>(
@@ -302,6 +426,106 @@ impl<E: Field + Ring> DigitRangeProver<E> {
 }
 
 impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
+    /// Stream the non-L2 stage-1 range proof directly into Spongefish.
+    #[allow(dead_code)] // Called by the native fold driver during production cutover.
+    pub(in crate::protocol::sumcheck) fn prove_native<F>(
+        self,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        physical_plan: Option<&PhysicalResponsePlan>,
+        level: u32,
+    ) -> Result<NativeDigitRangeProveOutput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        if physical_plan.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "native physical-L2 stage-1 transport is not yet selected".into(),
+            ));
+        }
+        let Self {
+            digit_source,
+            equality_point,
+            plan,
+            live_block_count,
+            high_variable_count,
+            low_variable_count,
+        } = self;
+        if plan.basis() <= 8 {
+            let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::new(
+                digit_source.digits(),
+                &equality_point,
+                plan,
+                live_block_count,
+                high_variable_count,
+                low_variable_count,
+            )?;
+            let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+                grinding,
+                akita_types::SumcheckProtocol::Stage1,
+                level,
+                0,
+            );
+            let (point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
+                &mut leaf_stage,
+                &mut channel,
+                0,
+            )?;
+            let range_image_evaluation = leaf_stage.final_range_image_eval();
+            akita_types::native_stage1_prover_range_image::<F, E>(
+                grinding,
+                level,
+                0,
+                range_image_evaluation,
+            )?;
+            return Ok(NativeDigitRangeProveOutput {
+                point,
+                range_image_evaluation,
+            });
+        }
+
+        let prefix = prove_product_prefix_native::<F, E>(
+            digit_source,
+            plan,
+            equality_point,
+            grinding,
+            level,
+        )?;
+        let batched_leaf_coeffs = prefix
+            .plan
+            .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
+        let mut leaf_stage = ClassIndexedRangeLeafProver::new(
+            prefix.digit_source,
+            &prefix.equality_point,
+            prefix.claim,
+            batched_leaf_coeffs,
+        )?;
+        let stage = u32::try_from(prefix.stage_count)
+            .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let (point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
+            &mut leaf_stage,
+            &mut channel,
+            0,
+        )?;
+        let range_image_evaluation = leaf_stage.final_range_image_eval();
+        akita_types::native_stage1_prover_range_image::<F, E>(
+            grinding,
+            level,
+            stage,
+            range_image_evaluation,
+        )?;
+        Ok(NativeDigitRangeProveOutput {
+            point,
+            range_image_evaluation,
+        })
+    }
+
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     /// An optional physical-response plan adds the scheduled norm identity to
     /// the existing final range leaf.
@@ -452,5 +676,59 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             norm_proof: None,
         };
         Ok((proof, stage1_point))
+    }
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+    use akita_transcript::new_native_prover;
+    use akita_types::{GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol};
+    use jolt_field::Prime128Offset275 as F;
+
+    #[test]
+    fn native_direct_leaf_streams_range_image_after_rounds() {
+        let level = 0;
+        let num_vars = 3usize;
+        let range_plan = DigitRangePlan::new(4).unwrap();
+        let domain = FlatBooleanDomain::new(8, num_vars).unwrap();
+        let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+            &[F::from_u64(2), F::from_u64(3), F::from_u64(5)],
+            2,
+            1,
+        )
+        .unwrap();
+        let prover = DigitRangeProver::new(
+            std::sync::Arc::from([0, 1, -1, 1, 0, -1, 1, 0]),
+            range_plan,
+            domain,
+            equality_point,
+        )
+        .unwrap();
+        let runs = (0..num_vars)
+            .map(|round| {
+                GrindingRun::proof_of_work(
+                    GrindingSite::SumcheckRound {
+                        protocol: SumcheckProtocol::Stage1,
+                        level,
+                        stage: 0,
+                        round: u32::try_from(round).unwrap(),
+                    },
+                    1,
+                    128,
+                )
+                .unwrap()
+            })
+            .collect();
+        let grinding_plan = GrindingPlan::new(runs, 128).unwrap();
+        let state = new_native_prover(b"native-stage1-prover", b"fixture").unwrap();
+        let mut grinding = akita_types::NativeProverGrinding::new(state, &grinding_plan);
+        let output = prover
+            .prove_native::<F>(&mut grinding, None, level)
+            .unwrap();
+        let proof = grinding.finish().unwrap();
+
+        assert_eq!(output.point.len(), num_vars);
+        assert!(!proof.is_empty());
     }
 }

@@ -25,6 +25,7 @@ pub mod layout;
 pub mod lhl_blinding;
 pub(crate) mod narrowing;
 mod native_eor;
+mod native_stage1;
 mod native_stage2;
 pub mod ntt_cache;
 pub mod opening_claims;
@@ -100,6 +101,10 @@ pub use layout::{
 pub use native_eor::{
     native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
     native_eor_verifier_prefix, NativeEorPrefix, NATIVE_EOR_SUMCHECK_INVOCATION,
+};
+pub use native_stage1::{
+    native_stage1_prover_child_claims, native_stage1_prover_range_image,
+    native_stage1_verifier_child_claims, native_stage1_verifier_range_image,
 };
 pub use native_stage2::{native_stage2_prover_w_eval, native_stage2_verifier_w_eval};
 pub use ntt_cache::{

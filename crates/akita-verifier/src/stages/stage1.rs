@@ -20,6 +20,12 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
 
+#[allow(dead_code)] // Consumed by the native fold verifier during production cutover.
+pub(crate) struct NativeStage1VerifyOutput<E: Field> {
+    pub(crate) point: Vec<E>,
+    pub(crate) range_image_evaluation: E,
+}
+
 pub(crate) struct RangeLeafVerifierInput<E: Field> {
     pub(crate) equality_point: Vec<E>,
     pub(crate) input_claim: E,
@@ -96,6 +102,119 @@ impl<E: Field> AkitaStage1Verifier<E> {
 }
 
 impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
+    fn verify_product_prefix_native<F>(
+        &self,
+        grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        level: u32,
+    ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let product_stage_arities = self.plan.product_stage_arities();
+        let rounds = self.equality_point.coordinates().len();
+        let leaf_coeffs = self.plan.leaf_coeffs::<E>();
+        let mut current_equality_point = self.equality_point.coordinates().to_vec();
+        let mut current_claim = E::zero();
+        let mut current_weights = vec![E::one()];
+        for (stage_index, &arity) in product_stage_arities.iter().enumerate() {
+            let expected = self
+                .plan
+                .stage_shape(rounds, stage_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
+            let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+                grinding,
+                akita_types::SumcheckProtocol::Stage1,
+                level,
+                stage,
+            );
+            let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
+                &current_equality_point,
+                current_claim,
+                arity,
+                &mut channel,
+                0,
+            )?;
+            let child_claims = akita_types::native_stage1_verifier_child_claims::<F, E>(
+                grinding,
+                level,
+                stage,
+                expected.child_claims,
+            )?;
+            let expected_output = current_weights
+                .iter()
+                .zip(child_claims.chunks_exact(arity))
+                .fold(E::zero(), |acc, (&weight, claims)| {
+                    acc + weight
+                        * claims
+                            .iter()
+                            .copied()
+                            .fold(E::one(), |product, claim| product * claim)
+                });
+            if replay.output_claim != expected_output {
+                return Err(AkitaError::InvalidProof);
+            }
+            let gamma = grinding.grinded_ext_challenge::<F, E>(
+                akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+            )?;
+            current_weights = self
+                .plan
+                .interstage_batch_weights(gamma, child_claims.len());
+            current_claim = self.plan.batch_claims(&current_weights, &child_claims)?;
+            current_equality_point = replay.challenges;
+        }
+        Ok(RangeLeafVerifierInput {
+            equality_point: current_equality_point,
+            input_claim: current_claim,
+            polynomial_coefficients: self
+                .plan
+                .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?,
+        })
+    }
+
+    /// Replay the non-L2 stage-1 proof directly from Spongefish.
+    #[allow(dead_code)] // Called by the native fold verifier during production cutover.
+    pub(crate) fn verify_native<F>(
+        &self,
+        grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        level: u32,
+    ) -> Result<NativeStage1VerifyOutput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let leaf = self.verify_product_prefix_native::<F>(grinding, level)?;
+        let stage = u32::try_from(self.plan.product_stage_arities().len())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
+        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
+            &leaf.equality_point,
+            leaf.input_claim,
+            degree_bound,
+            &mut channel,
+            0,
+        )?;
+        let range_image_evaluation =
+            akita_types::native_stage1_verifier_range_image::<F, E>(grinding, level, stage)?;
+        let expected_output = self
+            .plan
+            .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, range_image_evaluation);
+        if replay.output_claim != expected_output {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(NativeStage1VerifyOutput {
+            point: replay.challenges,
+            range_image_evaluation,
+        })
+    }
+
     pub(crate) fn verify_product_prefix<F, T>(
         &self,
         product_stage_proofs: &[akita_types::AkitaStage1StageProof<E>],

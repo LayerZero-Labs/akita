@@ -40,7 +40,8 @@ pub use native::{
     NativeContextError, NativeField, NativeInitializationError, NativeProverState,
     NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
     NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES, NATIVE_PROTOCOL_VERSION,
-    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
+    SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
+    SITE_FAMILY_SUMCHECK,
 };
 #[cfg(any(
     all(feature = "transcript-blake2b", not(feature = "transcript-keccak")),

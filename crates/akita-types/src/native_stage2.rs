@@ -57,7 +57,7 @@ mod tests {
     use super::*;
     use crate::GrindingPlan;
     use akita_transcript::{new_native_prover, new_native_verifier};
-    use jolt_field::{FpExt4, Prime32Offset99, Ring};
+    use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99, Ring};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
