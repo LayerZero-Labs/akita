@@ -263,7 +263,7 @@ pub(super) fn native_single_group_roundtrip<Cfg, P>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn two_group_verify_roundtrip<Cfg>(
     scheme: &AkitaCommitmentScheme<Cfg>,
-    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    proof: &[u8],
     verifier_setup: &akita_types::AkitaVerifierSetup<Cfg::Field>,
     selection: akita_types::OpeningScheduleSelection,
     pre: (
@@ -306,15 +306,6 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     let (pre_commitment, pre_point, pre_opening) = pre;
     let (final_commitment, final_point, final_opening) = fin;
 
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).expect("serialize");
-    let decoded = AkitaBatchedProof::<Cfg::Field, Cfg::ExtField>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize");
-
     let verify_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(pre_point.to_vec(), vec![pre_opening], pre_commitment)
             .expect("pre verifier group"),
@@ -323,12 +314,11 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     ])
     .expect("verifier claims");
 
-    let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
     scheme
-        .batched_verify_structured_legacy(
-            &decoded,
+        .batched_verify(
+            proof,
             verifier_setup,
-            &mut vt,
+            label,
             GroupBatchStatement::new(selection, verify_claims).expect("statement"),
             BasisMode::Lagrange,
         )

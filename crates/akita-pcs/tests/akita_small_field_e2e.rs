@@ -119,33 +119,32 @@ macro_rules! small_field_test {
                         .map(|i| weights[i] * <$se>::lift_base(evals[i]))
                         .fold(<$se>::from_u64(0), |a, b| a + b);
 
-                    let roundtrip = single_group_roundtrip::<
-                        $cfg,
-                        akita_prover::DensePoly<$sf>,
-                    >(
-                        nv,
-                        &poly,
-                        point.clone(),
-                        expected,
-                        label,
-                        stringify!($name),
-                    );
-                    $($check(&roundtrip, label, stringify!($name));)?
                     $(
-                        let _ = $check;
-                        native_single_group_roundtrip::<
+                        let roundtrip = single_group_roundtrip::<
                             $cfg,
                             akita_prover::DensePoly<$sf>,
                         >(
                             nv,
                             &poly,
-                            point,
+                            point.clone(),
                             expected,
                             label,
                             stringify!($name),
                         );
+                        $check(&roundtrip, label, stringify!($name));
+                        drop(roundtrip);
                     )?
-                    drop(roundtrip);
+                    native_single_group_roundtrip::<
+                        $cfg,
+                        akita_prover::DensePoly<$sf>,
+                    >(
+                        nv,
+                        &poly,
+                        point,
+                        expected,
+                        label,
+                        stringify!($name),
+                    );
                 }
             });
         }
@@ -265,12 +264,11 @@ macro_rules! small_field_test {
                     );
                     let selection = prover_data.selection();
 
-                    let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove_structured_legacy::<_, _, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
-                        &mut pt,
+                        label,
                         BasisMode::Lagrange,
                     )
                     .expect("prove");
@@ -321,7 +319,7 @@ macro_rules! small_field_test {
                         .collect();
                     let expected = onehot_opening_lagrange(&poly, &point);
 
-                    single_group_roundtrip::<
+                    native_single_group_roundtrip::<
                         $cfg,
                         akita_prover::OneHotPoly<$sf, u8>,
                     >(
@@ -463,12 +461,11 @@ macro_rules! small_field_test {
                     );
                     let selection = prover_data.selection();
 
-                    let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = scheme.batched_prove_structured_legacy::<_, _, _, _>(
+                    let proof = scheme.batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
-                        &mut pt,
+                        label,
                         BasisMode::Lagrange,
                     )
                     .expect("prove");
