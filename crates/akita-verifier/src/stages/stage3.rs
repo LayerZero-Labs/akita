@@ -267,15 +267,8 @@ where
 mod tests {
     use super::*;
 
-    use akita_types::{
-        derive_public_matrix_prefix, padded_setup_prefix_len, scheduled_setup_prefix,
-        setup_prefix_precommitted_params, AkitaSetupDescriptor, CommittedGroupParams,
-        CompressionChainPlan, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
-        SetupPrefixVerifierSlot,
-    };
+    use akita_types::AkitaSetupDescriptor;
     use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::Zero;
-    use std::sync::Arc;
 
     type F = Prime128OffsetA7F7;
     const RING_D: usize = 64;

@@ -317,35 +317,6 @@ where
 }
 
 #[cfg(test)]
-pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E, T>(
-    reduction: &Option<ExtensionOpeningReduction<E>>,
-    openings: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    transcript: &mut T,
-    level: u32,
-) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
-    E: FpExtEncoding<F> + ExtField<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
-        opening_batch,
-        akita_types::GrindingSite::EvaluationBatch { level },
-        transcript,
-    )?;
-    let resolved = resolve_evaluation_trace_claim(
-        reduction
-            .as_ref()
-            .map(ExtensionOpeningReductionBinding::from),
-        openings,
-        opening_batch,
-        &row_coefficients,
-    )?;
-    Ok((resolved, row_coefficients))
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use jolt_field::{Fp32, One};

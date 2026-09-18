@@ -28,11 +28,7 @@ pub use direct_range_leaf::LowBasisRangeCheckProver;
 use crate::backend::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::prove_eq_factored_sumcheck;
-use akita_transcript::labels;
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, AkitaStage1StageProof,
     DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, PhysicalResponsePlan,
 };
 use class_indexed_product::ClassIndexedProductSubcheckProver;
@@ -40,8 +36,6 @@ use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use jolt_field::{Fold, Unreduced};
-
-type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
 #[allow(dead_code)] // Consumed by the native fold driver during production cutover.
 pub(in crate::protocol) struct NativeDigitRangeProveOutput<E: Field> {
@@ -61,50 +55,6 @@ struct ProductSubcheckInput<'a, E: Field> {
     parent_weights: Vec<E>,
     equality_point: &'a [E],
     input_claim: E,
-}
-
-fn prove_class_indexed_product_subcheck<F, E, T, const LANES: usize>(
-    input: ProductSubcheckInput<'_, E>,
-    transcript: &mut T,
-    level: u32,
-    stage_index: u32,
-) -> Result<(AkitaStage1StageProof<E>, Vec<E>), AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
-        input.source,
-        input.plan,
-        input.leaf_polynomials,
-        input.stage_index,
-        input.parent_weights,
-        input.equality_point,
-        input.input_claim,
-    )?;
-    let mut round = 0u32;
-    let (sumcheck_proof, next_equality_point, _final_claim) =
-        prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut stage, transcript, |transcript| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                transcript,
-                akita_types::SumcheckProtocol::Stage1,
-                level,
-                stage_index,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidSetup("Stage 1 sumcheck round overflow".into())
-            })?;
-            Ok(challenge)
-        })?;
-    Ok((
-        AkitaStage1StageProof {
-            sumcheck_proof,
-            child_claims: stage.final_child_claims(),
-        },
-        next_equality_point,
-    ))
 }
 
 fn prove_class_indexed_product_subcheck_native<F, E, const LANES: usize>(
@@ -138,16 +88,6 @@ where
         0,
     )?;
     Ok((stage.final_child_claims(), next_equality_point))
-}
-
-struct ProductPrefix<E: Field> {
-    digit_source: CompactDigitSource,
-    plan: DigitRangePlan,
-    leaf_coeffs: Vec<Vec<E>>,
-    stage_proofs: Vec<AkitaStage1StageProof<E>>,
-    equality_point: Vec<E>,
-    claim: E,
-    weights: Vec<E>,
 }
 
 struct NativeProductPrefix<E: Field> {
@@ -232,92 +172,6 @@ where
         claim: current_claim,
         weights: current_weights,
         stage_count: plan.product_stage_arities().len(),
-    })
-}
-
-fn prove_product_prefix<F, E, T>(
-    digit_source: CompactDigitSource,
-    plan: DigitRangePlan,
-    equality_point: Vec<E>,
-    transcript: &mut T,
-    level: u32,
-) -> Result<ProductPrefix<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    let leaf_coeffs = plan.leaf_coeffs::<E>();
-    let mut stage_proofs = Vec::with_capacity(plan.product_stage_arities().len());
-    let mut current_equality_point = equality_point;
-    let mut current_claim = E::zero();
-    let mut current_weights = vec![E::one()];
-    for (stage_index, &arity) in plan.product_stage_arities().iter().enumerate() {
-        let lane_count = plan
-            .product_stage_lane_count(stage_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let _stage_span = tracing::info_span!(
-            "digit_range_product_substage",
-            basis = plan.basis(),
-            stage_index,
-            arity,
-            lane_count,
-            live_len = digit_source.live_len(),
-            domain_len = digit_source.domain_len(),
-        )
-        .entered();
-        let product_input = ProductSubcheckInput {
-            source: digit_source.clone(),
-            plan,
-            leaf_polynomials: &leaf_coeffs,
-            stage_index,
-            parent_weights: current_weights,
-            equality_point: &current_equality_point,
-            input_claim: current_claim,
-        };
-        let stage = u32::try_from(stage_index)
-            .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
-        let (stage_proof, next_equality_point) = match lane_count {
-            2 => prove_class_indexed_product_subcheck::<F, E, T, 2>(
-                product_input,
-                transcript,
-                level,
-                stage,
-            )?,
-            4 => prove_class_indexed_product_subcheck::<F, E, T, 4>(
-                product_input,
-                transcript,
-                level,
-                stage,
-            )?,
-            8 => prove_class_indexed_product_subcheck::<F, E, T, 8>(
-                product_input,
-                transcript,
-                level,
-                stage,
-            )?,
-            _ => return Err(AkitaError::InvalidProof),
-        };
-        append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-        transcript
-            .grind_query(akita_types::GrindingSite::Stage1InterstageBatch { level, stage })?;
-        let gamma = sample_ext_challenge::<F, E, T>(
-            transcript,
-            labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-        );
-        current_weights = plan.interstage_batch_weights(gamma, stage_proof.child_claims.len());
-        current_claim = plan.batch_claims(&current_weights, &stage_proof.child_claims)?;
-        current_equality_point = next_equality_point;
-        stage_proofs.push(stage_proof);
-    }
-    Ok(ProductPrefix {
-        digit_source,
-        plan,
-        leaf_coeffs,
-        stage_proofs,
-        equality_point: current_equality_point,
-        claim: current_claim,
-        weights: current_weights,
     })
 }
 
@@ -556,158 +410,6 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             range_image_evaluation,
             physical_l2: None,
         })
-    }
-
-    /// Produce the full stage-1 tree proof and return the final `stage1_point`.
-    /// An optional physical-response plan adds the scheduled norm identity to
-    /// the existing final range leaf.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any transcript or sumcheck failure from the internal root
-    /// and leaf-stage proofs.
-    pub fn prove<F, T>(
-        self,
-        transcript: &mut T,
-        physical_plan: Option<&PhysicalResponsePlan>,
-        level: u32,
-    ) -> Result<DigitRangeProveOutput<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-        E: ExtField<F>,
-        T: akita_types::ProverTranscriptGrinding<F>,
-    {
-        let Self {
-            mut digit_source,
-            equality_point,
-            plan,
-            live_block_count,
-            high_variable_count,
-            low_variable_count,
-        } = self;
-        let _prove_span = tracing::info_span!(
-            "digit_range_prove",
-            basis = plan.basis(),
-            rounds = equality_point.len(),
-        )
-        .entered();
-        if let Some(physical_plan) = physical_plan {
-            if physical_plan.domain().num_vars() != equality_point.len()
-                || physical_plan.domain().live_len() != digit_source.live_len()
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "physical response and digit-range domains disagree".into(),
-                ));
-            }
-        }
-        if physical_plan.is_none() && plan.basis() <= 8 {
-            let _leaf_span = tracing::info_span!("digit_range_direct_leaf").entered();
-            let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::new(
-                digit_source.digits(),
-                &equality_point,
-                plan,
-                live_block_count,
-                high_variable_count,
-                low_variable_count,
-            )?;
-            let mut round = 0u32;
-            let (sumcheck, stage1_point, _final_claim) =
-                prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut leaf_stage, transcript, |tr| {
-                    let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                        tr,
-                        akita_types::SumcheckProtocol::Stage1,
-                        level,
-                        0,
-                        round,
-                    )?;
-                    round = round.checked_add(1).ok_or_else(|| {
-                        AkitaError::InvalidSetup("Stage 1 sumcheck round overflow".into())
-                    })?;
-                    Ok(challenge)
-                })?;
-            let range_image_eval = leaf_stage.final_range_image_eval();
-            let proof = AkitaStage1Proof {
-                stages: vec![AkitaStage1StageProof {
-                    sumcheck_proof: sumcheck,
-                    child_claims: Vec::new(),
-                }],
-                range_image_evaluation: range_image_eval,
-                norm_proof: None,
-            };
-            return Ok((proof, stage1_point));
-        }
-
-        if physical_plan.is_some() {
-            digit_source.prepare_class_indexed_leaf();
-        }
-
-        let prefix =
-            prove_product_prefix::<F, E, T>(digit_source, plan, equality_point, transcript, level)?;
-        let batched_leaf_coeffs = prefix
-            .plan
-            .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
-        if let Some(physical_plan) = physical_plan {
-            let compact_witness = prefix.digit_source.digits();
-            let range_leaf = ClassIndexedRangeLeafProver::new(
-                prefix.digit_source,
-                &prefix.equality_point,
-                prefix.claim,
-                batched_leaf_coeffs,
-            )?;
-            let (norm_proof, stage1_point, range_image_evaluation) =
-                super::physical_l2_norm::prove_physical_l2_norm::<F, E, T>(
-                    physical_plan,
-                    &compact_witness,
-                    range_leaf,
-                    transcript,
-                    level,
-                )?;
-            return Ok((
-                AkitaStage1Proof {
-                    stages: prefix.stage_proofs,
-                    range_image_evaluation,
-                    norm_proof: Some(norm_proof),
-                },
-                stage1_point,
-            ));
-        }
-        let _leaf_span = tracing::info_span!("digit_range_polynomial_leaf").entered();
-        let mut leaf_stage = ClassIndexedRangeLeafProver::new(
-            prefix.digit_source,
-            &prefix.equality_point,
-            prefix.claim,
-            batched_leaf_coeffs,
-        )?;
-        let stage = u32::try_from(prefix.stage_proofs.len())
-            .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
-        let mut round = 0u32;
-        let (leaf_sumcheck, stage1_point, _leaf_final_claim) =
-            prove_eq_factored_sumcheck::<F, T, E, _, _>(&mut leaf_stage, transcript, |tr| {
-                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                    tr,
-                    akita_types::SumcheckProtocol::Stage1,
-                    level,
-                    stage,
-                    round,
-                )?;
-                round = round.checked_add(1).ok_or_else(|| {
-                    AkitaError::InvalidSetup("Stage 1 sumcheck round overflow".into())
-                })?;
-                Ok(challenge)
-            })?;
-        let mut stage_proofs = prefix.stage_proofs;
-        stage_proofs.push(AkitaStage1StageProof {
-            sumcheck_proof: leaf_sumcheck,
-            child_claims: Vec::new(),
-        });
-
-        let range_image_eval = leaf_stage.final_range_image_eval();
-        let proof = AkitaStage1Proof {
-            stages: stage_proofs,
-            range_image_evaluation: range_image_eval,
-            norm_proof: None,
-        };
-        Ok((proof, stage1_point))
     }
 }
 

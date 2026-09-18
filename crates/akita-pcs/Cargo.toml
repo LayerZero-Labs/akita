@@ -172,10 +172,6 @@ name = "decompose_fold"
 harness = false
 
 [[bench]]
-name = "digit_range"
-harness = false
-
-[[bench]]
 name = "fft_smooth"
 harness = false
 

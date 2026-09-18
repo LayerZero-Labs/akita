@@ -8,17 +8,11 @@
 use akita_challenges::NativeVerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::verify_eq_factored_sumcheck;
-use akita_transcript::labels;
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    append_digit_range_child_claims, draw_group_fold_challenges, AkitaStage1Proof,
-    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, GroupFoldChallenges,
-    OpeningClaimsLayout,
+    draw_group_fold_challenges, CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan,
+    GroupFoldChallenges, OpeningClaimsLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-type DigitRangeVerifyOutput<E> = Vec<E>;
 
 #[allow(dead_code)] // Consumed by the native fold verifier during production cutover.
 pub(crate) struct NativeStage1VerifyOutput<E: Field> {
@@ -225,156 +219,5 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             range_image_evaluation,
             physical_l2_virtual_evaluations: None,
         })
-    }
-
-    pub(crate) fn verify_product_prefix<F, T>(
-        &self,
-        product_stage_proofs: &[akita_types::AkitaStage1StageProof<E>],
-        transcript: &mut T,
-        level: u32,
-    ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-        T: akita_types::VerifierTranscriptGrinding<F>,
-    {
-        let product_stage_arities = self.plan.product_stage_arities();
-        if product_stage_proofs.len() != product_stage_arities.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: product_stage_arities.len(),
-                actual: product_stage_proofs.len(),
-            });
-        }
-        let rounds = self.equality_point.coordinates().len();
-        for (stage_index, stage) in product_stage_proofs.iter().enumerate() {
-            let expected = self
-                .plan
-                .stage_shape(rounds, stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0
-                || stage.child_claims.len() != expected.child_claims
-                || stage.sumcheck_proof.round_polys.iter().any(|round| {
-                    round.coeffs_except_constant_term.len() != expected.sumcheck_proof.1
-                })
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-
-        let leaf_coeffs = self.plan.leaf_coeffs::<E>();
-        let mut current_equality_point = self.equality_point.coordinates().to_vec();
-        let mut current_claim = E::zero();
-        let mut current_weights = vec![E::one()];
-        for (stage_index, (&arity, stage_proof)) in product_stage_arities
-            .iter()
-            .zip(product_stage_proofs.iter())
-            .enumerate()
-        {
-            let expected_output = current_weights
-                .iter()
-                .zip(stage_proof.child_claims.chunks_exact(arity))
-                .fold(E::zero(), |acc, (&weight, child_claims)| {
-                    let product = child_claims
-                        .iter()
-                        .copied()
-                        .fold(E::one(), |product, claim| product * claim);
-                    acc + weight * product
-                });
-            let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
-            let mut round = 0u32;
-            current_equality_point = verify_eq_factored_sumcheck::<F, T, E, _, _>(
-                &stage_proof.sumcheck_proof,
-                &current_equality_point,
-                current_claim,
-                arity,
-                transcript,
-                |tr| {
-                    let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                        tr,
-                        akita_types::SumcheckProtocol::Stage1,
-                        level,
-                        stage,
-                        round,
-                    )?;
-                    round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-                    Ok(challenge)
-                },
-                |_| Ok(expected_output),
-            )?;
-            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-            transcript
-                .grind_query(akita_types::GrindingSite::Stage1InterstageBatch { level, stage })?;
-            let gamma = sample_ext_challenge::<F, E, T>(
-                transcript,
-                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-            );
-            current_weights = self
-                .plan
-                .interstage_batch_weights(gamma, stage_proof.child_claims.len());
-            current_claim = self
-                .plan
-                .batch_claims(&current_weights, &stage_proof.child_claims)?;
-        }
-        Ok(RangeLeafVerifierInput {
-            equality_point: current_equality_point,
-            input_claim: current_claim,
-            polynomial_coefficients: self
-                .plan
-                .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?,
-        })
-    }
-
-    /// Verify the full stage-1 tree proof and return the final `stage1_point`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the staged proof shape is inconsistent with `b`, if
-    /// any internal stage sumcheck fails, or if the final oracle check fails.
-    pub fn verify<F, T>(
-        &self,
-        proof: &AkitaStage1Proof<E>,
-        transcript: &mut T,
-        level: u32,
-    ) -> Result<DigitRangeVerifyOutput<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F>,
-        T: akita_types::VerifierTranscriptGrinding<F>,
-    {
-        self.plan
-            .validate_proof_shape(proof, self.equality_point.coordinates().len())?;
-
-        let product_stage_arities = self.plan.product_stage_arities();
-        let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
-            return Err(AkitaError::InvalidProof);
-        };
-        debug_assert_eq!(product_stage_proofs.len(), product_stage_arities.len());
-        let leaf = self.verify_product_prefix::<F, T>(product_stage_proofs, transcript, level)?;
-        let stage =
-            u32::try_from(product_stage_proofs.len()).map_err(|_| AkitaError::InvalidProof)?;
-        let mut round = 0u32;
-        let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
-        let expected_output = self
-            .plan
-            .evaluate_leaf_polynomial(&leaf.polynomial_coefficients, proof.range_image_evaluation);
-        verify_eq_factored_sumcheck::<F, T, E, _, _>(
-            &leaf_stage_proof.sumcheck_proof,
-            &leaf.equality_point,
-            leaf.input_claim,
-            degree_bound,
-            transcript,
-            |tr| {
-                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                    tr,
-                    akita_types::SumcheckProtocol::Stage1,
-                    level,
-                    stage,
-                    round,
-                )?;
-                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-                Ok(challenge)
-            },
-            |_| Ok(expected_output),
-        )
     }
 }
