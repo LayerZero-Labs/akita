@@ -238,6 +238,50 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
             BasisMode::Lagrange,
         )
         .expect_err("native verification must bind the claimed opening");
+    scheme
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            b"test/different-session",
+            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("native verification must bind the session");
+    let mut truncated = proof.clone();
+    truncated.pop().expect("nonempty native proof");
+    scheme
+        .batched_verify(
+            &truncated,
+            &verifier_setup,
+            b"test/prove",
+            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("truncated native proof must reject");
+    let mut trailing = proof.clone();
+    trailing.push(0);
+    scheme
+        .batched_verify(
+            &trailing,
+            &verifier_setup,
+            b"test/prove",
+            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("trailing native proof bytes must reject");
+    let mut mutated = proof;
+    let middle = mutated.len() / 2;
+    mutated[middle] ^= 1;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheme.batched_verify(
+            &mutated,
+            &verifier_setup,
+            b"test/prove",
+            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+    }));
+    assert!(matches!(outcome, Ok(Err(_))));
 }
 
 #[test]
