@@ -506,9 +506,10 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
-    let cost = suffix.cost.checked_prepend(
+    let cost = suffix.cost.checked_prepend_native(
         edge_payload_bytes,
         edge_grinding_cost.total_nonce_bits,
+        edge_grinding_cost.native_nonce_bytes,
         edge_grinding_cost.expanded_query_count,
     )?;
     Ok(Some(PendingScheduleCandidate {

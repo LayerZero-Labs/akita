@@ -57,6 +57,7 @@ pub fn transcript_grinding_cost_for_planner_candidate(
         derive_transcript_grinding_plan(schedule, root_layout, modulus_bits, extension_degree)?;
     Ok(TranscriptGrindingCost {
         total_nonce_bits: plan.total_nonce_bits(),
+        native_nonce_bytes: plan.native_nonce_bytes(),
         expanded_query_count: plan.expanded_query_count(),
     })
 }

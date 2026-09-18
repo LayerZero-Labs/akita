@@ -562,14 +562,17 @@ pub struct GrindingPlan {
     runs: Vec<GrindingRun>,
     nominal_capacity_bits: u32,
     total_nonce_bits: usize,
+    native_nonce_bytes: usize,
     expanded_query_count: u64,
 }
 
 /// Aggregate transcript-grinding cost used while pricing planner candidates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TranscriptGrindingCost {
-    /// Total packed nonce width before byte alignment.
+    /// Semantic nonce widths used for range checks and security accounting.
     pub total_nonce_bits: usize,
+    /// Exact native proof bytes occupied by inline nonce atoms.
+    pub native_nonce_bytes: usize,
     /// Number of logical transcript queries after expanding compact runs.
     pub expanded_query_count: u64,
 }
@@ -578,6 +581,7 @@ pub(crate) struct GrindingPlanAccumulator {
     nominal_capacity_bits: u32,
     run_count: u32,
     total_nonce_bits: usize,
+    native_nonce_bytes: usize,
     expanded_query_count: u64,
 }
 
@@ -592,6 +596,7 @@ impl GrindingPlanAccumulator {
             nominal_capacity_bits,
             run_count: 0,
             total_nonce_bits: 0,
+            native_nonce_bytes: 0,
             expanded_query_count: 0,
         })
     }
@@ -618,6 +623,17 @@ impl GrindingPlanAccumulator {
             .total_nonce_bits
             .checked_add(run_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
+        if run.nonce_bits != 0 {
+            let run_bytes = 4usize.checked_mul(multiplicity).ok_or_else(|| {
+                AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+            })?;
+            self.native_nonce_bytes =
+                self.native_nonce_bytes
+                    .checked_add(run_bytes)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+                    })?;
+        }
         self.expanded_query_count = self
             .expanded_query_count
             .checked_add(run.multiplicity)
@@ -628,6 +644,7 @@ impl GrindingPlanAccumulator {
     pub(crate) const fn cost(&self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.total_nonce_bits,
+            native_nonce_bytes: self.native_nonce_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -689,6 +706,7 @@ impl GrindingPlan {
             runs,
             nominal_capacity_bits,
             total_nonce_bits: cost.total_nonce_bits,
+            native_nonce_bytes: cost.native_nonce_bytes,
             expanded_query_count: cost.expanded_query_count,
         })
     }
@@ -708,6 +726,12 @@ impl GrindingPlan {
     #[must_use]
     pub const fn total_nonce_bits(&self) -> usize {
         self.total_nonce_bits
+    }
+
+    /// Exact bytes emitted by native inline proof-of-work and fold-response nonces.
+    #[must_use]
+    pub const fn native_nonce_bytes(&self) -> usize {
+        self.native_nonce_bytes
     }
 
     #[must_use]
