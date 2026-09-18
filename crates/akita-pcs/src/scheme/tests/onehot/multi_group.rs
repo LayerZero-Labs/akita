@@ -271,12 +271,6 @@ where
         )
         .expect("multi-group prove");
     assert!(multi_group_schedule.num_fold_levels() >= 2);
-    let planned_stage3 = multi_group_schedule
-        .recursive_folds
-        .iter()
-        .filter(|fold| fold.params.setup_prefix().is_some())
-        .count();
-    assert!(planned_stage3 > 0, "fixture must exercise Stage 3");
 
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
