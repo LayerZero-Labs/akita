@@ -45,17 +45,18 @@ let commit_output = scheme.commit(
 )?;
 ```
 
-Applications may replace the default with
-`CpuBackend::with_resource_limits(max_cached_ring_switch_elements,
-commit_scratch_bytes_per_worker)`. A zero ring switch limit streams every
-operation that has a streamed path. `usize::MAX` retains every supported ring
-switch operation. The constructor rejects a zero commitment scratch budget.
-Each sparse commitment kernel rejects the operation later if its minimum tile
-does not fit. These settings change memory use and CPU work. Cached and streamed
-ring-switch routes use the same validated quotient arithmetic, including the
-same exact field fallback when one centered term is unsafe in CRT form. The
-settings do not change the schedule, transcript, setup bytes, proof bytes, or
-verifier.
+The CPU kernel sizes one-hot commitment scratch automatically from the
+commitment geometry. Scratch sizing is an internal implementation detail;
+see the [CPU resource policy](../book/src/how/optimizations.md#cpu-resource-limits).
+
+Applications may configure ring-switch cache retention with
+`CpuBackend::with_ring_switch_cache_limit(max_cached_ring_switch_elements)`.
+A zero limit streams every operation that has a streamed path. `usize::MAX`
+retains every supported ring switch operation. This setting changes memory
+use and CPU work. Cached and streamed ring-switch routes use the same
+validated quotient arithmetic, including the same exact field fallback when
+one centered term is unsafe in CRT form. The setting does not change the
+schedule, transcript, setup bytes, proof bytes, or verifier.
 
 Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
 not as a type parameter on the PCS API.

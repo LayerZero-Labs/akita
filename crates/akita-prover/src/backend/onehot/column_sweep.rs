@@ -2,6 +2,8 @@
 use super::inner_ajtai::inner_ajtai_wide_onehot;
 use super::*;
 
+const COMMIT_SCRATCH_TARGET_BYTES_PER_WORKER: usize = 8 << 20;
+
 /// Bucketed and merge are arithmetic choices inside the same block range
 /// driver. This enum is private policy state, not a source or plan type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -246,7 +248,6 @@ fn block_tile_for_scratch<F, const D: usize>(
     total_blocks: usize,
     active_a_cols: usize,
     max_entries_per_block: usize,
-    scratch_bytes_per_worker: usize,
 ) -> Result<usize, AkitaError>
 where
     F: Field + WithCommitAccumulator,
@@ -279,11 +280,8 @@ where
     let minimum = fixed
         .checked_add(per_block)
         .ok_or_else(|| AkitaError::InvalidSetup("one hot minimum scratch overflow".into()))?;
-    if minimum > scratch_bytes_per_worker {
-        return Err(AkitaError::InvalidSetup(format!(
-            "one hot commitment geometry needs at least {minimum} scratch bytes per worker but the CPU backend allows {scratch_bytes_per_worker}"
-        )));
-    }
+    // Preserve batching for small blocks while allowing any checked one-block minimum.
+    let scratch_bytes_per_worker = COMMIT_SCRATCH_TARGET_BYTES_PER_WORKER.max(minimum);
     let available = scratch_bytes_per_worker - fixed;
     let tile = available / per_block;
     Ok(tile.min(usize::from(u16::MAX) + 1).min(total_blocks.max(1)))
@@ -378,7 +376,6 @@ fn column_sweep_ajtai_onehot_multi_with_sweep<F, const D: usize, I>(
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
-    scratch_bytes_per_worker: usize,
     forced_sweep: Option<OneHotSweep>,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
@@ -426,12 +423,7 @@ where
         None
     };
     let max_entries = max_entries_per_block::<D, I>(sources, num_positions_per_block)?;
-    let block_tile = block_tile_for_scratch::<F, D>(
-        total,
-        active_a_cols,
-        max_entries,
-        scratch_bytes_per_worker,
-    )?;
+    let block_tile = block_tile_for_scratch::<F, D>(total, active_a_cols, max_entries)?;
     let sweep = forced_sweep.unwrap_or_else(|| select_sweep(total, active_a_cols, workers));
     let matrix_passes = estimated_matrix_passes(total, workers, block_tile);
     tracing::info!(
@@ -445,7 +437,6 @@ where
         active_a_cols,
         ring_dimension = D,
         estimated_matrix_passes = matrix_passes,
-        scratch_bytes_per_worker,
         "one hot commit schedule"
     );
 
@@ -525,7 +516,6 @@ pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
-    scratch_bytes_per_worker: usize,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
     F: Field + CanonicalEncoding + WithCommitAccumulator,
@@ -538,7 +528,6 @@ where
         n_a,
         active_a_cols,
         num_digits_inner,
-        scratch_bytes_per_worker,
         None,
     )
 }
@@ -550,7 +539,6 @@ pub(super) fn column_sweep_ajtai_onehot_multi_forced<F, const D: usize, I>(
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
-    scratch_bytes_per_worker: usize,
     sweep: OneHotSweep,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
@@ -564,7 +552,6 @@ where
         n_a,
         active_a_cols,
         num_digits_inner,
-        scratch_bytes_per_worker,
         Some(sweep),
     )
 }
