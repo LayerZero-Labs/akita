@@ -229,6 +229,20 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      - name: Run native Spongefish stream and mutation suites
+        run: |
+          cargo test --release -p akita-transcript \
+            --no-default-features \
+            --features logging-transcript,${{ matrix.backend }} \
+            native --lib
+          cargo test --release -p akita-pcs \
+            --no-default-features \
+            --features parallel,logging-transcript,${{ matrix.backend }} \
+            native_spongefish_roundtrip_and_statement_binding --lib
+          cargo test --release -p akita-pcs \
+            --no-default-features \
+            --features parallel,logging-transcript,${{ matrix.backend }} \
+            selective_l2_proof_rejects_transcript_mutations --lib
       # The structural challenge audit only runs under `logging-transcript`, so
       # the protocol suites must also be exercised with it enabled. Without this
       # step the audit is only ever checked against the two hardening targets at
