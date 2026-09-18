@@ -1,6 +1,10 @@
 //! Native Spongefish proof-stream driver for standard sumcheck.
 
-use crate::{CompressedUniPoly, SumcheckInstanceProver, SumcheckInstanceVerifier};
+use crate::{
+    advance_eq_factored_claim, CompressedUniPoly, EqFactoredSumcheckInstanceProver,
+    EqFactoredUniPoly, SumcheckInstanceProver, SumcheckInstanceVerifier,
+};
+use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::{checked, AkitaError};
 use akita_transcript::{
     prover_context, receive_native_extension, send_native_extension, verifier_context, NativeField,
@@ -296,6 +300,133 @@ where
     })
 }
 
+/// Prove one equality-factored sumcheck into the native argument stream.
+pub fn prove_eq_factored_sumcheck_native<F, E, C, P>(
+    prover: &mut P,
+    channel: &mut C,
+    invocation: u32,
+) -> Result<(Vec<E>, E), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: NativeSumcheckProverChannel<E>,
+    P: EqFactoredSumcheckInstanceProver<E> + ?Sized,
+{
+    let num_rounds = prover.num_rounds();
+    let degree_bound = prover.degree_bound();
+    let mut claim = prover.input_claim();
+    public_claim_prover::<F, E>(channel.state_mut(), invocation, claim)?;
+    let mut challenges = Vec::with_capacity(num_rounds);
+
+    for round in 0..num_rounds {
+        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        let poly = prover.compute_round_eq_factored(round);
+        let coefficient_count = poly.coeffs_except_constant_term.len();
+        if coefficient_count > degree_bound {
+            return Err(AkitaError::InvalidProof);
+        }
+        let coefficient_count_u32 =
+            u32::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
+        prover_context(
+            channel.state_mut(),
+            context(invocation, round_id, ROLE_ROUND_LENGTH, 1, 4, 0)?,
+        );
+        channel.state_mut().prover_message(&coefficient_count_u32);
+        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        prover_context(
+            channel.state_mut(),
+            context(
+                invocation,
+                round_id,
+                ROLE_ROUND_BODY,
+                atom_count,
+                field_bytes::<F>(atom_count)?,
+                0,
+            )?,
+        );
+        for coefficient in &poly.coeffs_except_constant_term {
+            send_native_extension::<F, E>(channel.state_mut(), *coefficient);
+        }
+        let challenge = channel.round_challenge(round_id)?;
+        claim = advance_eq_factored_claim(claim, prover.current_tau(), &poly, challenge);
+        challenges.push(challenge);
+        prover.ingest_challenge(round, challenge);
+    }
+    prover.finalize();
+    Ok((challenges, claim))
+}
+
+/// Verify one equality-factored sumcheck from the native argument stream.
+pub fn verify_eq_factored_sumcheck_native<'proof, F, E, C, O>(
+    equality_point: &[E],
+    input_claim: E,
+    degree_bound: usize,
+    channel: &mut C,
+    invocation: u32,
+    expected_output_claim: O,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    C: NativeSumcheckVerifierChannel<'proof, E>,
+    O: FnOnce(&[E]) -> Result<E, AkitaError>,
+{
+    let mut equality = GruenSplitEq::new(equality_point)?;
+    let mut claim = input_claim;
+    public_claim_verifier::<F, E>(channel.state_mut(), invocation, claim)?;
+    let mut challenges = Vec::with_capacity(equality_point.len());
+
+    for round in 0..equality_point.len() {
+        let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
+        verifier_context(
+            channel.state_mut(),
+            context(invocation, round_id, ROLE_ROUND_LENGTH, 1, 4, 0)?,
+        );
+        let coefficient_count = channel
+            .state_mut()
+            .prover_message::<u32>()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let coefficient_count =
+            usize::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
+        if coefficient_count > degree_bound {
+            return Err(AkitaError::InvalidProof);
+        }
+        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        verifier_context(
+            channel.state_mut(),
+            context(
+                invocation,
+                round_id,
+                ROLE_ROUND_BODY,
+                atom_count,
+                field_bytes::<F>(atom_count)?,
+                0,
+            )?,
+        );
+        let mut coefficients = Vec::new();
+        coefficients
+            .try_reserve_exact(coefficient_count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for _ in 0..coefficient_count {
+            coefficients.push(
+                receive_native_extension::<F, E>(channel.state_mut())
+                    .map_err(|_| AkitaError::InvalidProof)?,
+            );
+        }
+        let poly = EqFactoredUniPoly {
+            coeffs_except_constant_term: coefficients,
+        };
+        let challenge = channel.round_challenge(round_id)?;
+        claim = advance_eq_factored_claim(claim, equality.current_tau(), &poly, challenge);
+        equality.bind(challenge);
+        challenges.push(challenge);
+    }
+    if claim != expected_output_claim(&challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(challenges)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,7 +436,7 @@ mod tests {
         native_prover_field_challenge, native_verifier_field_challenge, new_native_prover,
         new_native_verifier, NATIVE_FIELD_CHALLENGE_BYTES,
     };
-    use jolt_field::{Prime128Offset275 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 
     struct DenseInstance {
         evaluations: Vec<F>,
@@ -363,6 +494,56 @@ mod tests {
 
         fn expected_output_claim(&self, challenges: &[F]) -> Result<F, AkitaError> {
             multilinear_eval(&self.evaluations, challenges)
+        }
+    }
+
+    struct OneRoundEq {
+        tau: F,
+        split: GruenSplitEq<F>,
+        coefficients: Vec<F>,
+    }
+
+    impl OneRoundEq {
+        fn new(tau: F, coefficients: Vec<F>) -> Self {
+            Self {
+                tau,
+                split: GruenSplitEq::new(&[tau]).unwrap(),
+                coefficients,
+            }
+        }
+
+        fn evaluate(&self, point: F) -> F {
+            UniPoly::from_coeffs(self.coefficients.clone()).evaluate(&point)
+        }
+
+        fn claim(&self) -> F {
+            (F::one() - self.tau) * self.evaluate(F::zero()) + self.tau * self.evaluate(F::one())
+        }
+    }
+
+    impl EqFactoredSumcheckInstanceProver<F> for OneRoundEq {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn degree_bound(&self) -> usize {
+            self.coefficients.len() - 1
+        }
+
+        fn input_claim(&self) -> F {
+            self.claim()
+        }
+
+        fn current_tau(&self) -> F {
+            self.split.current_tau()
+        }
+
+        fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<F> {
+            EqFactoredUniPoly::from_q_coeffs(self.coefficients.clone())
+        }
+
+        fn ingest_challenge(&mut self, _round: usize, challenge: F) {
+            self.split.bind(challenge);
         }
     }
 
@@ -490,5 +671,39 @@ mod tests {
             verify_sumcheck_native(&verifier_instance, &mut wrong_site, 8),
             Err(AkitaError::InvalidProof)
         );
+    }
+
+    #[test]
+    fn native_eq_factored_sumcheck_roundtrip() {
+        let tau = F::from_u64(7);
+        let coefficients = vec![F::from_u64(3), F::from_u64(5), F::from_u64(11)];
+        let mut instance = OneRoundEq::new(tau, coefficients.clone());
+        let claim = instance.claim();
+        let degree = instance.degree_bound();
+        let mut prover = TestProverChannel {
+            state: new_native_prover(b"native-eq-sumcheck", b"fixture").unwrap(),
+            invocation: 12,
+        };
+        let (prover_point, _) =
+            prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, 12)
+                .unwrap();
+        let proof = prover.state.narg_string().to_vec();
+
+        let expected = OneRoundEq::new(tau, coefficients);
+        let mut verifier = TestVerifierChannel {
+            state: new_native_verifier(b"native-eq-sumcheck", b"fixture", &proof).unwrap(),
+            invocation: 12,
+        };
+        let verifier_point = verify_eq_factored_sumcheck_native::<F, F, _, _>(
+            &[tau],
+            claim,
+            degree,
+            &mut verifier,
+            12,
+            |point| Ok(expected.evaluate(point[0])),
+        )
+        .unwrap();
+        assert_eq!(verifier_point, prover_point);
+        assert!(verifier.state.check_eof().is_ok());
     }
 }
