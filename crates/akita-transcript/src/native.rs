@@ -263,6 +263,57 @@ pub fn receive_native_field<F: CanonicalEncoding>(
         .map(NativeField::into_inner)
 }
 
+/// Emit one extension-field proof atom as ordered canonical base coordinates.
+pub fn send_native_extension<F, E>(state: &mut NativeProverState, value: E)
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    for coefficient in value.to_base_vec() {
+        send_native_field(state, coefficient);
+    }
+}
+
+/// Receive one extension-field proof atom from canonical base coordinates.
+pub fn receive_native_extension<F, E>(
+    state: &mut NativeVerifierState<'_>,
+) -> Result<E, VerificationError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(E::DEGREE)
+        .map_err(|_| VerificationError)?;
+    for _ in 0..E::DEGREE {
+        coefficients.push(receive_native_field(state)?);
+    }
+    Ok(E::from_base_slice(&coefficients))
+}
+
+/// Emit a schedule-bounded byte sequence as native one-byte proof atoms.
+pub fn send_native_bytes(state: &mut NativeProverState, bytes: &[u8]) {
+    for &byte in bytes {
+        state.prover_message(&[byte]);
+    }
+}
+
+/// Receive an exact schedule-bounded number of native one-byte proof atoms.
+pub fn receive_native_bytes(
+    state: &mut NativeVerifierState<'_>,
+    len: usize,
+) -> Result<Vec<u8>, VerificationError> {
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(len)
+        .map_err(|_| VerificationError)?;
+    for _ in 0..len {
+        bytes.push(state.prover_message::<[u8; 1]>()?[0]);
+    }
+    Ok(bytes)
+}
+
 /// Draw one base-field challenge from 512 random-oracle bits.
 #[must_use]
 pub fn native_prover_field_challenge<F: CanonicalEncoding>(state: &mut NativeProverState) -> F {

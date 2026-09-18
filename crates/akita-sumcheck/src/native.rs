@@ -3,7 +3,7 @@
 use crate::{CompressedUniPoly, SumcheckInstanceProver, SumcheckInstanceVerifier};
 use akita_error::{checked, AkitaError};
 use akita_transcript::{
-    prover_context, receive_native_field, send_native_field, verifier_context, NativeField,
+    prover_context, receive_native_extension, send_native_extension, verifier_context, NativeField,
     NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
     ProtocolSiteId, SITE_FAMILY_SUMCHECK,
 };
@@ -181,9 +181,7 @@ where
             )?,
         );
         for coefficient in &compressed.coeffs_except_linear_term {
-            for base in coefficient.to_base_vec() {
-                send_native_field(channel.state_mut(), base);
-            }
+            send_native_extension::<F, E>(channel.state_mut(), *coefficient);
         }
         let challenge = channel.round_challenge(round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
@@ -247,17 +245,10 @@ where
             .try_reserve_exact(coefficient_count)
             .map_err(|_| AkitaError::InvalidProof)?;
         for _ in 0..coefficient_count {
-            let mut base_coefficients = Vec::new();
-            base_coefficients
-                .try_reserve_exact(E::DEGREE)
-                .map_err(|_| AkitaError::InvalidProof)?;
-            for _ in 0..E::DEGREE {
-                base_coefficients.push(
-                    receive_native_field::<F>(channel.state_mut())
-                        .map_err(|_| AkitaError::InvalidProof)?,
-                );
-            }
-            coefficients.push(E::from_base_slice(&base_coefficients));
+            coefficients.push(
+                receive_native_extension::<F, E>(channel.state_mut())
+                    .map_err(|_| AkitaError::InvalidProof)?,
+            );
         }
         let compressed = CompressedUniPoly {
             coeffs_except_linear_term: coefficients,
