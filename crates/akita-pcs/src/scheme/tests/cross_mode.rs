@@ -122,14 +122,13 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                         .expect("cross-mode prover group");
                 let claims =
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_prove_structured_legacy::<_, _, _, _>(
+                    .batched_prove::<_, _, _>(
                         &setup,
                         selected_prover_data(scheme, claims, vec![hint.clone()], vec![&poly_refs])
                             .expect("cross-mode prover data"),
                         &stack,
-                        &mut transcript,
+                        LABEL,
                         BasisMode::Lagrange,
                     )
                     .expect("cross-mode proof")
@@ -151,12 +150,11 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     "reduced",
                 ),
             ] {
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_verify_structured_legacy(
+                    .batched_verify(
                         proof,
                         &verifier_setup,
-                        &mut transcript,
+                        LABEL,
                         statement(selection, &point, opening, &commitment),
                         BasisMode::Lagrange,
                     )
@@ -178,11 +176,10 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    let mut transcript = AkitaTranscript::<F>::new(LABEL);
-                    scheme.batched_verify_structured_legacy(
+                    scheme.batched_verify(
                         proof,
                         &verifier_setup,
-                        &mut transcript,
+                        LABEL,
                         statement(wrong_selection, &point, opening, &commitment),
                         BasisMode::Lagrange,
                     )
