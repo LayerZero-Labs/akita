@@ -199,9 +199,9 @@ where
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
+    let session = b"setup-tests/dense";
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -211,18 +211,15 @@ where
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("prove");
-    assert_folded_proof("single dense setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -483,9 +480,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
+    let session = b"setup-tests/batched-dense";
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -495,18 +492,15 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("batched prove");
-    assert_folded_proof("batched dense setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -597,9 +591,9 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
+    let session = b"setup-tests/batched-onehot";
     let proof = scheme
-        .batched_prove_structured_legacy::<_, _, _, _>(
+        .batched_prove::<_, _, _>(
             &setup,
             prove_input::<Cfg, _>(
                 &pt[..],
@@ -609,18 +603,15 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-    assert_folded_proof("batched onehot setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     scheme
-        .batched_verify_structured_legacy(
+        .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
