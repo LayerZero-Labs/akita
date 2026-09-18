@@ -375,7 +375,268 @@ pub(super) fn window_sparse_challenges(
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
+trait RingRelationProverStream<F, E, OB>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: akita_types::FpExtEncoding<F>
+        + jolt_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    OB: DigitRowsComputeBackend<F>,
+{
+    fn opening_payload(
+        &mut self,
+        level: u32,
+        ring_dimension: usize,
+        payload: &RingVec<F>,
+    ) -> Result<(), AkitaError>;
+
+    fn row_coefficients(
+        &mut self,
+        layout: &akita_types::OpeningClaimsLayout,
+        level: u32,
+    ) -> Result<Vec<E>, AkitaError>;
+
+    fn fold_responses<G>(
+        &mut self,
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        level: u32,
+        lp: &CommittedGroupParams,
+        opening_batch: &akita_types::OpeningClaimsLayout,
+        groups: &[fold_grind::FoldGrindGroup<'_, G>],
+    ) -> Result<Vec<fold_grind::FoldProbeOutput<F>>, AkitaError>
+    where
+        G: crate::protocol::core::RootProverGroupOpening<F, E, OB>;
+}
+
+struct LegacyRingRelationStream<'a, T> {
+    transcript: &'a mut T,
+}
+
+impl<F, E, OB, T> RingRelationProverStream<F, E, OB> for LegacyRingRelationStream<'_, T>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: akita_types::FpExtEncoding<F>
+        + jolt_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    OB: DigitRowsComputeBackend<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
+{
+    fn opening_payload(
+        &mut self,
+        _level: u32,
+        ring_dimension: usize,
+        payload: &RingVec<F>,
+    ) -> Result<(), AkitaError> {
+        payload.append_flat_to_transcript(ABSORB_OPENING_PAYLOAD, ring_dimension, self.transcript)
+    }
+
+    fn row_coefficients(
+        &mut self,
+        layout: &akita_types::OpeningClaimsLayout,
+        level: u32,
+    ) -> Result<Vec<E>, AkitaError> {
+        akita_types::sample_row_coefficients::<F, E, _>(
+            layout,
+            akita_types::GrindingSite::EvaluationBatch { level },
+            self.transcript,
+        )
+    }
+
+    fn fold_responses<G>(
+        &mut self,
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        level: u32,
+        lp: &CommittedGroupParams,
+        opening_batch: &akita_types::OpeningClaimsLayout,
+        groups: &[fold_grind::FoldGrindGroup<'_, G>],
+    ) -> Result<Vec<fold_grind::FoldProbeOutput<F>>, AkitaError>
+    where
+        G: crate::protocol::core::RootProverGroupOpening<F, E, OB>,
+    {
+        fold_grind::sample_multi_group_fold_decompose_witnesses::<F, E, _, OB, T>(
+            opening_ctx,
+            self.transcript,
+            level,
+            lp,
+            opening_batch,
+            groups,
+            None,
+        )
+    }
+}
+
+struct NativeRingRelationStream<'a, 'plan> {
+    grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
+}
+
+impl<F, E, OB> RingRelationProverStream<F, E, OB> for NativeRingRelationStream<'_, '_>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
+    E: akita_types::FpExtEncoding<F>
+        + jolt_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    OB: DigitRowsComputeBackend<F>,
+{
+    fn opening_payload(
+        &mut self,
+        level: u32,
+        ring_dimension: usize,
+        payload: &RingVec<F>,
+    ) -> Result<(), AkitaError> {
+        if !payload.can_decode_vec(ring_dimension) {
+            return Err(AkitaError::InvalidProof);
+        }
+        akita_transcript::send_native_field_group(
+            self.grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+                level,
+                detail: u32::try_from(ring_dimension)
+                    .map_err(|_| AkitaError::InvalidSetup("ring dimension exceeds u32".into()))?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            payload.coeffs(),
+        )
+        .map_err(|_| AkitaError::InvalidProof)
+    }
+
+    fn row_coefficients(
+        &mut self,
+        layout: &akita_types::OpeningClaimsLayout,
+        level: u32,
+    ) -> Result<Vec<E>, AkitaError> {
+        akita_types::sample_row_coefficients_native::<F, E>(
+            layout,
+            akita_types::GrindingSite::EvaluationBatch { level },
+            self.grinding,
+        )
+    }
+
+    fn fold_responses<G>(
+        &mut self,
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        level: u32,
+        lp: &CommittedGroupParams,
+        opening_batch: &akita_types::OpeningClaimsLayout,
+        groups: &[fold_grind::FoldGrindGroup<'_, G>],
+    ) -> Result<Vec<fold_grind::FoldProbeOutput<F>>, AkitaError>
+    where
+        G: crate::protocol::core::RootProverGroupOpening<F, E, OB>,
+    {
+        fold_grind::sample_multi_group_fold_decompose_witnesses_native::<F, E, _, OB>(
+            opening_ctx,
+            self.grinding,
+            level,
+            lp,
+            opening_batch,
+            groups,
+            None,
+        )
+    }
+}
+
 impl RingRelationProver {
+    #[allow(clippy::too_many_arguments)]
+    #[allow(private_bounds)]
+    pub(in crate::protocol) fn prepare<'a, F, PointF, T, P, S, OB, RB>(
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        ring_switch_ctx: &OperationCtx<'_, F, RB>,
+        prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
+        commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
+        block_claims: ProverOpeningData<'a, PointF, P, F, S>,
+        lp: CommittedGroupParams,
+        transcript: &mut T,
+        level: u32,
+        reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
+        scalar_openings: &[PointF],
+        trace_opening_batch: &akita_types::OpeningClaimsLayout,
+    ) -> Result<PreparedRingRelationOutput<F, PointF>, AkitaError>
+    where
+        F: Field
+            + CanonicalEncoding
+            + akita_serialization::AkitaSerialize
+            + Ring
+            + Unreduced
+            + 'static,
+        <F as Unreduced>::Wide: From<F>,
+        PointF: Clone
+            + akita_types::FpExtEncoding<F>
+            + jolt_field::ExtField<F>
+            + akita_serialization::AkitaSerialize,
+        T: akita_types::ProverTranscriptGrinding<F>,
+        P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
+        S: InnerRelationState<F> + OuterCompressionState<F>,
+        OB: DigitRowsComputeBackend<F>,
+        RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    {
+        let mut stream = LegacyRingRelationStream { transcript };
+        Self::prepare_with_stream(
+            opening_ctx,
+            ring_switch_ctx,
+            prepared_group_openings,
+            commitment_material,
+            block_claims,
+            lp,
+            &mut stream,
+            level,
+            reduction,
+            scalar_openings,
+            trace_opening_batch,
+        )
+    }
+
+    #[allow(dead_code)] // Called by the native outer fold driver during cutover.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(private_bounds)]
+    pub(in crate::protocol) fn prepare_native<'a, F, PointF, P, S, OB, RB>(
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        ring_switch_ctx: &OperationCtx<'_, F, RB>,
+        prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
+        commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
+        block_claims: ProverOpeningData<'a, PointF, P, F, S>,
+        lp: CommittedGroupParams,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
+        level: u32,
+        reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
+        scalar_openings: &[PointF],
+        trace_opening_batch: &akita_types::OpeningClaimsLayout,
+    ) -> Result<PreparedRingRelationOutput<F, PointF>, AkitaError>
+    where
+        F: Field
+            + CanonicalEncoding
+            + akita_serialization::AkitaSerialize
+            + Ring
+            + Unreduced
+            + 'static,
+        <F as Unreduced>::Wide: From<F>,
+        PointF: Clone
+            + akita_types::FpExtEncoding<F>
+            + jolt_field::ExtField<F>
+            + akita_serialization::AkitaSerialize,
+        P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
+        S: InnerRelationState<F> + OuterCompressionState<F>,
+        OB: DigitRowsComputeBackend<F>,
+        RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+    {
+        let mut stream = NativeRingRelationStream { grinding };
+        Self::prepare_with_stream(
+            opening_ctx,
+            ring_switch_ctx,
+            prepared_group_openings,
+            commitment_material,
+            block_claims,
+            lp,
+            &mut stream,
+            level,
+            reduction,
+            scalar_openings,
+            trace_opening_batch,
+        )
+    }
+
     /// Prepare the relation for one or more group-local opening points and
     /// polynomial slots, preserving payload-before-claim transcript order.
     ///
@@ -399,14 +660,14 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(in crate::protocol) fn prepare<'a, F, PointF, T, P, S, OB, RB>(
+    fn prepare_with_stream<'a, F, PointF, Stream, P, S, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
         commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
         block_claims: ProverOpeningData<'a, PointF, P, F, S>,
         lp: CommittedGroupParams,
-        transcript: &mut T,
+        stream: &mut Stream,
         level: u32,
         reduction: &Option<crate::protocol::core::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -422,7 +683,7 @@ impl RingRelationProver {
             + 'static,
         <F as Unreduced>::Wide: From<F>,
         PointF: Clone,
-        T: akita_types::ProverTranscriptGrinding<F>,
+        Stream: RingRelationProverStream<F, PointF, OB>,
         PointF: akita_types::FpExtEncoding<F>
             + jolt_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
@@ -764,15 +1025,11 @@ impl RingRelationProver {
                 .last()
                 .ok_or(AkitaError::InvalidProof)?
                 .ring_dimension();
-            RingVec::from_coeffs_with_ring_dim(
+            let opening_payload = RingVec::from_coeffs_with_ring_dim(
                 opening_source.terminal.coefficients().to_vec(),
                 opening_terminal_ring_dim,
-            )?
-            .append_flat_to_transcript(
-                ABSORB_OPENING_PAYLOAD,
-                opening_terminal_ring_dim,
-                transcript,
             )?;
+            stream.opening_payload(level, opening_terminal_ring_dim, &opening_payload)?;
             tracing::info!(
                 sources = compression_report.sources,
                 maps = compression_report.maps,
@@ -785,7 +1042,7 @@ impl RingRelationProver {
             );
             Some(compression)
         } else {
-            v.append_flat_to_transcript(ABSORB_OPENING_PAYLOAD, dims.d_d(), transcript)?;
+            stream.opening_payload(level, dims.d_d(), &v)?;
             None
         };
         drop(opening_rows_span);
@@ -794,17 +1051,17 @@ impl RingRelationProver {
         // opening digit has been bound through the complete D/H payload above.
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
-        let (trace_claim, row_coefficients) =
-            crate::protocol::core::prepare_evaluation_trace_claim::<F, PointF, T>(
-                reduction,
-                scalar_openings,
-                trace_opening_batch,
-                transcript,
-                level,
-            )
+        let row_coefficients = stream
+            .row_coefficients(trace_opening_batch, level)
             .map_err(|err| {
-                AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
+                AkitaError::InvalidInput(format!("prepare row coefficients failed: {err:?}"))
             })?;
+        let trace_claim = crate::protocol::core::resolve_evaluation_trace_claim(
+            reduction.as_ref(),
+            scalar_openings,
+            trace_opening_batch,
+            &row_coefficients,
+        )?;
         let row_coefficient_rings = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -856,16 +1113,8 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let grind_outputs =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
-                opening_ctx,
-                transcript,
-                level,
-                &lp,
-                &opening_batch,
-                &grind_groups,
-                None,
-            )
+        let grind_outputs = stream
+            .fold_responses(opening_ctx, level, &lp, &opening_batch, &grind_groups)
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
         drop(_grind_span);
         if grind_outputs.len() != num_groups || inner_relation_material.len() != num_groups {

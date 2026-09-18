@@ -39,6 +39,9 @@ pub const SITE_FAMILY_STAGE3: u32 = 6;
 /// Stable family identifier for indexed sparse fold-challenge roots.
 pub const SITE_FAMILY_FOLD_CHALLENGE: u32 = 7;
 
+/// Stable family identifier for ring-relation opening payloads.
+pub const SITE_FAMILY_OPENING_PAYLOAD: u32 = 8;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -623,6 +626,105 @@ where
         u64::try_from(encoded_bytes).map_err(|_| NativeContextError)?,
         0,
     ))
+}
+
+fn field_group_record<F>(
+    site: ProtocolSiteId,
+    kind: ProtocolMessageKind,
+    value_count: usize,
+) -> Result<ProtocolContextRecord, NativeContextError>
+where
+    F: CanonicalEncoding,
+{
+    let encoded_bytes = value_count
+        .checked_mul(F::NUM_BYTES)
+        .ok_or(NativeContextError)?;
+    Ok(ProtocolContextRecord::new(
+        site.to_bytes(),
+        kind as u32,
+        u64::try_from(value_count).map_err(|_| NativeContextError)?,
+        u64::try_from(encoded_bytes).map_err(|_| NativeContextError)?,
+        0,
+    ))
+}
+
+/// Absorb a fixed-count group of public base-field values.
+pub fn public_native_fields_prover<F>(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    values: &[F],
+) -> Result<(), NativeContextError>
+where
+    F: CanonicalEncoding,
+{
+    prover_context(
+        state,
+        field_group_record::<F>(site, ProtocolMessageKind::PublicValue, values.len())?,
+    );
+    for &value in values {
+        state.public_message(&NativeField::new(value));
+    }
+    Ok(())
+}
+
+/// Absorb a fixed-count group of public base-field values.
+pub fn public_native_fields_verifier<F>(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    values: &[F],
+) -> Result<(), NativeContextError>
+where
+    F: CanonicalEncoding,
+{
+    verifier_context(
+        state,
+        field_group_record::<F>(site, ProtocolMessageKind::PublicValue, values.len())?,
+    );
+    for &value in values {
+        state.public_message(&NativeField::new(value));
+    }
+    Ok(())
+}
+
+/// Emit a fixed-count group of canonical base-field proof atoms.
+pub fn send_native_field_group<F>(
+    state: &mut NativeProverState,
+    site: ProtocolSiteId,
+    values: &[F],
+) -> Result<(), NativeContextError>
+where
+    F: CanonicalEncoding,
+{
+    prover_context(
+        state,
+        field_group_record::<F>(site, ProtocolMessageKind::ProofAtoms, values.len())?,
+    );
+    for &value in values {
+        send_native_field(state, value);
+    }
+    Ok(())
+}
+
+/// Receive a schedule-fixed group of canonical base-field proof atoms.
+pub fn receive_native_field_group<F>(
+    state: &mut NativeVerifierState<'_>,
+    site: ProtocolSiteId,
+    value_count: usize,
+) -> Result<Vec<F>, VerificationError>
+where
+    F: CanonicalEncoding,
+{
+    let record = field_group_record::<F>(site, ProtocolMessageKind::ProofAtoms, value_count)
+        .map_err(|_| VerificationError)?;
+    verifier_context(state, record);
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(value_count)
+        .map_err(|_| VerificationError)?;
+    for _ in 0..value_count {
+        values.push(receive_native_field(state)?);
+    }
+    Ok(values)
 }
 
 /// Absorb a fixed-count group of public extension-field values.

@@ -42,8 +42,9 @@ mod witness_emission;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    sample_row_coefficients, sample_row_coefficients_native, verify_row_coefficients_native,
+    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PolynomialGroupLayout,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,

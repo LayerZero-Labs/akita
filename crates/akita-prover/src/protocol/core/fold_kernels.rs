@@ -20,7 +20,7 @@ pub(in crate::protocol) struct PreparedEvaluationTraceClaim<E: Field> {
     pub(in crate::protocol) claim_coefficients: Vec<E>,
 }
 
-fn resolve_evaluation_trace_claim<E: Field>(
+pub(in crate::protocol) fn resolve_evaluation_trace_claim<E: Field>(
     reduction: Option<&ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -324,6 +324,7 @@ where
         .collect()
 }
 
+#[cfg(test)]
 pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E, T>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
@@ -336,12 +337,6 @@ where
     E: FpExtEncoding<F> + ExtField<F>,
     T: akita_types::ProverTranscriptGrinding<F>,
 {
-    if openings.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_total_polynomials(),
-            actual: openings.len(),
-        });
-    }
     let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
