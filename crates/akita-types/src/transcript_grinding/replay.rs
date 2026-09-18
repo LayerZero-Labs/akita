@@ -69,20 +69,20 @@ impl ChallengeAudit {
 }
 
 #[derive(Clone, Copy)]
-struct GrindingPlanEntry {
-    site: GrindingSite,
-    grind_bits: u8,
-    nonce_bits: u8,
+pub(super) struct GrindingPlanEntry {
+    pub(super) site: GrindingSite,
+    pub(super) grind_bits: u8,
+    pub(super) nonce_bits: u8,
 }
 
-struct GrindingPlanCursor<'a> {
+pub(super) struct GrindingPlanCursor<'a> {
     plan: &'a GrindingPlan,
     run_index: usize,
     run_offset: u64,
 }
 
 impl<'a> GrindingPlanCursor<'a> {
-    const fn new(plan: &'a GrindingPlan) -> Self {
+    pub(super) const fn new(plan: &'a GrindingPlan) -> Self {
         Self {
             plan,
             run_index: 0,
@@ -90,7 +90,7 @@ impl<'a> GrindingPlanCursor<'a> {
         }
     }
 
-    fn next(&mut self) -> Option<GrindingPlanEntry> {
+    pub(super) fn next(&mut self) -> Option<GrindingPlanEntry> {
         let run = *self.plan.runs.get(self.run_index)?;
         let entry = GrindingPlanEntry {
             site: run.site,
@@ -105,7 +105,11 @@ impl<'a> GrindingPlanCursor<'a> {
         Some(entry)
     }
 
-    fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
+    pub(super) fn consume_run(
+        &mut self,
+        site: GrindingSite,
+        multiplicity: usize,
+    ) -> Result<(), AkitaError> {
         let run = self
             .plan
             .runs
@@ -126,7 +130,7 @@ impl<'a> GrindingPlanCursor<'a> {
         Ok(())
     }
 
-    fn is_finished(&self) -> bool {
+    pub(super) fn is_finished(&self) -> bool {
         self.run_index == self.plan.runs.len() && self.run_offset == 0
     }
 }
@@ -799,7 +803,7 @@ fn nonce_byte_len(bit_len: usize) -> Result<usize, SerializationError> {
         .ok_or_else(|| SerializationError::InvalidData("invalid nonce stream byte width".into()))
 }
 
-fn value_fits(value: u32, width: u8) -> bool {
+pub(super) fn value_fits(value: u32, width: u8) -> bool {
     width == u32::BITS as u8 || value < (1u32 << width)
 }
 

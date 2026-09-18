@@ -61,6 +61,8 @@ pub struct ProtocolSiteId {
     pub group: u32,
     /// Base-field limb within an extension challenge.
     pub limb: u32,
+    /// Family-specific public discriminator, such as grinding widths.
+    pub detail: u32,
 }
 
 impl ProtocolSiteId {
@@ -75,6 +77,7 @@ impl ProtocolSiteId {
         let round = self.round.to_le_bytes();
         let group = self.group.to_le_bytes();
         let limb = self.limb.to_le_bytes();
+        let detail = self.detail.to_le_bytes();
         encoded[0] = family[0];
         encoded[1] = family[1];
         encoded[2] = family[2];
@@ -103,6 +106,10 @@ impl ProtocolSiteId {
         encoded[25] = limb[1];
         encoded[26] = limb[2];
         encoded[27] = limb[3];
+        encoded[28] = detail[0];
+        encoded[29] = detail[1];
+        encoded[30] = detail[2];
+        encoded[31] = detail[3];
         encoded
     }
 }

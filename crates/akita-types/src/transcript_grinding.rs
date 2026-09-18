@@ -140,6 +140,86 @@ pub enum GrindingSite {
 }
 
 impl GrindingSite {
+    fn native_site_id(self, detail: u32) -> akita_transcript::ProtocolSiteId {
+        let mut site = akita_transcript::ProtocolSiteId {
+            detail,
+            ..akita_transcript::ProtocolSiteId::default()
+        };
+        match self {
+            Self::EvaluationBatch { level } => {
+                site.family = 100;
+                site.level = level;
+            }
+            Self::ExtensionOpeningPoint { level } => {
+                site.family = 101;
+                site.level = level;
+            }
+            Self::ExtensionOpeningClaimBatch { level } => {
+                site.family = 102;
+                site.level = level;
+            }
+            Self::SumcheckRound {
+                protocol,
+                level,
+                stage,
+                round,
+            } => {
+                site.family = 103;
+                site.invocation = protocol.tag();
+                site.level = level;
+                site.stage = stage;
+                site.round = round;
+            }
+            Self::FoldResponse { level } => {
+                site.family = 104;
+                site.level = level;
+            }
+            Self::FoldChallengeGroup { level, group } => {
+                site.family = 105;
+                site.level = level;
+                site.group = group;
+            }
+            Self::RingSwitchAlpha { level } => {
+                site.family = 106;
+                site.level = level;
+            }
+            Self::Tau0Point { level } => {
+                site.family = 107;
+                site.level = level;
+            }
+            Self::Tau1Point { level } => {
+                site.family = 108;
+                site.level = level;
+            }
+            Self::Stage1InterstageBatch { level, stage } => {
+                site.family = 109;
+                site.level = level;
+                site.stage = stage;
+            }
+            Self::L2SubclaimBatch { level } => {
+                site.family = 110;
+                site.level = level;
+            }
+            Self::L2NormMerge { level } => {
+                site.family = 111;
+                site.level = level;
+            }
+            Self::L2VirtualBatch { level } => {
+                site.family = 112;
+                site.level = level;
+            }
+            Self::CompressionBinary { level } => {
+                site.family = 113;
+                site.level = level;
+            }
+            Self::Stage2Batch { level } => {
+                site.family = 114;
+                site.level = level;
+            }
+        }
+        site
+    }
+
     /// Security role determined by this logical site.
     #[must_use]
     pub const fn kind(self) -> GrindingQueryKind {
@@ -553,8 +633,11 @@ impl GrindingPlanAccumulator {
     }
 }
 
+#[path = "transcript_grinding/native_replay.rs"]
+mod native_replay;
 #[path = "transcript_grinding/replay.rs"]
 mod replay;
+pub use native_replay::{NativeProverGrinding, NativeVerifierGrinding};
 pub use replay::{
     ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptGrinding, TranscriptNonceReader,
     TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,
