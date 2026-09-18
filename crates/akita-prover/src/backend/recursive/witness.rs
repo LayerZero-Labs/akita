@@ -443,12 +443,12 @@ where
 use crate::backend::coefficient_packing::{
     coefficient_packing_partials_from_position_source, FusedPackingWeights,
 };
+use crate::compute::aggregate_decompose_fold_witnesses;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootPolyMeta,
-    RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use jolt_field::MulBaseUnreduced;
 
@@ -622,11 +622,45 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: SuffixWitnessBatchView<'_, F, D>,
-        _plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
+        prepared: Option<&Self::PreparedSetup>,
+        source: SuffixWitnessBatchView<'_, F, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges_per_poly,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+            ..
+        } = plan;
+        plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
+        plan.map_challenge_windows(|window| {
+            aggregate_decompose_fold_witnesses::<F, D>(
+                source
+                    .polys
+                    .iter()
+                    .zip(window.chunks_exact(challenges_per_poly))
+                    .map(|(poly, poly_challenges)| {
+                        <Self as OpeningFoldKernel<
+                                SuffixWitnessView<'_, F, D>,
+                                F,
+                                D,
+                            >>::decompose_fold(
+                                self,
+                                prepared,
+                                poly.opening_view()?,
+                                DecomposeFoldPlan {
+                                    challenges: poly_challenges,
+                                    num_positions_per_block,
+                                    num_digits,
+                                    log_basis,
+                                },
+                            )
+                    }),
+            )
+        })
     }
 }
 
@@ -790,6 +824,46 @@ mod tests {
         assert_eq!(view.live_ring_elems, 70);
         assert!(view.padded_ring_elems >= view.live_ring_elems);
         assert_eq!(view.num_live_blocks(10).expect("live blocks"), 7);
+    }
+
+    #[test]
+    fn suffix_batch_fold_rejects_mixed_extents_and_count_mismatch() {
+        const D: usize = 64;
+        let witnesses = [
+            RecursiveWitnessFlat::from_i8_digits(vec![1; D]),
+            RecursiveWitnessFlat::from_i8_digits(vec![1; 2 * D]),
+        ];
+        let challenges = vec![
+            SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            };
+            2
+        ];
+        let run = |refs: &[&RecursiveWitnessFlat], challenges_per_poly| {
+            OpeningBatchKernel::decompose_fold_batch(
+                &CpuBackend::DEFAULT,
+                None,
+                <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+                DecomposeFoldBatchPlan::Sparse {
+                    challenges: &challenges,
+                    challenges_per_poly,
+                    num_chunks: 1,
+                    num_positions_per_block: 1,
+                    num_digits: 1,
+                    log_basis: 1,
+                },
+            )
+        };
+
+        assert!(matches!(
+            run(&[&witnesses[0], &witnesses[1]], 1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            run(&[&witnesses[0], &witnesses[0]], 2),
+            Err(AkitaError::InvalidSize { .. })
+        ));
     }
 
     #[test]

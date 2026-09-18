@@ -1,7 +1,11 @@
 use super::poly::DensePoly;
 use crate::commitment::CommitmentSource;
-use crate::compute::RootPolyMeta;
+use crate::compute::{
+    aggregate_decompose_fold_witnesses, CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel,
+    RootOpeningSource, RootPolyMeta,
+};
 use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::{CanonicalEncoding, Ring, Zero};
@@ -138,4 +142,80 @@ fn dense_field_constructor_rejects_unrepresentable_arities() {
 fn dense_field_constructor_rejects_arity_that_truncates_to_a_valid_shift() {
     let result = DensePoly::<F>::from_field_evals((1usize << 32) + 14, vec![F::zero(); 1 << 14]);
     assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+}
+
+#[test]
+fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
+    const D: usize = 64;
+    let polys = [
+        DensePoly::from_field_evals(6, vec![F::from_u64(1); 1 << 6]).unwrap(),
+        DensePoly::from_field_evals(7, vec![F::from_u64(1); 1 << 7]).unwrap(),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let run = |refs: &[&DensePoly<F>], challenges_per_poly| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                challenges_per_poly,
+                num_chunks: 1,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        run(&[&polys[0], &polys[1]], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        run(&[&polys[0], &polys[0]], 2),
+        Err(AkitaError::InvalidSize { .. })
+    ));
+}
+
+#[test]
+fn batch_fold_returns_one_witness_per_chunk() {
+    const D: usize = 8;
+    let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let run = |num_chunks| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch([&poly].as_slice()).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                challenges_per_poly: 2,
+                num_chunks,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    let chunks = run(2).unwrap();
+    let global = run(1).unwrap().pop().unwrap();
+    let recombined =
+        aggregate_decompose_fold_witnesses::<F, D>(chunks.iter().cloned().map(Ok)).unwrap();
+
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(recombined, global);
 }

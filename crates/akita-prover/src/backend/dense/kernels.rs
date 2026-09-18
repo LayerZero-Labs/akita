@@ -5,9 +5,9 @@ use crate::backend::coefficient_packing::{
     coefficient_packing_partials_from_position_source, FusedPackingWeights,
 };
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    aggregate_decompose_fold_witnesses, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyMeta,
-    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    RootPolyShape, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan,
 };
 use crate::DecomposeFoldWitness;
@@ -78,10 +78,35 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
-        _source: DenseBatchView<'_, F, D>,
-        _plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
+        source: DenseBatchView<'_, F, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges_per_poly,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+            ..
+        } = plan;
+        plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
+        plan.map_challenge_windows(|window| {
+            aggregate_decompose_fold_witnesses::<F, D>(
+                source
+                    .polys
+                    .iter()
+                    .zip(window.chunks_exact(challenges_per_poly))
+                    .map(|(poly, poly_challenges)| {
+                        Ok(poly.decompose_fold::<D>(
+                            poly_challenges,
+                            num_positions_per_block,
+                            num_digits,
+                            log_basis,
+                        ))
+                    }),
+            )
+        })
     }
 }
 

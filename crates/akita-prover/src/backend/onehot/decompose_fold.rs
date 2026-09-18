@@ -210,33 +210,34 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
+        challenges_per_poly: usize,
         num_positions_per_block: usize,
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F>>
     where
         F: Field + CanonicalEncoding,
     {
-        let mut challenge_start = 0usize;
+        if challenges_per_poly == 0 {
+            return None;
+        }
+        let challenge_chunks = challenges.chunks_exact(challenges_per_poly);
+        if !challenge_chunks.remainder().is_empty() || challenge_chunks.len() != polys.len() {
+            return None;
+        }
+        let mut challenge_start = 0;
         let mut sources = Vec::with_capacity(polys.len());
         for &poly in polys {
-            if challenge_start == challenges.len() {
-                break;
-            }
             let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
-            let active_blocks = num_blocks.min(challenges.len() - challenge_start);
-            if active_blocks == 0 {
-                continue;
+            if num_blocks != challenges_per_poly {
+                return None;
             }
             sources.push(DecomposeSource {
                 poly,
                 challenge_start,
-                active_blocks,
+                active_blocks: challenges_per_poly,
                 ring_elems,
             });
-            challenge_start += active_blocks;
-        }
-        if challenge_start == 0 {
-            return None;
+            challenge_start += challenges_per_poly;
         }
         let compressed = accumulate_indices::<F, I, D>(
             &sources,

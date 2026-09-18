@@ -1,28 +1,26 @@
 //! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
+#[cfg(test)]
+use crate::compute::DecomposeFoldBatchPlan;
 use crate::compute::{
-    OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
-    RuntimeOpeningSource,
+    aggregate_decompose_fold_witnesses, OpeningBatchKernel, RootOpeningSource,
+    RuntimeOpeningProveBackendFor, RuntimeOpeningSource,
 };
 use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_error::AkitaError;
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::ProverTranscriptGrinding;
 use akita_types::{
-    draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
-    golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams, TerminalResponseShape,
-    FOLD_RESPONSE_ATTEMPTS,
+    draw_group_fold_challenges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
+    golomb_rice_zigzag_width, CommittedGroupParams, InnerCommitSecurityRoute, OpeningClaimsLayout,
+    TerminalFoldParams, TerminalResponseShape, FOLD_RESPONSE_ATTEMPTS,
 };
 #[cfg(test)]
 use akita_types::{OpeningFamily, OpeningMethod};
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
-use super::ring_relation::{
-    aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
-    window_sparse_challenges,
-};
+use super::ring_relation::build_point_decompose_fold_witnesses;
 use super::ring_relation_witness::{CenteredFoldChunk, FoldChunkCoefficients};
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
@@ -199,16 +197,20 @@ where
                 F,
                 params.d_a(),
                 |D| {
-                    build_point_decompose_fold_witness::<F, P, B, D>(
+                    let witnesses = build_point_decompose_fold_witnesses::<F, P, B, D>(
                         backend,
                         prepared,
                         &challenges,
                         &polys,
                         &point_indices,
+                        1,
                         params.blocks.positions_per_block,
                         params.inner.digits.num_digits,
                         params.inner.digits.log_basis,
-                    )
+                    )?;
+                    witnesses.into_iter().next().ok_or_else(|| {
+                        AkitaError::InvalidInput("terminal fold returned no witness".into())
+                    })
                 }
             )?;
             let centered = witness.centered_coeffs_flat();
@@ -290,14 +292,14 @@ struct PreparedFoldGrindGroup<'group, G> {
     acceptance: FoldGrindAcceptanceCtx,
 }
 
-/// One fold probe: returns the global folded witness and the per-window centered
-/// responses `z_i` under the given (preview) challenges.
+/// One fold probe: requests every window in one batch-kernel dispatch, then
+/// returns the global folded witness and the per-window centered responses `z_i`.
 ///
 /// For `num_chunks <= 1` this is the legacy single global fold and the sole
 /// window equals the global centered response (byte-identical to the
 /// pre-chunking path). For `num_chunks > 1` the fold is computed per block
-/// window (`window_sparse_challenges`) and the global witness is the exact
-/// coefficient-wise sum of the windows (`Σ_i z_i = z`). Each full-width window
+/// window and the global witness is the exact coefficient-wise sum of the
+/// returned witnesses (`Σ_i z_i = z`). Each full-width window
 /// is checked against the common digit interval independently: cancellation in
 /// the aggregate cannot make an out-of-range chunk acceptable.
 #[allow(clippy::type_complexity)]
@@ -314,46 +316,33 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
-        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>,
 {
     let num_chunks = root_lp.witness_chunk.num_chunks;
-    if num_chunks <= 1 {
-        let witness = build_point_decompose_fold_witness::<F, P, B, D>(
-            backend,
-            prepared,
-            challenges,
-            polys,
-            point_indices,
-            params.num_positions_per_block(),
-            params.num_digits_inner(),
-            params.log_basis_inner(),
-        )?;
-        return Ok((witness, FoldChunkCoefficients::single()));
+    let mut windows = build_point_decompose_fold_witnesses::<F, P, B, D>(
+        backend,
+        prepared,
+        challenges,
+        polys,
+        point_indices,
+        num_chunks,
+        params.num_positions_per_block(),
+        params.num_digits_inner(),
+        params.log_basis_inner(),
+    )?;
+    if num_chunks == 1 {
+        return Ok((
+            windows
+                .pop()
+                .ok_or_else(|| AkitaError::InvalidInput("fold batch returned no witness".into()))?,
+            FoldChunkCoefficients::single(),
+        ));
     }
-
-    let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
-    let windows = chunk_block_ranges
-        .into_iter()
-        .map(|fold_range| {
-            let windowed = window_sparse_challenges(challenges, fold_range)?;
-            build_point_decompose_fold_witness::<F, P, B, D>(
-                backend,
-                prepared,
-                &windowed,
-                polys,
-                point_indices,
-                params.num_positions_per_block(),
-                params.num_digits_inner(),
-                params.log_basis_inner(),
-            )
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
     let per_chunk = windows
         .iter()
         .map(CenteredFoldChunk::from_witness)
         .collect();
-    let global = aggregate_decompose_fold_witnesses::<F, D>(windows)?;
+    let global = aggregate_decompose_fold_witnesses::<F, D>(windows.into_iter().map(Ok))?;
     Ok((global, FoldChunkCoefficients::chunked(per_chunk)?))
 }
 
@@ -702,22 +691,26 @@ mod tests {
 
     #[test]
     fn empty_chunk_window_has_zero_fold_challenges() {
-        let challenges = Challenges::from_sparse(
-            vec![
-                SparseChallenge {
-                    positions: vec![0].into(),
-                    coeffs: vec![1].into(),
-                };
-                4
-            ],
-            4,
-            1,
-        )
-        .expect("challenges");
-        let empty = window_sparse_challenges(&challenges, 2..2).expect("empty window");
+        let challenges = vec![
+            SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            };
+            4
+        ];
+        let windows = DecomposeFoldBatchPlan::Sparse {
+            challenges: &challenges,
+            challenges_per_poly: 4,
+            num_chunks: 8,
+            num_positions_per_block: 1,
+            num_digits: 1,
+            log_basis: 1,
+        }
+        .map_challenge_windows(|window| Ok(window.to_vec()))
+        .expect("challenge windows");
+        let empty = &windows[0];
 
         assert!(empty
-            .as_slice()
             .iter()
             .all(|challenge| challenge.positions.is_empty() && challenge.coeffs.is_empty()));
     }

@@ -127,6 +127,7 @@ dead_patterns=(
   'total_ring_elems\b'
   'MultilinearPolynomial\b'
   'multilinear_polynomial'
+  'BatchDecomposeFoldOutcome'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"

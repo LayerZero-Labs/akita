@@ -3,7 +3,7 @@ use super::fold::fold_onehot_block_ring;
 use super::fold::{fold_onehot_block, fold_onehot_block_subfield};
 use super::*;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
+    aggregate_decompose_fold_witnesses, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
@@ -212,23 +212,42 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
         let DecomposeFoldBatchPlan::Sparse {
-            challenges,
+            challenges_per_poly,
             num_positions_per_block,
             num_digits,
             log_basis,
+            ..
         } = plan;
-        match OneHotPoly::decompose_fold_batched::<D>(
-            source.polys,
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        ) {
-            Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-            None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-        }
+        plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
+        plan.map_challenge_windows(|window| {
+            match OneHotPoly::decompose_fold_batched::<D>(
+                source.polys,
+                window,
+                num_positions_per_block,
+                num_digits,
+                log_basis,
+            ) {
+                Some(witness) => Ok(witness),
+                None => aggregate_decompose_fold_witnesses::<F, D>(
+                    source
+                        .polys
+                        .iter()
+                        .zip(window.chunks_exact(challenges_per_poly))
+                        .map(|(poly, poly_challenges)| {
+                            Ok(poly.decompose_fold::<D>(
+                                poly_challenges,
+                                num_positions_per_block,
+                                num_digits,
+                                log_basis,
+                            ))
+                        }),
+                ),
+            }
+        })
     }
 }
 
@@ -557,6 +576,7 @@ where
         Self::decompose_fold_batched_onehot::<D>(
             &[self],
             challenges,
+            challenges.len(),
             num_positions_per_block,
             num_digits,
         )
@@ -577,7 +597,7 @@ where
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        first
+        let challenges_per_poly = first
             .num_live_blocks_for(D, num_positions_per_block)
             .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
@@ -585,6 +605,7 @@ where
         Self::decompose_fold_batched_onehot::<D>(
             polys,
             challenges,
+            challenges_per_poly,
             num_positions_per_block,
             num_digits,
         )

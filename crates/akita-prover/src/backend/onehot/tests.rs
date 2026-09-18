@@ -1,7 +1,7 @@
 use super::test_helpers::inner_ajtai_reference;
 use super::*;
 use crate::backend::test_support::aggregate_witnesses;
-use crate::compute::RootOpeningSource;
+use crate::compute::{CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel, RootOpeningSource};
 use crate::DensePoly;
 use akita_types::FlatMatrix;
 use jolt_field::{Field, Ring};
@@ -25,6 +25,47 @@ where
         coeffs[ring_idx].coeffs[coeff_idx] += F::one();
     }
     DensePoly::from_ring_coeffs(coeffs).unwrap()
+}
+
+#[test]
+fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
+    type F = Prime24Offset3;
+    const D: usize = 64;
+    let polys = [
+        OneHotPoly::<F>::new(64, vec![Some(0usize)]).unwrap(),
+        OneHotPoly::<F>::new(64, vec![Some(0usize); 2]).unwrap(),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let run = |refs: &[&OneHotPoly<F>], challenges_per_poly| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                challenges_per_poly,
+                num_chunks: 1,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        run(&[&polys[0], &polys[1]], 1),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        run(&[&polys[0], &polys[0]], 2),
+        Err(AkitaError::InvalidSize { .. })
+    ));
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>

@@ -1,4 +1,6 @@
 use super::*;
+use crate::compute::CpuBackend;
+use crate::DensePoly;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     relation_rhs_coeff_len, BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams,
@@ -9,6 +11,39 @@ use jolt_field::{Ext2, ExtField, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
+
+#[test]
+fn point_batch_rejects_polynomial_claim_count_mismatch() {
+    const D: usize = 64;
+    let poly = DensePoly::from_field_evals(6, vec![F::from_u64(1); 1 << 6]).unwrap();
+    let polys = [&poly];
+    let challenges = Challenges::from_sparse(
+        vec![
+            SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            };
+            2
+        ],
+        1,
+        2,
+    )
+    .unwrap();
+
+    let result = build_point_decompose_fold_witnesses::<F, DensePoly<F>, CpuBackend, D>(
+        &CpuBackend::DEFAULT,
+        None,
+        &challenges,
+        &polys,
+        &[0, 1],
+        1,
+        1,
+        1,
+        1,
+    );
+
+    assert!(matches!(result, Err(AkitaError::InvalidSize { .. })));
+}
 
 fn fixture() -> (
     CommittedGroupParams,
