@@ -148,8 +148,8 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
 /// Returns an error if claim preparation, schedule selection, transcript
 /// binding, or folded proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[cfg(any())]
-pub fn batched_prove_structured_legacy<'a, Cfg, T, P, S, O, TS, R, SP>(
+#[allow(dead_code)]
+pub(super) fn batched_prove_structured_legacy<'a, Cfg, T, P, S, O, TS, R, SP>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
