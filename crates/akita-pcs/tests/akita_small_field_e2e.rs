@@ -125,12 +125,26 @@ macro_rules! small_field_test {
                     >(
                         nv,
                         &poly,
-                        point,
+                        point.clone(),
                         expected,
                         label,
                         stringify!($name),
                     );
                     $($check(&roundtrip, label, stringify!($name));)?
+                    $(
+                        let _ = $check;
+                        native_single_group_roundtrip::<
+                            $cfg,
+                            akita_prover::DensePoly<$sf>,
+                        >(
+                            nv,
+                            &poly,
+                            point,
+                            expected,
+                            label,
+                            stringify!($name),
+                        );
+                    )?
                     drop(roundtrip);
                 }
             });

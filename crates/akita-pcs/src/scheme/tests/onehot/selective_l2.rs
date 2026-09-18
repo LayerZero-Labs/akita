@@ -2,6 +2,15 @@ use super::*;
 
 #[test]
 fn selective_l2_proof_rejects_transcript_mutations() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(selective_l2_proof_rejects_transcript_mutations_inner)
+        .expect("selective L2 test thread")
+        .join()
+        .expect("selective L2 test thread panicked");
+}
+
+fn selective_l2_proof_rejects_transcript_mutations_inner() {
     const NV: usize = 30;
     const BATCH_SIZE: usize = 4;
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
@@ -63,7 +72,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
             selected_prover_data::<L2Cfg, _, _>(
                 &scheme,
                 OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
-                vec![hint],
+                vec![hint.clone()],
                 vec![&poly_refs],
             )
             .expect("L2 opening data"),
@@ -91,6 +100,45 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         )
     };
     verify(&proof).expect("valid L2 proof");
+
+    let native_group = PolynomialGroupClaims::new(
+        point.clone(),
+        vec![OneHotF::zero(); BATCH_SIZE],
+        commitments[0].clone(),
+    )
+    .expect("native L2 prover group");
+    let native_proof = scheme
+        .batched_prove_native::<_, _, _>(
+            &setup,
+            selected_prover_data::<L2Cfg, _, _>(
+                &scheme,
+                OpeningClaims::from_groups(vec![native_group]).expect("native L2 prover claims"),
+                vec![hint],
+                vec![&poly_refs],
+            )
+            .expect("native L2 opening data"),
+            &stack,
+            TRANSCRIPT_LABEL,
+            BasisMode::Lagrange,
+        )
+        .expect("native L2 proof");
+    let native_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        point.clone(),
+        openings.clone(),
+        &commitments[0],
+    )
+    .expect("native L2 verifier group")])
+    .expect("native L2 verifier claims");
+    scheme
+        .batched_verify_native(
+            &native_proof,
+            &verifier_setup,
+            TRANSCRIPT_LABEL,
+            selected_statement::<L2Cfg>(&scheme, native_claims)
+                .expect("native L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
+        .expect("valid native L2 proof");
 
     let l2_index = proof
         .recursive_folds
