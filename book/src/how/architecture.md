@@ -133,7 +133,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `DensePoly`, `OneHotPoly`, `CommitmentSource`, `CommitmentExecutor` | D-free polynomial storage, commitment representations, and the checked split-or-fused commitment boundary |
 | `RootOpeningSource`, `RootTensorSource`, compute-backend traits | Typed views and kernels retained for opening, tensor, and ring-switch operations |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
-| `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
+| `Vec<u8>` returned by `batched_prove` | Canonical Spongefish argument stream, consumed in protocol order by `batched_verify` with EOF and grinding-plan completion |
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
@@ -144,5 +144,5 @@ Mixed-dimension malformed proof rejection is covered by
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
-| `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
+| Native Spongefish prover/verifier states | Fiat--Shamir state, proof emission/receipt, domain separation, challenges, and EOF checking |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

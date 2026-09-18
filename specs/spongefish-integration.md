@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Codex, for maintainer review |
 | Created | 2026-09-17 |
-| Status | proposed |
+| Status | implementing |
 | PR | Not opened |
 | Supersedes | On implementation, the transport/framing portions of transcript-grinding.md identified below |
 | Superseded-by | |
