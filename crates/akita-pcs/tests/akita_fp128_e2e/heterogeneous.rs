@@ -194,26 +194,10 @@ fn heterogeneous_group_types() {
             "heterogeneous selection must resolve to the two-precommit entry"
         );
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
+        let session = b"completeness/heterogeneous_group_types";
         let proof = onehot_scheme
-            .batched_prove_structured_legacy(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
@@ -235,13 +219,11 @@ fn heterogeneous_group_types() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
         onehot_scheme
-            .batched_verify_structured_legacy(
-                &decoded,
+            .batched_verify(
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -410,26 +392,10 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // really do disagree on their committed-source depth.
         assert_eq!(schedule.root.params.inner().digits.num_digits, 1,);
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
+        let session = b"completeness/bounded_dense_precommit_with_onehot_final";
         let proof = onehot_scheme
-            .batched_prove_structured_legacy(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("mixed-bound prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
@@ -441,13 +407,11 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         onehot_scheme
-            .batched_verify_structured_legacy(
-                &decoded,
+            .batched_verify(
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -470,14 +434,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .expect("final verifier group"),
         ])
         .expect("tampered claims");
-        let mut tampered_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         assert!(
             onehot_scheme
-                .batched_verify_structured_legacy(
-                    &decoded,
+                .batched_verify(
+                    &proof,
                     &verifier_setup,
-                    &mut tampered_transcript,
+                    session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
                     BasisMode::Lagrange,
                 )
@@ -831,35 +793,22 @@ fn heterogeneous_compute_backends() {
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let proof = batched_prove_structured_legacy::<Cfg, _, _, _, _, _, _, _>(
+        let session = b"completeness/heterogeneous_compute_backends";
+        let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
             scheme.schedules(),
             &stack,
             prover_data,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
         scheme
-            .batched_verify_structured_legacy(
-                &decoded,
+            .batched_verify(
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(
                     selection,
                     OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

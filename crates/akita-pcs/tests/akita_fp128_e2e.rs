@@ -89,15 +89,12 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_prover::{
-    batched_prove_structured_legacy, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
-    ErasedPreparedProverGroup, OpeningCluster, PortableStatePolicy, ProverComputeStack,
-    RingSwitchCluster, TensorCluster, UniformProverStack,
+    batched_prove, CommitmentExecutor, ComputeBackendSetup, CpuBackend, ErasedPreparedProverGroup,
+    OpeningCluster, PortableStatePolicy, ProverComputeStack, RingSwitchCluster, TensorCluster,
+    UniformProverStack,
 };
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims,
+    BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use common::*;
 use matrix_drivers::*;
