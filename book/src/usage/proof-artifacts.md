@@ -66,29 +66,17 @@ resolves this explicit identity in the supplied catalog, checks the row digest,
 and replays that schedule. This keeps planner search outside the verifier and
 prevents a proof from supplying its own unchecked parameters.
 
-## Encode the proof canonically
+## Store the proof canonically
 
-Akita proof objects implement compressed serialization.
-
-```rust
-let proof_shape = proof.shape();
-let mut proof_bytes = Vec::new();
-proof.serialize_compressed(&mut proof_bytes)?;
-```
-
-Decode against an expected shape:
+The PCS returns the canonical Spongefish argument byte string.
 
 ```rust
-let proof = AkitaBatchedProof::<F, E>::deserialize_compressed(
-    &mut std::io::Cursor::new(&proof_bytes),
-    &expected_shape,
-)?;
+let proof_bytes: Vec<u8> = proof;
 ```
 
-The expected shape controls list lengths and nested proof structure before the
-verifier reads large payloads. A host can derive it from the selected row in an
-approved catalog, or authenticate it as part of a versioned application
-artifact format.
+The verifier resolves the selected row from the approved catalog before it
+reads messages. Schedule-derived fixed counts and bounds control decoding and
+allocation; no proof-supplied shape is accepted.
 
 Canonical encoding means that one accepted object has one encoding within a
 protocol revision. Pinning the producer and verifier to the same commit or

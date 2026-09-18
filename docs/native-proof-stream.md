@@ -88,6 +88,5 @@ binding mismatches reject.
 
 The canonical production boundary is `AkitaCommitmentScheme::batched_prove`
 and `AkitaCommitmentScheme::batched_verify`; both operate on one Spongefish
-argument byte string. Structured legacy methods remain only while old
-diagnostic tests and profiling views are being removed and are not a fallback
-accepted by the canonical verifier.
+argument byte string. There is no structured proof decoder or fallback
+verification path.

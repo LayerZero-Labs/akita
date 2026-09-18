@@ -260,7 +260,7 @@ fn fp128_native_stream_rejects_statement_session_and_proof_mutations() {
 fn fp32_extension_native_stream_rejects_statement_session_and_proof_mutations() {
     run_on_large_stack(|| {
         assert_native_soundness_boundaries::<fp32::Field, fp32::Dense>(
-            16,
+            20,
             b"soundness/fp32-extension-native",
         );
     });
