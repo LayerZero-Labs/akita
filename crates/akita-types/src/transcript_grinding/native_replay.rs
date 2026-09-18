@@ -9,7 +9,7 @@ use akita_transcript::{
     native_verifier_ext_challenge, preview_native_grinding_predicate, prover_context,
     receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
     NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
-    GRINDING_PREDICATE_LEN,
+    ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -418,7 +418,23 @@ where
         self.grinding.state_mut()
     }
 
-    fn round_challenge(&mut self, round: u32) -> Result<E, AkitaError> {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+        ProtocolSiteId {
+            family: SITE_FAMILY_SUMCHECK,
+            invocation: self.protocol.tag(),
+            level: self.level,
+            stage: self.stage,
+            round,
+            group: invocation,
+            detail: role,
+            ..ProtocolSiteId::default()
+        }
+    }
+
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
+        if invocation != 0 {
+            return Err(AkitaError::InvalidProof);
+        }
         self.grinding
             .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
                 protocol: self.protocol,
@@ -467,7 +483,23 @@ where
         self.grinding.state_mut()
     }
 
-    fn round_challenge(&mut self, round: u32) -> Result<E, AkitaError> {
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+        ProtocolSiteId {
+            family: SITE_FAMILY_SUMCHECK,
+            invocation: self.protocol.tag(),
+            level: self.level,
+            stage: self.stage,
+            round,
+            group: invocation,
+            detail: role,
+            ..ProtocolSiteId::default()
+        }
+    }
+
+    fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
+        if invocation != 0 {
+            return Err(AkitaError::InvalidProof);
+        }
         self.grinding
             .grinded_ext_challenge::<F, E>(GrindingSite::SumcheckRound {
                 protocol: self.protocol,
