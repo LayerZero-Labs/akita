@@ -21,25 +21,22 @@ A host should define one versioned container with these fields:
 | Ordered commitments | Fixes every polynomial group |
 | Ordered opening points | States where each group is opened |
 | Ordered claimed values | States one value for each committed polynomial |
-| Expected proof shape | Bounds decoding and describes the proof structure |
-| Compressed proof bytes | Carries the opening proof |
+| Native proof bytes | Carries the canonical Spongefish argument stream |
 
 The host may store verifier setup separately and refer to it by an authenticated
 identifier. The remaining values still belong to one public verification
 request.
 
-## Use a fresh transcript for each side
+## Use a stable session for each protocol
 
 The host chooses an application specific session label. Give it a version and
 a clear protocol owner.
 
 ```rust
-const TRANSCRIPT_DOMAIN: &[u8] = b"my-system/akita-opening/v1";
+const SESSION: &[u8] = b"my-system/akita-opening/v1";
 
-let mut prover_transcript =
-    AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
-let mut verifier_transcript =
-    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
+let proof = scheme.batched_prove(&prover_setup, opening, &stacks, SESSION, basis)?;
+scheme.batched_verify(&proof, &verifier_setup, SESSION, statement, basis)?;
 ```
 
 The scheme binds the canonical Akita instance descriptor before replay. That
@@ -47,10 +44,9 @@ descriptor covers the configuration, setup identity, schedule, and public
 claim layout. Akita then absorbs commitments, points, claimed values, and proof
 messages in protocol order.
 
-Create a new transcript for each proof. Do not serialize a live transcript
-object or continue a prover transcript on the verifier side. The two sides
-start from the same session label and independently bind the same public
-instance.
+Akita constructs fresh native prover and verifier states internally. Do not
+serialize a live state or reuse proof bytes under another session. Both sides
+use the same session bytes and independently bind the same public instance.
 
 The [transcript chapter](../how/transcript.md) lists the exact binding order and
 explains the wire checks used by transcript tests.

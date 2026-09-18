@@ -37,10 +37,11 @@ block to validate.
 Transcript replay is also shape-bounded. Before decoding the headerless proof,
 the verifier derives the canonical `GrindingPlan` and successor-aware fold
 geometry from the validated public schedule and opening layout. That one
-geometry determines each sumcheck round count, recursive opening layout, proof
-shape, and packed nonce-stream width. The decoder validates the stream byte
-bound and final padding before allocation; replay rejects a wrong site or query
-kind, truncation, incomplete consumption, and an out-of-range nonce.
+geometry determines each sumcheck round count, recursive opening layout, and
+native proof-stream byte bound. Nonzero grinding and fold-response nonces are
+canonical inline `u32` messages. Replay rejects a wrong site or query kind,
+truncation, trailing bytes, incomplete plan consumption, and an out-of-range
+nonce.
 
 Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
 group root has a fixed 32-byte boundary, coordinate indices are checked before
