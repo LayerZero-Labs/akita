@@ -674,24 +674,10 @@ fn fp32_onehot_multi_group() {
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript =
-            AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
+        let session = b"completeness/fp32_onehot_multi_group";
         let proof = scheme
-            .batched_prove_structured_legacy(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("fp32 multi-group prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_uncompressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<SmallF, SmallE>::deserialize_uncompressed(&bytes[..], &shape)
-                .expect("deserialize");
 
         let verify_claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(pre_point, vec![pre_opening], &pre_commitment)
@@ -700,13 +686,11 @@ fn fp32_onehot_multi_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
         scheme
-            .batched_verify_structured_legacy(
-                &decoded,
+            .batched_verify(
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
