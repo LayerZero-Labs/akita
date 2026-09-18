@@ -9,7 +9,6 @@
 
 use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
-use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
     FoldSchedule, FpExtEncoding, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
@@ -17,7 +16,7 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-/// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
+/// Construct the canonical [`AkitaInstanceDescriptor`] bytes and grinding plan.
 ///
 /// Both `batched_prove` (prover) and `batched_verify` (verifier) call this
 /// helper after schedule selection and before protocol replay. The function
@@ -34,17 +33,15 @@ use jolt_field::{CanonicalEncoding, Field};
 /// Returns an error when:
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
-pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
+pub fn transcript_instance_descriptor<F, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningClaimsLayout,
     selection: OpeningScheduleSelection,
     schedule: &FoldSchedule,
     basis: BasisMode,
-    transcript: &mut T,
-) -> Result<GrindingPlan, AkitaError>
+) -> Result<(GrindingPlan, Vec<u8>), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
@@ -64,6 +61,5 @@ where
     let descriptor_bytes = instance_descriptor
         .canonical_bytes()
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
-    transcript.bind_instance_bytes(&descriptor_bytes);
-    Ok(grinding_plan)
+    Ok((grinding_plan, descriptor_bytes))
 }

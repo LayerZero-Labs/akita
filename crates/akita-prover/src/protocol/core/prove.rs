@@ -222,14 +222,14 @@ where
     } = admitted;
     let opening_batch = claims.opening_layout();
     executor.prepare_resources::<Cfg, O, TS, R, SP>(schedule)?;
-    let grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+    let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
         expanded.as_ref(),
         opening_batch,
         selection,
         schedule,
         basis,
-        transcript,
     )?;
+    transcript.bind_instance_bytes(&descriptor_bytes);
 
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (

@@ -89,7 +89,7 @@ pub use proof_optimized::{
     setup_level_params_from_schedule,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
-pub use transcript_binding::bind_transcript_instance_descriptor;
+pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
 /// Derive the runtime schedule policy from a preset.

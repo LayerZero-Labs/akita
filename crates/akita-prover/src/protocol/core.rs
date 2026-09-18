@@ -16,7 +16,7 @@ use crate::{
     RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::{transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};

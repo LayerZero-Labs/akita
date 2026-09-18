@@ -3,7 +3,7 @@ use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
-    bind_transcript_instance_descriptor, ensure_verifier_schedule_fits_setup, CommitmentConfig,
+    ensure_verifier_schedule_fits_setup, transcript_instance_descriptor, CommitmentConfig,
     TrustedScheduleCatalog,
 };
 use akita_error::AkitaError;
@@ -325,17 +325,17 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    let grinding_plan = {
+    let (grinding_plan, descriptor_bytes) = {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+        transcript_instance_descriptor::<Cfg::Field, Cfg>(
             setup.expanded(),
             &opening_batch,
             selection,
             schedule,
             basis,
-            transcript,
         )?
     };
+    transcript.bind_instance_bytes(&descriptor_bytes);
     let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<T>::new(
         transcript,
         &proof.nonce_stream,
