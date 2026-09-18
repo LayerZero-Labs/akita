@@ -47,6 +47,8 @@ type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 pub(in crate::protocol::sumcheck) struct NativeDigitRangeProveOutput<E: Field> {
     pub(in crate::protocol::sumcheck) point: Vec<E>,
     pub(in crate::protocol::sumcheck) range_image_evaluation: E,
+    pub(in crate::protocol::sumcheck) physical_l2:
+        Option<super::physical_l2_norm::NativePhysicalL2Proof<E>>,
 }
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
@@ -438,20 +440,15 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        if physical_plan.is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "native physical-L2 stage-1 transport is not yet selected".into(),
-            ));
-        }
         let Self {
-            digit_source,
+            mut digit_source,
             equality_point,
             plan,
             live_block_count,
             high_variable_count,
             low_variable_count,
         } = self;
-        if plan.basis() <= 8 {
+        if physical_plan.is_none() && plan.basis() <= 8 {
             let mut leaf_stage = direct_range_leaf::LowBasisRangeCheckProver::new(
                 digit_source.digits(),
                 &equality_point,
@@ -481,7 +478,12 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             return Ok(NativeDigitRangeProveOutput {
                 point,
                 range_image_evaluation,
+                physical_l2: None,
             });
+        }
+
+        if physical_plan.is_some() {
+            digit_source.prepare_class_indexed_leaf();
         }
 
         let prefix = prove_product_prefix_native::<F, E>(
@@ -494,6 +496,36 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
         let batched_leaf_coeffs = prefix
             .plan
             .batch_leaf_polynomials(&prefix.weights, &prefix.leaf_coeffs)?;
+        if let Some(physical_plan) = physical_plan {
+            let compact_witness = prefix.digit_source.digits();
+            let range_leaf = ClassIndexedRangeLeafProver::new(
+                prefix.digit_source,
+                &prefix.equality_point,
+                prefix.claim,
+                batched_leaf_coeffs,
+            )?;
+            let (physical_l2, point, range_image_evaluation) =
+                super::physical_l2_norm::prove_physical_l2_norm_native::<F, E>(
+                    physical_plan,
+                    &compact_witness,
+                    range_leaf,
+                    grinding,
+                    level,
+                )?;
+            let stage = u32::try_from(prefix.stage_count)
+                .map_err(|_| AkitaError::InvalidSetup("Stage 1 index exceeds u32".into()))?;
+            akita_types::native_stage1_prover_range_image::<F, E>(
+                grinding,
+                level,
+                stage,
+                range_image_evaluation,
+            )?;
+            return Ok(NativeDigitRangeProveOutput {
+                point,
+                range_image_evaluation,
+                physical_l2: Some(physical_l2),
+            });
+        }
         let mut leaf_stage = ClassIndexedRangeLeafProver::new(
             prefix.digit_source,
             &prefix.equality_point,
@@ -523,6 +555,7 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
         Ok(NativeDigitRangeProveOutput {
             point,
             range_image_evaluation,
+            physical_l2: None,
         })
     }
 

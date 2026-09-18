@@ -24,6 +24,7 @@ type DigitRangeVerifyOutput<E> = Vec<E>;
 pub(crate) struct NativeStage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) range_image_evaluation: E,
+    pub(crate) physical_l2_virtual_evaluations: Option<Vec<E>>,
 }
 
 pub(crate) struct RangeLeafVerifierInput<E: Field> {
@@ -178,15 +179,40 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
     pub(crate) fn verify_native<F>(
         &self,
         grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+        physical_l2: Option<(
+            &akita_types::PhysicalResponsePlan,
+            akita_types::SisModulusProfileId,
+            u128,
+        )>,
         level: u32,
     ) -> Result<NativeStage1VerifyOutput<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
-        E: ExtField<F>,
+        E: ExtField<F> + akita_types::FpExtEncoding<F>,
     {
         let leaf = self.verify_product_prefix_native::<F>(grinding, level)?;
         let stage = u32::try_from(self.plan.product_stage_arities().len())
             .map_err(|_| AkitaError::InvalidProof)?;
+        if let Some((plan, profile, cap)) = physical_l2 {
+            let replay = super::physical_l2_norm::verify_physical_l2_norm_native::<F, E>(
+                plan,
+                super::physical_l2_norm::NativePhysicalL2RangeClaim {
+                    equality_point: &leaf.equality_point,
+                    input_claim: leaf.input_claim,
+                    leaf_coefficients: &leaf.polynomial_coefficients,
+                    range_stage: stage,
+                },
+                profile,
+                cap,
+                grinding,
+                level,
+            )?;
+            return Ok(NativeStage1VerifyOutput {
+                point: replay.point,
+                range_image_evaluation: replay.range_image_evaluation,
+                physical_l2_virtual_evaluations: Some(replay.virtual_evaluations),
+            });
+        }
         let degree_bound = leaf.polynomial_coefficients.len().saturating_sub(1);
         let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
             grinding,
@@ -212,6 +238,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         Ok(NativeStage1VerifyOutput {
             point: replay.challenges,
             range_image_evaluation,
+            physical_l2_virtual_evaluations: None,
         })
     }
 

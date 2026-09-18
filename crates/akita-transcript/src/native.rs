@@ -30,6 +30,9 @@ pub const SITE_FAMILY_STAGE2: u32 = 3;
 /// Stable family identifier for stage-1 late oracle claims.
 pub const SITE_FAMILY_STAGE1: u32 = 4;
 
+/// Stable family identifier for physical-L2 proof values.
+pub const SITE_FAMILY_PHYSICAL_L2: u32 = 5;
+
 /// Native proof-stream operation kind committed by a context record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -255,6 +258,39 @@ impl<F: CanonicalEncoding> NargDeserialize for NativeField<F> {
         let value = F::from_bytes_le_checked(encoded).ok_or(VerificationError)?;
         *buf = remaining;
         Ok(Self(value))
+    }
+}
+
+/// Fixed-width little-endian `u128` proof atom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeU128(u128);
+
+impl NativeU128 {
+    /// Wrap an integer for native proof transport.
+    #[must_use]
+    pub const fn new(value: u128) -> Self {
+        Self(value)
+    }
+
+    /// Return the wrapped integer.
+    #[must_use]
+    pub const fn into_inner(self) -> u128 {
+        self.0
+    }
+}
+
+impl Encoding<[u8]> for NativeU128 {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.to_le_bytes()
+    }
+}
+
+impl NargDeserialize for NativeU128 {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
+        let (encoded, remaining) = buf.split_at_checked(16).ok_or(VerificationError)?;
+        let bytes: [u8; 16] = encoded.try_into().map_err(|_| VerificationError)?;
+        *buf = remaining;
+        Ok(Self(u128::from_le_bytes(bytes)))
     }
 }
 

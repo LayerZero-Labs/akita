@@ -18,6 +18,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) virtual_evaluations: Vec<E>,
+    pub(crate) range_image_evaluation: E,
 }
 
 pub(crate) struct PhysicalL2RangeClaim<'a, E> {
@@ -27,9 +28,16 @@ pub(crate) struct PhysicalL2RangeClaim<'a, E> {
     pub(crate) image_evaluation: E,
 }
 
+pub(crate) struct NativePhysicalL2RangeClaim<'a, E> {
+    pub(crate) equality_point: &'a [E],
+    pub(crate) input_claim: E,
+    pub(crate) leaf_coefficients: &'a [E],
+    pub(crate) range_stage: u32,
+}
+
 struct PhysicalL2NormVerifier<'a, E: Field> {
     plan: &'a PhysicalResponsePlan,
-    proof: &'a PhysicalL2NormProof<E>,
+    virtual_evaluations: &'a [E],
     range_equality_point: &'a [E],
     range_leaf_coefficients: &'a [E],
     range_image_evaluation: E,
@@ -63,7 +71,6 @@ impl<E: Field + Ring> SumcheckInstanceVerifier<E> for PhysicalL2NormVerifier<'_,
         let norm = match self.plan.shape() {
             PhysicalL2NormProofShape::Direct { .. } => {
                 let value = self
-                    .proof
                     .virtual_evaluations
                     .first()
                     .copied()
@@ -98,12 +105,10 @@ impl<E: Field + Ring> SumcheckInstanceVerifier<E> for PhysicalL2NormVerifier<'_,
                 let mut sum = E::zero();
                 for ((left, right), selector) in layout.limb_pairs().zip(pair_selectors) {
                     let left = *self
-                        .proof
                         .virtual_evaluations
                         .get(left)
                         .ok_or(AkitaError::InvalidProof)?;
                     let right = *self
-                        .proof
                         .virtual_evaluations
                         .get(right)
                         .ok_or(AkitaError::InvalidProof)?;
@@ -147,7 +152,9 @@ where
 
 fn validate_integer_claim<F, E>(
     plan: &PhysicalResponsePlan,
-    proof: &PhysicalL2NormProof<E>,
+    response_l2_sq: u128,
+    subclaims: &[E],
+    virtual_evaluations: &[E],
     profile: SisModulusProfileId,
     cap: u128,
 ) -> Result<(), AkitaError>
@@ -165,24 +172,22 @@ where
             "L2 modulus profile disagrees with the proof base field".into(),
         ));
     }
-    if proof.response_l2_sq > cap {
+    if response_l2_sq > cap {
         return Err(AkitaError::InvalidProof);
     }
     plan.shape()
         .validate_integer_soundness(profile, plan.fold_basis(), plan.fold_digit_count())?;
     match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => {
-            if !proof.subclaims.is_empty()
-                || proof.virtual_evaluations.len() != 1
-                || proof.response_l2_sq >= modulus
+            if !subclaims.is_empty() || virtual_evaluations.len() != 1 || response_l2_sq >= modulus
             {
                 return Err(AkitaError::InvalidProof);
             }
         }
         shape @ PhysicalL2NormProofShape::LimbGram { block_len, .. } => {
             let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
-            if proof.subclaims.len() != layout.subclaim_count()
-                || proof.virtual_evaluations.len() != layout.limb_count()
+            if subclaims.len() != layout.subclaim_count()
+                || virtual_evaluations.len() != layout.limb_count()
             {
                 return Err(AkitaError::InvalidProof);
             }
@@ -194,8 +199,7 @@ where
                         .ok_or_else(|| AkitaError::InvalidSetup("L2 limb bound overflow".into()))?,
                 )
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 limb bound overflow".into()))?;
-            let integers = proof
-                .subclaims
+            let integers = subclaims
                 .iter()
                 .copied()
                 .map(|claim| centered_lift::<F, E>(claim, profile))
@@ -204,7 +208,7 @@ where
                 .iter()
                 .any(|value| value.unsigned_abs() > claim_abs_bound)
                 || reconstruct_l2_sq_from_gram(plan.shape(), plan.fold_basis(), &integers)?
-                    != proof.response_l2_sq
+                    != response_l2_sq
             {
                 return Err(AkitaError::InvalidProof);
             }
@@ -232,7 +236,14 @@ where
             "fused Stage-1 leaf has inconsistent range geometry".into(),
         ));
     }
-    validate_integer_claim::<F, E>(plan, proof, profile, cap)?;
+    validate_integer_claim::<F, E>(
+        plan,
+        proof.response_l2_sq,
+        &proof.subclaims,
+        &proof.virtual_evaluations,
+        profile,
+        cap,
+    )?;
     transcript.append_serde(ABSORB_L2_NORM_INTEGER, &proof.response_l2_sq);
     for claim in &proof.subclaims {
         transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
@@ -259,7 +270,7 @@ where
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let verifier = PhysicalL2NormVerifier {
         plan,
-        proof,
+        virtual_evaluations: &proof.virtual_evaluations,
         range_equality_point: range.equality_point,
         range_leaf_coefficients: range.leaf_coefficients,
         range_image_evaluation: range.image_evaluation,
@@ -285,6 +296,108 @@ where
     Ok(PhysicalL2VerifierReplay {
         point,
         virtual_evaluations: proof.virtual_evaluations.clone(),
+        range_image_evaluation: range.image_evaluation,
+    })
+}
+
+/// Replay a physical-L2 proof directly from the native Spongefish stream.
+#[allow(dead_code)] // Called by the native fold verifier during production cutover.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_physical_l2_norm_native<F, E>(
+    plan: &PhysicalResponsePlan,
+    range: NativePhysicalL2RangeClaim<'_, E>,
+    profile: SisModulusProfileId,
+    cap: u128,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
+) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
+{
+    if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
+        return Err(AkitaError::InvalidSetup(
+            "fused Stage-1 leaf has inconsistent range geometry".into(),
+        ));
+    }
+    let (subclaim_count, virtual_count) = match plan.shape() {
+        PhysicalL2NormProofShape::Direct { .. } => (0, 1),
+        shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
+            let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
+            (layout.subclaim_count(), layout.limb_count())
+        }
+    };
+    let prefix = akita_types::native_l2_verifier_prefix::<F, E>(grinding, level, subclaim_count)?;
+    let mut subclaim_weights = Vec::new();
+    let norm_input_claim = match plan.shape() {
+        PhysicalL2NormProofShape::Direct { .. } => E::from_u128(prefix.response_l2_sq),
+        PhysicalL2NormProofShape::LimbGram { .. } => {
+            let gamma = grinding.grinded_ext_challenge::<F, E>(
+                akita_types::GrindingSite::L2SubclaimBatch { level },
+            )?;
+            let mut power = E::one();
+            for _ in 0..prefix.subclaims.len() {
+                subclaim_weights.push(power);
+                power *= gamma;
+            }
+            prefix
+                .subclaims
+                .iter()
+                .zip(&subclaim_weights)
+                .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
+        }
+    };
+    let norm_merge =
+        grinding.grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
+    let input_claim = range.input_claim + norm_merge * norm_input_claim;
+    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::PhysicalL2,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+        &mut channel,
+        0,
+        input_claim,
+        plan.domain().num_vars(),
+        range.leaf_coefficients.len(),
+    )?;
+    let virtual_evaluations = akita_types::native_l2_verifier_virtual_evaluations::<F, E>(
+        grinding,
+        level,
+        virtual_count,
+    )?;
+    let range_image_evaluation = akita_types::native_stage1_verifier_range_image::<F, E>(
+        grinding,
+        level,
+        range.range_stage,
+    )?;
+    validate_integer_claim::<F, E>(
+        plan,
+        prefix.response_l2_sq,
+        &prefix.subclaims,
+        &virtual_evaluations,
+        profile,
+        cap,
+    )?;
+    let verifier = PhysicalL2NormVerifier {
+        plan,
+        virtual_evaluations: &virtual_evaluations,
+        range_equality_point: range.equality_point,
+        range_leaf_coefficients: range.leaf_coefficients,
+        range_image_evaluation,
+        subclaim_weights,
+        input_claim,
+        norm_merge,
+    };
+    if replay.output_claim != verifier.expected_output_claim(&replay.challenges)? {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(PhysicalL2VerifierReplay {
+        point: replay.challenges,
+        virtual_evaluations,
+        range_image_evaluation,
     })
 }
 

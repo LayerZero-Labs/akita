@@ -23,6 +23,191 @@ const RANGE_Q_MAX_DEGREE: usize = 4;
 const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;
 const NORM_MAX_DEGREE: usize = 3;
 
+#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
+pub(in crate::protocol::sumcheck) struct NativePhysicalL2Proof<E: Field> {
+    pub(in crate::protocol::sumcheck) response_l2_sq: u128,
+    pub(in crate::protocol::sumcheck) virtual_evaluations: Vec<E>,
+}
+
+trait PhysicalL2ProverStream<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Proof;
+
+    fn prefix(&mut self, response_l2_sq: u128, subclaims: &[E]) -> Result<(), AkitaError>;
+    fn subclaim_batch_challenge(&mut self) -> Result<E, AkitaError>;
+    fn norm_merge_challenge(&mut self) -> Result<E, AkitaError>;
+    fn prove_sumcheck<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: SumcheckInstanceProver<E> + ?Sized;
+    fn virtual_evaluations(&mut self, evaluations: &[E]) -> Result<(), AkitaError>;
+    fn finish_proof(proof: Self::Proof, evaluations: Vec<E>) -> Self::Proof;
+}
+
+struct LegacyPhysicalL2ProverStream<'a, T, E: Field> {
+    transcript: &'a mut T,
+    level: u32,
+    response_l2_sq: u128,
+    subclaims: Vec<E>,
+}
+
+impl<F, E, T> PhysicalL2ProverStream<F, E> for LegacyPhysicalL2ProverStream<'_, T, E>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
+{
+    type Proof = PhysicalL2NormProof<E>;
+
+    fn prefix(&mut self, response_l2_sq: u128, subclaims: &[E]) -> Result<(), AkitaError> {
+        self.response_l2_sq = response_l2_sq;
+        self.subclaims = subclaims.to_vec();
+        self.transcript
+            .append_serde(ABSORB_L2_NORM_INTEGER, &response_l2_sq);
+        for claim in subclaims {
+            self.transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
+        }
+        Ok(())
+    }
+
+    fn subclaim_batch_challenge(&mut self) -> Result<E, AkitaError> {
+        self.transcript
+            .grind_query(akita_types::GrindingSite::L2SubclaimBatch { level: self.level })?;
+        Ok(sample_ext_challenge::<F, E, T>(
+            self.transcript,
+            CHALLENGE_L2_NORM_BATCH,
+        ))
+    }
+
+    fn norm_merge_challenge(&mut self) -> Result<E, AkitaError> {
+        self.transcript
+            .grind_query(akita_types::GrindingSite::L2NormMerge { level: self.level })?;
+        Ok(sample_ext_challenge::<F, E, T>(
+            self.transcript,
+            CHALLENGE_L2_NORM_MERGE,
+        ))
+    }
+
+    fn prove_sumcheck<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut round = 0u32;
+        let (sumcheck, point, claim) =
+            prove_sumcheck::<F, T, E, _, _>(prover, self.transcript, |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::PhysicalL2,
+                    self.level,
+                    0,
+                    round,
+                )?;
+                round = round
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("physical L2 round overflow".into()))?;
+                Ok(challenge)
+            })?;
+        Ok((
+            PhysicalL2NormProof {
+                response_l2_sq: self.response_l2_sq,
+                subclaims: self.subclaims.clone(),
+                virtual_evaluations: Vec::new(),
+                sumcheck,
+            },
+            point,
+            claim,
+        ))
+    }
+
+    fn virtual_evaluations(&mut self, evaluations: &[E]) -> Result<(), AkitaError> {
+        for evaluation in evaluations {
+            self.transcript
+                .append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);
+        }
+        Ok(())
+    }
+
+    fn finish_proof(mut proof: Self::Proof, evaluations: Vec<E>) -> Self::Proof {
+        proof.virtual_evaluations = evaluations;
+        proof
+    }
+}
+
+struct NativePhysicalL2ProverStream<'a, 'plan> {
+    grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
+    level: u32,
+    response_l2_sq: u128,
+}
+
+impl<F, E> PhysicalL2ProverStream<F, E> for NativePhysicalL2ProverStream<'_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Proof = NativePhysicalL2Proof<E>;
+
+    fn prefix(&mut self, response_l2_sq: u128, subclaims: &[E]) -> Result<(), AkitaError> {
+        self.response_l2_sq = response_l2_sq;
+        akita_types::native_l2_prover_prefix::<F, E>(
+            self.grinding,
+            self.level,
+            response_l2_sq,
+            subclaims,
+        )
+    }
+
+    fn subclaim_batch_challenge(&mut self) -> Result<E, AkitaError> {
+        self.grinding
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2SubclaimBatch {
+                level: self.level,
+            })
+    }
+
+    fn norm_merge_challenge(&mut self) -> Result<E, AkitaError> {
+        self.grinding
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge {
+                level: self.level,
+            })
+    }
+
+    fn prove_sumcheck<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            self.grinding,
+            akita_types::SumcheckProtocol::PhysicalL2,
+            self.level,
+            0,
+        );
+        let (point, claim) =
+            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(prover, &mut channel, 0)?;
+        Ok((
+            NativePhysicalL2Proof {
+                response_l2_sq: self.response_l2_sq,
+                virtual_evaluations: Vec::new(),
+            },
+            point,
+            claim,
+        ))
+    }
+
+    fn virtual_evaluations(&mut self, evaluations: &[E]) -> Result<(), AkitaError> {
+        akita_types::native_l2_prover_virtual_evaluations::<F, E>(
+            self.grinding,
+            self.level,
+            evaluations,
+        )
+    }
+
+    fn finish_proof(mut proof: Self::Proof, evaluations: Vec<E>) -> Self::Proof {
+        proof.virtual_evaluations = evaluations;
+        proof
+    }
+}
+
 enum PhysicalNormTerm<E: Field> {
     Direct {
         response: ExactPrefixTable<E>,
@@ -334,6 +519,45 @@ where
     E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
 {
+    let mut stream = LegacyPhysicalL2ProverStream {
+        transcript,
+        level,
+        response_l2_sq: 0,
+        subclaims: Vec::new(),
+    };
+    prove_physical_l2_norm_with_stream::<F, E, _>(plan, compact_witness, range, &mut stream)
+}
+
+pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm_native<F, E>(
+    plan: &PhysicalResponsePlan,
+    compact_witness: &crate::backend::packed_digits::PackedSignedDigits,
+    range: ClassIndexedRangeLeafProver<E>,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    level: u32,
+) -> Result<(NativePhysicalL2Proof<E>, Vec<E>, E), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
+{
+    let mut stream = NativePhysicalL2ProverStream {
+        grinding,
+        level,
+        response_l2_sq: 0,
+    };
+    prove_physical_l2_norm_with_stream::<F, E, _>(plan, compact_witness, range, &mut stream)
+}
+
+fn prove_physical_l2_norm_with_stream<F, E, S>(
+    plan: &PhysicalResponsePlan,
+    compact_witness: &crate::backend::packed_digits::PackedSignedDigits,
+    range: ClassIndexedRangeLeafProver<E>,
+    stream: &mut S,
+) -> Result<(S::Proof, Vec<E>, E), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
+    S: PhysicalL2ProverStream<F, E>,
+{
     if EqFactoredSumcheckInstanceProver::num_rounds(&range) != plan.domain().num_vars() {
         return Err(AkitaError::InvalidSetup(
             "fused Stage-1 leaf has inconsistent range geometry".into(),
@@ -344,16 +568,12 @@ where
         Ok(())
     })?;
     let (response_l2_sq, subclaims) = exact_claims::<E>(plan, &integers)?;
-    transcript.append_serde(ABSORB_L2_NORM_INTEGER, &response_l2_sq);
-    for claim in &subclaims {
-        transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
-    }
+    stream.prefix(response_l2_sq, &subclaims)?;
 
     let (norm_input_claim, subclaim_weights) = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => (E::from_u128(response_l2_sq), Vec::new()),
         PhysicalL2NormProofShape::LimbGram { .. } => {
-            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
-            let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
+            let gamma = stream.subclaim_batch_challenge()?;
             let mut power = E::one();
             let mut weights = Vec::with_capacity(subclaims.len());
             let mut claim = E::zero();
@@ -366,8 +586,7 @@ where
         }
     };
     let norm = prepare_norm_term(plan, integers, &subclaim_weights)?;
-    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
-    let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
+    let norm_merge = stream.norm_merge_challenge()?;
     let range_input_claim = EqFactoredSumcheckInstanceProver::input_claim(&range);
     let mut prover = FusedRangeNormProver {
         range,
@@ -376,21 +595,7 @@ where
         input_claim: range_input_claim + norm_merge * norm_input_claim,
         rounds_completed: 0,
     };
-    let mut round = 0u32;
-    let (sumcheck, point, final_claim) =
-        prove_sumcheck::<F, T, E, _, _>(&mut prover, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::PhysicalL2,
-                level,
-                0,
-                round,
-            )?;
-            round = round
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidSetup("physical L2 round overflow".into()))?;
-            Ok(challenge)
-        })?;
+    let (proof, point, final_claim) = stream.prove_sumcheck(&mut prover)?;
     let expected_final_claim =
         prover.range.final_range_claim() + norm_merge * prover.norm.final_claim()?;
     if final_claim != expected_final_claim {
@@ -400,16 +605,9 @@ where
     }
     let range_image_evaluation = prover.range.final_range_image_eval();
     let virtual_evaluations = prover.norm.virtual_evaluations()?;
-    for evaluation in &virtual_evaluations {
-        transcript.append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);
-    }
+    stream.virtual_evaluations(&virtual_evaluations)?;
     Ok((
-        PhysicalL2NormProof {
-            response_l2_sq,
-            subclaims,
-            virtual_evaluations,
-            sumcheck,
-        },
+        S::finish_proof(proof, virtual_evaluations),
         point,
         range_image_evaluation,
     ))
