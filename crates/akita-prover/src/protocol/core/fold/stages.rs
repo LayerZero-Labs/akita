@@ -13,6 +13,81 @@ pub(super) enum Stage2Compression<E: Field> {
     },
 }
 
+trait Stage2ProverStream<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Proof;
+
+    fn prove<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized;
+}
+
+struct LegacyStage2ProverStream<'a, T> {
+    transcript: &'a mut T,
+    level: u32,
+}
+
+impl<F, E, T> Stage2ProverStream<F, E> for LegacyStage2ProverStream<'_, T>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
+{
+    type Proof = SumcheckProof<E>;
+
+    fn prove<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut round = 0u32;
+        prove_sumcheck::<F, T, E, _, _>(prover, self.transcript, |tr| {
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::Stage2,
+                self.level,
+                0,
+                round,
+            )?;
+            round = round
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("Stage 2 round overflow".into()))?;
+            Ok(challenge)
+        })
+    }
+}
+
+#[allow(dead_code)] // Constructed by the native fold driver during cutover.
+struct NativeStage2ProverStream<'a, 'plan> {
+    grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
+    level: u32,
+}
+
+impl<F, E> Stage2ProverStream<F, E> for NativeStage2ProverStream<'_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    type Proof = ();
+
+    fn prove<P>(&mut self, prover: &mut P) -> Result<(Self::Proof, Vec<E>, E), AkitaError>
+    where
+        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized,
+    {
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            self.grinding,
+            akita_types::SumcheckProtocol::Stage2,
+            self.level,
+            0,
+        );
+        let (point, final_claim) =
+            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(prover, &mut channel, 0)?;
+        Ok(((), point, final_claim))
+    }
+}
+
 pub(super) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     level: u32,
@@ -119,6 +194,90 @@ where
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: akita_types::ProverTranscriptGrinding<F>,
 {
+    let level_u32 = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let mut stream = LegacyStage2ProverStream {
+        transcript,
+        level: level_u32,
+    };
+    prove_stage2_with_stream::<F, E, _>(
+        level,
+        &mut stream,
+        batching_coeff,
+        rs,
+        stage1_point,
+        range_image_evaluation,
+        relation_claim,
+        compression,
+        physical_l2,
+        linear_terms,
+        trace_opening_claim,
+        plan,
+    )
+}
+
+#[allow(dead_code)] // Called by the native fold driver during production cutover.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prove_stage2_native<F, E>(
+    level: usize,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
+    batching_coeff: E,
+    rs: RingSwitchOutput<E>,
+    stage1_point: &[E],
+    range_image_evaluation: E,
+    relation_claim: E,
+    compression: Stage2Compression<E>,
+    physical_l2: Option<PhysicalL2ProverReplay<E>>,
+    linear_terms: PreparedProverLinearTerms<E>,
+    trace_opening_claim: E,
+    plan: RelationRangeImagePlan,
+) -> Result<Stage2ProveOutput<E, ()>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+{
+    let level_u32 = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let mut stream = NativeStage2ProverStream {
+        grinding,
+        level: level_u32,
+    };
+    prove_stage2_with_stream::<F, E, _>(
+        level,
+        &mut stream,
+        batching_coeff,
+        rs,
+        stage1_point,
+        range_image_evaluation,
+        relation_claim,
+        compression,
+        physical_l2,
+        linear_terms,
+        trace_opening_claim,
+        plan,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_stage2_with_stream<F, E, S>(
+    level: usize,
+    stream: &mut S,
+    batching_coeff: E,
+    rs: RingSwitchOutput<E>,
+    stage1_point: &[E],
+    range_image_evaluation: E,
+    relation_claim: E,
+    compression: Stage2Compression<E>,
+    physical_l2: Option<PhysicalL2ProverReplay<E>>,
+    linear_terms: PreparedProverLinearTerms<E>,
+    trace_opening_claim: E,
+    plan: RelationRangeImagePlan,
+) -> Result<Stage2ProveOutput<E, S::Proof>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    S: Stage2ProverStream<F, E>,
+{
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
     let geometry = rs.relation_address_geometry;
@@ -206,23 +365,8 @@ where
             "stage-2 prover initialization failed at fold level {level}: {err}"
         ))
     })?;
-    let level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
-    let mut round = 0u32;
     let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) =
-        prove_sumcheck::<F, T, E, _, _>(&mut stage2_prover, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::Stage2,
-                level,
-                0,
-                round,
-            )?;
-            round = round
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidSetup("Stage 2 round overflow".into()))?;
-            Ok(challenge)
-        })?;
+        stream.prove(&mut stage2_prover)?;
     if final_claim != stage2_prover.expected_final_claim()? {
         return Err(AkitaError::InvalidInput(
             "stage-2 prover final claim disagrees with its folded oracle".into(),

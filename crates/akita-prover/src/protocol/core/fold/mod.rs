@@ -33,8 +33,8 @@ struct Stage1ProveOutput<E: Field> {
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 }
 
-struct Stage2ProveOutput<E: Field> {
-    proof: SumcheckProof<E>,
+struct Stage2ProveOutput<E: Field, P = SumcheckProof<E>> {
+    proof: P,
     challenges: Vec<E>,
     prover: RelationRangeImageProver<E>,
 }
