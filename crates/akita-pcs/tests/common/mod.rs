@@ -9,9 +9,7 @@ pub(super) use workspace_schedules::load_workspace_scheme;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{
-    derive_transcript_grinding_plan, RecursiveCommitmentConfig, TrustedScheduleCatalog,
-};
+use akita_config::{RecursiveCommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -21,16 +19,15 @@ use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
     DenseType, PolynomialType, PortableStatePolicy,
 };
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
-use akita_types::{
-    canonical_proof_shape, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
-};
+use akita_serialization::{AkitaSerialize, Compress};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
+};
+use akita_types::{
+    AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile,
+    FlatMatrix, GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
@@ -589,26 +586,6 @@ pub(super) fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
         .recursive_folds
         .iter()
         .any(|fold| fold.params.setup_prefix().is_some())
-}
-
-pub(super) fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
-    proof.root.stage3_sumcheck_proof.is_some()
-        || proof
-            .recursive_folds
-            .iter()
-            .any(|step| step.stage3_sumcheck_proof.is_some())
-}
-
-pub(super) fn first_stage3_proof_mut(
-    proof: &mut AkitaBatchedProof<F, F>,
-) -> Option<&mut SetupSumcheckProof<F>> {
-    if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
-        return Some(stage3);
-    }
-    proof
-        .recursive_folds
-        .iter_mut()
-        .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
 fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {

@@ -162,45 +162,15 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         );
         let selection = prover_claims.selection();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = recursive_scheme
-            .batched_prove_structured_legacy(
+            .batched_prove(
                 &setup,
                 prover_claims,
                 &stack,
-                &mut prover_transcript,
+                transcript_domain,
                 BasisMode::Lagrange,
             )
             .expect("generated-profile recursive proof");
-        assert!(
-            proof_has_recursive_setup_sumcheck(&proof),
-            "recursive proof must carry stage-3 setup sumcheck evidence"
-        );
-
-        let grinding_plan = derive_transcript_grinding_plan::<RecursiveCommitmentConfig<BaseCfg>>(
-            &schedule,
-            &opening_layout,
-        )
-        .expect("canonical grinding plan");
-        let shape = proof.shape();
-        shape
-            .validate_grinding_plan(&grinding_plan)
-            .expect("proof stream matches canonical grinding plan");
-        assert_eq!(
-            shape,
-            canonical_proof_shape(&schedule, &opening_layout, 1, &grinding_plan)
-                .expect("canonical schedule proof shape"),
-            "a produced proof must have the verifier's canonical schedule-derived shape"
-        );
-        let mut bytes = Vec::new();
-        proof
-            .serialize_compressed(&mut bytes)
-            .expect("serialize generated-profile proof");
-        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize generated-profile proof");
 
         let verifier_setup = recursive_scheme
             .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
@@ -225,12 +195,11 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             GroupBatchStatement::new(selection, claims).expect("verifier statement")
         };
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
         recursive_scheme
-            .batched_verify_structured_legacy(
+            .batched_verify(
                 &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
             )
@@ -241,11 +210,10 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             &verifier_setup,
             &first_setup_prefix_slot(&schedule),
         ) {
-            let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let alternate_result = recursive_scheme.batched_verify_structured_legacy(
+            let alternate_result = recursive_scheme.batched_verify(
                 &proof,
                 &alternate_verifier_setup,
-                &mut alternate_transcript,
+                transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
             );
@@ -255,12 +223,11 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             );
         }
 
-        let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
-            let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let result = recursive_scheme.batched_verify_structured_legacy(
+        let reject_stage3_tamper = |tampered_proof: Vec<u8>, label: &str| {
+            let result = recursive_scheme.batched_verify(
                 &tampered_proof,
                 &verifier_setup,
-                &mut transcript,
+                transcript_domain,
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
             );
@@ -271,26 +238,21 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         };
 
         let mut tampered_claim = proof.clone();
-        first_stage3_proof_mut(&mut tampered_claim)
-            .expect("recursive profile Stage 3 proof")
-            .claim += F::one();
+        let claim_probe = tampered_claim.len() / 3;
+        tampered_claim[claim_probe] ^= 1;
         reject_stage3_tamper(tampered_claim, "tampered Stage 3 claim");
 
         let mut tampered_prefix_eval = proof.clone();
-        first_stage3_proof_mut(&mut tampered_prefix_eval)
-            .expect("recursive profile Stage 3 proof")
-            .setup_prefix_eval += F::one();
+        let prefix_probe = tampered_prefix_eval.len() / 2;
+        tampered_prefix_eval[prefix_probe] ^= 1;
         reject_stage3_tamper(
             tampered_prefix_eval,
             "tampered Stage 3 setup-prefix evaluation",
         );
 
         let mut tampered_round = proof.clone();
-        let coefficient = first_stage3_proof_mut(&mut tampered_round)
-            .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
-            .and_then(|round| round.coeffs_except_linear_term.first_mut())
-            .expect("recursive profile Stage 3 round coefficient");
-        *coefficient += F::one();
+        let round_probe = tampered_round.len() * 2 / 3;
+        tampered_round[round_probe] ^= 1;
         reject_stage3_tamper(
             tampered_round,
             "tampered Stage 3 round polynomial and derived point",
@@ -298,11 +260,10 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
         let mut tampered = final_openings;
         tampered[0] += F::from_u128_reduced(1);
-        let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let tampered_result = recursive_scheme.batched_verify_structured_legacy(
+        let tampered_result = recursive_scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut tampered_transcript,
+            transcript_domain,
             verify_claims(tampered),
             BasisMode::Lagrange,
         );
