@@ -18,6 +18,26 @@ pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v2\0\0\0
 /// Number of random-oracle bytes used for each base-field coordinate challenge.
 pub const NATIVE_FIELD_CHALLENGE_BYTES: u64 = 64;
 
+/// Statistical-distance budget reserved for all reduced native field draws.
+pub const NATIVE_FIELD_SAMPLING_SECURITY_BITS: u32 = 192;
+
+/// Global cap used to account for honest draws and adversarial oracle queries.
+pub const NATIVE_FIELD_SAMPLING_DRAW_LIMIT: u64 = u32::MAX as u64;
+
+/// Certify the conservative union bound for reduced native field challenges.
+///
+/// For a modulus with at most `modulus_bits`, reducing 512 uniform bits has
+/// distance at most `2^(modulus_bits - 514)`. Multiplying by fewer than `2^32`
+/// draws leaves at least 354 bits of statistical security for Akita's supported
+/// fields, comfortably above the independently budgeted 192-bit target.
+#[must_use]
+pub const fn native_field_sampling_budget_is_certified(modulus_bits: u32, draw_limit: u64) -> bool {
+    modulus_bits <= 128
+        && draw_limit <= NATIVE_FIELD_SAMPLING_DRAW_LIMIT
+        && modulus_bits + 32 + NATIVE_FIELD_SAMPLING_SECURITY_BITS
+            <= (NATIVE_FIELD_CHALLENGE_BYTES as u32) * 8 + 2
+}
+
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;
 
@@ -1009,7 +1029,43 @@ impl Encoding<[u8]> for ProtocolContextRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{CanonicalBytes, Prime32Offset99 as F, Ring};
+    use jolt_field::{
+        CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime64Offset59, PseudoMersenne,
+        Ring,
+    };
+    use num_bigint::BigUint;
+    use num_traits::One;
+
+    fn assert_exact_sampling_budget<Field: PseudoMersenne>() {
+        let n = BigUint::one() << (NATIVE_FIELD_CHALLENGE_BYTES * 8);
+        let modulus = (BigUint::one() << Field::MODULUS_BITS) - Field::OFFSET;
+        let remainder = &n % &modulus;
+        let exact_numerator = &remainder * (&modulus - &remainder);
+        let aggregate_numerator = exact_numerator
+            * NATIVE_FIELD_SAMPLING_DRAW_LIMIT
+            * (BigUint::one() << NATIVE_FIELD_SAMPLING_SECURITY_BITS);
+        let exact_denominator = modulus * n;
+        assert!(aggregate_numerator <= exact_denominator);
+    }
+
+    #[test]
+    fn exact_reduction_bias_budget_covers_every_production_field() {
+        assert!(native_field_sampling_budget_is_certified(
+            F::MODULUS_BITS,
+            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+        ));
+        assert!(native_field_sampling_budget_is_certified(
+            Prime64Offset59::MODULUS_BITS,
+            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+        ));
+        assert!(native_field_sampling_budget_is_certified(
+            Prime128OffsetA7F7::MODULUS_BITS,
+            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+        ));
+        assert_exact_sampling_budget::<F>();
+        assert_exact_sampling_budget::<Prime64Offset59>();
+        assert_exact_sampling_budget::<Prime128OffsetA7F7>();
+    }
 
     #[test]
     fn native_field_roundtrip_and_eof() {

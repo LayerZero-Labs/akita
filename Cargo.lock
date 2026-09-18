@@ -226,6 +226,8 @@ dependencies = [
  "akita-serialization",
  "blake2",
  "jolt-field",
+ "num-bigint 0.4.8",
+ "num-traits",
  "spongefish",
 ]
 

@@ -69,8 +69,12 @@ The integration changes Fiat--Shamir transport, not Akita's lattice relations,
 sumcheck equations, sparse distribution, or security parameters. Each
 extension coordinate challenge is derived from 64 random-oracle bytes. For a
 base field of modulus `p`, reduction distance per coordinate is at most
-`p / 2^512`; the schedule's certified adversarial query count and total
-coordinate count are included by union bound in the existing security budget.
+`p / (4 * 2^512)`. Admission rejects fields wider than 128 bits, and Akita
+accounts against a global cap of `2^32 - 1` combined coordinate draws and
+adversarial oracle queries. The resulting conservative union bound is below
+`2^-354`, independently satisfying the `2^-192` sampling-error budget. An
+exact integer test evaluates `r * (p-r) / (p * 2^512)`, where
+`r = 2^512 mod p`, for every production modulus at that global cap.
 The indexed sparse sampler still uses the fixed 40-byte
 `root || little_endian_u64(index)` input and rejection sampling for positions.
 
@@ -87,4 +91,3 @@ and `AkitaCommitmentScheme::batched_verify`; both operate on one Spongefish
 argument byte string. Structured legacy methods remain only while old
 diagnostic tests and profiling views are being removed and are not a fallback
 accepted by the canonical verifier.
-
