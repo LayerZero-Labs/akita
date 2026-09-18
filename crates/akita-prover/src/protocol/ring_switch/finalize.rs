@@ -11,40 +11,6 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct LegacyRingSwitchChallenges<'a, T>(&'a mut T);
-
-impl<F, E, T> RingSwitchChallengeSource<F, E> for LegacyRingSwitchChallenges<'_, T>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
-        Ok(sample_ext_challenge::<F, E, T>(
-            self.0,
-            CHALLENGE_RING_SWITCH,
-        ))
-    }
-
-    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-        Ok((0..count)
-            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU0))
-            .collect())
-    }
-
-    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-        Ok((0..count)
-            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU1))
-            .collect())
-    }
-}
-
 struct NativeRingSwitchChallenges<'a, 'plan>(&'a mut akita_types::NativeProverGrinding<'plan>);
 
 impl<F, E> RingSwitchChallengeSource<F, E> for NativeRingSwitchChallenges<'_, '_>
@@ -66,55 +32,6 @@ where
         self.0
             .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
     }
-}
-
-/// Complete the ring switch after the caller has bound the next witness.
-///
-/// Samples challenges and builds the evaluation tables for the fused sumcheck.
-/// The caller must first absorb the next-witness binding into `transcript`.
-///
-/// The relation reads the exact compact coefficient prefix. Each commitment
-/// group contributes events at its native role dimensions.
-///
-/// # Errors
-///
-/// Returns an error if the supplied gamma vector does not match the claim
-/// count or if matrix expansion or evaluation-table construction fails.
-#[tracing::instrument(skip_all, name = "ring_switch_finalize")]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_finalize<F, E, T>(
-    instance: &RingRelationInstance<F>,
-    setup: &AkitaExpandedSetup<F>,
-    transcript: &mut T,
-    level: u32,
-    w: &RecursiveWitnessFlat,
-    lp: &CommittedGroupParams,
-    opening_source_len: usize,
-    opening_ring_dim: usize,
-    gamma: Option<&[E]>,
-    opening_claim_coefficients: &[E],
-    prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
-) -> Result<RingSwitchFinalization<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    let mut challenges = LegacyRingSwitchChallenges(transcript);
-    ring_switch_finalize_with_challenges::<F, E, _>(
-        instance,
-        setup,
-        &mut challenges,
-        level,
-        w,
-        lp,
-        opening_source_len,
-        opening_ring_dim,
-        gamma,
-        opening_claim_coefficients,
-        prepared_relation_groups,
-    )
 }
 
 #[allow(dead_code)] // Called by the native fold driver during production cutover.

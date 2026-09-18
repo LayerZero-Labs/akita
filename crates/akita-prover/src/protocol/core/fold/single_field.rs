@@ -1,6 +1,6 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or tensor-projection symbols in scope.
-use super::{prepare_fold_relation, prepare_fold_relation_native, PreparedFold};
+use super::{prepare_fold_relation_native, PreparedFold};
 use crate::commitment::{CommitmentStatePolicy, InnerRelationState, OuterCompressionState};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
@@ -12,68 +12,6 @@ use akita_serialization::AkitaSerialize;
 use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use jolt_field::{Fold, Unreduced};
-
-/// Prepare a fold level when claim and coefficient fields coincide (`EXT_DEGREE == 1`).
-///
-/// This path never runs extension-opening reduction or tensor projection.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, S, O, TS, R, SP>(
-    stack: &ProverComputeStack<'_, F, O, TS, R, SP>,
-    block_claims: ProverOpeningData<'a, E, P, F, S>,
-    commitment_material: Vec<crate::types::PreparedCommitmentRelationMaterial<F>>,
-    pad_base_evals: bool,
-    transcript: &mut T,
-    level: u32,
-    level_params: &CommittedGroupParams,
-    basis: BasisMode,
-) -> Result<PreparedFold<F, E>, AkitaError>
-where
-    F: Field
-        + CanonicalEncoding
-        + akita_serialization::AkitaSerialize
-        + Ring
-        + Field
-        + Unreduced
-        + Field
-        + 'static,
-    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + Unreduced
-        + Fold
-        + Ring
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-    P: RootProverGroupOpening<F, E, O>,
-    S: InnerRelationState<F> + OuterCompressionState<F>,
-    O: DigitRowsComputeBackend<F>,
-    TS: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
-    SP: CommitmentStatePolicy<F>,
-{
-    let opening_batch = block_claims.opening_layout().clone();
-    let protocol_points = block_claims
-        .opening_claims()
-        .groups()
-        .iter()
-        .map(|group| group.point().to_vec())
-        .collect::<Vec<_>>();
-    prepare_fold_relation::<F, E, T, P, S, O, TS, R, SP>(
-        stack,
-        block_claims,
-        commitment_material,
-        &protocol_points,
-        None,
-        &opening_batch,
-        level,
-        level_params,
-        basis,
-        pad_base_evals,
-        transcript,
-    )
-    .map_err(|err| AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}")))
-}
 
 /// Prepare a degree-one fold directly against the native Spongefish stream.
 #[allow(dead_code)] // Called by the native root/suffix driver during cutover.

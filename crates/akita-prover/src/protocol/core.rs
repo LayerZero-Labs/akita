@@ -4,8 +4,8 @@ use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_native, NextWitnessState,
-    NextWitnessStateOutput, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize_native, NextWitnessState, NextWitnessStateOutput,
+    RingSwitchOutput,
 };
 use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weights;
 use crate::protocol::sumcheck::AkitaStage3Prover;
@@ -19,31 +19,20 @@ use akita_algebra::CyclotomicRing;
 use akita_config::{transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{prove_sumcheck, SumcheckProof};
-use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
-    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY,
-    CHALLENGE_SUMCHECK_BATCH,
-};
-use akita_transcript::{
-    append_ext_field, sample_ext_challenge, Transcript, TranscriptChallengePreview,
-};
+use akita_sumcheck::SumcheckProof;
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights,
-    derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
+    basis_weights, derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::relation_row_weight, recover_ring_subfield_inner_product, reduction_table_len,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
-    AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
-    CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, RingVec, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaExpandedSetup,
+    BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec,
+    SetupContributionMode, SetupPrefixProverRegistry, TerminalFoldParams, TerminalLevelProof,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
@@ -95,9 +84,8 @@ struct ProverExecutor<'stack, Stacks: ?Sized> {
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
-    prepare_extension_claim_fold, prepare_extension_claim_fold_native, prepare_single_field_fold,
-    prepare_single_field_fold_native, prove_fold, prove_fold_native, ExtensionOpeningSource,
-    PreparedFold,
+    prepare_extension_claim_fold_native, prepare_single_field_fold_native, prove_fold_native,
+    ExtensionOpeningSource, PreparedFold,
 };
 pub(in crate::protocol) use fold_kernels::*;
 pub use prove::batched_prove;
@@ -133,9 +121,4 @@ pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
 
 pub struct NativeRecursiveSuffixOutcome {
     pub num_levels: usize,
-}
-
-pub(in crate::protocol::core) struct Stage3ProveOutput<E: Field> {
-    pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
-    pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
 }

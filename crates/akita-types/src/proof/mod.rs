@@ -75,9 +75,9 @@ pub use containers::{
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
-    AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof,
-    SetupSumcheckProof, TerminalLevelProof,
+    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
+    FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
+    TerminalLevelProof,
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,
@@ -119,10 +119,10 @@ pub use setup_prefix::{
     SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
-    canonical_extension_opening_reduction_shape, canonical_proof_shape, AkitaBatchedProofShape,
-    AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    canonical_extension_opening_reduction_shape, AkitaStage1StageShape,
+    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
+    PhysicalL2NormProofWireShape, SetupProductSumcheckShape, TerminalLevelProofShape,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

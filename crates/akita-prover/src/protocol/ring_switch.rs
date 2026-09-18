@@ -4,8 +4,6 @@ use crate::{tensor_pack_recursive_witness, RecursiveWitnessFlat};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
     r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
     FpExtEncoding, NegativeBinarySupport, RingVec,
@@ -27,7 +25,7 @@ pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
 pub(crate) use evals::build_w_evals_compact;
-pub(crate) use finalize::{ring_switch_finalize, ring_switch_finalize_native};
+pub(crate) use finalize::ring_switch_finalize_native;
 pub use relation_weights::{
     build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,

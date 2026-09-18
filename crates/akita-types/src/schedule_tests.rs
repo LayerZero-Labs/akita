@@ -23,15 +23,14 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::GrindingPlan;
 use crate::{
-    canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
-    sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
-    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingRelationMode, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
+    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
+    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingRelationMode, RingVec, SisModulusProfileId, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -46,8 +45,6 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
-#[path = "schedule_tests/proof_shapes.rs"]
-mod proof_shapes;
 #[path = "schedule_tests/relation_mode.rs"]
 mod relation_mode;
 #[path = "schedule_tests/sis_occurrences.rs"]

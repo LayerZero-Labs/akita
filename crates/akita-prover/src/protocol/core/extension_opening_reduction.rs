@@ -70,97 +70,6 @@ where
     ) -> Self::Reduction;
 }
 
-struct LegacyEorProverStream<'a, T> {
-    transcript: &'a mut T,
-    level: u32,
-}
-
-impl<F, E, T> EorProverStream<F, E> for LegacyEorProverStream<'_, T>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F> + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-{
-    type Sumcheck = SumcheckProof<E>;
-    type Reduction = ExtensionOpeningReduction<E>;
-
-    fn prefix(
-        &mut self,
-        opening_batch: &OpeningClaimsLayout,
-        openings: &[E],
-        partials: &[E],
-    ) -> Result<(Vec<E>, Vec<E>), AkitaError> {
-        append_claim_values_to_transcript::<F, E, T>(openings, self.transcript);
-        for partial in partials {
-            append_ext_field::<F, E, T>(self.transcript, ABSORB_EVALUATION_CLAIMS, partial);
-        }
-        self.transcript
-            .grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level: self.level })?;
-        let (split_bits, _) = tensor_opening_split::<F, E>()?;
-        let eta = (0..split_bits)
-            .map(|_| sample_ext_challenge::<F, E, T>(self.transcript, CHALLENGE_SUMCHECK_BATCH))
-            .collect::<Vec<_>>();
-        let coefficients = akita_types::sample_row_coefficients::<F, E, T>(
-            opening_batch,
-            akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: self.level },
-            self.transcript,
-        )?;
-        Ok((eta, coefficients))
-    }
-
-    fn prove_sumcheck<P>(
-        &mut self,
-        prover: &mut P,
-    ) -> Result<(Self::Sumcheck, Vec<E>, E), AkitaError>
-    where
-        P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized,
-    {
-        let mut round = 0u32;
-        let (proof, point, final_claim) =
-            akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(prover, self.transcript, |tr| {
-                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                    tr,
-                    akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                    self.level,
-                    0,
-                    round,
-                )?;
-                round = round
-                    .checked_add(1)
-                    .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
-                Ok(challenge)
-            })?;
-        Ok((proof, point, final_claim))
-    }
-
-    fn final_claims(
-        &mut self,
-        _opening_batch: &OpeningClaimsLayout,
-        final_claims: &[E],
-    ) -> Result<(), AkitaError> {
-        for final_claim in final_claims {
-            append_ext_field::<F, E, T>(self.transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
-        }
-        Ok(())
-    }
-
-    fn build_reduction(
-        partials: Vec<E>,
-        sumcheck: Self::Sumcheck,
-        final_claims: Vec<E>,
-        final_factors: Vec<E>,
-    ) -> Self::Reduction {
-        ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials,
-                sumcheck,
-                final_claims,
-            },
-            final_factors,
-        }
-    }
-}
-
 #[allow(dead_code)] // Constructed by the native migration entry point below.
 struct NativeEorProverStream<'a, 'plan> {
     grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
@@ -281,39 +190,6 @@ where
         row_partials_by_claim,
         openings,
     })
-}
-
-/// Prove one extension-opening reduction over all opening groups.
-///
-/// Each group contributes native-dimension witness/factor terms. Terms with a
-/// smaller tail arity are extended cylindrically over fixed zero coordinates,
-/// so every group participates in one sumcheck challenge sequence without
-/// materializing repeated witness tables.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B>(
-    tensor_backend: &B,
-    tensor_prepared: Option<&B::PreparedSetup>,
-    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
-    transcript: &mut T,
-    level: u32,
-    path: &'static str,
-) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
-    <F as Unreduced>::Wide: From<F>,
-    E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
-    G: RootProverGroupTensor<F, E, B>,
-    B: ComputeBackendSetup<F>,
-{
-    let mut stream = LegacyEorProverStream { transcript, level };
-    prove_extension_opening_reduction_with_stream::<F, E, _, G, B>(
-        tensor_backend,
-        tensor_prepared,
-        group_inputs,
-        &mut stream,
-        path,
-    )
 }
 
 /// Prove EOR directly into the authoritative native Spongefish stream.

@@ -8,43 +8,30 @@ mod extension_opening_reduction;
 mod verify;
 use crate::protocol::evaluation_trace::prepare_evaluation_trace;
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_native, RingSwitchReplay, RingSwitchVerifyOutput,
+    ring_switch_verifier_native, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{
-    derive_multi_group_stage1_challenges, derive_multi_group_stage1_challenges_native,
-    AkitaStage1Verifier,
-};
+use crate::stages::stage1::{derive_multi_group_stage1_challenges_native, AkitaStage1Verifier};
 use crate::stages::stage2::AkitaStage2Verifier;
-use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
-use akita_challenges::{FoldDraw, LiveFoldDraw};
+use crate::stages::SetupSumcheckVerifier;
+use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
-    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_OPENING_PAYLOAD, ABSORB_RANGE_IMAGE_EVALUATION,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
-};
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
+    assemble_compressed_relation_rhs, assemble_relation_rhs,
     canonical_extension_opening_reduction_shape, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::relation_row_weight, raw_field_segment_bytes,
+    prepare_opening_point, proof::relation::relation_row_weight,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    tensor_equality_factor_eval_at_point, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
+    EvaluationTraceInputs, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
     OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
     PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
-    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
-    TerminalResponse, TerminalWitnessTranscriptParts,
+    RingVec, SetupContributionMode, TerminalFoldParams,
 };
 
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
-use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 mod fold;
@@ -52,38 +39,15 @@ mod root_fold;
 mod suffix;
 mod terminal_direct;
 mod terminal_ntt;
-use root_fold::verify_root;
 
 pub use verify::batched_verify;
 
 pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
-pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    absorb_protocol_opening_points, bind_opening_payload_and_finalize_claims,
     finalize_native_claims, prepare_single_field_suffix_groups,
-    prepare_single_field_terminal_suffix, verify_coefficient_packing_root_prefix,
-    verify_coefficient_packing_suffix_prefix, verify_coefficient_packing_suffix_prefix_native,
-    verify_extension_claim_suffix_prefix, verify_extension_claim_suffix_prefix_native,
-    verify_extension_claim_terminal_suffix, verify_extension_claim_terminal_suffix_native,
-    verify_fold, verify_fold_native, FoldClaimMaterial, NativeFoldVerifyOutput,
-    NativeNextWitnessPlan, NativePreparedFoldReplay, PreparedFoldOpeningPoint, PreparedFoldPayload,
-    PreparedFoldReplay, PreparedNextWitness,
+    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix_native,
+    verify_extension_claim_suffix_prefix_native, verify_extension_claim_terminal_suffix_native,
+    verify_fold_native, FoldClaimMaterial, NativeFoldVerifyOutput, NativeNextWitnessPlan,
+    NativePreparedFoldReplay, PreparedFoldOpeningPoint,
 };
-
-fn prepare_terminal_witness_replay<F, T>(
-    transcript: &mut T,
-    terminal_response: &TerminalResponse<F>,
-    terminal_response_len: usize,
-) -> Result<TerminalWitnessTranscriptParts, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    T: Transcript<F>,
-{
-    if terminal_response.num_elems() != terminal_response_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    let parts = terminal_response.terminal_transcript_parts()?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_folded);
-    Ok(parts)
-}

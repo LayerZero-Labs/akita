@@ -3,15 +3,10 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
-use akita_transcript::labels::{
-    ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
-    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
-};
-use akita_transcript::sample_ext_challenge;
+use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
-    reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProof, PhysicalL2NormProofShape,
-    PhysicalResponsePlan, SisModulusProfileId,
+    reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProofShape, PhysicalResponsePlan,
+    SisModulusProfileId,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -19,13 +14,6 @@ pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) virtual_evaluations: Vec<E>,
     pub(crate) range_image_evaluation: E,
-}
-
-pub(crate) struct PhysicalL2RangeClaim<'a, E> {
-    pub(crate) equality_point: &'a [E],
-    pub(crate) input_claim: E,
-    pub(crate) leaf_coefficients: &'a [E],
-    pub(crate) image_evaluation: E,
 }
 
 pub(crate) struct NativePhysicalL2RangeClaim<'a, E> {
@@ -215,89 +203,6 @@ where
         }
     }
     Ok(())
-}
-
-pub(crate) fn verify_physical_l2_norm<F, E, T>(
-    plan: &PhysicalResponsePlan,
-    proof: &PhysicalL2NormProof<E>,
-    range: PhysicalL2RangeClaim<'_, E>,
-    profile: SisModulusProfileId,
-    cap: u128,
-    transcript: &mut T,
-    level: u32,
-) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
-        return Err(AkitaError::InvalidSetup(
-            "fused Stage-1 leaf has inconsistent range geometry".into(),
-        ));
-    }
-    validate_integer_claim::<F, E>(
-        plan,
-        proof.response_l2_sq,
-        &proof.subclaims,
-        &proof.virtual_evaluations,
-        profile,
-        cap,
-    )?;
-    transcript.append_serde(ABSORB_L2_NORM_INTEGER, &proof.response_l2_sq);
-    for claim in &proof.subclaims {
-        transcript.append_serde(ABSORB_L2_NORM_SUBCLAIM, claim);
-    }
-    let mut subclaim_weights = Vec::new();
-    let norm_input_claim = match plan.shape() {
-        PhysicalL2NormProofShape::Direct { .. } => E::from_u128(proof.response_l2_sq),
-        PhysicalL2NormProofShape::LimbGram { .. } => {
-            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
-            let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
-            let mut power = E::one();
-            for _ in 0..proof.subclaims.len() {
-                subclaim_weights.push(power);
-                power *= gamma;
-            }
-            proof
-                .subclaims
-                .iter()
-                .zip(&subclaim_weights)
-                .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
-        }
-    };
-    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
-    let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
-    let verifier = PhysicalL2NormVerifier {
-        plan,
-        virtual_evaluations: &proof.virtual_evaluations,
-        range_equality_point: range.equality_point,
-        range_leaf_coefficients: range.leaf_coefficients,
-        range_image_evaluation: range.image_evaluation,
-        subclaim_weights,
-        input_claim: range.input_claim + norm_merge * norm_input_claim,
-        norm_merge,
-    };
-    let mut round = 0u32;
-    let point = verify_sumcheck::<F, T, E, _, _>(&verifier, &proof.sumcheck, transcript, |tr| {
-        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-            tr,
-            akita_types::SumcheckProtocol::PhysicalL2,
-            level,
-            0,
-            round,
-        )?;
-        round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-        Ok(challenge)
-    })?;
-    for evaluation in &proof.virtual_evaluations {
-        transcript.append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);
-    }
-    Ok(PhysicalL2VerifierReplay {
-        point,
-        virtual_evaluations: proof.virtual_evaluations.clone(),
-        range_image_evaluation: range.image_evaluation,
-    })
 }
 
 /// Replay a physical-L2 proof directly from the native Spongefish stream.

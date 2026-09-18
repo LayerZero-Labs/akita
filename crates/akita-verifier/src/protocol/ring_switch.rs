@@ -4,8 +4,6 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
@@ -144,40 +142,6 @@ where
     fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
 }
 
-struct LegacyRingSwitchChallenges<'a, T>(&'a mut T);
-
-impl<F, E, T> RingSwitchChallengeSource<F, E> for LegacyRingSwitchChallenges<'_, T>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
-        Ok(sample_ext_challenge::<F, E, T>(
-            self.0,
-            CHALLENGE_RING_SWITCH,
-        ))
-    }
-
-    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-        Ok((0..count)
-            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU0))
-            .collect())
-    }
-
-    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
-        self.0
-            .grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-        Ok((0..count)
-            .map(|_| sample_ext_challenge::<F, E, T>(self.0, CHALLENGE_TAU1))
-            .collect())
-    }
-}
-
 struct NativeRingSwitchChallenges<'a, 'proof, 'plan>(
     &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
 );
@@ -201,25 +165,6 @@ where
         self.0
             .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
     }
-}
-
-/// Replay the verifier half of ring switching after the caller has absorbed
-/// the schedule-selected outgoing witness binding.
-#[tracing::instrument(skip_all, name = "ring_switch_verifier")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier<F, E, T>(
-    replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
-    transcript: &mut T,
-    level: u32,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    let mut challenges = LegacyRingSwitchChallenges(transcript);
-    ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
 }
 
 #[allow(dead_code)] // Called by the native fold verifier during production cutover.

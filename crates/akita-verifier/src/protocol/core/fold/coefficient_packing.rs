@@ -3,11 +3,9 @@
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{
-    append_claim_values_to_transcript, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
+    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -83,37 +81,6 @@ where
 {
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, root_lp)?;
-    Ok(FoldClaimMaterial {
-        prepared_points,
-        openings: openings.to_vec(),
-        reduction_final_claims: None,
-        reduction_factors: None,
-    })
-}
-
-/// Prepare a recursive packing prefix without extension-opening reduction.
-pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix<F, E, T>(
-    claims: &OpeningClaims<'_, E>,
-    openings: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    basis: BasisMode,
-    lp: &CommittedGroupParams,
-    transcript: &mut T,
-) -> Result<FoldClaimMaterial<F, E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let prepared_points =
-        prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
-    let mut point_refs = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let point = claims.group_point(group_index)?;
-        point_refs.push(point);
-    }
-    super::single_field::absorb_protocol_opening_points::<F, E, T>(&point_refs, transcript);
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),

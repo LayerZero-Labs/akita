@@ -5,7 +5,7 @@
 //! prover-side compact witness scans and two-round-prefix kernels stay in the
 //! prover/root path.
 
-use akita_challenges::{LiveFoldDraw, NativeVerifierFoldDraw};
+use akita_challenges::NativeVerifierFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::verify_eq_factored_sumcheck;
@@ -31,59 +31,6 @@ pub(crate) struct RangeLeafVerifierInput<E: Field> {
     pub(crate) equality_point: Vec<E>,
     pub(crate) input_claim: E,
     pub(crate) polynomial_coefficients: Vec<E>,
-}
-
-/// Absorb the prover's `v` rows once, then sample one
-/// [`akita_challenges::Challenges`] set per
-/// commitment group in `OpeningClaims` order.
-///
-/// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
-/// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
-/// group; the terminal layout drops the D-block so the absorb is skipped on
-/// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
-/// each group's native fold-challenge config and the shared
-/// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// [`akita_challenges::Challenges`] set with
-/// `lp.blocks.live_blocks`/`num_total_polynomials`.
-///
-/// # Errors
-///
-/// Returns an error if the group layout is malformed or challenge sampling fails.
-pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
-    transcript: &mut T,
-    level: u32,
-    opening_batch: &OpeningClaimsLayout,
-    lp: &CommittedGroupParams,
-    grind_nonce: u32,
-) -> Result<Vec<GroupFoldChallenges>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
-        let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        let drawn = {
-            let mut live = LiveFoldDraw::<F, T>::new(transcript);
-            draw_group_fold_challenges::<F, E, _>(
-                &mut live,
-                &group_lp,
-                group_index,
-                k_g,
-                grind_nonce,
-            )?
-        };
-        let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
-        let coordinate_count = group_lp
-            .num_live_blocks()
-            .checked_mul(k_g)
-            .ok_or(AkitaError::InvalidProof)?;
-        transcript.record_fold_challenges(level, group, coordinate_count)?;
-        group_challenges.push(drawn);
-    }
-    Ok(group_challenges)
 }
 
 /// Native Spongefish replay of all sparse fold roots for one recursive level.
