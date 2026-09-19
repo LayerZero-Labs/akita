@@ -6,7 +6,7 @@
 //!
 //! Production transcripts are positional: these byte strings are diagnostics
 //! for logging builds, tests, and schedule inspection, not bytes absorbed by
-//! [`AkitaTranscript`](crate::AkitaTranscript).
+//! native Spongefish proof stream.
 //!
 /// Top-level protocol domain label.
 pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";

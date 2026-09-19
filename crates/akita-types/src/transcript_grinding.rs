@@ -3,17 +3,10 @@
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
-use akita_serialization::{AkitaSerialize, SerializationError};
-use akita_transcript::{
-    grinding_predicate_accepts, sample_ext_challenge, search_grinding_nonce, Transcript,
-    TranscriptChallengePreview,
-};
 pub use akita_transcript::{
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
     MAX_GRINDING_BITS,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
-use std::num::NonZeroU8;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
@@ -652,42 +645,10 @@ impl GrindingPlanAccumulator {
 
 #[path = "transcript_grinding/native_replay.rs"]
 mod native_replay;
-#[path = "transcript_grinding/replay.rs"]
-mod replay;
 pub use native_replay::{
     NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
     NativeProverGrinding, NativeVerifierGrinding,
 };
-pub use replay::{
-    ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptGrinding, TranscriptNonceReader,
-    TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,
-    VerifierTranscriptGrinding,
-};
-
-/// Apply the scheduled work and draw one sumcheck challenge.
-pub fn sample_grinded_sumcheck_challenge<F, E, T>(
-    transcript: &mut T,
-    protocol: SumcheckProtocol,
-    level: u32,
-    stage: u32,
-    round: u32,
-) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: TranscriptGrinding<F>,
-{
-    transcript.grind_query(GrindingSite::SumcheckRound {
-        protocol,
-        level,
-        stage,
-        round,
-    })?;
-    Ok(sample_ext_challenge(
-        transcript,
-        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
-    ))
-}
 
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.

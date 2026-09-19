@@ -41,7 +41,6 @@ pub mod signed_digit;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
-pub mod transcript;
 mod transcript_grinding;
 mod transcript_grinding_plan;
 pub mod witness;
@@ -130,8 +129,7 @@ pub use ntt_cache::{
 };
 pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
-    active_setup_field_len, append_batched_commitments_to_transcript,
-    append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
+    active_setup_field_len, assemble_compressed_relation_rhs, assemble_relation_rhs,
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     build_terminal_response, build_terminal_response_from_groups,
     canonical_extension_opening_reduction_shape, commit_only_setup_field_elements,
@@ -145,10 +143,10 @@ pub use proof::{
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_row_count,
     ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
-    sample_akita_setup_seed, sample_row_coefficients, sample_row_coefficients_native,
-    scheduled_setup_prefix, setup_matrix_capacity_for_schedule,
-    setup_matrix_field_elements_for_schedule, setup_prefix_coverage_eval_len,
-    setup_prefix_precommitted_params, setup_prefix_slot_field_elements, suffix_opening_layout,
+    sample_akita_setup_seed, sample_row_coefficients_native, scheduled_setup_prefix,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_prefix_coverage_eval_len, setup_prefix_precommitted_params,
+    setup_prefix_slot_field_elements, suffix_opening_layout,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
     validate_batched_inputs, validate_public_matrix_matches_seed, validate_setup_prefix_domain,
@@ -160,17 +158,17 @@ pub use proof::{
     CoefficientPackingChallenges, CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
     CoefficientPackingStage2Terms, CoefficientPackingVerifierBatchSemantics,
     CoefficientPackingVerifierGroupSemantics, Commitment, CommitmentSetupMatrixShape,
-    CommitmentVerifier, CommittedGroup, CompressionRelationAddressGeometry,
-    CompressionRelationWeights, DigitBlockIter, DigitBlocks, DummyProof,
-    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
-    GroupBatchStatement, GroupFoldChallenges, LevelProofShape, NegativeBinarySupport,
-    NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
-    PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, PreparedRingMultiplier, ProverCommitmentRows, PublicMatrixDerivation,
-    ReducedCoefficientFunctional, ReducedCompressionRelationWeights, RelationAddressGeometry,
-    RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
-    RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
-    RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
+    CommittedGroup, CompressionRelationAddressGeometry, CompressionRelationWeights, DigitBlockIter,
+    DigitBlocks, DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
+    FoldLevelProof, GroupBatchStatement, GroupFoldChallenges, LevelProofShape,
+    NegativeBinarySupport, NextWitnessBinding, NextWitnessBindingShape, OpeningClaims,
+    OpeningClaimsLayout, OpeningPoints, PhysicalL2NormProof, PhysicalResponsePlan,
+    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, PreparedRingMultiplier,
+    ProverCommitmentRows, PublicMatrixDerivation, ReducedCoefficientFunctional,
+    ReducedCompressionRelationWeights, RelationAddressGeometry, RelationGroupRows,
+    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RelationRowFamily,
+    RelationRowGeometry, RelationWeightContribution, RelationWeightEvent, RelationWitnessGeometry,
+    RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
@@ -182,8 +180,8 @@ pub use proof::{
     SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
-    append_digit_range_child_claims, batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram,
-    DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+    batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
+    DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
@@ -231,20 +229,16 @@ pub use trace_weight::{
     TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable, TraceTerm,
     TraceTermBatch, TraceWeightLayout,
 };
-pub use transcript::AppendToTranscript;
 pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    sample_grinded_sumcheck_challenge, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
-    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
-    NativeProverGrinding, NativeVerifierGrinding, ProverGrindingTranscript,
-    ProverTranscriptGrinding, SumcheckProtocol, TranscriptGrinding, TranscriptGrindingCost,
-    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
-    VerifierGrindingTranscript, VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION,
-    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
-    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
-    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_GRINDING_QUERY_LIMIT,
-    TRANSCRIPT_SECURITY_BITS,
+    GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite, NativeGrindingSumcheckProver,
+    NativeGrindingSumcheckVerifier, NativeProofAcceptance, NativeProverGrinding,
+    NativeVerifierGrinding, SumcheckProtocol, TranscriptGrindingCost,
+    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
+    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
+    TRANSCRIPT_GRINDING_QUERY_LIMIT, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape,

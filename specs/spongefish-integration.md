@@ -1,15 +1,5 @@
 # Spec: Native Spongefish transcripts and proof streams
 
-| Field | Value |
-| --- | --- |
-| Author(s) | Codex, for maintainer review |
-| Created | 2026-09-17 |
-| Status | implementing |
-| PR | Not opened |
-| Supersedes | On implementation, the transport/framing portions of transcript-grinding.md identified below |
-| Superseded-by | |
-| Book-chapter | book/src/how/transcript.md |
-
 ## Summary and decision
 
 Adopt Spongefish's native prover state, verifier state, argument serialization,
@@ -46,9 +36,9 @@ Byte `Encoding` supplies blanket `NargSerialize`; native receipt absorbs the
 decoded value's re-encoding. Runtime shapes are handled with schedule-bounded
 fixed-size atom reads, without requiring a contextual upstream decoder.
 
-The implementation centers on `crates/akita-transcript/src/sponge.rs`,
+The implementation centers on `crates/akita-transcript/src/native.rs`,
 `crates/akita-types/src/proof/wire.rs`,
-`crates/akita-types/src/transcript_grinding/replay.rs`,
+`crates/akita-types/src/transcript_grinding/native_replay.rs`,
 `crates/akita-config/src/transcript_binding.rs`, and protocol callers in the
 prover/verifier crates. Indexed sparse sampling remains in `akita-challenges`.
 
@@ -142,10 +132,26 @@ The new baseline encoding rules are:
   length-prefixed fields. They use `public_message` and occupy no proof bytes.
   Diagnostic labels are not implicitly cryptographic domains.
 
-Before implementation, complete a message table covering each protocol path:
-message type, exact encoding, trusted count/bound, validation, and first
-dependent challenge. Resolve compressed payload grammar and conditional
-branches explicitly. Incidental struct/derive ordering is not a wire contract.
+The canonical dependency map is:
+
+| Protocol group | Stream or public value | Trusted shape or bound | First dependent randomness or check |
+| --- | --- | --- | --- |
+| Root statement | Commitments, opening points, claims, basis, call layout | Validated root layout and descriptor | Evaluation batching and first fold randomness |
+| Extension-opening reduction | Partial claims, round polynomials, final claims | Scheduled rounds, degree, and group counts | Per-round challenge and final oracle equality |
+| Opening payload | Compressed relation payload | Schedule-derived count or bounded payload length | Fold-response search and relation checks |
+| Fold response | One native `u32` nonce | 12-bit semantic range | Every group-local fold root at that level |
+| Fold challenge group | Public fold-domain payload and root challenge | Scheduled group and coordinate counts | Indexed sparse coordinates and folded witness |
+| Stage 1 | Range-product messages and child claims | `DigitRangePlan` and scheduled security route | Per-round and interstage batching challenges |
+| Physical L2 | Norm claims, subclaims, virtual evaluations | Scheduled L2 shape and response cap | Norm batching, merge, and terminal equality checks |
+| Stage 2 | Compression/relation sumcheck messages | Scheduled rounds and degree | Per-round challenge and successor witness binding |
+| Stage 3 | Setup slot, product claim, rounds, prefix evaluation | Validated setup-prefix slot and schedule | Per-round challenge and setup-product equality |
+| Successor witness | Inner or outer commitment binding | Public next-level transition | Ring-switch and successor-level randomness |
+| Terminal response | Canonical bounded response payload | Terminal plan and schedule-derived byte cap | Reconstruction, norm, relation, and retained-binding checks |
+| Proof-of-work | One native `u32` nonce for each nonzero target | Grinding plan, `g + 7` range, `g <= 25` | Distinct predicate followed by the protected challenge |
+
+Compressed payload grammar and conditional branches are defined by the public
+schedule and the site/kind records below. Incidental struct or derive ordering
+is not a wire contract.
 
 Use or derive only `Encoding` and `NargDeserialize` for proof messages.
 Do not derive `Codec`: it also exposes challenge `Decoding`. Reserve
@@ -414,26 +420,26 @@ not byte equivalence with the old system. Required review artifacts:
 
 ### Acceptance criteria
 
-- [ ] Native Spongefish emission/receipt is the sole production proof path;
+- Native Spongefish emission/receipt is the sole production proof path;
   obsolete transcript and wire compatibility code is removed.
-- [ ] Grammar, site/kind assignments, public records, message dependencies,
+- Grammar, site/kind assignments, public records, message dependencies,
   domains and soundness/accounting review have no unresolved blockers.
-- [ ] Codec canonicality and cursor-on-error properties are tested, with
+- Codec canonicality and cursor-on-error properties are tested, with
   unchecked decoding excluded from verifier proof input paths.
-- [ ] Exact sampling-error accounting certifies the 64-byte coordinate width
+- Exact sampling-error accounting certifies the 64-byte coordinate width
   and aggregate budget including adversarial query counts.
-- [ ] Raw-state/constructor allowlists and the consuming acceptance/finish
+- Raw-state/constructor allowlists and the consuming acceptance/finish
   boundary are enforced.
-- [ ] Both grinding mechanisms retain bounded search, plan/site enforcement,
+- Both grinding mechanisms retain bounded search, plan/site enforcement,
   exhaustion, predicate separation and verifier response checks.
-- [ ] Acceptance requires EOF, algebraic validity, and complete plan consumption.
-- [ ] Every supported mode, field, backend, persistence path and integration works.
-- [ ] Malformed input rejects without panic or unchecked allocation.
-- [ ] New traces/vectors agree across prover/verifier; logging does not alter
+- Acceptance requires EOF, algebraic validity, and complete plan consumption.
+- Every supported mode, field, backend, persistence path and integration works.
+- Malformed input rejects without panic or unchecked allocation.
+- New traces/vectors agree across prover/verifier; logging does not alter
   challenges; verifier and guest construction need no entropy.
-- [ ] A responsibility/code-size report demonstrates deletion of Akita plumbing,
+- A responsibility/code-size report demonstrates deletion of Akita plumbing,
   including dependency patches and maintenance of raw-state exceptions.
-- [ ] Performance, memory, proof-size and planner-model changes are measured;
+- Performance, memory, proof-size and planner-model changes are measured;
   affected artifacts, fixtures and documentation are updated.
 
 ### Testing
@@ -523,9 +529,9 @@ Implementation updates `book/src/how/transcript.md`,
 proof-format documentation, examples, and changed edges in `docs/crate-graph.md`.
 Update the grinding spec's nonce transport, framing, size formulas and domains
 in the same cutover. Preserve its security/response-bound obligations unless
-replaced by an explicitly reviewed argument. This proposal does not describe
-shipped behavior. Fold and archive after implementation; keep its index and
-live-spec checker synchronized meanwhile.
+replaced by an explicitly reviewed argument. This specification describes the
+native proof-stream architecture; keep its index, documentation, and live-spec
+checker synchronized with the code.
 
 - [Pinned Spongefish codecs](https://github.com/arkworks-rs/spongefish/blob/d2d190b1329d35ac9577438d05aed4f17a57b9f9/spongefish/src/codecs.rs)
 - [Pinned Spongefish domain separator](https://github.com/arkworks-rs/spongefish/blob/d2d190b1329d35ac9577438d05aed4f17a57b9f9/spongefish/src/domain_separator.rs)

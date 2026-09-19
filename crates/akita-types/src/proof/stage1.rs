@@ -3,20 +3,7 @@
 use crate::proof::PhysicalL2NormProofWireShape;
 use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_error::AkitaError;
-use akita_transcript::{append_ext_field, labels, Transcript};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-/// Absorb digit-range product child claims in their canonical transcript order.
-pub fn append_digit_range_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for claim in claims {
-        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
-    }
-}
+use jolt_field::{Field, Ring};
 
 /// Checked flat Boolean domain for the compact digit witness.
 ///

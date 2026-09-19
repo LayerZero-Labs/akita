@@ -13,8 +13,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, SumcheckProof};
-use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
+use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
     ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
     AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding, PreparedRelationAddress,
@@ -25,18 +24,6 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
-
-/// Output of the setup-only stage-3 prover.
-pub struct AkitaStage3ProverOutput<E: Field> {
-    /// Setup-product claim carried in the serialized stage-3 proof.
-    pub setup_product_claim: E,
-    /// Setup-prefix MLE value at the stage-3 challenge.
-    pub setup_prefix_eval: E,
-    /// Setup-prefix opening point.
-    pub setup_prefix_point: Vec<E>,
-    /// Degree-two setup-product sumcheck.
-    pub sumcheck: SumcheckProof<E>,
-}
 
 #[allow(dead_code)] // Consumed by the native fold driver during production cutover.
 pub(crate) struct NativeAkitaStage3ProverOutput<E: Field> {
@@ -101,75 +88,6 @@ where
         Ok(Self {
             setup,
             setup_product_claim,
-        })
-    }
-
-    /// Construct a recursive setup-product sumcheck prover.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new<T>(
-        expanded: &'a AkitaExpandedSetup<F>,
-        prefix_slots: &SetupPrefixProverRegistry<F>,
-        lp: &CommittedGroupParams,
-        next_fold_level_params: &CommittedGroupParams,
-        relation: &RingRelationInstance<F>,
-        tau1: &[E],
-        alpha: E,
-        stage2_challenges: &[E],
-        relation_address_geometry: RelationAddressGeometry,
-        transcript: &mut T,
-    ) -> Result<Self, AkitaError>
-    where
-        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-        E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
-        T: Transcript<F>,
-    {
-        let setup_coefficient_bits =
-            relation_address_geometry.relation_coefficient_variable_count();
-        let setup_x_challenges = stage2_challenges
-            .get(setup_coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
-        let setup_term = {
-            let _span = tracing::info_span!("stage3_setup_term_prepare").entered();
-            let (term, slot_id) = build_setup_product_term::<F, E>(
-                expanded,
-                prefix_slots,
-                lp,
-                next_fold_level_params,
-                relation,
-                tau1,
-                alpha,
-                setup_x_challenges,
-                relation_address_geometry,
-            )?;
-            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot_id);
-            term
-        };
-        let setup_product_claim = setup_term.input_claim();
-        Ok(Self {
-            setup: setup_term,
-            setup_product_claim,
-        })
-    }
-
-    pub fn prove<T, SampleRound>(
-        &mut self,
-        transcript: &mut T,
-        sample_round: SampleRound,
-    ) -> Result<AkitaStage3ProverOutput<E>, AkitaError>
-    where
-        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-        E: AkitaSerialize,
-        T: Transcript<F>,
-        SampleRound: FnMut(&mut T) -> Result<E, AkitaError>,
-    {
-        let (sumcheck, setup_prefix_point, _final_claim) =
-            prove_sumcheck::<F, T, E, _, _>(self, transcript, sample_round)?;
-        let setup_prefix_eval = self.setup.folded_table_value()?;
-        Ok(AkitaStage3ProverOutput {
-            setup_product_claim: self.setup_product_claim,
-            setup_prefix_eval,
-            setup_prefix_point,
-            sumcheck,
         })
     }
 

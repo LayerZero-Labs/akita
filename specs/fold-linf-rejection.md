@@ -82,18 +82,16 @@ including its committed digit depths and response limits.
 
 ## Fiat-Shamir grinding
 
-Each fold consumes one 12-bit value from the proof-level packed
-`TranscriptNonceStream`. For candidate values `0, 1, ...`, the prover expands
-the value to `u32`, absorbs that numeric little-endian encoding into every
-group-local fold-challenge domain, and samples the sparse challenges. The
-verifier performs the same absorption and sampling for the accepted value.
-Moving the value from an individual `u32` proof field to 12 packed bits does
-not change the group-root input for the same numeric nonce.
+Each fold emits one native Spongefish `u32` proof message whose value is
+restricted to the 12-bit search domain. For candidate values `0, 1, ...`, the
+prover previews the native nonce message followed by every group-local
+fold-challenge context and samples the sparse challenges. The accepted nonce is
+then committed once to the live proof stream, and the verifier performs the
+same native receipt and sampling.
 
 `TranscriptGrindingBinding` commits the canonical grinding-plan digest. The
-plan binds the exclusive probe cap (`4096`), the 12-bit packed width, query
-order, and indexed sparse-oracle revision. Values outside the bound are not
-representable by the scheduled stream entry.
+plan binds the exclusive probe cap (`4096`), the 12-bit semantic width, query
+order, and indexed sparse-oracle revision. Values outside the bound are rejected.
 
 Nonce values outside the bound are rejected. Exhausting the bound returns a
 prover error; it does not create an unbounded loop or a verifier panic.

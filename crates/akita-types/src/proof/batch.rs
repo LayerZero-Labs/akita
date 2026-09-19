@@ -6,14 +6,11 @@ mod subfield;
 use crate::{
     basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, RingVec,
+    BasisMode, CommittedGroupParams, FpExtEncoding, RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
-use akita_transcript::{append_ext_field, Transcript};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{ExtField, Field};
 
 pub use ring_multiplier::{PreparedRingMultiplier, RingMultiplierOpeningPoint};
 pub use subfield::SubfieldMultiplierOpeningPoint;
@@ -136,18 +133,6 @@ where
         .map(RingMultiplierOpeningPoint::Subfield)
 }
 
-/// Absorb public claim-field evaluations into the base-field transcript.
-pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for value in values {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVAL_OPENINGS_FIELD, value);
-    }
-}
-
 /// Sum claim-group sizes with overflow checking.
 ///
 /// # Errors
@@ -156,25 +141,6 @@ where
 pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
     checked::sum(group_sizes.iter().copied())
         .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
-}
-
-/// Absorb the batch commitment into the transcript using the D-free flat
-/// coefficient encoding under its derived terminal compression `ring_dim`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] if the stored buffer is not well-formed
-/// for `ring_dim`.
-pub fn append_batched_commitments_to_transcript<F, T>(
-    commitment: &Commitment<F>,
-    ring_dim: usize,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-    T: Transcript<F>,
-{
-    commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)
 }
 
 /// Validate common batched prove/verify input shape constraints.

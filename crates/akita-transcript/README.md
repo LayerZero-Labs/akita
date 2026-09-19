@@ -1,33 +1,22 @@
 # akita-transcript
 
-Fiat-Shamir transcript support for Akita.
+Native Spongefish proof-stream support for Akita.
 
 ## Active Hardening Pillars
 
 Akita's transcript hardening has three active pieces:
 
 1. `AkitaInstanceDescriptor` bytes are bound into the spongefish preamble through `DomainSeparator.instance(...)`.
-2. `AkitaTranscript` is backed by spongefish. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Exactly one backend must be selected. Builds with neither or both backend features fail closed.
-3. `LoggingTranscript` is available behind `logging-transcript` for tests and schedule inspection.
+2. Spongefish `ProverState` and `VerifierState` are the only production transcript implementations. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Exactly one backend must be selected.
+3. Native proof receipt, public-message absorption, challenge extraction, and EOF checking operate on the same state and argument string.
 
-Production labels are diagnostics only. `Label` is a zero-sized type when `logging-transcript` is disabled, and labels are never absorbed into the production sponge. Positional order plus the instance descriptor preamble are the protocol transcript domain.
+Fixed-format public context records bind message kind, site, atom count, encoded width, and challenge width. Rust type names and diagnostic labels are not cryptographic domains.
 
 ## Logging Checks
 
-`LoggingTranscript` records:
-
-- descriptor preamble events;
-- transcript absorbs;
-- challenge squeezes;
-- verifier wire-use events registered by tests or verifier harnesses.
-
-Its smell checks assert:
-
-- the first event is a non-empty descriptor preamble;
-- absorbs are non-empty;
-- labels are in `labels::ALL_LABELS`;
-- each tracked verifier wire use is followed by a matching absorb before the next squeeze;
-- declared wire-coverage manifest labels are actually recorded.
+With `logging-transcript`, the native context helpers record the exact
+`ProtocolContextRecord` sequence absorbed by Spongefish. End-to-end tests require
+the prover and verifier context streams to be non-empty and identical.
 
 The PCS integration tests enable this with:
 

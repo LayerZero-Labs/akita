@@ -2,7 +2,7 @@ use super::*;
 use crate::RecursiveWitnessFlat;
 use akita_config::proof_optimized::fp128::OneHot;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
-use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};
+use jolt_field::{Fp32, FpExt2, TwoNr};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;

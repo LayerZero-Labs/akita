@@ -120,11 +120,6 @@ where
     fn num_vars(&self) -> Result<usize, AkitaError> {
         self.inner.num_vars()
     }
-
-    #[cfg(feature = "response-model-diagnostics")]
-    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
-        self.inner.exact_integer_coeff_l2_sq()
-    }
 }
 
 impl<F, E, O> crate::protocol::core::RootProverGroupOpening<F, E, O>

@@ -716,11 +716,15 @@ impl ProtocolContextRecord {
 
 /// Absorb a public context record on the prover side.
 pub fn prover_context(state: &mut NativeProverState, record: ProtocolContextRecord) {
+    #[cfg(feature = "logging-transcript")]
+    crate::logging::record_context(record);
     state.public_message(&record);
 }
 
 /// Absorb a public context record on the verifier side.
 pub fn verifier_context(state: &mut NativeVerifierState<'_>, record: ProtocolContextRecord) {
+    #[cfg(feature = "logging-transcript")]
+    crate::logging::record_context(record);
     state.public_message(&record);
 }
 

@@ -8,7 +8,6 @@ use crate::{ErasedPreparedProverGroup, PreparedProverGroup};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
     CommittedGroupParams, CompressionChainPlan, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
@@ -517,52 +516,6 @@ where
             .collect()
     }
 
-    /// Absorb the normalized batch shape, commitments, and group points.
-    pub fn append_to_transcript<T>(
-        &self,
-        root_params: &CommittedGroupParams,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        CommitF: CanonicalEncoding + AkitaSerialize,
-        PointF: ExtField<CommitF>,
-        T: Transcript<CommitF>,
-    {
-        let layout = self.opening_layout();
-        let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_level(root_params, layout, PointF::DEGREE)?;
-        let relation_layout = relation_geometry.rhs_layout();
-        layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
-        for (group_index, commitment) in self.commitments().into_iter().enumerate() {
-            let compression = relation_layout.compression_plan_for_group(group_index)?;
-            if commitment.rows().coeff_len() != compression.terminal_coefficients() {
-                return Err(AkitaError::InvalidInput(
-                    "root compressed commitment does not match scheduled root params".into(),
-                ));
-            }
-            let ring_dim = compression
-                .maps()
-                .last()
-                .ok_or(AkitaError::InvalidProof)?
-                .ring_dimension();
-            commitment.append_to_transcript(
-                akita_transcript::labels::ABSORB_COMMITMENT,
-                ring_dim,
-                transcript,
-            )?;
-        }
-        for group in self.opening_claims.groups() {
-            for coord in group.point() {
-                akita_transcript::append_ext_field::<CommitF, PointF, T>(
-                    transcript,
-                    akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
-                    coord,
-                );
-            }
-        }
-        Ok(())
-    }
-
     /// Bind the actual root commitments and opening points as framed native
     /// public messages. The descriptor separately commits to batch geometry.
     pub(crate) fn append_to_native(
@@ -701,8 +654,6 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_transcript::labels::ABSORB_COMMITMENT;
-    use akita_transcript::AkitaTranscript;
     use akita_types::{GroupCommitPhaseParams, GroupOpenPhaseParams, RingVec, SisModulusProfileId};
     use jolt_field::{Fp32, Zero};
 
@@ -927,89 +878,5 @@ mod tests {
             )
             .is_err());
         }
-    }
-
-    #[test]
-    fn transcript_binding_rejects_malformed_commitment_rows() {
-        let pre = MockPoly { num_vars: 2 };
-        let final_poly = MockPoly { num_vars: 4 };
-        let pre_refs = [&pre];
-        let final_refs = [&final_poly, &final_poly];
-        let data = multi_group_data(&pre_refs, &final_refs).expect("prover data");
-        let claims = data
-            .opening_claims()
-            .groups()
-            .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    Commitment::new(RingVec::from_coeffs(vec![F::zero()])),
-                )
-                .expect("claims group")
-            })
-            .collect();
-        let malformed = ProverOpeningData::new_internal(
-            OpeningClaims::from_groups(claims).expect("claims"),
-            vec![empty_hint(), empty_hint()],
-            vec![&pre_refs[..], &final_refs[..]],
-        )
-        .expect("claim shape is valid");
-        let mut transcript = AkitaTranscript::<F>::new(b"test/malformed-commitment");
-        assert!(matches!(
-            malformed.append_to_transcript(&multi_group_params(), &mut transcript),
-            Err(AkitaError::InvalidInput(_))
-        ));
-    }
-
-    #[test]
-    fn append_to_transcript_binds_precise_group_shape_not_padded_max() {
-        let pre_poly = MockPoly { num_vars: 2 };
-        let final_a = MockPoly { num_vars: 4 };
-        let final_b = MockPoly { num_vars: 4 };
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_a, &final_b];
-        let data = multi_group_data(&pre_refs, &final_refs).expect("prover data");
-        let root_params = multi_group_params();
-
-        let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
-        data.append_to_transcript(&root_params, &mut precise)
-            .expect("precise transcript absorb");
-        let precise_challenge = precise.challenge_scalar(b"after-shape");
-
-        let padded_layout =
-            OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("old padded layout");
-        let mut padded = AkitaTranscript::<F>::new(b"test/precise-group-shape");
-        padded_layout
-            .append_batch_shape_to_transcript::<F, _>(&mut padded)
-            .expect("padded shape absorb");
-        let geometry =
-            akita_types::RelationWitnessGeometry::for_level(&root_params, data.opening_layout(), 1)
-                .expect("fixture geometry");
-        for (index, commitment) in data.commitments().into_iter().enumerate() {
-            let ring_dimension = geometry
-                .rhs_layout()
-                .compression_plan_for_group(index)
-                .expect("fixture compression")
-                .maps()
-                .last()
-                .expect("terminal map")
-                .ring_dimension();
-            commitment
-                .append_to_transcript(ABSORB_COMMITMENT, ring_dimension, &mut padded)
-                .expect("commitment absorb");
-        }
-        for group in data.opening_claims().groups() {
-            for coord in group.point() {
-                akita_transcript::append_ext_field::<F, F, _>(
-                    &mut padded,
-                    akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
-                    coord,
-                );
-            }
-        }
-        let padded_challenge = padded.challenge_scalar(b"after-shape");
-
-        assert_ne!(precise_challenge, padded_challenge);
     }
 }

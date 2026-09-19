@@ -93,16 +93,6 @@ impl FoldChunkCoefficients {
         }
     }
 
-    #[cfg(feature = "response-model-diagnostics")]
-    pub(crate) fn coefficient_count(&self, global: &[i32]) -> usize {
-        match &self.storage {
-            FoldChunkStorage::Single => global.len(),
-            FoldChunkStorage::Chunked(chunks) => {
-                chunks.iter().map(|chunk| chunk.coefficients.len()).sum()
-            }
-        }
-    }
-
     pub(crate) fn all_extrema_within(
         &self,
         global: &DecomposeFoldWitness<impl Field>,

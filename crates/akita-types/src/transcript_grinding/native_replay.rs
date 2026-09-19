@@ -1,6 +1,5 @@
 //! Inline native Spongefish nonce replay for transcript grinding.
 
-use super::replay::{value_fits, GrindingPlanCursor, GrindingPlanEntry};
 use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
 use akita_sumcheck::{NativeSumcheckProverChannel, NativeSumcheckVerifierChannel};
@@ -14,6 +13,82 @@ use akita_transcript::{
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 use std::num::NonZeroU8;
+
+#[derive(Clone, Copy)]
+struct GrindingPlanEntry {
+    site: GrindingSite,
+    grind_bits: u8,
+    nonce_bits: u8,
+}
+
+struct GrindingPlanCursor<'a> {
+    plan: &'a GrindingPlan,
+    run_index: usize,
+    run_offset: u64,
+}
+
+impl<'a> GrindingPlanCursor<'a> {
+    const fn new(plan: &'a GrindingPlan) -> Self {
+        Self {
+            plan,
+            run_index: 0,
+            run_offset: 0,
+        }
+    }
+
+    fn next(&mut self) -> Option<GrindingPlanEntry> {
+        let run = *self.plan.runs.get(self.run_index)?;
+        let entry = GrindingPlanEntry {
+            site: run.site,
+            grind_bits: run.grind_bits,
+            nonce_bits: run.nonce_bits,
+        };
+        self.run_offset += 1;
+        if self.run_offset == run.multiplicity {
+            self.run_index += 1;
+            self.run_offset = 0;
+        }
+        Some(entry)
+    }
+
+    fn peek(&self) -> Option<GrindingPlanEntry> {
+        let run = *self.plan.runs.get(self.run_index)?;
+        Some(GrindingPlanEntry {
+            site: run.site,
+            grind_bits: run.grind_bits,
+            nonce_bits: run.nonce_bits,
+        })
+    }
+
+    fn consume_run(&mut self, site: GrindingSite, multiplicity: usize) -> Result<(), AkitaError> {
+        let run = self
+            .plan
+            .runs
+            .get(self.run_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if self.run_offset != 0
+            || run.site != site
+            || run.grind_bits != 0
+            || run.nonce_bits != 0
+            || usize::try_from(run.multiplicity).ok() != Some(multiplicity)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.run_index = self
+            .run_index
+            .checked_add(1)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(())
+    }
+
+    fn is_finished(&self) -> bool {
+        self.run_index == self.plan.runs.len() && self.run_offset == 0
+    }
+}
+
+const fn value_fits(value: u32, width: u8) -> bool {
+    width == 32 || value < (1u32 << width)
+}
 
 fn next_entry(
     cursor: &mut GrindingPlanCursor<'_>,

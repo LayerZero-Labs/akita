@@ -243,17 +243,11 @@ jobs:
             --no-default-features \
             --features parallel,logging-transcript,${{ matrix.backend }} \
             selective_l2_proof_rejects_transcript_mutations --lib
-      # The structural challenge audit only runs under `logging-transcript`, so
-      # the protocol suites must also be exercised with it enabled. Without this
-      # step the audit is only ever checked against the two hardening targets at
-      # a single opening shape.
-      - name: Run protocol suites under the challenge audit
+      - name: Run protocol suites with native transcript tracing
         run: >-
           cargo test --release -p akita-pcs
           --test protocol_soundness
           --test fold_linf
-          --test transcript
-          --test label_schedule
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --

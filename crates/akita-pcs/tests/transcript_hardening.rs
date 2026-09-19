@@ -49,6 +49,8 @@ fn native_stream_binds_session_statement_basis_and_eof() {
                 akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::clear_thread_events();
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -64,6 +66,8 @@ fn native_stream_binds_session_statement_basis_and_eof() {
                 BasisMode::Lagrange,
             )
             .expect("prove");
+        #[cfg(feature = "logging-transcript")]
+        let prover_events = akita_transcript::thread_events();
         let verify = |candidate: &[u8], session: &[u8], claimed: F, basis| {
             scheme.batched_verify(
                 candidate,
@@ -74,7 +78,15 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             )
         };
 
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::clear_thread_events();
         verify(&proof, LABEL, opening, BasisMode::Lagrange).expect("honest proof");
+        #[cfg(feature = "logging-transcript")]
+        {
+            let verifier_events = akita_transcript::thread_events();
+            assert!(!prover_events.is_empty());
+            assert_eq!(verifier_events, prover_events);
+        }
         assert!(verify(
             &proof,
             b"hardening/onehot/different-session",

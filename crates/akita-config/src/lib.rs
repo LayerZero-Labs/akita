@@ -9,7 +9,6 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
@@ -296,23 +295,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
-    /// Absorb an extension-field element into a base-field transcript.
-    fn append_extension_field<T: Transcript<Self::Field>>(
-        transcript: &mut T,
-        label: &[u8],
-        x: &Self::ExtField,
-    ) {
-        append_ext_field::<Self::Field, Self::ExtField, T>(transcript, label, x);
-    }
-
-    /// Squeeze an extension-field element from a base-field transcript.
-    fn sample_extension_field<T: Transcript<Self::Field>>(
-        transcript: &mut T,
-        label: &[u8],
-    ) -> Self::ExtField {
-        sample_ext_challenge::<Self::Field, Self::ExtField, T>(transcript, label)
-    }
-
     /// Uniform or bounded-adaptive ring-dimension schedule policy.
     const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode;
 
@@ -414,9 +396,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::{
-        append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
-    };
     use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
@@ -503,47 +482,12 @@ mod tests {
     }
 
     #[test]
-    fn config_samples_extension_challenge() {
-        let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-
-        let c1 =
-            SingleExtensionConfig::sample_extension_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
-        let c2 = sample_ext_challenge::<Base, BaseExt, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
-        assert_eq!(c1, c2);
-    }
-
-    #[test]
     fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
             SingleExtensionConfig::EXT_DEGREE,
             <BaseExt as ExtField<Base>>::DEGREE
         );
         assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
-    }
-
-    #[test]
-    fn config_appends_extension_opening() {
-        let opening = BaseExt::from_base_slice(&[
-            Base::from_u64(9),
-            Base::from_u64(10),
-            Base::from_u64(11),
-            Base::from_u64(12),
-        ]);
-
-        let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-
-        SingleExtensionConfig::append_extension_field(
-            &mut t1,
-            labels::ABSORB_EVALUATION_CLAIMS,
-            &opening,
-        );
-        append_ext_field::<Base, BaseExt, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &opening);
-
-        let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        assert_eq!(c1, c2);
     }
 
     #[test]

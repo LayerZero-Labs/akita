@@ -31,8 +31,8 @@ policy and the checker use the same live set in
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
-| [`transcript-grinding`](../../../specs/transcript-grinding.md) | proposed | Defines the planned public proof-of-work policy and packed nonce stream. |
-| [`spongefish-integration`](../../../specs/spongefish-integration.md) | proposed | Defines native Spongefish proof streams and new transcript encoding, preserving grinding and soundness obligations. |
+| [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current native proof-of-work and fold-response grinding policy. |
+| [`spongefish-integration`](../../../specs/spongefish-integration.md) | implemented | Defines the current native Spongefish proof stream, transcript encoding, grinding integration, and soundness obligations. |
 
 ## Archived records
 

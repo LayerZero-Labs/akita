@@ -23,7 +23,6 @@ dependencies = [
  "keccak 0.1.6",
  "serde",
  "smallvec",
- "tracing",
 ]
 
 [[package]]
@@ -62,15 +61,12 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "jolt-field",
- "tracing",
 ]
 
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
- "akita-serialization",
- "blake2",
  "jolt-field",
  "spongefish",
 ]

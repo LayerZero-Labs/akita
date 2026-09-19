@@ -42,12 +42,10 @@ mod witness_emission;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_row_coefficients, sample_row_coefficients_native, verify_row_coefficients_native,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout,
+    sample_row_coefficients_native, verify_row_coefficients_native, GroupBatchStatement,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
     PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
@@ -69,9 +67,7 @@ pub use compression_relation_weights::{
     evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
     ReducedCompressionRelationWeights,
 };
-pub use containers::{
-    append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
-};
+pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -98,7 +94,7 @@ pub use ring_relation::{
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
-pub use scheme::{CommitmentVerifier, OpeningPoints};
+pub use scheme::OpeningPoints;
 pub use setup::{
     derive_public_matrix_prefix, sample_akita_setup_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
@@ -124,9 +120,7 @@ pub use shapes::{
     PhysicalL2NormProofWireShape, SetupProductSumcheckShape, TerminalLevelProofShape,
     SETUP_SUMCHECK_DEGREE,
 };
-pub use stage1::{
-    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
-};
+pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
     build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
     raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
@@ -151,7 +145,6 @@ use akita_sumcheck::EqFactoredSumcheckProof;
 use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
-use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
 

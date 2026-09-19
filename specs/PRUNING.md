@@ -52,8 +52,8 @@ Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
 The current set temporarily contains 22. The active commitment-execution,
 external-catalog, paired quotient-free tail-ring, Jolt field-unification, and
-guided-adaptation records and proposed Spongefish integration account for the
-seven-record overage. Each record
+guided-adaptation records and the load-bearing Spongefish integration record
+account for the seven-record overage. Each record
 returns to the archive after its durable contract is folded into the Book.
 
 ## Status transitions (required actions)
