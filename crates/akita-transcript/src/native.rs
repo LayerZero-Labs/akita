@@ -434,14 +434,66 @@ where
         .map(NativeExtension::into_inner)
 }
 
-/// Emit a schedule-bounded byte sequence as native one-byte proof atoms.
+const NATIVE_BYTE_CHUNK_BYTES: usize = 1024;
+const NATIVE_BYTE_TAIL_CHUNK_BYTES: usize = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeByteChunk<const N: usize>([u8; N]);
+
+impl<const N: usize> Encoding<[u8]> for NativeByteChunk<N> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.as_slice()
+    }
+}
+
+impl<const N: usize> NargDeserialize for NativeByteChunk<N> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> Result<Self, VerificationError> {
+        let (encoded, remaining) = buf.split_at_checked(N).ok_or(VerificationError)?;
+        let bytes = encoded.try_into().map_err(|_| VerificationError)?;
+        *buf = remaining;
+        Ok(Self(bytes))
+    }
+}
+
+fn send_native_byte_chunks<'a, const N: usize>(
+    state: &mut NativeProverState,
+    mut bytes: &'a [u8],
+) -> &'a [u8] {
+    while bytes.len() >= N {
+        let (chunk, remaining) = bytes.split_at(N);
+        let chunk: NativeByteChunk<N> =
+            NativeByteChunk(chunk.try_into().expect("chunk length is fixed"));
+        state.prover_message(&chunk);
+        bytes = remaining;
+    }
+    bytes
+}
+
+fn receive_native_byte_chunks<const N: usize>(
+    state: &mut NativeVerifierState<'_>,
+    len: usize,
+    bytes: &mut Vec<u8>,
+) -> Result<usize, VerificationError> {
+    for _ in 0..len / N {
+        let chunk = state.prover_message::<NativeByteChunk<N>>()?;
+        bytes.extend_from_slice(&chunk.0);
+    }
+    Ok(len % N)
+}
+
+/// Emit a schedule-bounded byte sequence in fixed-size native chunks.
+///
+/// Spongefish absorption is associative, so this emits and absorbs exactly the
+/// same byte string as one-byte messages while avoiding one call per byte.
 pub fn send_native_bytes(state: &mut NativeProverState, bytes: &[u8]) {
+    let bytes = send_native_byte_chunks::<NATIVE_BYTE_CHUNK_BYTES>(state, bytes);
+    let bytes = send_native_byte_chunks::<NATIVE_BYTE_TAIL_CHUNK_BYTES>(state, bytes);
     for &byte in bytes {
         state.prover_message(&[byte]);
     }
 }
 
-/// Receive an exact schedule-bounded number of native one-byte proof atoms.
+/// Receive an exact schedule-bounded number of bytes in fixed-size native chunks.
 pub fn receive_native_bytes(
     state: &mut NativeVerifierState<'_>,
     len: usize,
@@ -450,7 +502,10 @@ pub fn receive_native_bytes(
     bytes
         .try_reserve_exact(len)
         .map_err(|_| VerificationError)?;
-    for _ in 0..len {
+    let remaining = receive_native_byte_chunks::<NATIVE_BYTE_CHUNK_BYTES>(state, len, &mut bytes)?;
+    let remaining =
+        receive_native_byte_chunks::<NATIVE_BYTE_TAIL_CHUNK_BYTES>(state, remaining, &mut bytes)?;
+    for _ in 0..remaining {
         bytes.push(state.prover_message::<[u8; 1]>()?[0]);
     }
     Ok(bytes)
@@ -576,9 +631,7 @@ pub fn public_native_bytes_prover(
     bytes: &[u8],
 ) -> Result<(), NativeContextError> {
     prover_context(state, public_bytes_record(site, bytes.len())?);
-    for &byte in bytes {
-        state.public_message(&[byte]);
-    }
+    state.public_message(bytes);
     Ok(())
 }
 
@@ -589,9 +642,7 @@ pub fn public_native_bytes_verifier(
     bytes: &[u8],
 ) -> Result<(), NativeContextError> {
     verifier_context(state, public_bytes_record(site, bytes.len())?);
-    for &byte in bytes {
-        state.public_message(&[byte]);
-    }
+    state.public_message(bytes);
     Ok(())
 }
 
@@ -1139,6 +1190,50 @@ mod tests {
             F::from_u64(42)
         );
         assert!(verifier.check_eof().is_ok());
+    }
+
+    #[test]
+    fn chunked_bytes_match_bytewise_proof_and_transcript() {
+        for len in [0, 1, 63, 64, 65, 1023, 1024, 1025, 21_066] {
+            let bytes = (0..len)
+                .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
+                .collect::<Vec<_>>();
+            let site = ProtocolSiteId {
+                family: SITE_FAMILY_TERMINAL,
+                level: 6,
+                round: 3,
+                ..ProtocolSiteId::default()
+            };
+
+            let mut chunked = new_native_prover(b"chunked-bytes", b"instance").unwrap();
+            send_native_bytes(&mut chunked, &bytes);
+            public_native_bytes_prover(&mut chunked, site, &bytes).unwrap();
+            let chunked_challenge = chunked.verifier_message::<[u8; 32]>();
+
+            let mut bytewise = new_native_prover(b"chunked-bytes", b"instance").unwrap();
+            for &byte in &bytes {
+                bytewise.prover_message(&[byte]);
+            }
+            prover_context(
+                &mut bytewise,
+                public_bytes_record(site, bytes.len()).unwrap(),
+            );
+            for &byte in &bytes {
+                bytewise.public_message(&[byte]);
+            }
+            let bytewise_challenge = bytewise.verifier_message::<[u8; 32]>();
+
+            assert_eq!(chunked.narg_string(), bytes);
+            assert_eq!(chunked.narg_string(), bytewise.narg_string());
+            assert_eq!(chunked_challenge, bytewise_challenge);
+
+            let proof = chunked.narg_string().to_vec();
+            let mut verifier = new_native_verifier(b"chunked-bytes", b"instance", &proof).unwrap();
+            assert_eq!(receive_native_bytes(&mut verifier, len).unwrap(), bytes);
+            public_native_bytes_verifier(&mut verifier, site, &bytes).unwrap();
+            assert_eq!(verifier.verifier_message::<[u8; 32]>(), chunked_challenge);
+            verifier.check_eof().unwrap();
+        }
     }
 
     #[test]
