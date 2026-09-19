@@ -205,7 +205,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
 }
 
 #[test]
-fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
+fn adapted_schedule_rejects_oversized_packing_domain() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(44);
@@ -233,7 +233,10 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
         },
     )
     .expect("valid packing domain");
-    assert_eq!(packing_domain.len(), 1, "regression requires one choice");
+    assert!(
+        !packing_domain.is_empty(),
+        "regression requires packing choices"
+    );
 
     let request = crate::emit::GroupedGenerationRequest::new(
         main_group,
@@ -246,7 +249,7 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
         &policy_of::<OneHot>(),
         |_| panic!("oversized request must reject before planner search"),
     )
-    .expect_err("oversized one-choice producer domain must fail at the public boundary");
+    .expect_err("oversized producer domain must fail at the public boundary");
     let AkitaError::UnsupportedSchedule(message) = error else {
         panic!("unexpected error: {error}");
     };

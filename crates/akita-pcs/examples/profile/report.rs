@@ -33,7 +33,7 @@ pub(crate) fn print_native_proof_summary(
         "native proof summary"
     );
     eprintln!(
-        "[{label}] proof: native_total={} bytes, native_nonce_messages={} bytes, levels={levels}",
+        "[{label}] proof: native_total={} bytes, native_nonce_messages_max={} bytes, levels={levels}",
         proof.len(),
         nonce_bytes,
     );

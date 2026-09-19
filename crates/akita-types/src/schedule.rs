@@ -818,7 +818,7 @@ fn validate_stage2_successor_capacity(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
-    /// Exact proof-level native inline nonce bytes.
+    /// Maximum proof-level native inline nonce bytes.
     pub nonce_stream_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,

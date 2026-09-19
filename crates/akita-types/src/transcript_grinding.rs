@@ -3,6 +3,7 @@
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
+use akita_transcript::native_nonce_max_bytes;
 pub use akita_transcript::{
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
     MAX_GRINDING_BITS,
@@ -15,7 +16,7 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
 pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
-pub const GRINDING_ENCODING_VERSION: u16 = 1;
+pub const GRINDING_ENCODING_VERSION: u16 = 2;
 /// Query catalog and loss-policy revision.
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 2;
 /// Indexed fold-coordinate oracle revision.
@@ -617,9 +618,11 @@ impl GrindingPlanAccumulator {
             .checked_add(run_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
         if run.nonce_bits != 0 {
-            let run_bytes = 4usize.checked_mul(multiplicity).ok_or_else(|| {
-                AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
-            })?;
+            let run_bytes = native_nonce_max_bytes(run.nonce_bits)
+                .checked_mul(multiplicity)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+                })?;
             self.native_nonce_bytes =
                 self.native_nonce_bytes
                     .checked_add(run_bytes)
@@ -689,7 +692,7 @@ impl GrindingPlan {
         self.total_nonce_bits
     }
 
-    /// Exact bytes emitted by native inline proof-of-work and fold-response nonces.
+    /// Maximum bytes emitted by native inline proof-of-work and fold-response nonces.
     #[must_use]
     pub const fn native_nonce_bytes(&self) -> usize {
         self.native_nonce_bytes

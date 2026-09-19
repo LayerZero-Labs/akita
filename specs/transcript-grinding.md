@@ -25,8 +25,8 @@ norm bounds. These are distinct mechanisms with one public, schedule-derived
 `GrindingPlan` and one plan cursor.
 
 All nonzero grinding values are inline native Spongefish proof messages. A
-proof-of-work nonce is one canonical little-endian `u32`; a fold-response nonce
-is another `u32` under a distinct context kind. There is no nonce prefix,
+proof-of-work nonce and a fold-response nonce each use the same canonical
+unsigned LEB128 codec under distinct context kinds. There is no nonce prefix,
 bit-packed stream, proof shape, or separate replay transcript. Zero-bit
 proof-of-work sites emit no nonce and make no grinding-specific state
 transition. Native receipt, absorption, challenge extraction, and EOF checking
@@ -110,14 +110,15 @@ omitted, duplicated, reordered, or unexpected site rejects.
 For every proof-of-work entry with `g > 0`:
 
 1. Absorb a `ProtocolContextRecord` with the canonical plan site, target,
-   nonce width, `GrindingNonce` kind, one atom, and four encoded bytes.
+   nonce width, `GrindingNonce` kind, one atom, and the maximum canonical
+   LEB128 bytes permitted by that width.
 2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical native `u32`, absorb a distinct
+   absorb the canonical native nonce, absorb a distinct
    `GrindingPredicate` context, and squeeze 32 predicate bytes.
 3. Select a candidate exactly when the first `g` bits, read low bit first, are
    zero. Exhaustion returns an error.
 4. Commit the winner once with native `prover_message`. The verifier receives
-   the `u32`, range-checks it against `g+7`, reproduces the predicate, and
+   the nonce, range-checks it against `g+7`, reproduces the predicate, and
    rejects a failed predicate.
 5. Absorb the protected challenge's own context record and draw the challenge.
 
@@ -137,7 +138,7 @@ groups in that fold.
 For candidate `c`:
 
 1. Clone the current public sponge state and absorb the fold-response context
-   plus canonical native `u32(c)`.
+   plus the canonical unsigned LEB128 encoding of `c`.
 2. In canonical group order, absorb each group's public sparse-draw context and
    squeeze its root.
 3. Derive every indexed sparse coordinate, compute the folded response, and
@@ -174,18 +175,21 @@ bound by the public schedule and native context records.
 
 ## Encoding and proof-size accounting
 
-Every nonzero proof-of-work site contributes four proof bytes. Every
-fold-response site contributes four proof bytes. Context records and public
-values are absorbed with `public_message` and contribute no proof bytes.
+Each proof-of-work or fold-response site contributes the canonical unsigned
+LEB128 length of its accepted nonce. Context records and public values are
+absorbed with `public_message` and contribute no proof bytes.
 
-`GrindingPlan::native_nonce_bytes` is the canonical storage cost. The planner
-adds this byte count directly to proof payload cost. `total_nonce_bits` remains
-semantic search metadata only and MUST NOT be used as a packed wire size.
+`GrindingPlan::native_nonce_bytes` is the schedule-derived maximum storage cost,
+computed as `ceil(nonce_bits / 7)` per emitted nonce. The planner adds this byte
+bound directly to proof payload cost. Actual proofs may be smaller because the
+codec is self-delimiting. `total_nonce_bits` remains semantic search metadata
+only and MUST NOT be used as a packed wire size.
 Schedule identities and cached costs MUST agree with the plan derived by the
 runtime verifier.
 
-Native `u32` decoding is fixed-width and little endian. The verifier checks
-the scheduled range after receipt. Truncation, trailing argument bytes,
+Native nonce decoding MUST reject unterminated, overflowing, and redundant
+unsigned LEB128 encodings without advancing the input cursor. The verifier
+checks the scheduled range after receipt. Truncation, trailing argument bytes,
 out-of-range nonces, wrong context/order, failed predicates, and incomplete
 plans reject with `AkitaError`; verifier-reachable code MUST NOT panic or
 allocate from a proof-controlled length.

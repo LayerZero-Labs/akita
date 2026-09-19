@@ -10,11 +10,14 @@ use std::{error::Error, fmt};
 
 use crate::TranscriptSponge;
 
+mod nonce;
+pub use nonce::{native_nonce_max_bytes, NativeNonce};
+
 /// Native transcript and proof-stream format version.
-pub const NATIVE_PROTOCOL_VERSION: u32 = 2;
+pub const NATIVE_PROTOCOL_VERSION: u32 = 3;
 
 /// Domain tag included in every native protocol context record.
-pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v2\0\0\0\0\0";
+pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v3\0\0\0\0\0";
 
 /// Number of random-oracle bytes used for each base-field coordinate challenge.
 pub const NATIVE_FIELD_CHALLENGE_BYTES: u64 = 64;
@@ -224,9 +227,9 @@ impl Encoding<[u8]> for FramedBytes<'_> {
 
 fn native_protocol_id() -> [u8; 64] {
     #[cfg(feature = "transcript-blake2b")]
-    let name = "akita-pcs/native-proof-stream/v2/blake2b";
+    let name = "akita-pcs/native-proof-stream/v3/blake2b";
     #[cfg(feature = "transcript-keccak")]
-    let name = "akita-pcs/native-proof-stream/v2/keccak";
+    let name = "akita-pcs/native-proof-stream/v3/keccak";
     protocol_id(format_args!("{name}"))
 }
 
@@ -795,7 +798,7 @@ impl NativeFoldPreview {
     pub fn new(state: &NativeProverState, nonce_record: ProtocolContextRecord, nonce: u32) -> Self {
         let mut sponge = state.duplex_sponge_state.clone();
         sponge.absorb(nonce_record.encode().as_ref());
-        sponge.absorb(nonce.encode().as_ref());
+        sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
         Self { sponge }
     }
 
@@ -1069,7 +1072,7 @@ pub fn preview_native_grinding_predicate(
 ) -> [u8; crate::GRINDING_PREDICATE_LEN] {
     let mut sponge = state.duplex_sponge_state.clone();
     sponge.absorb(nonce_record.encode().as_ref());
-    sponge.absorb(nonce.encode().as_ref());
+    sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
     sponge.absorb(predicate_record.encode().as_ref());
     let mut predicate = [0u8; crate::GRINDING_PREDICATE_LEN];
     sponge.squeeze(&mut predicate);
@@ -1106,7 +1109,7 @@ pub fn commit_native_grinding_nonce(
     predicate_record: ProtocolContextRecord,
 ) -> [u8; crate::GRINDING_PREDICATE_LEN] {
     prover_context(state, nonce_record);
-    state.prover_message(&nonce);
+    state.prover_message(&NativeNonce::new(nonce));
     prover_context(state, predicate_record);
     state.verifier_message()
 }
@@ -1118,7 +1121,7 @@ pub fn receive_native_grinding_nonce(
     predicate_record: ProtocolContextRecord,
 ) -> Result<(u32, [u8; crate::GRINDING_PREDICATE_LEN]), VerificationError> {
     verifier_context(state, nonce_record);
-    let nonce = state.prover_message::<u32>()?;
+    let nonce = state.prover_message::<NativeNonce>()?.into_inner();
     verifier_context(state, predicate_record);
     Ok((nonce, state.verifier_message()))
 }
@@ -1299,7 +1302,7 @@ mod tests {
             nonce_site.to_bytes(),
             ProtocolMessageKind::FoldResponseNonce as u32,
             1,
-            4,
+            native_nonce_max_bytes(12) as u64,
             0,
         );
         let root_record = ProtocolContextRecord::new(
@@ -1321,15 +1324,21 @@ mod tests {
         let preview =
             NativeFoldPreview::new(&prover, nonce_record, nonce).fold_root(root_record, &payload);
         prover_context(&mut prover, nonce_record);
-        prover.prover_message(&nonce);
+        prover.prover_message(&NativeNonce::new(nonce));
         let live = native_prover_fold_root(&mut prover, root_record, &payload);
         assert_eq!(preview, live);
         let proof = prover.narg_string().to_vec();
-        assert_eq!(proof.len(), 4);
+        assert_eq!(proof.len(), 1);
 
         let mut verifier = new_native_verifier(b"fold-preview", b"fixture", &proof).unwrap();
         verifier_context(&mut verifier, nonce_record);
-        assert_eq!(verifier.prover_message::<u32>().unwrap(), nonce);
+        assert_eq!(
+            verifier
+                .prover_message::<NativeNonce>()
+                .unwrap()
+                .into_inner(),
+            nonce
+        );
         assert_eq!(
             native_verifier_fold_root(&mut verifier, root_record, &payload),
             live
@@ -1455,7 +1464,7 @@ mod tests {
             .to_bytes(),
             ProtocolMessageKind::GrindingNonce as u32,
             1,
-            4,
+            native_nonce_max_bytes(12) as u64,
             0,
         );
         let predicate_record = ProtocolContextRecord::new(

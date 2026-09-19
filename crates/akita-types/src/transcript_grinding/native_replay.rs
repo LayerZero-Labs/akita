@@ -4,10 +4,10 @@ use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
 use akita_sumcheck::{NativeSumcheckProverChannel, NativeSumcheckVerifierChannel};
 use akita_transcript::{
-    commit_native_grinding_nonce, grinding_predicate_accepts, native_prover_ext_challenge,
-    native_verifier_ext_challenge, preview_native_grinding_predicate, prover_context,
-    receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeFoldPreview, NativeProverState, NativeVerifierState, ProtocolContextRecord,
+    commit_native_grinding_nonce, grinding_predicate_accepts, native_nonce_max_bytes,
+    native_prover_ext_challenge, native_verifier_ext_challenge, preview_native_grinding_predicate,
+    prover_context, receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
+    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProtocolContextRecord,
     ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -110,7 +110,13 @@ fn grinding_records(
     let detail = u32::from(grind_bits) | (u32::from(nonce_bits) << 8);
     let site_id = site.native_site_id(detail).to_bytes();
     (
-        ProtocolContextRecord::new(site_id, ProtocolMessageKind::GrindingNonce as u32, 1, 4, 0),
+        ProtocolContextRecord::new(
+            site_id,
+            ProtocolMessageKind::GrindingNonce as u32,
+            1,
+            native_nonce_max_bytes(nonce_bits) as u64,
+            0,
+        ),
         ProtocolContextRecord::new(
             site_id,
             ProtocolMessageKind::GrindingPredicate as u32,
@@ -126,7 +132,7 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
         site.native_site_id(u32::from(nonce_bits)).to_bytes(),
         ProtocolMessageKind::FoldResponseNonce as u32,
         1,
-        4,
+        native_nonce_max_bytes(nonce_bits) as u64,
         0,
     )
 }
@@ -246,7 +252,7 @@ impl<'plan> NativeProverGrinding<'plan> {
         Ok(())
     }
 
-    /// Emit the next scheduled fold-response nonce as a native `u32` message.
+    /// Emit the next scheduled fold-response nonce as a canonical native message.
     pub fn commit_fold_response(
         &mut self,
         site: GrindingSite,
@@ -270,7 +276,7 @@ impl<'plan> NativeProverGrinding<'plan> {
             &mut self.state,
             fold_response_record(site, entry.nonce_bits),
         );
-        self.state.prover_message(&counter);
+        self.state.prover_message(&NativeNonce::new(counter));
         Ok(())
     }
 
@@ -450,7 +456,8 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         );
         let counter = self
             .state
-            .prover_message::<u32>()
+            .prover_message::<NativeNonce>()
+            .map(NativeNonce::into_inner)
             .map_err(|_| AkitaError::InvalidProof)?;
         value_fits(counter, entry.nonce_bits)
             .then_some(counter)
@@ -643,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn native_grinding_roundtrip_uses_inline_u32_nonces_and_eof() {
+    fn native_grinding_roundtrip_uses_inline_canonical_nonces_and_eof() {
         let plan = plan();
         let state = new_native_prover(b"native-grinding", b"fixture").unwrap();
         let mut prover = NativeProverGrinding::new(state, &plan);
@@ -658,7 +665,7 @@ mod tests {
 
         // One PoW nonce and one response nonce; public context records occupy
         // no argument bytes.
-        assert_eq!(proof.len(), 8);
+        assert!(proof.len() <= plan.native_nonce_bytes());
         let state = new_native_verifier(b"native-grinding", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
         let verifier_challenge = verifier
@@ -693,7 +700,7 @@ mod tests {
             .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
             .unwrap();
         let proof = prover.finish().unwrap();
-        assert_eq!(proof.len(), 4);
+        assert!(proof.len() <= plan.native_nonce_bytes());
 
         let state = new_native_verifier(b"native-vector-grinding", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);

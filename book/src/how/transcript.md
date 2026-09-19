@@ -219,8 +219,9 @@ schedule, normalized opening layout, field tower, and policy. The plan fixes
 the order and bit width of every proof-of-work query and bounded
 fold-response search. Its digest is part of the descriptor.
 
-Nonzero proof-of-work sites and every fold-response site carry an inline native
-`u32` nonce at the exact protocol position where it is used. A decoder does not
+Nonzero proof-of-work sites and every fold-response site carry an inline
+canonical unsigned LEB128 nonce at the exact protocol position where it is
+used. A decoder does not
 obtain a nonce count or policy from proof bytes. The plan cursor checks sites in
 order and must be exhausted when native EOF is checked.
 
@@ -248,13 +249,14 @@ not reused as the challenge. A zero-bit target consumes no proof bits and
 leaves the transcript unchanged at that site.
 
 The additional seven nonce bits provide room for honest search beyond the
-expected $2^g$ attempts. Storage is always four bytes; the semantic width is
-still checked from the public plan.
+expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
+width is still checked from the public plan. The planner charges the maximum
+`ceil(nonce_bits / 7)` bytes for each nonce.
 
 ### Fold-response search
 
-A fold-response entry carries a native `u32` whose value must fit the 12-bit
-search domain, shared by all commitment
+A fold-response entry carries a canonical unsigned LEB128 nonce whose value
+must fit the 12-bit search domain, shared by all commitment
 groups in that fold. The prover previews candidates until the resulting
 response satisfies the scheduled representation and norm bounds. It commits
 the winning nonce to replay, or returns an error if the bounded search is

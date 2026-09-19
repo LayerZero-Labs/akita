@@ -117,10 +117,10 @@ The new baseline encoding rules are:
 - Base-field elements use fixed-width canonical little-endian bytes; reject
   out-of-field representatives rather than reducing proof input. Extension
   elements use ordered base-field coordinates.
-- Each nonzero protected-query nonce is a native `u32` message: four
-  little-endian bytes, range-checked against the plan's `g + 7` bits.
-- Each fold-response nonce is one native `u32` message per fold: four
-  little-endian bytes, range-checked against the 12-bit search domain.
+- Each nonzero protected-query nonce is a canonical unsigned LEB128 message,
+  range-checked against the plan's `g + 7` bits.
+- Each fold-response nonce is one canonical unsigned LEB128 message per fold,
+  range-checked against the 12-bit search domain.
 - Fixed-count vectors are sequences of fixed-size atoms. Counts come from
   the validated bound schedule, without trusting proof-supplied lengths.
   Prefer bounded scalar receipt loops over allocation-heavy dynamic helpers.
@@ -139,7 +139,7 @@ The canonical dependency map is:
 | Root statement | Commitments, opening points, claims, basis, call layout | Validated root layout and descriptor | Evaluation batching and first fold randomness |
 | Extension-opening reduction | Partial claims, round polynomials, final claims | Scheduled rounds, degree, and group counts | Per-round challenge and final oracle equality |
 | Opening payload | Compressed relation payload | Schedule-derived count or bounded payload length | Fold-response search and relation checks |
-| Fold response | One native `u32` nonce | 12-bit semantic range | Every group-local fold root at that level |
+| Fold response | One canonical native nonce | 12-bit semantic range | Every group-local fold root at that level |
 | Fold challenge group | Public fold-domain payload and root challenge | Scheduled group and coordinate counts | Indexed sparse coordinates and folded witness |
 | Stage 1 | Range-product messages and child claims | `DigitRangePlan` and scheduled security route | Per-round and interstage batching challenges |
 | Physical L2 | Norm claims, subclaims, virtual evaluations | Scheduled L2 shape and response cap | Norm batching, merge, and terminal equality checks |
@@ -147,7 +147,7 @@ The canonical dependency map is:
 | Stage 3 | Setup slot, product claim, rounds, prefix evaluation | Validated setup-prefix slot and schedule | Per-round challenge and setup-product equality |
 | Successor witness | Inner or outer commitment binding | Public next-level transition | Ring-switch and successor-level randomness |
 | Terminal response | Canonical bounded response payload | Terminal plan and schedule-derived byte cap | Reconstruction, norm, relation, and retained-binding checks |
-| Proof-of-work | One native `u32` nonce for each nonzero target | Grinding plan, `g + 7` range, `g <= 25` | Distinct predicate followed by the protected challenge |
+| Proof-of-work | One canonical native nonce for each nonzero target | Grinding plan, `g + 7` range, `g <= 25` | Distinct predicate followed by the protected challenge |
 
 Compressed payload grammar and conditional branches are defined by the public
 schedule and the site/kind records below. Incidental struct or derive ordering
@@ -202,6 +202,12 @@ before receiving the body. Public/derived variable messages also need framing.
 Record recursive commitment and terminal inner-state binding as distinct kinds,
 selected by the public schedule.
 
+For self-delimiting nonce atoms, `encoded_bytes` records the maximum canonical
+encoding length permitted by the public nonce width. The decoder determines the
+consumed length, rejects noncanonical or overflowing encodings transactionally,
+and the verifier then enforces the scheduled value range before any dependent
+challenge is used.
+
 Record challenge width before every prescribed challenge group, including
 predicate and field-coordinate draws. These are native `public_message`
 operations, not a new transcript engine or serialized operation journal.
@@ -248,7 +254,7 @@ For each protected query with `g > 0`:
 1. Absorb a public context containing a new grinding domain, plan site identity,
    `g`, and nonce width `g + 7`.
 2. Preview candidates from that public sponge state. Absorb exactly the native
-   `u32` nonce encoding and squeeze a 32-byte predicate. Accept when its first
+   unsigned LEB128 nonce encoding and squeeze a 32-byte predicate. Accept when its first
    `g` low-order bits are zero.
 3. Emit the winner with native `prover_message`. The verifier receives it with
    native `prover_message`, checks its range, draws the predicate with
@@ -271,7 +277,7 @@ and honest-search/exhaustion contract. Increasing the nonce range alone does
 not decrease the expected work for a fixed predicate difficulty.
 
 For fold-response search, bind a public fold-search domain and site identity.
-Preview a native `u32` fold nonce followed by the prescribed group contexts and
+Preview a canonical native fold nonce followed by the prescribed group contexts and
 root squeezes. Commit the winner once before those live draws. Keep one 12-bit
 nonce shared across all groups and verifier enforcement of response representation
 and norm bounds. The nonce can leave individual group-context encodings because
@@ -483,11 +489,11 @@ time, peak memory, allocations where available, attempts and guest cycles.
 Measure preview absorb/permutation counts as group count grows; one-group
 wall-time results cannot establish linear multi-group preview behavior.
 
-Proof-size growth from inline nonces or framing is allowed. New nonce storage
-is four bytes per nonzero PoW site plus four bytes per fold-response site,
-replacing the bit-packed prefix. Update proof-size formulas, planner costs,
-nonce metadata and catalog identities; old bit counts must not describe new
-wire bytes. Security query counts remain independent of storage width.
+Nonce storage uses canonical unsigned LEB128 inline messages. Planner costs use
+the schedule-derived maximum `ceil(nonce_bits / 7)` for every emitted nonce;
+actual proofs may be smaller. Update proof-size formulas, planner costs, nonce
+metadata and catalog identities when this bound changes. Security query counts
+remain independent of storage width.
 
 Investigate substantial regressions (initial threshold: 5% median time or guest
 cycles). Zero overhead and byte equality are not gates against native adoption.
