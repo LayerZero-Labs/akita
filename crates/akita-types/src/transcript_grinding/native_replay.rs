@@ -4,11 +4,12 @@ use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
 use akita_sumcheck::{NativeSumcheckProverChannel, NativeSumcheckVerifierChannel};
 use akita_transcript::{
-    commit_native_grinding_nonce, grinding_predicate_accepts, native_nonce_max_bytes,
-    native_prover_ext_challenge, native_verifier_ext_challenge, preview_native_grinding_predicate,
-    prover_context, receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
-    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProtocolContextRecord,
-    ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
+    commit_native_grinding_nonce, grinding_predicate_accepts, native_nonce_encoded_len,
+    native_nonce_max_bytes, native_prover_ext_challenge, native_verifier_ext_challenge,
+    preview_native_grinding_predicate, prover_context, receive_native_grinding_nonce,
+    search_native_grinding_nonce, verifier_context, NativeFoldPreview, NativeNonce,
+    NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
+    ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -141,6 +142,7 @@ fn fold_response_record(site: GrindingSite, nonce_bits: u8) -> ProtocolContextRe
 pub struct NativeProverGrinding<'plan> {
     state: NativeProverState,
     cursor: GrindingPlanCursor<'plan>,
+    serialized_nonce_bytes: usize,
     invalid: bool,
 }
 
@@ -151,6 +153,7 @@ impl<'plan> NativeProverGrinding<'plan> {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
+            serialized_nonce_bytes: 0,
             invalid: false,
         }
     }
@@ -249,6 +252,10 @@ impl<'plan> NativeProverGrinding<'plan> {
         if preview != predicate || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(native_nonce_encoded_len(nonce))
+            .ok_or(AkitaError::InvalidProof)?;
         Ok(())
     }
 
@@ -277,6 +284,10 @@ impl<'plan> NativeProverGrinding<'plan> {
             fold_response_record(site, entry.nonce_bits),
         );
         self.state.prover_message(&NativeNonce::new(counter));
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(native_nonce_encoded_len(counter))
+            .ok_or(AkitaError::InvalidProof)?;
         Ok(())
     }
 
@@ -326,6 +337,10 @@ impl<'plan> NativeProverGrinding<'plan> {
         if self.invalid || !self.cursor.is_finished() {
             return Err(AkitaError::InvalidProof);
         }
+        tracing::info!(
+            native_nonce_bytes_actual = self.serialized_nonce_bytes,
+            "native proof nonce bytes"
+        );
         Ok(self.state.narg_string().to_vec())
     }
 }
@@ -334,6 +349,7 @@ impl<'plan> NativeProverGrinding<'plan> {
 pub struct NativeVerifierGrinding<'proof, 'plan> {
     state: NativeVerifierState<'proof>,
     cursor: GrindingPlanCursor<'plan>,
+    serialized_nonce_bytes: usize,
     invalid: bool,
 }
 
@@ -353,6 +369,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
+            serialized_nonce_bytes: 0,
             invalid: false,
         }
     }
@@ -438,6 +455,10 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         if !value_fits(nonce, entry.nonce_bits) || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(native_nonce_encoded_len(nonce))
+            .ok_or(AkitaError::InvalidProof)?;
         Ok(())
     }
 
@@ -459,9 +480,14 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             .prover_message::<NativeNonce>()
             .map(NativeNonce::into_inner)
             .map_err(|_| AkitaError::InvalidProof)?;
-        value_fits(counter, entry.nonce_bits)
-            .then_some(counter)
-            .ok_or(AkitaError::InvalidProof)
+        if !value_fits(counter, entry.nonce_bits) {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.serialized_nonce_bytes = self
+            .serialized_nonce_bytes
+            .checked_add(native_nonce_encoded_len(counter))
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(counter)
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -489,6 +515,10 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         if self.invalid || !self.cursor.is_finished() {
             return Err(AkitaError::InvalidProof);
         }
+        tracing::info!(
+            native_nonce_bytes_actual = self.serialized_nonce_bytes,
+            "native proof nonce bytes"
+        );
         self.state
             .check_eof()
             .map_err(|_| AkitaError::InvalidProof)?;

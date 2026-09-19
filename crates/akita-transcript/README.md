@@ -10,12 +10,15 @@ Akita's transcript hardening has three active pieces:
 2. Spongefish `ProverState` and `VerifierState` are the only production transcript implementations. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Exactly one backend must be selected.
 3. Native proof receipt, public-message absorption, challenge extraction, and EOF checking operate on the same state and argument string.
 
-Fixed-format public context records bind message kind, site, atom count, encoded width, and challenge width. Rust type names and diagnostic labels are not cryptographic domains.
+The versioned instance descriptor binds a fixed positional grammar. Public
+context records capture message kind, site, atom count, encoded width, and
+challenge candidate width for diagnostics; they are not hashed in production.
+Rust type names and diagnostic labels are not cryptographic domains.
 
 ## Logging Checks
 
 With `logging-transcript`, the native context helpers record the exact
-`ProtocolContextRecord` sequence absorbed by Spongefish. End-to-end tests require
+`ProtocolContextRecord` sequence executed around Spongefish operations. End-to-end tests require
 the prover and verifier context streams to be non-empty and identical.
 
 The PCS integration tests enable this with:

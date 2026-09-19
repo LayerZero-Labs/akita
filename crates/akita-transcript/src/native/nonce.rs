@@ -8,6 +8,17 @@ use spongefish::{Encoding, NargDeserialize, VerificationError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeNonce(u32);
 
+struct NativeNonceEncoding {
+    bytes: [u8; native_nonce_max_bytes(u32::BITS as u8)],
+    len: usize,
+}
+
+impl AsRef<[u8]> for NativeNonceEncoding {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
 impl NativeNonce {
     /// Wrap one nonce for canonical native proof transport.
     #[must_use]
@@ -25,14 +36,18 @@ impl NativeNonce {
 impl Encoding<[u8]> for NativeNonce {
     fn encode(&self) -> impl AsRef<[u8]> {
         let mut value = self.0;
-        let mut encoded = Vec::with_capacity(native_nonce_max_bytes(u32::BITS as u8));
+        let mut encoded = NativeNonceEncoding {
+            bytes: [0; native_nonce_max_bytes(u32::BITS as u8)],
+            len: 0,
+        };
         loop {
             let mut byte = (value & 0x7f) as u8;
             value >>= 7;
             if value != 0 {
                 byte |= 0x80;
             }
-            encoded.push(byte);
+            encoded.bytes[encoded.len] = byte;
+            encoded.len += 1;
             if value == 0 {
                 return encoded;
             }
@@ -71,6 +86,22 @@ pub const fn native_nonce_max_bytes(nonce_bits: u8) -> usize {
         0
     } else {
         (nonce_bits as usize).div_ceil(7)
+    }
+}
+
+/// Number of bytes in one canonical unsigned LEB128 nonce.
+#[must_use]
+pub const fn native_nonce_encoded_len(value: u32) -> usize {
+    if value < (1 << 7) {
+        1
+    } else if value < (1 << 14) {
+        2
+    } else if value < (1 << 21) {
+        3
+    } else if value < (1 << 28) {
+        4
+    } else {
+        5
     }
 }
 

@@ -63,23 +63,18 @@ trials. Grinding does not add entropy, prove uniqueness, or establish a QROM
 claim. Accepting any satisfying in-range nonce is sound; the verifier MUST NOT
 require the prover's first solution.
 
-The predicate and protected challenge are distinct random-oracle queries. A
-fixed public context record is absorbed before each, with different operation
-kinds and challenge widths. Conditioning on predicate success therefore uses
-the reviewed native sponge transition and MUST NOT reuse predicate bytes as the
-protocol challenge.
+The predicate and protected challenge are distinct random-oracle queries. The
+predicate transition absorbs the candidate nonce and squeezes 32 bytes; after
+the accepted nonce is committed to the live state, the protected challenge is
+drawn separately. The predicate bytes MUST NOT be reused as the protocol
+challenge. The versioned protocol identifier and descriptor bind the positional
+grammar; context records are diagnostics and are not absorbed.
 
-Native field challenges reduce 512 uniform bits. For modulus `p`, `N = 2^512`,
-and `r = N mod p`, the exact statistical distance is
-
-```text
-r * (p - r) / (p * N) <= p / (4 * N).
-```
-
-Akita admits fields of at most 128 modulus bits and accounts against a global
-cap of `2^32 - 1` combined draws and adversarial queries. The conservative
-union bound is below `2^-354`, independently satisfying the `2^-192` sampling
-budget. Exact-integer tests evaluate the formula for every production modulus.
+Native field challenges use exact canonical rejection sampling. Each attempt
+squeezes the field's canonical byte width, clears unused high bits, and accepts
+only a canonical representative. Consequently there is no modular-reduction
+bias or statistical-distance budget. The admitted native codec supports fields
+up to 64 bytes; production fields use 4, 8, or 16 bytes.
 
 ## Public plan
 
@@ -109,18 +104,16 @@ omitted, duplicated, reordered, or unexpected site rejects.
 
 For every proof-of-work entry with `g > 0`:
 
-1. Absorb a `ProtocolContextRecord` with the canonical plan site, target,
-   nonce width, `GrindingNonce` kind, one atom, and the maximum canonical
-   LEB128 bytes permitted by that width.
+1. Record diagnostic metadata for the canonical plan site, target, nonce width,
+   and `GrindingNonce` kind when transcript logging is enabled.
 2. For each candidate in `[0, 2^(g+7))`, clone only the public duplex state,
-   absorb the canonical native nonce, absorb a distinct
-   `GrindingPredicate` context, and squeeze 32 predicate bytes.
+   absorb the canonical native nonce, and squeeze 32 predicate bytes.
 3. Select a candidate exactly when the first `g` bits, read low bit first, are
    zero. Exhaustion returns an error.
 4. Commit the winner once with native `prover_message`. The verifier receives
    the nonce, range-checks it against `g+7`, reproduces the predicate, and
    rejects a failed predicate.
-5. Absorb the protected challenge's own context record and draw the challenge.
+5. Record the protected challenge's diagnostic site and draw the challenge.
 
 A zero-bit entry has nonce width zero, emits no proof bytes, and skips steps
 1--4. It remains present in the semantic plan so query coverage can be audited.
@@ -137,10 +130,11 @@ groups in that fold.
 
 For candidate `c`:
 
-1. Clone the current public sponge state and absorb the fold-response context
-   plus the canonical unsigned LEB128 encoding of `c`.
-2. In canonical group order, absorb each group's public sparse-draw context and
-   squeeze its root.
+1. Clone the current public sponge state and absorb the canonical unsigned
+   LEB128 encoding of `c`.
+2. In canonical group order, absorb each group's public sparse-draw payload and
+   squeeze its root. Diagnostic context metadata records the expected sequence
+   without changing the production sponge.
 3. Derive every indexed sparse coordinate, compute the folded response, and
    accept only if all scheduled representation and norm bounds hold.
 
@@ -171,21 +165,22 @@ configured support bounds remain mandatory.
 The coordinate count is the checked product
 `num_claims * num_live_blocks`. Reprogramming coordinate `i` changes only that
 coordinate. Group roots, coordinate order, and distribution parameters are
-bound by the public schedule and native context records.
+bound by the public schedule and the versioned positional grammar.
 
 ## Encoding and proof-size accounting
 
 Each proof-of-work or fold-response site contributes the canonical unsigned
-LEB128 length of its accepted nonce. Context records and public values are
-absorbed with `public_message` and contribute no proof bytes.
+LEB128 length of its accepted nonce. Context records are diagnostic only;
+public values are absorbed with `public_message`. Neither contributes proof
+bytes.
 
-`GrindingPlan::native_nonce_bytes` is the schedule-derived maximum storage cost,
-computed as `ceil(nonce_bits / 7)` per emitted nonce. The planner adds this byte
-bound directly to proof payload cost. Actual proofs may be smaller because the
-codec is self-delimiting. `total_nonce_bits` remains semantic search metadata
-only and MUST NOT be used as a packed wire size.
-Schedule identities and cached costs MUST agree with the plan derived by the
-runtime verifier.
+Schedule selection deliberately retains main's packed objective,
+`ceil(sum(semantic_nonce_widths) / 8)`, throughout `PackedProofCost`, suffix
+search, dominance, runtime materialization, and generated artifacts. This is
+not an exact estimate of the native LEB128 wire and is accepted migration debt.
+It MUST NOT be used as a parser bound, nonce range, or security bound. A fresh
+generation MUST reproduce main's schedule artifacts; generated files MUST NOT
+be copied or hand-edited to manufacture parity.
 
 Native nonce decoding MUST reject unterminated, overflowing, and redundant
 unsigned LEB128 encodings without advancing the input cursor. The verifier
@@ -199,13 +194,13 @@ allocate from a proof-controlled length.
 | Component | Responsibility |
 |---|---|
 | Spongefish | Native state, argument bytes, nonce receipt/absorption, challenge squeeze, EOF |
-| `akita-transcript` | Native context records, public-state previews, predicate and bounded search primitive |
+| `akita-transcript` | Native positional codecs, diagnostic context records, public-state previews, predicate and bounded search primitive |
 | `akita-types` | Grinding sites, policy, plan, cursor, native plan-owning adapters |
 | `akita-config` | Derive and descriptor-bind the public plan |
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
 | `akita-verifier` | Nonce ranges, predicates, response equations, plan completion |
 | `akita-challenges` | Indexed sparse expansion and distribution checks |
-| `akita-planner` | Query accounting and additive native nonce byte cost |
+| `akita-planner` | Query accounting and the frozen packed-bit schedule objective |
 
 There is one production proof path. A separate packed nonce codec, nonce prefix,
 structured proof replay, or alternate verifier is prohibited.
@@ -213,8 +208,9 @@ structured proof replay, or alternate verifier is prohibited.
 ## Required tests and checks
 
 - Exact site encoding and plan digest vectors cover every site discriminator.
-- Zero-bit, nonzero, maximum-target, exhaustion, wrong-site, incomplete-plan,
-  out-of-range, truncation, mutation, and trailing-byte cases reject correctly.
+- Zero-bit, nonzero, maximum-target, exhaustion, incomplete-plan, out-of-range,
+  truncation, mutation, and trailing-byte cases reject correctly; diagnostic
+  site sequences agree between prover and verifier.
 - Preview output matches live prover and verifier replay for both Blake2b and
   Keccak, multiple groups, and multiple candidate counts.
 - Unsuccessful previews leave live state and proof output unchanged.

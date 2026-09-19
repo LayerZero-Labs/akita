@@ -26,9 +26,5 @@ logging-transcript = []
 transcript-blake2b = ["dep:spongefish", "spongefish/blake2", "spongefish/sha3"]
 transcript-keccak = ["dep:spongefish", "spongefish/keccak", "spongefish/sha3"]
 
-[dev-dependencies]
-num-bigint = "0.4"
-num-traits = "0.2"
-
 [lints]
 workspace = true

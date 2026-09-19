@@ -10,7 +10,7 @@ thread_local! {
 /// One native transcript event recorded for structural diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranscriptEvent {
-    /// A fixed-format public context record absorbed before a message group or challenge.
+    /// Fixed-format diagnostic metadata for a message group or challenge.
     Context(ProtocolContextRecord),
 }
 

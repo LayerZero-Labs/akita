@@ -14,7 +14,6 @@ use akita_transcript::{
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 const ROLE_CLAIM: u32 = 1;
-const ROLE_ROUND_LENGTH: u32 = 2;
 const ROLE_ROUND_BODY: u32 = 3;
 
 /// Prover-side native operations required by the standard sumcheck driver.
@@ -59,7 +58,6 @@ fn context(
 ) -> Result<ProtocolContextRecord, AkitaError> {
     let kind = match role {
         ROLE_CLAIM => ProtocolMessageKind::PublicValue,
-        ROLE_ROUND_LENGTH => ProtocolMessageKind::ProofLength,
         ROLE_ROUND_BODY => ProtocolMessageKind::ProofAtoms,
         _ => return Err(AkitaError::InvalidProof),
     };
@@ -161,21 +159,15 @@ where
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
         let poly = prover.compute_round_univariate(round, claim);
-        let compressed = poly.compress();
+        let mut compressed = poly.compress();
         let coefficient_count = compressed.coeffs_except_linear_term.len();
         if coefficient_count == 0 || coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
         }
-        let coefficient_count_u32 =
-            u32::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
-
-        let length_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_LENGTH);
-        prover_context(
-            channel.state_mut(),
-            context(length_site, ROLE_ROUND_LENGTH, 1, 4, 0)?,
-        );
-        channel.state_mut().prover_message(&coefficient_count_u32);
-        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        compressed
+            .coeffs_except_linear_term
+            .resize(degree_bound, E::zero());
+        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
         prover_context(
             channel.state_mut(),
@@ -246,21 +238,10 @@ where
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let length_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_LENGTH);
-        verifier_context(
-            channel.state_mut(),
-            context(length_site, ROLE_ROUND_LENGTH, 1, 4, 0)?,
-        );
-        let coefficient_count = channel
-            .state_mut()
-            .prover_message::<u32>()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let coefficient_count =
-            usize::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
-        if coefficient_count == 0 || coefficient_count > degree_bound {
+        if degree_bound == 0 {
             return Err(AkitaError::InvalidProof);
         }
-        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
         verifier_context(
             channel.state_mut(),
@@ -274,9 +255,9 @@ where
         );
         let mut coefficients = Vec::new();
         coefficients
-            .try_reserve_exact(coefficient_count)
+            .try_reserve_exact(degree_bound)
             .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..coefficient_count {
+        for _ in 0..degree_bound {
             coefficients.push(
                 receive_native_extension::<F, E>(channel.state_mut())
                     .map_err(|_| AkitaError::InvalidProof)?,
@@ -317,20 +298,14 @@ where
 
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let poly = prover.compute_round_eq_factored(round);
+        let mut poly = prover.compute_round_eq_factored(round);
         let coefficient_count = poly.coeffs_except_constant_term.len();
         if coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
         }
-        let coefficient_count_u32 =
-            u32::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
-        let length_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_LENGTH);
-        prover_context(
-            channel.state_mut(),
-            context(length_site, ROLE_ROUND_LENGTH, 1, 4, 0)?,
-        );
-        channel.state_mut().prover_message(&coefficient_count_u32);
-        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        poly.coeffs_except_constant_term
+            .resize(degree_bound, E::zero());
+        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
         prover_context(
             channel.state_mut(),
@@ -403,21 +378,7 @@ where
 
     for round in 0..equality_point.len() {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let length_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_LENGTH);
-        verifier_context(
-            channel.state_mut(),
-            context(length_site, ROLE_ROUND_LENGTH, 1, 4, 0)?,
-        );
-        let coefficient_count = channel
-            .state_mut()
-            .prover_message::<u32>()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let coefficient_count =
-            usize::try_from(coefficient_count).map_err(|_| AkitaError::InvalidProof)?;
-        if coefficient_count > degree_bound {
-            return Err(AkitaError::InvalidProof);
-        }
-        let atom_count = extension_atom_count::<E, F>(coefficient_count)?;
+        let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
         verifier_context(
             channel.state_mut(),
@@ -431,9 +392,9 @@ where
         );
         let mut coefficients = Vec::new();
         coefficients
-            .try_reserve_exact(coefficient_count)
+            .try_reserve_exact(degree_bound)
             .map_err(|_| AkitaError::InvalidProof)?;
-        for _ in 0..coefficient_count {
+        for _ in 0..degree_bound {
             coefficients.push(
                 receive_native_extension::<F, E>(channel.state_mut())
                     .map_err(|_| AkitaError::InvalidProof)?,
@@ -459,8 +420,9 @@ mod tests {
     use crate::UniPoly;
     use akita_algebra::poly::multilinear_eval;
     use akita_transcript::{
-        native_prover_field_challenge, native_verifier_field_challenge, new_native_prover,
-        new_native_verifier, NATIVE_FIELD_CHALLENGE_BYTES, SITE_FAMILY_SUMCHECK,
+        native_field_challenge_bytes, native_prover_field_challenge,
+        native_verifier_field_challenge, new_native_prover, new_native_verifier,
+        SITE_FAMILY_SUMCHECK,
     };
     use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 
@@ -609,7 +571,7 @@ mod tests {
                     ProtocolMessageKind::Challenge as u32,
                     0,
                     0,
-                    NATIVE_FIELD_CHALLENGE_BYTES,
+                    native_field_challenge_bytes::<F>(),
                 ),
             );
             Ok(native_prover_field_challenge(&mut self.state))
@@ -646,7 +608,7 @@ mod tests {
                     ProtocolMessageKind::Challenge as u32,
                     0,
                     0,
-                    NATIVE_FIELD_CHALLENGE_BYTES,
+                    native_field_challenge_bytes::<F>(),
                 ),
             );
             Ok(native_verifier_field_challenge(&mut self.state))
@@ -684,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn native_sumcheck_rejects_truncation_and_wrong_site() {
+    fn native_sumcheck_rejects_truncation() {
         let (evaluations, claim) = fixture();
         let mut prover_instance = DenseInstance {
             evaluations: evaluations.clone(),
@@ -710,15 +672,6 @@ mod tests {
         };
         assert_eq!(
             verify_sumcheck_native(&verifier_instance, &mut truncated, 7),
-            Err(AkitaError::InvalidProof)
-        );
-
-        let mut wrong_site = TestVerifierChannel {
-            state: new_native_verifier(b"native-sumcheck", b"fixture", proof).unwrap(),
-            invocation: 8,
-        };
-        assert_eq!(
-            verify_sumcheck_native(&verifier_instance, &mut wrong_site, 8),
             Err(AkitaError::InvalidProof)
         );
     }

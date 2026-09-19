@@ -480,18 +480,13 @@ where
         group.z_payload_bytes,
     )
     .map_err(|_| AkitaError::InvalidProof)?;
-    let z = akita_types::decode_terminal_z_golomb_payload(&z_payload, group)?;
-    let z = z.into_iter().map(i32::from).collect::<Vec<_>>();
-    let terminal_response = akita_types::build_terminal_response(
-        scheduled,
-        &scheduled.response_shape,
-        &e_fields,
-        current_state.witness.clone(),
-        &z,
-    )?;
-    if terminal_response.z_payloads.first() != Some(&z_payload) {
-        return Err(AkitaError::InvalidProof);
-    }
+    scheduled.validate_terminal_linf_cap(group.z_linf_cap)?;
+    let terminal_response = akita_types::TerminalResponse {
+        layout: scheduled.response_shape.layout.clone(),
+        z_payloads: vec![z_payload],
+        e_fields,
+        t_fields: current_state.witness.clone(),
+    };
     super::terminal_direct::verify_terminal_ring_relations(
         setup,
         &challenges,

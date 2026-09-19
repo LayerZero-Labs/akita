@@ -239,8 +239,9 @@ serve different purposes.
 ### Protected challenge queries
 
 At a protected query with grinding target $g>0$, the prover searches a
-nonce whose accepted value must fit $g+7$ bits. Each attempt binds the canonical grinding
-context and nonce, then produces a separate 32-byte predicate. The predicate
+nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
+canonical nonce, then produces a separate 32-byte predicate. Diagnostic
+metadata records the grinding site without changing the sponge. The predicate
 passes when its first $g$ low-order bits are zero.
 
 The verifier repeats that predicate check. Only after it passes does replay
@@ -250,8 +251,10 @@ leaves the transcript unchanged at that site.
 
 The additional seven nonce bits provide room for honest search beyond the
 expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
-width is still checked from the public plan. The planner charges the maximum
-`ceil(nonce_bits / 7)` bytes for each nonce.
+width is still checked from the public plan. Schedule selection retains main's
+packed estimate, `ceil(sum(semantic_nonce_widths) / 8)`, so canonical schedule
+regeneration remains stable. This estimate is selection-only accounting debt;
+it is not the native LEB128 wire size or a verifier safety bound.
 
 ### Fold-response search
 
@@ -284,10 +287,11 @@ preserve those messages in the new state.
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.
 
-Native context records make semantic sites part of sponge state. Tests cover
-prover/verifier vectors, tampering, truncation, statement/session binding, and
-EOF; they do not freeze one proof-byte digest for all future schedules. The
-complete message and dependency review is in
+The native protocol uses a descriptor-bound positional grammar. Context records
+capture semantic sites and widths for logging diagnostics without adding
+production hashing work. Tests cover prover/verifier vectors, tampering,
+truncation, statement/session binding, and EOF; they do not freeze one
+proof-byte digest for all future schedules. The complete message and dependency review is in
 [`docs/native-proof-stream.md`](../../../docs/native-proof-stream.md).
 
 ## Code map

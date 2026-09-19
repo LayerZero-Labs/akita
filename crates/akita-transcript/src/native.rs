@@ -11,35 +11,32 @@ use std::{error::Error, fmt};
 use crate::TranscriptSponge;
 
 mod nonce;
-pub use nonce::{native_nonce_max_bytes, NativeNonce};
+pub use nonce::{native_nonce_encoded_len, native_nonce_max_bytes, NativeNonce};
 
 /// Native transcript and proof-stream format version.
-pub const NATIVE_PROTOCOL_VERSION: u32 = 3;
+pub const NATIVE_PROTOCOL_VERSION: u32 = 6;
 
-/// Domain tag included in every native protocol context record.
-pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v3\0\0\0\0\0";
+/// Domain tag stored in every native diagnostic context record.
+pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v6\0\0\0\0\0";
 
-/// Number of random-oracle bytes used for each base-field coordinate challenge.
+/// Maximum candidate width supported by native exact field sampling.
 pub const NATIVE_FIELD_CHALLENGE_BYTES: u64 = 64;
-
-/// Statistical-distance budget reserved for all reduced native field draws.
-pub const NATIVE_FIELD_SAMPLING_SECURITY_BITS: u32 = 192;
 
 /// Global cap used to account for honest draws and adversarial oracle queries.
 pub const NATIVE_FIELD_SAMPLING_DRAW_LIMIT: u64 = u32::MAX as u64;
 
-/// Certify the conservative union bound for reduced native field challenges.
-///
-/// For a modulus with at most `modulus_bits`, reducing 512 uniform bits has
-/// distance at most `2^(modulus_bits - 514)`. Multiplying by fewer than `2^32`
-/// draws leaves at least 354 bits of statistical security for Akita's supported
-/// fields, comfortably above the independently budgeted 192-bit target.
+/// Certify that exact rejection sampling supports the requested field width.
 #[must_use]
 pub const fn native_field_sampling_budget_is_certified(modulus_bits: u32, draw_limit: u64) -> bool {
-    modulus_bits <= 128
+    modulus_bits > 0
+        && modulus_bits <= (NATIVE_FIELD_CHALLENGE_BYTES as u32) * 8
         && draw_limit <= NATIVE_FIELD_SAMPLING_DRAW_LIMIT
-        && modulus_bits + 32 + NATIVE_FIELD_SAMPLING_SECURITY_BITS
-            <= (NATIVE_FIELD_CHALLENGE_BYTES as u32) * 8 + 2
+}
+
+/// Candidate bytes consumed by one attempt of exact native field sampling.
+#[must_use]
+pub const fn native_field_challenge_bytes<F: CanonicalEncoding>() -> u64 {
+    F::NUM_BYTES as u64
 }
 
 /// Stable family identifier for standard and batched sumcheck sites.
@@ -78,7 +75,7 @@ pub const SITE_FAMILY_ROOT_STATEMENT: u32 = 11;
 /// Stable family identifier for terminal response messages.
 pub const SITE_FAMILY_TERMINAL: u32 = 12;
 
-/// Native proof-stream operation kind committed by a context record.
+/// Native proof-stream operation kind recorded by diagnostic context metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum ProtocolMessageKind {
@@ -227,9 +224,9 @@ impl Encoding<[u8]> for FramedBytes<'_> {
 
 fn native_protocol_id() -> [u8; 64] {
     #[cfg(feature = "transcript-blake2b")]
-    let name = "akita-pcs/native-proof-stream/v3/blake2b";
+    let name = "akita-pcs/native-proof-stream/v6/blake2b";
     #[cfg(feature = "transcript-keccak")]
-    let name = "akita-pcs/native-proof-stream/v3/keccak";
+    let name = "akita-pcs/native-proof-stream/v6/keccak";
     protocol_id(format_args!("{name}"))
 }
 
@@ -514,7 +511,7 @@ pub fn receive_native_bytes(
     Ok(bytes)
 }
 
-/// Emit a schedule-bounded byte sequence as one context-framed proof group.
+/// Emit a schedule-bounded byte sequence as one diagnostically labelled proof group.
 pub fn send_native_byte_group(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
@@ -535,7 +532,7 @@ pub fn send_native_byte_group(
     Ok(())
 }
 
-/// Receive an exact schedule-bounded context-framed byte proof group.
+/// Receive an exact schedule-bounded diagnostically labelled proof group.
 pub fn receive_native_byte_group(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
@@ -627,7 +624,7 @@ fn public_bytes_record(
     ))
 }
 
-/// Absorb one context-framed public byte string on the prover side.
+/// Absorb one public byte string and record its diagnostic site on the prover side.
 pub fn public_native_bytes_prover(
     state: &mut NativeProverState,
     site: ProtocolSiteId,
@@ -638,7 +635,7 @@ pub fn public_native_bytes_prover(
     Ok(())
 }
 
-/// Absorb one context-framed public byte string on the verifier side.
+/// Absorb one public byte string and record its diagnostic site on the verifier side.
 pub fn public_native_bytes_verifier(
     state: &mut NativeVerifierState<'_>,
     site: ProtocolSiteId,
@@ -649,20 +646,53 @@ pub fn public_native_bytes_verifier(
     Ok(())
 }
 
-/// Draw one base-field challenge from 512 random-oracle bits.
-#[must_use]
-pub fn native_prover_field_challenge<F: CanonicalEncoding>(state: &mut NativeProverState) -> F {
-    let bytes = state.verifier_message::<[u8; NATIVE_FIELD_CHALLENGE_BYTES as usize]>();
-    F::from_challenge_bytes(&bytes)
+fn sample_native_field<F: CanonicalEncoding>(sponge: &mut TranscriptSponge) -> F {
+    let mut candidate = [0u8; NATIVE_FIELD_CHALLENGE_BYTES as usize];
+    let width = F::NUM_BYTES.min(candidate.len());
+    let modulus_bits = F::MODULUS_BITS as usize;
+    if width == 0 || F::NUM_BYTES > candidate.len() || modulus_bits > width * 8 {
+        sponge.squeeze(&mut candidate);
+        return F::from_challenge_bytes(&candidate);
+    }
+    let excess_bits = width * 8 - modulus_bits;
+    if excess_bits >= 8 {
+        sponge.squeeze(&mut candidate);
+        return F::from_challenge_bytes(&candidate);
+    }
+    #[cfg(feature = "transcript-keccak")]
+    let mut attempts = 0u32;
+    loop {
+        #[cfg(feature = "transcript-keccak")]
+        {
+            attempts = attempts.saturating_add(1);
+        }
+        sponge.squeeze(&mut candidate[..width]);
+        if excess_bits != 0 {
+            candidate[width - 1] &= u8::MAX >> excess_bits;
+        }
+        if let Some(value) = F::from_bytes_le_checked(&candidate[..width]) {
+            // The pinned Keccak duplex forgets squeeze length after a later
+            // absorb. Bind rejection-path length so distinct retry histories
+            // cannot reconverge when the next protocol message is absorbed.
+            #[cfg(feature = "transcript-keccak")]
+            sponge.absorb(&attempts.to_le_bytes());
+            return value;
+        }
+    }
 }
 
-/// Draw one base-field challenge from 512 random-oracle bits.
+/// Draw one exactly uniform base-field challenge by canonical rejection sampling.
+#[must_use]
+pub fn native_prover_field_challenge<F: CanonicalEncoding>(state: &mut NativeProverState) -> F {
+    sample_native_field(&mut state.duplex_sponge_state)
+}
+
+/// Draw one exactly uniform base-field challenge by canonical rejection sampling.
 #[must_use]
 pub fn native_verifier_field_challenge<F: CanonicalEncoding>(
     state: &mut NativeVerifierState<'_>,
 ) -> F {
-    let bytes = state.verifier_message::<[u8; NATIVE_FIELD_CHALLENGE_BYTES as usize]>();
-    F::from_challenge_bytes(&bytes)
+    sample_native_field(&mut state.duplex_sponge_state)
 }
 
 /// Draw a context-bound extension-field challenge on the prover side.
@@ -688,7 +718,7 @@ where
                 ProtocolMessageKind::Challenge as u32,
                 0,
                 0,
-                NATIVE_FIELD_CHALLENGE_BYTES,
+                native_field_challenge_bytes::<F>(),
             ),
         );
         coefficients.push(native_prover_field_challenge(state));
@@ -719,7 +749,7 @@ where
                 ProtocolMessageKind::Challenge as u32,
                 0,
                 0,
-                NATIVE_FIELD_CHALLENGE_BYTES,
+                native_field_challenge_bytes::<F>(),
             ),
         );
         coefficients.push(native_verifier_field_challenge(state));
@@ -727,7 +757,7 @@ where
     Ok(E::from_base_slice(&coefficients))
 }
 
-/// Fixed-width public record separating logical message and challenge groups.
+/// Fixed-width diagnostic record identifying logical message and challenge groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProtocolContextRecord {
     /// Fixed domain for all native Akita context records.
@@ -768,18 +798,22 @@ impl ProtocolContextRecord {
     }
 }
 
-/// Absorb a public context record on the prover side.
-pub fn prover_context(state: &mut NativeProverState, record: ProtocolContextRecord) {
+/// Record prover-side protocol metadata when transcript diagnostics are enabled.
+#[inline(always)]
+pub fn prover_context(_state: &mut NativeProverState, record: ProtocolContextRecord) {
     #[cfg(feature = "logging-transcript")]
     crate::logging::record_context(record);
-    state.public_message(&record);
+    #[cfg(not(feature = "logging-transcript"))]
+    let _ = record;
 }
 
-/// Absorb a public context record on the verifier side.
-pub fn verifier_context(state: &mut NativeVerifierState<'_>, record: ProtocolContextRecord) {
+/// Record verifier-side protocol metadata when transcript diagnostics are enabled.
+#[inline(always)]
+pub fn verifier_context(_state: &mut NativeVerifierState<'_>, record: ProtocolContextRecord) {
     #[cfg(feature = "logging-transcript")]
     crate::logging::record_context(record);
-    state.public_message(&record);
+    #[cfg(not(feature = "logging-transcript"))]
+    let _ = record;
 }
 
 /// A prover-side clone of only the public duplex state used to preview a
@@ -795,31 +829,31 @@ pub struct NativeFoldPreview {
 impl NativeFoldPreview {
     /// Clone the public state and absorb one candidate native nonce message.
     #[must_use]
-    pub fn new(state: &NativeProverState, nonce_record: ProtocolContextRecord, nonce: u32) -> Self {
+    pub fn new(
+        state: &NativeProverState,
+        _nonce_record: ProtocolContextRecord,
+        nonce: u32,
+    ) -> Self {
         let mut sponge = state.duplex_sponge_state.clone();
-        sponge.absorb(nonce_record.encode().as_ref());
         sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
         Self { sponge }
     }
 
-    /// Absorb one public, context-framed fold payload and squeeze its root.
+    /// Absorb one public fold payload and squeeze its root.
     #[must_use]
     pub fn fold_root(
         &mut self,
-        record: ProtocolContextRecord,
+        _record: ProtocolContextRecord,
         payload: &[u8],
     ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
-        self.sponge.absorb(record.encode().as_ref());
-        for &byte in payload {
-            self.sponge.absorb([byte].encode().as_ref());
-        }
+        self.sponge.absorb(payload);
         let mut root = [0u8; crate::FOLD_CHALLENGE_SEED_LEN];
         self.sponge.squeeze(&mut root);
         root
     }
 }
 
-/// Absorb one public, context-framed fold payload and draw its root live on the
+/// Absorb one public fold payload and draw its root live on the
 /// prover side.
 #[must_use]
 pub fn native_prover_fold_root(
@@ -828,13 +862,11 @@ pub fn native_prover_fold_root(
     payload: &[u8],
 ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
     prover_context(state, record);
-    for &byte in payload {
-        state.public_message(&[byte]);
-    }
+    state.public_message(payload);
     state.verifier_message()
 }
 
-/// Absorb one public, context-framed fold payload and draw its root live on the
+/// Absorb one public fold payload and draw its root live on the
 /// verifier side.
 #[must_use]
 pub fn native_verifier_fold_root(
@@ -843,9 +875,7 @@ pub fn native_verifier_fold_root(
     payload: &[u8],
 ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
     verifier_context(state, record);
-    for &byte in payload {
-        state.public_message(&[byte]);
-    }
+    state.public_message(payload);
     state.verifier_message()
 }
 
@@ -1066,14 +1096,12 @@ where
 #[must_use]
 pub fn preview_native_grinding_predicate(
     state: &NativeProverState,
-    nonce_record: ProtocolContextRecord,
+    _nonce_record: ProtocolContextRecord,
     nonce: u32,
-    predicate_record: ProtocolContextRecord,
+    _predicate_record: ProtocolContextRecord,
 ) -> [u8; crate::GRINDING_PREDICATE_LEN] {
     let mut sponge = state.duplex_sponge_state.clone();
-    sponge.absorb(nonce_record.encode().as_ref());
     sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
-    sponge.absorb(predicate_record.encode().as_ref());
     let mut predicate = [0u8; crate::GRINDING_PREDICATE_LEN];
     sponge.squeeze(&mut predicate);
     predicate
@@ -1128,14 +1156,12 @@ pub fn receive_native_grinding_nonce(
 
 impl Encoding<[u8]> for ProtocolContextRecord {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = [0u8; 96];
-        out[..32].copy_from_slice(&self.domain);
-        out[32..36].copy_from_slice(&self.version.to_le_bytes());
-        out[36..68].copy_from_slice(&self.site_id);
-        out[68..72].copy_from_slice(&self.kind.to_le_bytes());
-        out[72..80].copy_from_slice(&self.atom_count.to_le_bytes());
-        out[80..88].copy_from_slice(&self.encoded_bytes.to_le_bytes());
-        out[88..96].copy_from_slice(&self.challenge_bytes.to_le_bytes());
+        let mut out = [0u8; 60];
+        out[..32].copy_from_slice(&self.site_id);
+        out[32..36].copy_from_slice(&self.kind.to_le_bytes());
+        out[36..44].copy_from_slice(&self.atom_count.to_le_bytes());
+        out[44..52].copy_from_slice(&self.encoded_bytes.to_le_bytes());
+        out[52..60].copy_from_slice(&self.challenge_bytes.to_le_bytes());
         out
     }
 }
@@ -1144,26 +1170,11 @@ impl Encoding<[u8]> for ProtocolContextRecord {
 mod tests {
     use super::*;
     use jolt_field::{
-        CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime64Offset59, PseudoMersenne,
-        Ring,
+        CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime64Offset59, Ring,
     };
-    use num_bigint::BigUint;
-    use num_traits::One;
-
-    fn assert_exact_sampling_budget<Field: PseudoMersenne>() {
-        let n = BigUint::one() << (NATIVE_FIELD_CHALLENGE_BYTES * 8);
-        let modulus = (BigUint::one() << Field::MODULUS_BITS) - Field::OFFSET;
-        let remainder = &n % &modulus;
-        let exact_numerator = &remainder * (&modulus - &remainder);
-        let aggregate_numerator = exact_numerator
-            * NATIVE_FIELD_SAMPLING_DRAW_LIMIT
-            * (BigUint::one() << NATIVE_FIELD_SAMPLING_SECURITY_BITS);
-        let exact_denominator = modulus * n;
-        assert!(aggregate_numerator <= exact_denominator);
-    }
 
     #[test]
-    fn exact_reduction_bias_budget_covers_every_production_field() {
+    fn exact_rejection_sampling_covers_every_production_field() {
         assert!(native_field_sampling_budget_is_certified(
             F::MODULUS_BITS,
             NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
@@ -1176,9 +1187,9 @@ mod tests {
             Prime128OffsetA7F7::MODULUS_BITS,
             NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
         ));
-        assert_exact_sampling_budget::<F>();
-        assert_exact_sampling_budget::<Prime64Offset59>();
-        assert_exact_sampling_budget::<Prime128OffsetA7F7>();
+        assert_eq!(native_field_challenge_bytes::<F>(), 4);
+        assert_eq!(native_field_challenge_bytes::<Prime64Offset59>(), 8);
+        assert_eq!(native_field_challenge_bytes::<Prime128OffsetA7F7>(), 16);
     }
 
     #[test]
@@ -1398,12 +1409,12 @@ mod tests {
             encoded_bytes: 5,
             challenge_bytes: 6,
         };
-        assert_eq!(record.encode().as_ref().len(), 96);
+        assert_eq!(record.encode().as_ref().len(), 60);
     }
 
     #[cfg(feature = "transcript-keccak")]
     #[test]
-    fn challenge_width_records_prevent_keccak_reconvergence() {
+    fn rejection_attempt_markers_prevent_keccak_reconvergence() {
         let mut short = new_native_prover(b"width", b"substrate").unwrap();
         let mut long = new_native_prover(b"width", b"substrate").unwrap();
         let _: [u8; 1] = short.verifier_message();
@@ -1418,38 +1429,16 @@ mod tests {
 
         let mut framed_short = new_native_prover(b"width", b"framed").unwrap();
         let mut framed_long = new_native_prover(b"width", b"framed").unwrap();
-        let site = ProtocolSiteId {
-            family: 31,
-            ..ProtocolSiteId::default()
-        };
-        prover_context(
-            &mut framed_short,
-            ProtocolContextRecord::new(
-                site.to_bytes(),
-                ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                1,
-            ),
-        );
-        prover_context(
-            &mut framed_long,
-            ProtocolContextRecord::new(
-                site.to_bytes(),
-                ProtocolMessageKind::Challenge as u32,
-                0,
-                0,
-                2,
-            ),
-        );
         let _: [u8; 1] = framed_short.verifier_message();
         let _: [u8; 2] = framed_long.verifier_message();
+        framed_short.public_message(&1u32);
+        framed_long.public_message(&2u32);
         framed_short.public_message(&[17u8]);
         framed_long.public_message(&[17u8]);
         assert_ne!(
             framed_short.verifier_message::<[u8; 32]>(),
             framed_long.verifier_message::<[u8; 32]>(),
-            "Akita context records must bind the prescribed squeeze width",
+            "exact-sampling retry markers must bind the consumed squeeze path",
         );
     }
 

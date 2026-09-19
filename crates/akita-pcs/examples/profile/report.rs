@@ -37,6 +37,36 @@ pub(crate) fn print_native_proof_summary(
         proof.len(),
         nonce_bytes,
     );
+    #[cfg(feature = "logging-transcript")]
+    print_native_wire_contexts(label);
+}
+
+#[cfg(feature = "logging-transcript")]
+fn print_native_wire_contexts(label: &str) {
+    use std::collections::BTreeMap;
+
+    let mut wire = BTreeMap::<(u32, u32, u32), (u64, u64)>::new();
+    for event in akita_transcript::thread_events() {
+        let akita_transcript::TranscriptEvent::Context(record) = event;
+        if matches!(
+            record.kind,
+            kind if kind == akita_transcript::ProtocolMessageKind::ProofLength as u32
+                || kind == akita_transcript::ProtocolMessageKind::ProofAtoms as u32
+                || kind == akita_transcript::ProtocolMessageKind::GrindingNonce as u32
+                || kind == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
+        ) {
+            let family = u32::from_le_bytes(record.site_id[..4].try_into().expect("site family"));
+            let level = u32::from_le_bytes(record.site_id[8..12].try_into().expect("site level"));
+            let entry = wire.entry((family, level, record.kind)).or_default();
+            entry.0 += record.atom_count;
+            entry.1 += record.encoded_bytes;
+        }
+    }
+    for ((family, level, kind), (atoms, bytes)) in wire {
+        eprintln!(
+            "[{label}] native_wire_context: family={family} level={level} kind={kind} atoms={atoms} declared_bytes={bytes}"
+        );
+    }
 }
 
 pub(crate) fn emit_native_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {

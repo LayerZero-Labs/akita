@@ -220,8 +220,6 @@ name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "num-bigint 0.4.8",
- "num-traits",
  "spongefish",
 ]
 

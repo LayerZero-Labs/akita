@@ -730,7 +730,8 @@ pub fn expanded_schedule_proof_payload_bytes(
         field_bits,
         policy.claim_ext_degree,
     )?;
-    let nonce_stream_bytes = grinding_plan.native_nonce_bytes();
+    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     total
         .checked_add(terminal_eor)
         .and_then(|value| value.checked_add(terminal_response))
@@ -788,20 +789,19 @@ pub fn materialize_candidate_schedule(
         policy.claim_ext_degree,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
-        || grinding_plan.native_nonce_bytes() != cached_grinding_cost.native_nonce_bytes
         || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
     {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached grinding cost ({} nonce bits, {} nonce bytes, {} queries) disagrees with materialized plan ({} nonce bits, {} nonce bytes, {} queries)",
+            "cached grinding cost ({} nonce bits, {} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
             cached_grinding_cost.total_nonce_bits,
-            cached_grinding_cost.native_nonce_bytes,
             cached_grinding_cost.expanded_query_count,
             grinding_plan.total_nonce_bits(),
-            grinding_plan.native_nonce_bytes(),
             grinding_plan.expanded_query_count(),
         )));
     }
-    estimate.nonce_stream_bytes = grinding_plan.native_nonce_bytes();
+    estimate.nonce_stream_bytes =
+        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(

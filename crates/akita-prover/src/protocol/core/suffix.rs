@@ -374,6 +374,12 @@ where
         .z_payloads
         .first()
         .ok_or(AkitaError::InvalidProof)?;
+    tracing::info!(
+        native_terminal_z_bytes = z_payload.len(),
+        native_terminal_e_field_elements = terminal_response.e_fields.coeff_len(),
+        native_terminal_t_field_elements = terminal_response.t_fields.coeff_len(),
+        "native terminal response bytes"
+    );
     akita_transcript::send_native_bounded_bytes(
         grinding.state_mut(),
         akita_transcript::ProtocolSiteId {

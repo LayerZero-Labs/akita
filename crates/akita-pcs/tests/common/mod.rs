@@ -116,7 +116,7 @@ where
             akita_transcript::ProtocolMessageKind::Challenge as u32,
             0,
             0,
-            akita_transcript::NATIVE_FIELD_CHALLENGE_BYTES,
+            akita_transcript::native_field_challenge_bytes::<FF>(),
         ),
     );
     akita_transcript::native_prover_field_challenge::<FF>(&mut transcript)

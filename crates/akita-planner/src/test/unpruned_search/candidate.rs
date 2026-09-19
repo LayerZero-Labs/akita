@@ -264,10 +264,9 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
-    let cost = child.cost.checked_prepend_native(
+    let cost = child.cost.checked_prepend(
         direct_bytes,
         edge_grinding_cost.total_nonce_bits,
-        edge_grinding_cost.native_nonce_bytes,
         edge_grinding_cost.expanded_query_count,
     )?;
     if !cost.fits_query_limit() {
@@ -332,10 +331,9 @@ pub(super) fn prepend_root(
         policy.claim_ext_degree,
         0,
     )?;
-    let cost = suffix.cost.checked_prepend_native(
+    let cost = suffix.cost.checked_prepend(
         root_bytes,
         root_grinding_cost.total_nonce_bits,
-        root_grinding_cost.native_nonce_bytes,
         root_grinding_cost.expanded_query_count,
     )?;
     if !cost.fits_query_limit() {
