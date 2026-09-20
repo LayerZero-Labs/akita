@@ -150,7 +150,13 @@ where
         >,
     {
         let t_prove_total = Instant::now();
-        let prefix_slots = backend.import_setup_prefixes::<Cfg>(&setup.prefix_slots)?;
+        let resolved = self.schedules.resolve_selection(opening.selection())?;
+        let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            opening.opening_layout(),
+        )?;
+        let prefix_slots =
+            backend.import_setup_prefixes::<Cfg>(&setup.prefix_slots, &required_prefix_ids)?;
         let proof = akita_prover::batched_prove::<Cfg, T, CpuBackend>(
             setup.expanded.descriptor(),
             &prefix_slots,

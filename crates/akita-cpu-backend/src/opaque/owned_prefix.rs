@@ -163,6 +163,7 @@ impl CpuBackend {
     pub fn import_setup_prefixes<Cfg>(
         &self,
         artifacts: &crate::commitment::SetupPrefixProverRegistry<Cfg::Field>,
+        required_ids: &[SetupPrefixSlotId],
     ) -> Result<
         SetupPrefixProverRegistry<Cfg::Field, CommitmentHandle<Cfg::Field, Cfg::ExtField>>,
         AkitaError,
@@ -195,7 +196,10 @@ impl CpuBackend {
             .check()
             .map_err(|_| AkitaError::InvalidSetup("invalid setup prefix artifacts".into()))?;
         let mut imported = SetupPrefixProverRegistry::new(artifacts.setup_seed().clone());
-        for (id, artifact) in artifacts.iter() {
+        for id in required_ids {
+            let artifact = artifacts.get(id).ok_or_else(|| {
+                AkitaError::InvalidSetup("required setup prefix artifact is missing".into())
+            })?;
             let slot = self.prepare_setup_prefix::<Cfg::Field, Cfg::ExtField>(id)?;
             if slot.public.id != artifact.id
                 || slot.public.commitment.rows.len() != artifact.commitment.rows.len()
@@ -272,8 +276,12 @@ mod tests {
                     .unwrap();
                 assert_eq!(decoded, artifacts);
                 let second = CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
-                let imported_first = first.import_setup_prefixes::<Cfg>(&decoded).unwrap();
-                let imported_second = second.import_setup_prefixes::<Cfg>(&decoded).unwrap();
+                let imported_first = first
+                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .unwrap();
+                let imported_second = second
+                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .unwrap();
                 let a = &imported_first.get(&id).unwrap().commitment_handle;
                 let b = &imported_second.get(&id).unwrap().commitment_handle;
                 assert_eq!(a.owner, first.owner_id());
@@ -288,11 +296,21 @@ mod tests {
                 let mut changed =
                     crate::commitment::SetupPrefixProverRegistry::new(decoded.setup_seed().clone());
                 changed.insert(slot).unwrap();
-                assert!(second.import_setup_prefixes::<Cfg>(&changed).is_err());
+                assert!(second
+                    .import_setup_prefixes::<Cfg>(&changed, std::slice::from_ref(&id))
+                    .is_err());
                 let wrong_setup =
                     crate::commitment::SetupPrefixProverRegistry::<F>::new([99; 32].into());
-                assert!(second.import_setup_prefixes::<Cfg>(&wrong_setup).is_err());
-                assert!(second.import_setup_prefixes::<Cfg>(&decoded).is_ok());
+                assert!(second
+                    .import_setup_prefixes::<Cfg>(&wrong_setup, std::slice::from_ref(&id))
+                    .is_err());
+                assert!(second
+                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .is_ok());
+                assert!(second
+                    .import_setup_prefixes::<Cfg>(&decoded, &[])
+                    .unwrap()
+                    .is_empty());
             })
             .unwrap()
             .join()

@@ -764,8 +764,14 @@ fn explicit_commitment_transfer_between_backends() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
+        let resolved = scheme.schedules().resolve_selection(selection).unwrap();
+        let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            prover_data.opening_layout(),
+        )
+        .unwrap();
         let prefixes = receiver
-            .import_setup_prefixes::<Cfg>(&setup.prefix_slots)
+            .import_setup_prefixes::<Cfg>(&setup.prefix_slots, &required_prefix_ids)
             .unwrap();
         let proof = akita_prover::batched_prove::<Cfg, _, _>(
             setup.expanded.descriptor(),

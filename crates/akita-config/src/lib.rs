@@ -73,6 +73,7 @@ pub mod recursive_commitment;
 mod schedule_artifact_tests;
 mod setup_prefix_slots;
 mod setup_requirements;
+pub use setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule;
 pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements};
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

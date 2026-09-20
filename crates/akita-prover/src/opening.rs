@@ -72,6 +72,9 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
     pub fn selection(&self) -> OpeningScheduleSelection {
         self.selection
     }
+    pub fn opening_layout(&self) -> &OpeningClaimsLayout {
+        self.opening_data.opening_layout()
+    }
     pub(crate) fn into_low_level_parts(
         self,
     ) -> (OpeningScheduleSelection, ProverOpeningData<'a, E, H, F>) {
