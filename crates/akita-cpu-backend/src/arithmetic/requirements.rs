@@ -517,7 +517,22 @@ pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::Canonic
     let mut planned = NttExecutionRequirements::default();
     planned.add_group_relation(0, level, level.witness_chunk.num_chunks)?;
     planned.add_opening_relation(0, level)?;
+    warm_joined_ntt_requirements(backend, prepared, &planned)
+}
 
+/// Build one retained transform per `(ring dimension, transform domain)`, at the
+/// joined maximum extent, largest first.
+///
+/// The prepared cache only reuses a slot that *covers* the request, and it
+/// reclaims smaller slots once a larger build lands. Issuing a small request
+/// before a large one for the same ring dimension and domain therefore pays for
+/// two full transforms and keeps one. Joining first, then ordering by
+/// descending extent, makes every covering request a hit.
+pub(crate) fn warm_joined_ntt_requirements<F: jolt_field::Field + jolt_field::CanonicalEncoding>(
+    backend: &CpuBackend,
+    prepared: &CpuPreparedSetup<F>,
+    planned: &NttExecutionRequirements,
+) -> Result<(), AkitaError> {
     let mut joined = Vec::<NttCacheKey>::new();
     for requirement in planned.entries() {
         if !backend.ntt_requirement_is_cached(prepared, *requirement)? {
@@ -531,6 +546,7 @@ pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::Canonic
             joined.push(requirement.key);
         }
     }
+    joined.sort_by_key(|key| std::cmp::Reverse(key.num_ring_elements));
     for requirement in joined {
         backend.ensure_ntt_slot(prepared, requirement)?;
     }

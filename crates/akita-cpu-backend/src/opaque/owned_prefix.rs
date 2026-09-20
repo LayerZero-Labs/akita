@@ -13,6 +13,16 @@ use jolt_field::{
 };
 use std::sync::Arc;
 
+/// Setup-prefix material memoized on the owning backend.
+///
+/// Both members depend only on the owned setup and the slot id. The retained
+/// source is shared by `Arc`, so the prefix coefficients and their digit-plane
+/// cache survive across proofs instead of being rebuilt per prove call.
+struct CachedSetupPrefix<F: Field> {
+    artifact: crate::commitment::SetupPrefixSlot<F>,
+    source: Arc<OwnedPolynomials<DensePoly<F>>>,
+}
+
 impl<F, E> akita_prover::SetupPrefixKernel<F, E> for CpuBackend
 where
     F: Field
@@ -108,25 +118,40 @@ impl CpuBackend {
     {
         self.validate_extension::<E>()?;
         let prepared = self.prepared::<F>()?;
-        let executor = CommitmentExecutor::cpu(
-            self,
-            prepared,
-            &prepared.expanded,
-            vec![PolynomialType::Dense(DenseType::Coefficients)],
-            PortableStatePolicy,
-        )?;
-        let artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
-        let coefficients = prepared
-            .expanded
-            .shared_matrix()
-            .as_field_slice()
-            .get(..id.n_prefix()?)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
-            })?
-            .to_vec();
-        let polynomial =
-            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+
+        // The commitment and the prefix coefficients are a pure function of the
+        // owned setup and the slot id, so derive them at most once per backend.
+        // Only the per-proof operation identity below is minted fresh, keeping
+        // handle lineage exactly as it was when every call re-derived.
+        let cached = self.memoized_setup_prefix(id, || {
+            let executor = CommitmentExecutor::cpu(
+                self,
+                prepared,
+                &prepared.expanded,
+                vec![PolynomialType::Dense(DenseType::Coefficients)],
+                PortableStatePolicy,
+            )?;
+            let artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
+            let coefficients = prepared
+                .expanded
+                .shared_matrix()
+                .as_field_slice()
+                .get(..id.n_prefix()?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
+                })?
+                .to_vec();
+            let polynomial =
+                DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+            Ok(CachedSetupPrefix {
+                artifact,
+                source: Arc::new(OwnedPolynomials {
+                    polynomials: vec![polynomial],
+                }),
+            })
+        })?;
+
+        let artifact = &cached.artifact;
         let public_commitment = artifact
             .commitment
             .rows
@@ -135,9 +160,7 @@ impl CpuBackend {
             .clone();
         let committed = Arc::new(CommittedSource {
             commitment_id: self.owner().next_operation_id()?,
-            source: Arc::new(OwnedPolynomials {
-                polynomials: vec![polynomial],
-            }),
+            source: cached.source.clone(),
             metadata: akita_prover::SourceMetadata::try_new(
                 1,
                 id.commitment_profile.group.num_vars(),
@@ -288,6 +311,19 @@ mod tests {
                 assert_eq!(b.owner, second.owner_id());
                 assert_ne!(a.owner, b.owner);
                 assert_eq!(a.committed.public, b.committed.public);
+
+                let imported_again = first
+                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .unwrap();
+                let a_again = &imported_again.get(&id).unwrap().commitment_handle;
+                assert_ne!(
+                    a.committed.commitment_id, a_again.committed.commitment_id,
+                    "each imported handle must retain fresh operation lineage"
+                );
+                assert!(
+                    Arc::ptr_eq(&a.committed.source, &a_again.committed.source),
+                    "repeated imports on one backend must reuse the memoized prefix source"
+                );
 
                 let mut slot = decoded.get(&id).unwrap().clone();
                 let mut fields = slot.commitment.rows[0].coeffs().to_vec();

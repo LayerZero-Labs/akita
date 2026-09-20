@@ -1,6 +1,6 @@
 //! Application-facing cache controls and public resource diagnostics.
 use super::{CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric};
-use crate::opaque::{ComputeBackendSetup, NttExecutionRequirements};
+use crate::opaque::NttExecutionRequirements;
 use akita_error::AkitaError;
 use akita_types::FoldSchedule;
 use jolt_field::{CanonicalEncoding, Field};
@@ -12,14 +12,8 @@ impl CpuBackend {
         schedule: &FoldSchedule,
     ) -> Result<(), AkitaError> {
         let prepared = self.prepared::<F>()?;
-        for requirement in
-            NttExecutionRequirements::from_commit_and_prove_schedule(schedule)?.entries()
-        {
-            if self.ntt_requirement_is_cached(prepared, *requirement)? {
-                self.ensure_ntt_slot(prepared, requirement.key)?;
-            }
-        }
-        Ok(())
+        let planned = NttExecutionRequirements::from_commit_and_prove_schedule(schedule)?;
+        super::requirements::warm_joined_ntt_requirements(self, prepared, &planned)
     }
 
     /// Initialized setup transforms for application profiling.

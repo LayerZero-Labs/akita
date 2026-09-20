@@ -36,7 +36,17 @@ pub struct CpuEorSession<E: Field> {
     binding: OperationBinding,
     groups: Vec<Box<dyn ExtensionOpeningSession<E>>>,
     coefficients: Vec<E>,
-    expected_factors: Vec<Vec<E>>,
+    /// Per-group tail points retained for the final transparent-factor
+    /// cross-check.
+    ///
+    /// The factor is evaluated once in `finish_eor` from these points and the
+    /// accumulated challenges, in `O(rounds)`. Materializing the `2^rounds`
+    /// Lagrange table here and folding it every round would duplicate the
+    /// compact table each group already owns, and would defeat
+    /// `ExtensionOpeningReductionGroup::extend_cylindrically`, which exists
+    /// precisely to avoid expanding a group over its high variables.
+    expected_tails: Vec<Vec<E>>,
+    eta: Vec<E>,
     num_rounds: usize,
     round: usize,
     claim: E,
@@ -219,7 +229,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let mut sessions = Vec::with_capacity(preparation.groups.len());
         let mut claims = Vec::new();
-        let mut factors = Vec::new();
+        let mut tails: Vec<Vec<E>> = Vec::with_capacity(preparation.groups.len());
         for (index, group) in preparation.groups.into_iter().enumerate() {
             let range = preparation.layout.root_group_claim_range(index)?;
             let weights = coefficients.get(range).ok_or(AkitaError::InvalidProof)?;
@@ -240,8 +250,7 @@ where
             let extra = rounds
                 .checked_sub(tail.len())
                 .ok_or(AkitaError::InvalidProof)?;
-            let mut factor = tensor_equality_factor_evals::<F, E>(tail, eta)?;
-            factor.resize(reduction_table_len(rounds)?, E::zero());
+            tails.push(tail.to_vec());
             let session = match group.source {
                 RetainedOpeningSource::Commitment(source) => source.source.begin_eor(
                     self,
@@ -270,7 +279,6 @@ where
             }
             sessions.push(session);
             claims.push(claim);
-            factors.push(factor);
         }
         let claim = claims.iter().copied().fold(E::zero(), |sum, c| sum + c);
         Ok((
@@ -279,7 +287,8 @@ where
                 binding: preparation.binding,
                 groups: sessions,
                 coefficients: coefficients.to_vec(),
-                expected_factors: factors,
+                expected_tails: tails,
+                eta: eta.to_vec(),
                 num_rounds: rounds,
                 round: 0,
                 claim,
@@ -343,9 +352,6 @@ where
             *claim = polynomial.evaluate(&challenge);
             group.bind_challenge(round, challenge)?;
         }
-        for factor in &mut session.expected_factors {
-            akita_algebra::poly::fold_evals_in_place(factor, challenge);
-        }
         session.claim = polynomial.evaluate(&challenge);
         session.challenges.push(challenge);
         session.round += 1;
@@ -356,24 +362,43 @@ where
         if session.round != session.num_rounds || session.pending.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        let mut values = Vec::with_capacity(session.coefficients.len());
-        for (group, factor) in session.groups.into_iter().zip(session.expected_factors) {
-            let factor = *factor.first().ok_or(AkitaError::InvalidProof)?;
+        let CpuEorSession {
+            groups,
+            coefficients,
+            expected_tails,
+            eta,
+            challenges,
+            claim,
+            ..
+        } = session;
+        let mut values = Vec::with_capacity(coefficients.len());
+        for (group, tail) in groups.into_iter().zip(&expected_tails) {
+            // Same value the verifier derives: eq(tail, local) projected
+            // through eta, then one `(1 - r)` per cylindrical high variable.
+            let local = challenges
+                .get(..tail.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail, &eta, local)?;
+            for extra in challenges
+                .get(tail.len()..)
+                .ok_or(AkitaError::InvalidProof)?
+            {
+                factor *= E::one() - *extra;
+            }
             for (coefficient, witness, actual_factor) in group.finish()? {
                 let index = values.len();
-                if actual_factor != factor || session.coefficients.get(index) != Some(&coefficient)
-                {
+                if actual_factor != factor || coefficients.get(index) != Some(&coefficient) {
                     return Err(AkitaError::InvalidProof);
                 }
                 values.push(witness * actual_factor);
             }
         }
-        if values.len() != session.coefficients.len()
+        if values.len() != coefficients.len()
             || values
                 .iter()
-                .zip(&session.coefficients)
+                .zip(&coefficients)
                 .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
-                != session.claim
+                != claim
         {
             return Err(AkitaError::InvalidProof);
         }

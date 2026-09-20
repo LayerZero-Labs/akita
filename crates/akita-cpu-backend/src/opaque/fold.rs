@@ -8,6 +8,7 @@ use crate::opaque::{
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{gadget_row_scalars, RingMultiplierOpeningPoint};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
@@ -216,9 +217,16 @@ impl<F: Field> CpuAcceptedFold<F> {
             .checked_mul(plan.num_digits_fold())
             .ok_or_else(|| AkitaError::InvalidSetup("Z plane count overflow".into()))?;
         let mut planes = vec![[0i8; D]; plane_count];
-        for (row, row_planes) in rows.iter().zip(planes.chunks_mut(plan.num_digits_fold())) {
-            balanced_decompose_centered_i32_i8_into(row, row_planes, plan.log_basis_open());
-        }
+        // Each row owns a disjoint `num_digits_fold`-wide plane window, so the
+        // decomposition is embarrassingly parallel and byte-identical either
+        // way. Keep the parallel form this path had before the kernel move.
+        let num_digits_fold = plan.num_digits_fold();
+        let log_basis_open = plan.log_basis_open();
+        cfg_iter!(rows)
+            .zip(cfg_chunks_mut!(&mut planes, num_digits_fold))
+            .for_each(|(row, row_planes)| {
+                balanced_decompose_centered_i32_i8_into(row, row_planes, log_basis_open);
+            });
         let expected_planes = plan
             .num_positions_per_block()
             .checked_mul(plan.num_digits_inner())

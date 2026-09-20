@@ -6,10 +6,14 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
-use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout};
+use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
 use jolt_field::{CanonicalEncoding, Field};
 use std::any::{Any, TypeId};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+type SetupPrefixCacheValue = Arc<dyn Any + Send + Sync>;
+type SetupPrefixCacheCell = Arc<Mutex<Option<SetupPrefixCacheValue>>>;
 
 /// Reusable owner of CPU setup resources and independent proof scopes.
 pub struct CpuBackend {
@@ -19,6 +23,14 @@ pub struct CpuBackend {
     schedules: Box<dyn CpuConfiguration>,
     max_cached_ring_switch_elements: usize,
     commit_scratch_bytes_per_worker: usize,
+    /// Derived setup-prefix material, memoized for the life of this backend.
+    ///
+    /// A prefix commitment is a pure function of the owned setup and the slot
+    /// id, both of which are fixed here, so deriving it more than once is
+    /// wasted work. Values are type-erased because the backend is erased over
+    /// its field; `validate_config` has already pinned the field before any
+    /// lookup, so the downcast is exact.
+    setup_prefix_cache: Mutex<BTreeMap<SetupPrefixSlotId, SetupPrefixCacheCell>>,
 }
 
 trait CpuSetupResources: Send + Sync {
@@ -137,7 +149,43 @@ impl CpuBackend {
             schedules: Box::new(schedules.clone()),
             max_cached_ring_switch_elements,
             commit_scratch_bytes_per_worker,
+            setup_prefix_cache: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Return memoized setup-prefix material, deriving it once per slot.
+    pub(crate) fn memoized_setup_prefix<T, Derive>(
+        &self,
+        id: &SetupPrefixSlotId,
+        derive: Derive,
+    ) -> Result<Arc<T>, AkitaError>
+    where
+        T: Any + Send + Sync,
+        Derive: FnOnce() -> Result<T, AkitaError>,
+    {
+        let cell = {
+            let mut cache = self
+                .setup_prefix_cache
+                .lock()
+                .map_err(|_| AkitaError::InvalidSetup("setup prefix cache lock poisoned".into()))?;
+            Arc::clone(
+                cache
+                    .entry(id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(None))),
+            )
+        };
+        let mut cached = cell
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("setup prefix slot lock poisoned".into()))?;
+        if let Some(value) = cached.as_ref() {
+            return Arc::clone(value).downcast::<T>().map_err(|_| {
+                AkitaError::InvalidInput("setup prefix material belongs to another field".into())
+            });
+        }
+        let value = Arc::new(derive()?);
+        let erased: SetupPrefixCacheValue = value.clone();
+        *cached = Some(erased);
+        Ok(value)
     }
 
     pub(crate) fn validate_config<Cfg: CommitmentConfig>(&self) -> Result<(), AkitaError> {
@@ -323,6 +371,7 @@ impl CpuBackend {
             schedules: Box::new(()),
             max_cached_ring_switch_elements,
             commit_scratch_bytes_per_worker,
+            setup_prefix_cache: Mutex::new(BTreeMap::new()),
         })
     }
     pub(crate) fn for_test_setup<F: Field + CanonicalEncoding>(
@@ -341,6 +390,7 @@ impl CpuBackend {
             schedules: Box::new(()),
             max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
             commit_scratch_bytes_per_worker: Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+            setup_prefix_cache: Mutex::new(BTreeMap::new()),
         })
     }
 }
