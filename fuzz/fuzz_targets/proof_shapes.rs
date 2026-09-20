@@ -1,14 +1,11 @@
 #![no_main]
 
 use akita_serialization::AkitaDeserialize;
-use akita_types::{
-    AkitaBatchedProofShape, LevelProofShape, TerminalResponseShape, TerminalLevelProofShape,
-};
+use akita_types::{LevelProofShape, TerminalResponseShape, TerminalLevelProofShape};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let _ = TerminalResponseShape::deserialize_compressed(data, &());
     let _ = LevelProofShape::deserialize_compressed(data, &());
     let _ = TerminalLevelProofShape::deserialize_compressed(data, &());
-    let _ = AkitaBatchedProofShape::deserialize_compressed(data, &());
 });

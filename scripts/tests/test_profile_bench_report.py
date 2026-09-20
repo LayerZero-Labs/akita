@@ -1306,6 +1306,31 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("stored in a 32 bit field", report)
         self.assertIn("12 bit fold response", report)
 
+    def test_native_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = "\n".join(
+            [
+                "INFO native proof summary label=onehot_fp128 levels=2 "
+                "proof_size_bytes=101 accounted_bytes=101 native_nonce_bytes=9",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 "
+                "native_nonce_bytes=9 run_count=1 expanded_query_count=1",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=stage2 query=claim_batch protocol=none stage=None "
+                "round=None group=None kind=proof_of_work loss_factor=1 grind_bits=47 "
+                "nonce_bits=54 multiplicity=1 run_nonce_bits=54",
+            ]
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+
+        self.assertEqual(summary["proof_size_bytes"], 101)
+        self.assertEqual(summary["accounted_bytes"], 101)
+        self.assertEqual(summary["native_nonce_bytes"], 9)
+        self.assertEqual(summary["nonce_stream_bits"], 54)
+        self.assertEqual(summary["grinding_plan"]["nonce_stream_bytes"], 7)
+        self.assertEqual(summary["grinding_plan"]["native_nonce_bytes"], 9)
+
     def test_grinding_round_groups_split_when_security_terms_change(self) -> None:
         from scripts.profile_bench_fold_details import aggregate_grinding_runs
 

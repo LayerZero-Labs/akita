@@ -27,7 +27,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     /// `S(r) = range_image_evaluation` to an opening of the same digit table
     /// through `S = w(w + 1)`. No relation or evaluation-trace term is
     /// included. Pass the returned instance directly to
-    /// [`akita_sumcheck::prove_sumcheck`].
+    /// [`akita_sumcheck::prove_sumcheck_native`].
     pub fn new_virtual_only(
         w_evals_compact: Vec<i8>,
         stage1_point: &[E],

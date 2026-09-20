@@ -29,6 +29,7 @@ pub(crate) fn print_native_proof_summary(
         label,
         levels,
         proof_size_bytes = proof.len(),
+        accounted_bytes = proof.len(),
         native_nonce_bytes = nonce_bytes,
         "native proof summary"
     );

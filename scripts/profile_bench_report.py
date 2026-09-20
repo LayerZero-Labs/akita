@@ -954,6 +954,15 @@ def extract_summary(
             "verify multi threaded OK" in line or "verify OK" in line
         ) and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
+        elif "native proof summary" in line and kvs.get("label") == mode:
+            summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
+            summary["accounted_bytes"] = int(
+                kvs.get("accounted_bytes", kvs["proof_size_bytes"])
+            )
+            if "native_nonce_bytes" in kvs:
+                summary["native_nonce_bytes"] = int(kvs["native_nonce_bytes"])
+            if "levels" in kvs:
+                summary["akita_levels"] = int(kvs["levels"])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])
@@ -971,6 +980,10 @@ def extract_summary(
                 "run_count": int(kvs["run_count"]),
                 "expanded_query_count": int(kvs["expanded_query_count"]),
             }
+            if "native_nonce_bytes" in kvs:
+                grinding_plan_summary["native_nonce_bytes"] = int(
+                    kvs["native_nonce_bytes"]
+                )
             summary["nonce_stream_bits"] = int(kvs["total_nonce_bits"])
             summary["nonce_stream_padding_bits"] = int(kvs["padding_bits"])
         elif "grinding plan run" in line and kvs.get("label") == mode:

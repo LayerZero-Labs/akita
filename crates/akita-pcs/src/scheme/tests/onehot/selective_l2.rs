@@ -102,10 +102,7 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
     for offset in [0, proof.len() / 4, proof.len() / 2, proof.len() - 1] {
         let mut mutated = proof.clone();
         mutated[offset] ^= 1;
-        assert!(
-            verify(&mutated).is_err(),
-            "mutation at byte {offset} accepted"
-        );
+        assert!(verify(&mutated).is_err(), "mutated proof accepted");
     }
 
     let truncated = &proof[..proof.len() - 1];

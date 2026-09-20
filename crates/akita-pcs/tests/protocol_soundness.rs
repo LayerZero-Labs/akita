@@ -241,7 +241,7 @@ where
         }));
         assert!(
             matches!(outcome, Ok(Err(_))),
-            "mutation at native proof byte {offset} must reject without panicking"
+            "mutated native proof must reject without panicking"
         );
     }
 }
