@@ -23,7 +23,8 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = [
   "parallel",
 ] }
-akita-prover = { path = "../../../crates/akita-prover" }
+akita-prover = { path = "../../../crates/akita-prover", default-features = false }
+akita-cpu-backend = { path = "../../../crates/akita-cpu-backend" }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier" }
@@ -40,7 +41,7 @@ parallel = [
   "dep:rayon",
   "akita-pcs/parallel",
   "jolt-field/parallel",
-  "akita-prover/parallel",
+  "akita-cpu-backend/parallel",
 ]
 
 [lints.rust]

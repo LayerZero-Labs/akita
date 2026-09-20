@@ -102,7 +102,7 @@ describes a separate, not-yet-implemented approach to reducing those retained
 tables.
 
 The implementation and its comparison with a padded-table reference are in
-`crates/akita-prover/src/backend/recursive/witness/tensor.rs`.
+`crates/akita-cpu-backend/src/opaque/recursive/witness/tensor.rs`.
 
 ## Tiling and sweep selection
 
@@ -140,7 +140,7 @@ a route change is visible even when total runtime is noisy.
 
 `CpuBackend` owns two deployment limits. The first is the largest ring switch
 operation that keeps a complete transformed matrix prefix. The second is the
-sparse commitment scratch budget for each worker. `CpuBackend::DEFAULT` uses `2^21` ring
+sparse commitment scratch budget for each worker. The default backend limits use `2^21` ring
 elements and 8 MiB. Applications may use `CpuBackend::with_resource_limits` to
 choose other values.
 
@@ -254,11 +254,11 @@ Euclidean prover's memory cost.
 
 Relevant sources:
 
-- `crates/akita-prover/src/backend/packed_digits/` owns compact signed-digit
+- `crates/akita-cpu-backend/src/sources/packed_digits/` owns compact signed-digit
   storage.
-- `crates/akita-prover/src/protocol/sumcheck/digit_range/` owns the direct and
+- `crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/` owns the direct and
   class-indexed range provers.
-- `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs` fuses the
+- `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs` fuses the
   physical norm with the final range leaf.
 - `crates/akita-types/src/sis/physical_l2.rs` defines the direct and limb-Gram
   plans and reconstructs the integer norm.

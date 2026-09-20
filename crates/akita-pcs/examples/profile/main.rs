@@ -16,7 +16,6 @@ compile_error!("profile-bench-selected is internal; enable one profile-ci-* grou
 
 mod modes;
 mod monitor;
-mod ntt_prewarm;
 mod parallel;
 #[path = "../../benches/support/relation_phase_timing.rs"]
 mod relation_phase_timing;
@@ -31,7 +30,7 @@ mod workload;
 #[path = "../support/workspace_schedules.rs"]
 mod workspace_schedules;
 
-use akita_prover::CpuBackend;
+use akita_cpu_backend::CpuBackend;
 use std::env;
 use std::fs;
 use std::io::BufWriter;
@@ -124,16 +123,15 @@ fn main() {
     };
     let monitor_enabled = enable_trace && env_flag("AKITA_PROFILE_MONITOR", true);
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
-    let cpu = CpuBackend::DEFAULT;
     tracing::info!(
-        max_cached_ring_switch_elements = cpu.max_cached_ring_switch_elements(),
-        commit_scratch_bytes_per_worker = cpu.commit_scratch_bytes_per_worker(),
+        max_cached_ring_switch_elements = CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+        commit_scratch_bytes_per_worker = CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         "CPU resource policy"
     );
     eprintln!(
         "[profile] cpu_policy: max_cached_ring_switch_elements={}, commit_scratch_bytes_per_worker={}",
-        cpu.max_cached_ring_switch_elements(),
-        cpu.commit_scratch_bytes_per_worker(),
+        CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     );
     modes::log_active_fp128_prime_probe();
 

@@ -53,15 +53,11 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute setup-prefix slots for the generated profile"
         );
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
+        let stack = CpuBackend::new::<RecursiveCommitmentConfig<BaseCfg>>(
+            setup.expanded.clone(),
+            recursive_scheme.schedules(),
         )
-        .expect("stack");
+        .expect("backend");
 
         let mut pre_polys_by_group = Vec::new();
         let mut pre_commitments = Vec::new();
@@ -69,15 +65,15 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         for group_idx in 0..PRE_GROUPS {
             let poly =
                 make_onehot_poly::<BaseCfg>(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
-                prover_state: hint,
-            } = base_scheme
-                .commit(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: hint,
+            } = stack
+                .commit::<RecursiveCommitmentConfig<BaseCfg>>(
+                    &stack
+                        .import_source::<RecursiveCommitmentConfig<BaseCfg>, _>(vec![poly.clone()])
+                        .expect("source"),
+                    akita_cpu_backend::GroupContext::explicit(&pre_frozen),
                 )
                 .expect("precommit group");
             pre_polys_by_group.push(vec![poly]);
@@ -92,15 +88,15 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .collect();
         let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
             .expect("nonempty precommitted groups");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
-            prover_state: final_hint,
-        } = recursive_scheme
-            .commit(
-                &setup,
-                &final_polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+            private_handle: final_hint,
+        } = stack
+            .commit::<RecursiveCommitmentConfig<BaseCfg>>(
+                &stack
+                    .import_source::<RecursiveCommitmentConfig<BaseCfg>, _>(final_polys.clone())
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final generated-profile commitment");
 
@@ -119,12 +115,6 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .iter()
             .map(|poly| onehot_opening_lagrange(poly, &point))
             .collect();
-
-        let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
-            .iter()
-            .map(|polys| polys.iter().collect())
-            .collect();
-        let final_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
 
         let mut prover_groups = Vec::new();
         for (group_idx, openings) in pre_openings.iter().enumerate() {
@@ -146,18 +136,12 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             .expect("final prover group"),
         );
 
-        let mut prover_polys: Vec<&[&OneHotPoly<F, u8>]> = Vec::new();
-        for refs in &pre_refs_by_group {
-            prover_polys.push(&refs[..]);
-        }
-        prover_polys.push(&final_refs[..]);
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
 
-        let prover_claims = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
+        let prover_claims = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
-            prover_polys,
             recursive_scheme.schedules(),
         );
         let selection = prover_claims.selection();

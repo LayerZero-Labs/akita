@@ -501,7 +501,6 @@ mod tests {
                 relation_rhs_coeff_len(relation_geometry.rhs_layout())
                     .unwrap()
             ]),
-            RingVec::from_coeffs(Vec::new()),
             params.role_dims(),
         )
         .unwrap();

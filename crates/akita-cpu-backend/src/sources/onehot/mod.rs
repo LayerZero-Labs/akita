@@ -1,0 +1,59 @@
+//! One-hot polynomial: sparse witness with at most one nonzero field
+//! element per chunk of size `onehot_k`.
+//!
+//! [`OneHotPoly`] implements the four prover operations (ring evaluation, per-block
+//! fold, decompose+fold, and inner-Ajtai commit) by iterating only over the
+//! nonzero monomial positions.
+//!
+//! # Module layout
+//!
+//! The module is organized as private kernel and polynomial modules.
+//!
+//!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
+//!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
+//!     at the narrowest width that fits their hot positions.
+//!   - One hot block views use the same [`SparseRingBlockEntry`] and
+//!     [`FlatBlocks<E>`] representation as sparse ring polynomials. Each hot
+//!     coefficient is one entry with value `1`.
+//!   - [`OneHotPoly<F, I>`]: the caller-facing polynomial. Storage is
+//!     D-free; ring-shaped ops take the kernel dispatch dimension as a
+//!     method-level const generic.
+
+use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
+use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
+use akita_types::RingMatrixView;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field};
+use jolt_field::{Unreduced, WithCommitAccumulator};
+use std::marker::PhantomData;
+
+use super::flat_blocks::FlatBlocks;
+use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
+use crate::opaque::DecomposeFoldWitness;
+use crate::sources::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+
+mod column_sweep;
+mod decompose_fold;
+mod entries;
+mod fold;
+#[cfg(test)]
+mod inner_ajtai;
+mod ops;
+mod poly;
+#[cfg(test)]
+pub(crate) mod test_helpers;
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+pub(crate) use column_sweep::column_sweep_ajtai_onehot;
+pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
+pub use entries::OneHotIndex;
+#[cfg(test)]
+use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
+pub(crate) use ops::commit_onehot_sources;
+pub use poly::{OneHotPoly, OneHotSource};
+
+pub(crate) use ops::onehot_coefficient_packing_batch;

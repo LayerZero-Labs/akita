@@ -7,19 +7,19 @@ use workspace_schedules::load_workspace_scheme;
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::{
-    ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, SelectedProverOpeningData,
-};
+use akita_cpu_backend::CommitmentHandle;
+use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
+use akita_prover::SelectedProverOpeningData;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile,
-    GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
+    BasisMode, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
+    OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use std::hint::black_box;
 
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, Criterion};
-use jolt_field::{CanonicalEncoding, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Ring};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -55,31 +55,22 @@ fn random_point(nv: usize) -> Vec<F> {
         .collect()
 }
 
-fn prover_claims<'a, Cfg, P>(
+fn prover_claims<'a, Cfg>(
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
     point: &'a [F],
-    polynomials: &'a [&'a P],
+    evaluations: &[F],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: AkitaCommitmentHint<Cfg::Field>,
-) -> SelectedProverOpeningData<'a, F, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
+    hint: CommitmentHandle<Cfg::Field, F>,
+) -> SelectedProverOpeningData<'a, F, CommitmentHandle<Cfg::Field, F>, Cfg::Field>
 where
     Cfg: CommitmentConfig<ExtField = F>,
-    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![F::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover claims group");
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), commitment.clone())
+            .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        opening_claims,
-        vec![hint],
-        vec![polynomials],
-        schedules,
-    )
-    .expect("valid prover opening data")
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(opening_claims, vec![hint], schedules)
+        .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(
@@ -131,42 +122,33 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     });
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+
+    let source = stack.import_source::<Cfg, _>(vec![poly.clone()]).unwrap();
 
     group.bench_function("commit", |b| {
         b.iter(|| {
             black_box(
-                scheme
-                    .commit::<_, _>(
-                        &setup,
-                        black_box(std::slice::from_ref(&poly)),
-                        stack.commitment(),
-                        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                stack
+                    .commit::<Cfg>(
+                        &source,
+                        akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                     )
                     .unwrap(),
             )
         })
     });
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &source,
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
     let selection = scheme
@@ -188,12 +170,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     scheme
-                        .batched_prove::<_, _, _, _>(
+                        .batched_prove(
                             &setup,
-                            prover_claims::<Cfg, _>(
+                            prover_claims::<Cfg>(
                                 scheme.schedules(),
                                 &pt[..],
-                                &poly_refs[..],
+                                &openings[..],
                                 &commitments[0],
                                 h.into_iter().next().unwrap(),
                             ),
@@ -210,12 +192,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prover_claims::<Cfg, _>(
+            prover_claims::<Cfg>(
                 scheme.schedules(),
                 &pt[..],
-                &poly_refs[..],
+                &openings[..],
                 &commitments[0],
                 hint.clone(),
             ),
@@ -286,29 +268,21 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
     group.bench_function(format!("e2e/{mode_label}"), |b| {
         b.iter(|| {
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group: cm,
-                prover_state: h,
-            } = scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: h,
+            } = stack
+                .commit::<Cfg>(
+                    &source,
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap();
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = scheme
-                .batched_prove::<_, _, _, _>(
+                .batched_prove(
                     &setup,
-                    prover_claims::<Cfg, _>(
-                        scheme.schedules(),
-                        &pt[..],
-                        &poly_refs[..],
-                        &cms[0],
-                        h,
-                    ),
+                    prover_claims::<Cfg>(scheme.schedules(), &pt[..], &openings[..], &cms[0], h),
                     &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
@@ -382,45 +356,38 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
 
+    let source = stack
+        .import_source::<Cfg, _>(vec![onehot_poly.clone()])
+        .unwrap();
+
     group.bench_function("commit_onehot", |b| {
         b.iter(|| {
             black_box(
-                scheme
-                    .commit::<_, _>(
-                        &setup,
-                        black_box(std::slice::from_ref(&onehot_poly)),
-                        stack.commitment(),
-                        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                stack
+                    .commit::<Cfg>(
+                        &source,
+                        akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                     )
                     .unwrap(),
             )
         })
     });
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&onehot_poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &source,
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
-    let poly_refs: [&OneHotPoly<F>; 1] = [&onehot_poly];
     let commitments = [commitment];
     let openings = [opening];
     let selection = scheme
@@ -442,12 +409,12 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     scheme
-                        .batched_prove::<_, _, _, _>(
+                        .batched_prove(
                             &setup,
-                            prover_claims::<Cfg, _>(
+                            prover_claims::<Cfg>(
                                 scheme.schedules(),
                                 &pt[..],
-                                &poly_refs[..],
+                                &openings[..],
                                 &commitments[0],
                                 h.into_iter().next().unwrap(),
                             ),
@@ -464,12 +431,12 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prover_claims::<Cfg, _>(
+            prover_claims::<Cfg>(
                 scheme.schedules(),
                 &pt[..],
-                &poly_refs[..],
+                &openings[..],
                 &commitments[0],
                 hint.clone(),
             ),
@@ -501,29 +468,21 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 
     group.bench_function(format!("e2e/{mode_label}"), |b| {
         b.iter(|| {
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group: cm,
-                prover_state: h,
-            } = scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&onehot_poly),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: h,
+            } = stack
+                .commit::<Cfg>(
+                    &source,
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap();
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = scheme
-                .batched_prove::<_, _, _, _>(
+                .batched_prove(
                     &setup,
-                    prover_claims::<Cfg, _>(
-                        scheme.schedules(),
-                        &pt[..],
-                        &poly_refs[..],
-                        &cms[0],
-                        h,
-                    ),
+                    prover_claims::<Cfg>(scheme.schedules(), &pt[..], &openings[..], &cms[0], h),
                     &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,

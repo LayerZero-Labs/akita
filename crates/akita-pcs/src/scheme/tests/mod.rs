@@ -13,23 +13,23 @@ where
 }
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
-use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, OneHotPoly, PreparedProverGroup, SelectedProverOpeningData};
+use akita_cpu_backend::evaluate_root_polynomial;
+use akita_cpu_backend::CpuBackend;
+use akita_cpu_backend::{DensePoly, OneHotPoly};
+use akita_prover::CommitmentHandleMetadata;
+use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
 use akita_types::DigitRangePlan;
 use akita_types::ExtensionOpeningReductionProof;
-use akita_types::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field, RingVec,
-};
+use akita_types::{lagrange_weights, RingVec};
 use akita_types::{
     AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, TerminalLevelProofShape,
 };
 use akita_types::{
-    AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
+    OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use jolt_field::{One, Ring, Zero};
 use rand::rngs::StdRng;
@@ -96,18 +96,6 @@ fn scheme_rejects_a_catalog_bound_to_another_config() {
     assert!(error.to_string().contains("family"));
 }
 
-type HomogeneousSelectedProverData<
-    'a,
-    C,
-    P,
-    S = AkitaCommitmentHint<<C as CommitmentConfig>::Field>,
-> = SelectedProverOpeningData<
-    'a,
-    <C as CommitmentConfig>::ExtField,
-    PreparedProverGroup<'a, P>,
-    <C as CommitmentConfig>::Field,
-    S,
->;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
@@ -121,22 +109,16 @@ mod layout;
 mod onehot;
 mod single;
 
-fn selected_prover_data<'a, C, P, S>(
+fn selected_prover_data<'a, C, S>(
     scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     prover_states: Vec<S>,
-    polynomials: Vec<&'a [&'a P]>,
-) -> Result<HomogeneousSelectedProverData<'a, C, P, S>, AkitaError>
+) -> Result<SelectedProverOpeningData<'a, C::ExtField, S, C::Field>, AkitaError>
 where
     C: CommitmentConfig,
-    P: akita_prover::RootPolyMeta<C::Field>,
+    S: CommitmentHandleMetadata,
 {
-    SelectedProverOpeningData::from_committed_claims::<C>(
-        claims,
-        prover_states,
-        polynomials,
-        &scheme.schedules,
-    )
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, prover_states, &scheme.schedules)
 }
 
 fn selected_statement<'a, C>(
@@ -168,28 +150,24 @@ fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
     witness_len <= MIN_W_LEN_FOR_FOLDING || witness_len >= prev_w_len
 }
 
-fn prover_claims<'a, P, S>(
+fn prover_claims<'a, S>(
     scheme: &Scheme,
     point: &'a [F],
-    polynomials: &'a [&'a P],
+    evaluations: &[F],
     commitment: &'a CommittedGroup<F>,
-    prover_state: S,
-) -> SelectedProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F, S>
+    private_handle: S,
+) -> SelectedProverOpeningData<'a, F, S, F>
 where
-    P: akita_prover::RootPolyMeta<F>,
+    S: CommitmentHandleMetadata,
 {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![F::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover claims group");
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), commitment.clone())
+            .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _, _>(
-        scheme,
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
-        vec![prover_state],
-        vec![polynomials],
+        vec![private_handle],
+        scheme.schedules(),
     )
     .expect("valid prover opening data")
 }
@@ -273,24 +251,18 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform_with_state_policy(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-        akita_prover::ResidentStatePolicy,
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: prover_state,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(vec![poly.clone()])
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
@@ -303,17 +275,16 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
             prover_claims(
                 &scheme,
                 &opening_point[..],
-                &poly_refs[..],
+                &[opening],
                 &commitments[0],
                 prover_state,
             ),
@@ -486,33 +457,18 @@ fn opening_from_poly_at<const D_OPEN: usize>(
     point: &[OneHotF],
     num_positions_per_block: usize,
     num_live_blocks: usize,
-) -> OneHotF {
-    let alpha_bits = D_OPEN.trailing_zeros() as usize;
-    let inner_point = &point[..alpha_bits];
-    let reduced_point = &point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
+) -> OneHotF
+where
+    OneHotPoly<OneHotF, u8>: akita_cpu_backend::RootPolynomialEvaluator<OneHotF, D_OPEN>,
+{
+    evaluate_root_polynomial::<OneHotF, _, D_OPEN>(
+        poly,
+        point,
         num_positions_per_block,
         num_live_blocks,
         BasisMode::Lagrange,
     )
-    .expect("opening point shape should match layout");
-    let opening = OpeningFoldKernel::<_, OneHotF, D_OPEN>::evaluate_and_fold(
-        &CpuBackend::DEFAULT,
-        None,
-        poly.opening_view().expect("opening view"),
-        OpeningFoldPlan::Base {
-            live_block_weights: &ring_opening_point.live_block_weights,
-            position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block,
-        },
-    )
-    .expect("evaluate_and_fold");
-    let folded_ring = opening.eval;
-    let packed_inner =
-        reduce_inner_opening_to_ring_element::<OneHotF, D_OPEN>(inner_point, BasisMode::Lagrange)
-            .expect("inner opening point should match ring dimension");
-    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
+    .expect("root polynomial opening")
 }
 
 fn opening_from_poly(

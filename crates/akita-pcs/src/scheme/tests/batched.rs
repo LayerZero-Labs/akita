@@ -12,55 +12,49 @@ fn batched_commit_matches_individual_commits() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, &evals_b).unwrap();
     let setup = scheme.setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
-    let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
+    let (batched_commitments, _batched_handles): (Vec<_>, Vec<_>) = poly_groups
         .iter()
         .map(|group| {
-            scheme.commit::<_, _>(
-                &setup,
-                group,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            stack.commit::<Cfg>(
+                &stack
+                    .import_source::<Cfg, _>(group.to_vec())
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
-        .map(|output| (output.committed_group, output.prover_state))
+        .map(|output| (output.committed_group, output.private_handle))
         .unzip();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment_a,
-        prover_state: hint_a,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly_a),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: _hint_a,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(vec![poly_a.clone()])
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment_b,
-        prover_state: hint_b,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly_b),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: _hint_b,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(vec![poly_b.clone()])
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
-    assert_eq!(batched_hints, vec![hint_a, hint_b]);
 }
 
 #[test]
@@ -74,24 +68,14 @@ fn commit_rejects_mixed_group_arity() {
     let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
     let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, &smaller_evals).unwrap();
     let setup = scheme.setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
 
     // An empty precommitted group prefix is unrepresentable, so no grouped context
     // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
     // `precommitted_group_profiles_reject_an_empty_prefix`.
-    let error = scheme
-        .commit(
-            &setup,
-            &[poly, smaller],
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect_err("one committed group must be homogeneous");
+    let error = stack
+        .import_source::<Cfg, _>(vec![poly, smaller])
+        .expect_err("one imported group must be homogeneous");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
 }

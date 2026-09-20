@@ -212,9 +212,9 @@ panic.
 | Define prefix identities and proof data | `crates/akita-types/src/proof/setup_prefix.rs` |
 | Build the shared setup contribution plan | `crates/akita-types/src/setup_contribution/` |
 | Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |
-| Prove the setup product | `crates/akita-prover/src/protocol/sumcheck/akita_stage3/` |
+| Prove the setup product | `crates/akita-cpu-backend/src/opaque/sumcheck/stage3/` |
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
-| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/core/` and `crates/akita-verifier/src/protocol/core/` |
+| Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/protocol/core/` |
 
 The live planner contract is
 [`specs/setup-offloading-planner.md`](../../specs/setup-offloading-planner.md).

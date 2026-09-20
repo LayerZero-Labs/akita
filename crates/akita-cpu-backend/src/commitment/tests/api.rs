@@ -1,0 +1,498 @@
+use super::*;
+use crate::commitment::PortableStatePolicy;
+use crate::opaque::CpuBackend;
+use crate::opaque::{ComputeBackendSetup, OperationCtx};
+use crate::{AkitaProverSetup, DensePoly};
+use akita_challenges::SparseChallengeConfig;
+use akita_types::sis::{
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
+    SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
+use akita_types::{
+    CommittedSourceEncoding, CompressionChainPlan, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
+};
+use jolt_field::Fp64;
+
+type F = Fp64<4294967197>;
+const D: usize = 64;
+
+fn audited_commit_params(
+    slice_count: akita_types::CommitmentSliceCount,
+    positions_per_block: usize,
+    live_ring_elements: usize,
+    num_digits_inner: usize,
+    num_digits_outer: usize,
+    num_digits_open: usize,
+) -> CommittedGroupParams {
+    let mut params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        D,
+        3,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::production_for_ring_dim(D)
+            .expect("D=64 has a production challenge configuration"),
+    );
+    params.own_group_mut().profile.outer_slice_count = slice_count;
+    params = params
+        .with_decomp(
+            positions_per_block,
+            live_ring_elements,
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open,
+        )
+        .expect("commitment fixture geometry");
+    let source_len = live_ring_elements
+        .checked_mul(D)
+        .expect("commitment fixture source length");
+    assert!(source_len.is_power_of_two());
+    params.own_group_mut().profile.group =
+        PolynomialGroupLayout::singleton(source_len.trailing_zeros() as usize);
+
+    let a_bucket = rounded_up_role_a_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q32Offset99,
+        D,
+        params.open().digits.log_basis,
+        &params.fold_challenge_config(),
+        params.num_digits_fold(),
+        params.witness_chunk.num_chunks,
+    )
+    .expect("audited fixture A bucket");
+    params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Inner,
+            ring_dimension: D as u32,
+            coeff_linf_bound: a_bucket,
+        },
+        params.inner().matrix.input_width(),
+    )
+    .expect("audited fixture A matrix");
+    params = params
+        .with_decomp(
+            positions_per_block,
+            live_ring_elements,
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open,
+        )
+        .expect("fixture geometry after A rank");
+
+    let b_bucket = rounded_up_collision_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisModulusProfileId::Q32Offset99,
+        SisMatrixRole::Outer,
+        D,
+        params.outer().digits.log_basis,
+    )
+    .expect("audited fixture B bucket");
+    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Outer,
+            ring_dimension: D as u32,
+            coeff_linf_bound: b_bucket,
+        },
+        params.outer().matrix.input_width(),
+    )
+    .expect("audited fixture B matrix");
+
+    let d_bucket = rounded_up_collision_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisModulusProfileId::Q32Offset99,
+        SisMatrixRole::Open,
+        D,
+        params.open().digits.log_basis,
+    )
+    .expect("audited fixture D bucket");
+    params.open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Open,
+            ring_dimension: D as u32,
+            coeff_linf_bound: d_bucket,
+        },
+        params.open().matrix.input_width(),
+    )
+    .expect("audited fixture D matrix");
+    params
+}
+
+#[test]
+fn commit_level_params_reject_log_basis_above_i8_range() {
+    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: D,
+        },
+    )
+    .unwrap()
+    .expanded;
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        D,
+        9,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(2, 4, 2, 2, 2)
+    .unwrap();
+
+    assert!(matches!(
+        validate_commit_level_params::<F>(&params, &expanded, 0, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
+    let mut params = audited_commit_params(akita_types::CommitmentSliceCount::ONE, 1, 1, 1, 1, 1);
+    let d_key = params.open().matrix.sis_table_key();
+    params.open_matrix = OpenCommitMatrixParams::new_unchecked(
+        d_key.policy,
+        d_key.table_digest,
+        d_key.modulus_profile,
+        8,
+        8,
+        d_key.coeff_linf_bound,
+        D,
+    );
+    let commit_only_fields = akita_types::commit_only_setup_field_elements(
+        &params.inner().matrix,
+        &params.outer().matrix,
+        params.outer_slice_count(),
+    )
+    .unwrap();
+    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: commit_only_fields,
+        },
+    )
+    .unwrap()
+    .expanded;
+
+    validate_commit_level_params::<F>(&params, &expanded, 0, 1)
+        .expect("standalone commitment only materializes A and B");
+}
+
+fn sliced_commit_params() -> CommittedGroupParams {
+    audited_commit_params(akita_types::CommitmentSliceCount::FOUR, 2, 16, 1, 1, 1)
+}
+
+fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
+    let key = params.outer().matrix.sis_table_key();
+    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        key.policy,
+        key.table_digest,
+        key.modulus_profile,
+        params.outer().matrix.output_rank(),
+        input_width,
+        key.coeff_linf_bound,
+        params.outer().matrix.ring_dimension(),
+    );
+}
+
+#[test]
+fn commitment_request_binds_slice_count_and_exact_b_width() {
+    let params = sliced_commit_params();
+    params
+        .validate_commitment_request(0, 1)
+        .expect("canonical sliced geometry");
+
+    let mut wrong_slice_count = params.clone();
+    wrong_slice_count.own_group_mut().profile.outer_slice_count =
+        akita_types::CommitmentSliceCount::ONE;
+    assert!(matches!(
+        wrong_slice_count.validate_commitment_request(0, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    let mut wrong_width = params.clone();
+    set_outer_width(&mut wrong_width, params.outer().matrix.input_width() + 1);
+    assert!(matches!(
+        wrong_width.validate_commitment_request(0, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+    assert!(matches!(
+        params.validate_commitment_request(2, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn commitment_request_binds_polynomial_count_in_both_directions() {
+    let one_polynomial = sliced_commit_params();
+    assert!(matches!(
+        one_polynomial.validate_commitment_request(0, 2),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    let mut two_polynomials = one_polynomial.clone();
+    two_polynomials.own_group_mut().profile.group = PolynomialGroupLayout::new(10, 2);
+    let geometry = akita_types::CommitmentSliceGeometry::try_new(
+        two_polynomials.outer_slice_count(),
+        two_polynomials.blocks().live_blocks,
+        2,
+        two_polynomials.inner().matrix.output_rank(),
+        two_polynomials.outer().digits.num_digits,
+        two_polynomials.role_dims().d_a(),
+        two_polynomials.role_dims().d_b(),
+    )
+    .unwrap();
+    set_outer_width(&mut two_polynomials, geometry.physical_input_width());
+    two_polynomials
+        .validate_commitment_request(0, 2)
+        .expect("two-polynomial B geometry");
+    assert!(matches!(
+        two_polynomials.validate_commitment_request(0, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn commit_b_input_len_rejects_overflow() {
+    assert_eq!(checked_commit_b_input_len(3, 5).expect("fits"), 15);
+    assert!(matches!(
+        checked_commit_b_input_len(usize::MAX, 2),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
+/// Inner digit depth that actually represents an `Fp32` coefficient at
+/// `log_basis_inner = 3`.
+///
+/// The fixture used to declare a single base-8 digit, which cannot represent a
+/// 32-bit field element at all: the commitment silently truncated, and the test
+/// only passed because the production and reference paths truncated identically.
+/// The commit path now rejects a source outside its scheduled digit envelope, so
+/// the fixture states a depth consistent with the coefficients it commits.
+fn slice_fixture_num_digits_inner() -> usize {
+    akita_types::sis::compute_num_digits_field_width(32, 3)
+}
+
+fn commitment_params_for_slice_count(
+    slice_count: akita_types::CommitmentSliceCount,
+) -> CommittedGroupParams {
+    audited_commit_params(slice_count, 2, 16, slice_fixture_num_digits_inner(), 1, 1)
+}
+
+#[allow(clippy::type_complexity)]
+fn commit_fixture_with_profile(
+    polys: &[DensePoly<F>],
+    ctx: &OperationCtx<'_, F, CpuBackend>,
+    profile: GroupCommitPhaseParams,
+) -> Result<(Commitment<F>, PortableCommitmentHandle<F>), AkitaError> {
+    let execution_plan = CommitmentExecutionPlan::for_root(&profile)?;
+    let expanded = ctx.backend().prepared_expanded_setup(ctx.prepared());
+    let executor = CommitmentExecutor::cpu(
+        ctx.backend(),
+        ctx.prepared(),
+        expanded,
+        Vec::new(),
+        PortableStatePolicy,
+    )?;
+    let sources = polys
+        .iter()
+        .map(|poly| poly as &dyn CommitmentSource<F>)
+        .collect::<Vec<_>>();
+    let (payload, hint) = executor
+        .execute_full(&execution_plan, &sources)?
+        .into_parts();
+    Ok((Commitment::new(payload), hint))
+}
+
+#[test]
+fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
+    const NUM_VARS: usize = 10;
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        NUM_VARS,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 2_000_000,
+        },
+    )
+    .expect("deterministic setup");
+    let prepared = CpuBackend::for_arithmetic_tests()
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+    let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref())
+        .expect("commit context");
+    let evals = (0..1usize << NUM_VARS)
+        .map(|index| F::from_u64(index as u64 + 1))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
+
+    for slice_count in akita_types::CommitmentSliceCount::ALL {
+        let sliced_params = commitment_params_for_slice_count(slice_count);
+        validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
+            .unwrap_or_else(|error| {
+                panic!("real S={} geometry failed: {error}", slice_count.get())
+            });
+        let (commitment, hint) = commit_fixture_with_profile(
+            std::slice::from_ref(&poly),
+            &ctx,
+            GroupCommitPhaseParams::try_from_params(sliced_params.group(), &sliced_params)
+                .unwrap_or_else(|error| {
+                    panic!("real S={} profile failed: {error}", slice_count.get())
+                }),
+        )
+        .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
+        let source_coefficients = slice_count
+            .complete_source_coefficients(
+                sliced_params.outer().matrix.output_rank(),
+                sliced_params.outer().matrix.ring_dimension(),
+            )
+            .expect("complete source coefficients");
+        let plan = CompressionChainPlan::for_complete_source(
+            sliced_params.outer().matrix.sis_table_key().modulus_profile,
+            source_coefficients,
+        )
+        .expect("real compression plan");
+        hint.validate_outer_compression(&plan)
+            .expect("real sliced compression hint");
+        assert!(!commitment.rows().coeffs().is_empty());
+    }
+}
+
+#[test]
+fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
+    const NUM_VARS: usize = 10;
+    let canonical = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
+    let mut packing_plan = canonical.clone();
+    packing_plan.own_group_mut().opening.opening_method =
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    let group = PolynomialGroupLayout::new(NUM_VARS, 1);
+    let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
+        group,
+
+        blocks: akita_types::BlockGeometry::new(
+            params.blocks().live_ring_elements_per_claim,
+            params.blocks().positions_per_block,
+            params.blocks().live_blocks,
+        ),
+
+        outer_slice_count: params.outer_slice_count(),
+        inner: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(
+                params.inner().digits.log_basis,
+                params.inner().digits.num_digits,
+            ),
+            params.inner().matrix,
+        ),
+        outer: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(
+                params.outer().digits.log_basis,
+                params.outer().digits.num_digits,
+            ),
+            params.outer().matrix,
+        ),
+    };
+    assert_eq!(
+        profile(&canonical),
+        profile(&packing_plan),
+        "opening policy must not enter commitment identity",
+    );
+
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        NUM_VARS,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 2_000_000,
+        },
+    )
+    .unwrap();
+    let prepared = CpuBackend::for_arithmetic_tests()
+        .prepare_setup(&setup)
+        .unwrap();
+    let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+    let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
+    let evaluations = (0..1usize << NUM_VARS)
+        .map(|index| F::from_u64((index * 17 + 9) as u64))
+        .collect::<Vec<_>>();
+    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
+    validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
+    let raw = commit_fixture_with_profile(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        GroupCommitPhaseParams::try_from_params(canonical.group(), &canonical).unwrap(),
+    )
+    .unwrap();
+    let raw_under_other_method = commit_fixture_with_profile(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        GroupCommitPhaseParams::try_from_params(packing_plan.group(), &packing_plan).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(raw, raw_under_other_method);
+    let a_matrix = setup
+        .expanded
+        .shared_matrix()
+        .ring_view::<D>(
+            canonical.inner().matrix.output_rank(),
+            canonical.inner().matrix.input_width(),
+        )
+        .unwrap();
+    let mut source_digits = Vec::new();
+    for coefficients in evaluations
+        .chunks_exact(D)
+        .take(canonical.blocks().positions_per_block)
+    {
+        source_digits.extend(
+            akita_algebra::CyclotomicRing::<F, D>::from_coefficients(
+                coefficients.try_into().unwrap(),
+            )
+            .balanced_decompose_pow2_i8(
+                canonical.inner().digits.num_digits,
+                canonical.inner().digits.log_basis,
+            ),
+        );
+    }
+    let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
+    assert_eq!(
+        rows.len(),
+        canonical.inner().matrix.output_rank() * canonical.blocks().live_blocks
+    );
+    for (row, actual) in rows
+        .iter()
+        .take(canonical.inner().matrix.output_rank())
+        .enumerate()
+    {
+        let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
+            akita_algebra::CyclotomicRing::zero(),
+            |sum, (matrix, digits)| {
+                sum + *matrix
+                    * akita_algebra::CyclotomicRing::from_coefficients(std::array::from_fn(
+                        |index| F::from_i8(digits[index]),
+                    ))
+            },
+        );
+        assert_eq!(*actual, expected, "A commitment row {row} mismatch");
+    }
+
+    let mut tensor = canonical.clone();
+    tensor.source_encoding = CommittedSourceEncoding::TensorSubfieldProjection {
+        extension_degree: 2,
+    };
+    assert!(GroupCommitPhaseParams::try_from_params(group, &tensor).is_err());
+}

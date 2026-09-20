@@ -79,27 +79,20 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     reduced_scheme.setup_prover(full_num_vars, 1)
                 }
                 .expect("cross-mode setup");
-            let prepared = CpuBackend::DEFAULT
-                .prepare_setup(&setup)
-                .expect("cross-mode prepared setup");
-            let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend::DEFAULT,
-                &prepared,
-                setup.expanded.as_ref(),
-            )
-            .expect("cross-mode prover stack");
+            let stack = CpuBackend::new::<Cfg>(setup.expanded.clone(), quotient_scheme.schedules())
+                .expect("backend");
             let verifier_setup = quotient_scheme
                 .setup_verifier(&setup)
                 .expect("cross-mode verifier setup");
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
-                prover_state: hint,
-            } = quotient_scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: hint,
+            } = stack
+                .commit::<Cfg>(
+                    &stack
+                        .import_source::<Cfg, _>(vec![poly.clone()])
+                        .expect("source"),
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("cross-mode commitment");
             assert_eq!(commitment.profile(), &quotient_row.profiles().final_group);
@@ -114,28 +107,33 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 .fold(F::zero(), |sum, (&coefficient, weight)| {
                     sum + coefficient * weight
                 });
-            let poly_refs = [&poly];
 
-            let prove = |scheme: &Scheme| {
+            let prove = |scheme: &Scheme, backend: &CpuBackend, handle| {
                 let group =
-                    PolynomialGroupClaims::new(point.clone(), vec![F::zero()], commitment.clone())
+                    PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone())
                         .expect("cross-mode prover group");
                 let claims =
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
                 let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_prove::<_, _, _, _>(
+                    .batched_prove(
                         &setup,
-                        selected_prover_data(scheme, claims, vec![hint.clone()], vec![&poly_refs])
+                        selected_prover_data(scheme, claims, vec![handle])
                             .expect("cross-mode prover data"),
-                        &stack,
+                        backend,
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
                     .expect("cross-mode proof")
             };
-            let quotient_proof = prove(&quotient_scheme);
-            let reduced_proof = prove(&reduced_scheme);
+            let quotient_proof = prove(&quotient_scheme, &stack, hint.clone());
+            let reduced_backend =
+                CpuBackend::new::<Cfg>(setup.expanded.clone(), reduced_scheme.schedules())
+                    .expect("reduced backend");
+            let reduced_handle = reduced_backend
+                .import_commitment(&hint)
+                .expect("validated cross-mode commitment transfer");
+            let reduced_proof = prove(&reduced_scheme, &reduced_backend, reduced_handle);
 
             for (scheme, proof, selection, name) in [
                 (

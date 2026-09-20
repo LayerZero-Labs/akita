@@ -17,7 +17,7 @@ execution; Akita resolves sources, validates capabilities, connects stages, owns
 type erasure, and assembles the result.
 
 The retained prover state is selected by policy. It may be a portable
-`AkitaCommitmentHint`, resident CPU data, a device allocation lease, or another
+`PortableCommitmentHandle`, resident CPU data, a device allocation lease, or another
 backend-owned value. It is not required to be a vector of ring elements.
 
 This specification consolidates the original commitment design, its simplified
@@ -164,8 +164,9 @@ is rejected before materialization or arithmetic.
 
 Each commitment group is therefore representation-homogeneous. Different
 groups in one opening batch may use different concrete source types and
-representations. Proving erases complete prepared groups through
-`ErasedPreparedProverGroup`; it does not erase or dispatch each polynomial.
+representations. The owning backend retains each complete source group behind
+a reusable commitment handle. Proving receives only ordered handles and public
+claims.
 
 A fused route accepts an external-only source only when its capability declares
 support for the fused command context. The source encoder may append A work to
@@ -233,65 +234,17 @@ dependencies are rejected during preflight before source materialization.
 existing optimized CPU inner, outer, and compression implementations and
 preserves the standard source paths.
 
-## Routing before execution
+## Internal execution selection
 
-Applications can build all required executor combinations, then assign the
-inner/outer route and compressor independently over round ranges:
+The owning CPU backend selects commitment operations from the validated public
+plan. Its internal executor keeps the inner, outer, and compression stages
+bound to the same setup and checked resource declarations. Root execution is
+complete; recursive execution follows the scheduled payload mode; terminal
+execution uses the inner stage.
 
-```rust,ignore
-let mut schedule = CommitmentExecutionScheduleBuilder::new(round_count)?;
-let terminal_round = round_count - 1;
-
-schedule
-    .register_executor("gpu-fused", Some("metal"), &gpu_fused_metal)?
-    .register_executor("gpu-fused", Some("cpu"), &gpu_fused_cpu)?
-    .register_executor("cpu-split", Some("cpu"), &cpu_split_cpu)?
-    .register_executor("terminal-inner", None, &terminal_inner)?;
-
-schedule
-    .inner_outer(0..i, "gpu-fused", InnerOuterRouteKind::Fused)?
-    .inner_outer(i..terminal_round, "cpu-split", InnerOuterRouteKind::Split)?
-    .inner_outer(terminal_round..round_count, "terminal-inner", InnerOuterRouteKind::InnerOnly)?
-    .compression(0..j, Some("metal"))?
-    .compression(j..terminal_round, Some("cpu"))?
-    .compression(terminal_round..round_count, None)?;
-
-let schedule = schedule.compile()?;
-```
-
-When the scheduled range includes the terminal fold, assign that round
-`InnerOuterRouteKind::InnerOnly` and assign `None` as its compression route.
-`None` is an explicit, inspectable no-compression decision; an unassigned range
-still fails schedule compilation. A fused executor may include its terminal
-inner operation, or the terminal round may select a separate inner-only
-executor.
-
-For four rounds with `i = 2` and `j = 1`, this resolves:
-
-| Round | Inner/outer | Compression |
-|---|---|---|
-| 0 | GPU fused | Metal |
-| 1 | GPU fused | CPU |
-| 2 | CPU split | CPU |
-| 3 | CPU inner only | None |
-
-The schedule is immutable after compilation. `steps()` exposes every decision
-for inspection. `preflight` validates the selected round's execution mode,
-source admission, capability, ring-dimension, relation-mode, and setup
-requirements without invoking backend arithmetic.
-
-Compilation rejects zero rounds, out-of-range or overlapping assignments,
-unassigned rounds, missing executor pairs, setup mismatches, and route-kind
-mismatches. Empty cutover ranges are valid. Execution uses the resolved
-executor and never retries with a fallback.
-
-`TieredProveStacks` remains the fold-level selector for complete prover stacks.
-Each selected stack contains its own commitment executor, so applications can
-also change commitment routes and the opening/tensor/ring-switch stack from
-fold to fold. These decisions are fixed before transcript work begins.
-`batched_prove` uses that stack sequence as its only routing authority; the
-standalone `CommitmentExecutionSchedule` is for commitment-only callers and is
-not a second schedule input to proving.
+Applications do not provide a second per-round physical route schedule.
+Generic proving receives one backend and its coherent opaque handle family.
+Any future accelerator composition belongs inside that owning implementation.
 
 ## Retained state and hints
 
@@ -320,7 +273,7 @@ implementation to recycle a GPU allocation or remote object.
 - `ResidentStatePolicy` returns `ResidentCommitmentState<F>` containing opaque
   inner and optional compression state references;
 - `PortableStatePolicy` explicitly invokes registered exporters and returns the
-  existing `AkitaCommitmentHint<F>` representation; and
+  existing `PortableCommitmentHandle<F>` representation; and
 - `NoRetainedStatePolicy` returns no retained state for flows that do not need
   later witness material.
 
@@ -452,34 +405,19 @@ Root commitment preserves this validation order:
 All shape, count, product, and range arithmetic uses checked constructors and
 `akita_error::checked`. The verifier remains unaware of the producing backend.
 
-## Prover-stack integration
+## Owning backend integration
 
-`ProverComputeStack` stores a complete `CommitmentExecutor` alongside the
-existing opening, tensor, and ring-switch operation contexts. Its
-`commitment()` accessor is the canonical commitment entry point. A uniform CPU
-stack constructs the same CPU executor used by commit-only callers.
+`CpuBackend` owns the configuration, prepared setup, and physical commitment
+executor. Root commitment calls full execution; recursive commitment selects
+full or uncompressed execution according to the schedule; terminal commitment
+uses the inner operation. These choices remain internal to the CPU backend.
 
-Root commitment calls `execute_full`; recursive commitment uses full or
-uncompressed execution according to its scheduled payload mode; terminal
-commitment calls `execute_inner`. Fold-level stack selection remains available
-through `LevelProveStacks` and `TieredProveStacks`.
-
-State consumers remain capability-specific. Inner-relation,
-outer-compression, terminal-binding, portable-export, and recomputation support
-are separate contracts. `batched_prove` checks the existing opening states and
-the consumer edges for every scheduled recursive and terminal commitment before
-prewarm and transcript mutation. Runtime export still validates the returned
-material.
-
-`ProverComputeStack` is generic only over the opening, tensor, and ring-switch
-backends it stores as typed contexts. Commitment execution is already fully
-owned by `CommitmentExecutor`, so the stack carries no phantom commitment
-backend type.
-
-Setup-prefix generation uses a commitment executor and explicitly exports
-portable state before building `SetupPrefixSlot`. Slot identities and persisted
-registry coverage remain derived from the trusted catalog, and disk namespaces
-remain bound to `catalog_digest`.
+The generic prover uses the focused opaque contracts in `akita-prover`. It
+receives reusable source-retaining commitment handles and public claims, then
+starts an independent proof scope. Admission validates owner, setup, public
+commitment, exact profile, and ordered group before proof state is prepared.
+Portable conversion belongs to backend import/export operations and is absent
+from the generic proving interface.
 
 ## Jolt integration contract
 
@@ -580,7 +518,7 @@ state/capability rejection, and modular/legacy byte parity.
 ## Code map and verification
 
 The canonical implementation lives under
-`crates/akita-prover/src/commitment/`:
+`crates/akita-prover/src/backend/commitment/`:
 
 - `source.rs`: source descriptors, standard representations, and request
   compilation;

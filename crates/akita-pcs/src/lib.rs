@@ -24,7 +24,8 @@
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
-//! - `akita-prover` - Commitment and proving kernels
+//! - `akita-prover` - Generic protocol sequencing and opaque backend contracts
+//! - `akita-cpu-backend` - Owning CPU source, commitment, and witness execution
 //! - `akita-pcs` - End-to-end [`AkitaCommitmentScheme`] orchestration plus public re-exports
 //!
 //! Verifier-only consumers should depend directly on `akita-verifier`,
@@ -49,15 +50,11 @@ pub use akita_algebra::fft::SmoothFftField;
 pub use akita_algebra::Module;
 pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
-pub use akita_prover::{
-    CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
-    DecomposeFoldWitness, DigitRowsComputeBackend, ErasedPreparedProverGroup, GroupContext,
-    LevelProveStacks, OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps,
-    PreparedProverGroup, ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor, TieredProveStacks,
-    UniformProverStack,
+pub use akita_cpu_backend::{
+    AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
+    OneHotPoly, SourceHandle,
 };
+pub use akita_prover::{ProverBackend, ProverOpeningData, SelectedProverOpeningData};
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{

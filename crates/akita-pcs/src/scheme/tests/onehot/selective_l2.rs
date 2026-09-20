@@ -12,7 +12,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))
         .collect();
-    let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
+
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
@@ -28,43 +28,32 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared L2 setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("L2 stack");
+    let stack =
+        CpuBackend::new::<L2Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<L2Cfg>(
+            &stack
+                .import_source::<L2Cfg, _>(polys.to_vec())
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("L2 commitment");
     let commitments = [commitment];
-    let prover_group = PolynomialGroupClaims::new(
-        point.clone(),
-        vec![OneHotF::zero(); BATCH_SIZE],
-        commitments[0].clone(),
-    )
-    .expect("L2 prover group");
+    let prover_group =
+        PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
+            .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            selected_prover_data::<L2Cfg, _, _>(
+            selected_prover_data::<L2Cfg, _>(
                 &scheme,
                 OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
                 vec![hint],
-                vec![&poly_refs],
             )
             .expect("L2 opening data"),
             &stack,

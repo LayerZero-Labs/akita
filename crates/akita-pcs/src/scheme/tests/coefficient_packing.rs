@@ -1,6 +1,5 @@
 use super::*;
 
-use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
 use jolt_field::ExtField;
@@ -179,7 +178,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .map(|index| PackingField::from_i64((index % 7) as i64 - 3))
                 .collect::<Vec<_>>();
             let polynomial =
-                akita_prover::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
+                akita_cpu_backend::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
 
             let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
@@ -198,94 +197,31 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     .ring_dimension(),
                 "the prefix dispatcher must use its frozen A-ring dimension"
             );
-            let prefix_backend = CpuBackend::DEFAULT;
-            let prefix_prepared = prefix_backend.prepare_setup(&setup).unwrap();
-            let prefix_executor = akita_prover::CommitmentExecutor::cpu(
-                &prefix_backend,
-                &prefix_prepared,
-                &setup.expanded,
-                vec![akita_prover::PolynomialType::Dense(
-                    akita_prover::DenseType::Coefficients,
-                )],
-                akita_prover::PortableStatePolicy,
-            )
-            .unwrap();
-            let prefix_slot = akita_prover::commit_setup_prefix(
-                setup.expanded.as_ref(),
-                &prefix_executor,
-                &setup_prefix,
-            )
-            .unwrap();
-            drop(prefix_executor);
-            setup.prefix_slots.insert(prefix_slot).unwrap();
-            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-            let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend::DEFAULT,
-                &prepared,
-                setup.expanded.as_ref(),
-            )
-            .unwrap();
+            let prefix_backend =
+                CpuBackend::new::<PackingCfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+            let artifacts = prefix_backend
+                .export_setup_prefixes::<PackingField>(std::slice::from_ref(&setup_prefix))
+                .unwrap();
+            setup
+                .prefix_slots
+                .insert(artifacts.get(&setup_prefix).unwrap().clone())
+                .unwrap();
+            let stack = CpuBackend::new::<PackingCfg>(setup.expanded.clone(), scheme.schedules())
+                .expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group,
-                prover_state: hint,
-            } = scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&polynomial),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: hint,
+            } = stack
+                .commit::<PackingCfg>(
+                    &stack
+                        .import_source::<PackingCfg, _>(vec![polynomial.clone()])
+                        .expect("source"),
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap();
             assert_eq!(committed_group.profile(), &row.profiles().final_group);
-            akita_types::dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                PackingField,
-                root.d_a(),
-                |D_A| {
-                    let a_matrix = setup
-                        .expanded
-                        .shared_matrix()
-                        .ring_view::<D_A>(
-                            root.inner().matrix.output_rank(),
-                            root.inner().matrix.input_width(),
-                        )
-                        .unwrap();
-                    let mut source_digits = Vec::new();
-                    for coefficients in evaluations
-                        .chunks_exact(D_A)
-                        .take(root.blocks().positions_per_block)
-                    {
-                        source_digits.extend(
-                            CyclotomicRing::<PackingField, D_A>::from_coefficients(
-                                coefficients.try_into().unwrap(),
-                            )
-                            .balanced_decompose_pow2_i8(
-                                root.inner().digits.num_digits,
-                                root.inner().digits.log_basis,
-                            ),
-                        );
-                    }
-                    let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
-                    let output_rank = root.inner().matrix.output_rank();
-                    assert_eq!(hint_rows.len(), output_rank * root.blocks().live_blocks);
-                    for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
-                        let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
-                            CyclotomicRing::zero(),
-                            |sum, (matrix, digits)| {
-                                sum + *matrix
-                                    * CyclotomicRing::from_coefficients(std::array::from_fn(
-                                        |index| PackingField::from_i8(digits[index]),
-                                    ))
-                            },
-                        );
-                        assert_eq!(*actual, expected, "A hint row {row} mismatch");
-                    }
-                    Ok::<(), akita_error::AkitaError>(())
-                }
-            )
-            .unwrap();
-            let polynomial_refs = [&polynomial];
+
             let point = (0..num_vars)
                 .map(|index| PackingExt::from_u64((index as u64).wrapping_mul(3).wrapping_add(1)))
                 .collect::<Vec<_>>();
@@ -300,7 +236,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 );
                 let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                     point.clone(),
-                    vec![PackingExt::zero()],
+                    vec![expected],
                     committed_group.clone(),
                 )
                 .unwrap()])
@@ -308,7 +244,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 let prover_data = SelectedProverOpeningData::from_committed_claims::<PackingCfg>(
                     prover_claims,
                     vec![hint.clone()],
-                    vec![&polynomial_refs],
                     scheme.schedules(),
                 )
                 .unwrap();
@@ -319,13 +254,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 };
                 let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
                 let proof = scheme
-                    .batched_prove::<_, _, _, _>(
-                        &setup,
-                        prover_data,
-                        &stack,
-                        &mut prover_transcript,
-                        basis,
-                    )
+                    .batched_prove(&setup, prover_data, &stack, &mut prover_transcript, basis)
                     .unwrap();
                 assert!(
                     proof.root.stage3_sumcheck_proof().is_some(),

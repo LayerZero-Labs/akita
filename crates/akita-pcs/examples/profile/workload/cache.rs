@@ -1,4 +1,4 @@
-use akita_prover::PreparedNttCacheMetric;
+use akita_cpu_backend::PreparedNttCacheMetric;
 
 pub(super) fn assert_profile_ntt_cache_did_not_grow(
     before: &[PreparedNttCacheMetric],

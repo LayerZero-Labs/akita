@@ -55,13 +55,10 @@ setup with the configuration that will produce the final proofs.
 The CPU backend turns public setup into reusable execution state.
 
 ```rust
-let backend = CpuBackend::DEFAULT;
-let prepared = backend.prepare_setup(&setup)?;
-let stack = UniformProverStack::uniform(
-    &backend,
-    &prepared,
-    setup.expanded.as_ref(),
-)?;
+let backend = std::sync::Arc::new(CpuBackend::new::<Config>(
+    setup.expanded.clone(),
+    scheme.schedules(),
+)?);
 ```
 
 The prepared state starts with empty transform caches. Commitment and proving
@@ -73,9 +70,10 @@ stream and are not covered by `AkitaSetupSeed`. Two machines may retain
 different transform domains and prefix lengths while producing identical
 commitments and proofs.
 
-Keep `backend`, `prepared`, and `stack` alive across repeated work. This makes
-later commitments and proofs reuse the matrix transforms already built by the
-first one.
+Keep the shared `backend` alive across repeated work. It owns prepared setup
+resources and caches. Reusable commitment handles retain their immutable sources,
+while every proof creates separate temporary state. Finishing or abandoning one
+proof leaves other proofs and commitments valid.
 
 ## Build verifier setup
 
@@ -114,10 +112,10 @@ Those commitments authenticate the offloaded public setup contributions.
 Prepared state stays warm by default. That is the right policy for a service
 that proves many statements with the same setup.
 
-Some hosts need to lower peak memory between the root commitment and later
-folds. `ReleaseRootNttAfterFold` wraps a prover stack and releases large shared
-matrix transform entries after the root fold. The entries rebuild when a later
-proof needs them again.
+Applications can call `backend.trim_caches()` to release reusable transform
+entries. Active operations retain the storage they still need. Proof completion
+releases proof-owned temporary state while shared caches may survive for later
+proofs. Cache entries rebuild lazily when needed.
 
 The release policy changes local memory and compute time. It does not change
 setup identity, commitment identity, or proof bytes. Measure the complete host

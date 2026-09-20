@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
 
 mod common;
 
@@ -69,27 +69,21 @@ fn event_stream_equality_small() {
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit::<OneHotCfg>(
+                &stack
+                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let poly_refs = [&poly];
         let commitments = [commitment];
         let openings = [opening];
         let hints = vec![hint];
@@ -99,9 +93,9 @@ fn event_stream_equality_small() {
         let proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(
+                prove_input::<OneHotCfg>(
                     &point,
-                    &poly_refs,
+                    &openings,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                     scheme.schedules(),
@@ -334,27 +328,21 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit::<OneHotCfg>(
+                &stack
+                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let poly_refs = [&poly];
         let commitments = [commitment];
         let openings = [opening];
         let hints = vec![hint];
@@ -363,9 +351,9 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let mut proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(
+                prove_input::<OneHotCfg>(
                     &point,
-                    &poly_refs,
+                    &openings,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                     scheme.schedules(),
@@ -425,33 +413,27 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let point = random_point(num_vars, 0x6161);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let akita_prover::CommitOutput {
+        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit::<OneHotCfg>(
+                &stack
+                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(
+                prove_input::<OneHotCfg>(
                     &point,
-                    &poly_refs,
+                    &[onehot_opening_lagrange(&poly, &point)],
                     &commitment,
                     hint,
                     scheme.schedules(),

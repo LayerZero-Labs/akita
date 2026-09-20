@@ -77,6 +77,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-cpu-backend"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-error",
+ "akita-prover",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "criterion",
+ "ctr",
+ "jolt-field",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
+ "rayon",
+ "shake",
+ "tracing",
+]
+
+[[package]]
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
@@ -90,6 +115,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-cpu-backend",
  "akita-error",
  "akita-planner",
  "akita-prover",
@@ -139,7 +165,6 @@ dependencies = [
 name = "akita-prover"
 version = "0.1.0"
 dependencies = [
- "aes",
  "akita-algebra",
  "akita-challenges",
  "akita-config",
@@ -148,12 +173,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "ctr",
  "jolt-field",
- "rand 0.8.8",
- "rand_core 0.6.4",
- "rayon",
- "shake",
  "tracing",
 ]
 
@@ -183,8 +203,8 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-config",
+ "akita-cpu-backend",
  "akita-error",
- "akita-prover",
  "akita-serialization",
  "akita-types",
  "jolt-field",

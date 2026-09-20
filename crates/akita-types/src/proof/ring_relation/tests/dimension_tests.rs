@@ -40,7 +40,6 @@ fn uniform_dimension_check_accepts_coefficient_packing() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D>(&[]),
         CommitmentRingDims::uniform(PACK_D),
     )
     .expect("uniform packing instance");
@@ -64,7 +63,6 @@ fn uniform_dimension_check_accepts_coefficient_packing() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D>(&[]),
         CommitmentRingDims::uniform(PACK_D),
     )
     .expect("carrier construction is schedule-independent");

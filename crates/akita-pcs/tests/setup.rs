@@ -22,9 +22,9 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::DensePoly;
-use akita_prover::OneHotPoly;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
+use akita_cpu_backend::DensePoly;
+use akita_cpu_backend::OneHotPoly;
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
 use common::{
@@ -133,13 +133,8 @@ where
     );
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -181,19 +176,18 @@ where
         .expect_err("one-field-short verifier setup must reject");
     }
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(vec![poly.clone()])
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -201,11 +195,11 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
@@ -275,13 +269,8 @@ where
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -310,19 +299,18 @@ where
         verifier_capacity.num_field_elements
     );
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(vec![poly.clone()])
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
-    let poly_refs: [&OneHotPoly<F, usize>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -330,11 +318,11 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
@@ -458,25 +446,19 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(polys.to_vec())
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched commit");
     let commitments = [commitment];
@@ -485,11 +467,11 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
@@ -572,25 +554,19 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit::<Cfg>(
+            &stack
+                .import_source::<Cfg, _>(polys.to_vec())
+                .expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
     let commitments = [commitment];
@@ -599,11 +575,11 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),

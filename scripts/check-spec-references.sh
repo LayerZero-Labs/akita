@@ -28,6 +28,17 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'CommitmentExecutionSchedule'
+  'CommitmentRoundStep'
+  'InnerOuterRouteKind'
+  'CpuProverConsumer'
+  'ProverConsumerFactory'
+  'PreparedProverGroup'
+  'ErasedPreparedProverGroup'
+  'UniformProverStack'
+  'LevelProveStacks'
+  'TieredProveStacks'
+  'ProverComputeStack'
   'effective_batched_schedule'
   'trusted_setup_matrix_capacity'
   'setup_prefix_slot_ids_from_catalog'
