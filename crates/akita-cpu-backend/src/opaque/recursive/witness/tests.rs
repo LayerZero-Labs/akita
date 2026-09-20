@@ -3,6 +3,51 @@ use crate::opaque::consumer_kernels::RelationWitnessSession;
 use crate::opaque::eor::ExtensionOpeningSession;
 use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
+#[test]
+fn suffix_batch_fold_rejects_mixed_extents_and_count_mismatch() {
+    use crate::opaque::{
+        CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel, RootOpeningSource,
+    };
+    use akita_challenges::SparseChallenge;
+    use akita_error::AkitaError;
+
+    const D: usize = 64;
+    let witnesses = [
+        RecursiveWitnessFlat::from_i8_digits(vec![1; D]),
+        RecursiveWitnessFlat::from_i8_digits(vec![1; 2 * D]),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::for_arithmetic_tests();
+    let run = |refs: &[&RecursiveWitnessFlat]| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &backend,
+            None,
+            <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        run(&[&witnesses[0], &witnesses[1]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        run(&[&witnesses[0], &witnesses[0], &witnesses[0]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
 fn stage1_session() -> super::super::digit_range::DigitRangeSession<F> {
     let domain = akita_types::FlatBooleanDomain::new(4, 2).unwrap();
     let equality = akita_types::DigitRangeEqualityPoint::from_column_then_ring_challenges(

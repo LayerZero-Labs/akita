@@ -211,8 +211,10 @@ where
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<crate::opaque::CpuFoldResponses<F>, AkitaError> {
-        let challenges_per_poly = plan.challenges_per_poly(source.polys.len())?;
         let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
+        let challenges_per_poly = plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
                 let witness = match OneHotPoly::decompose_fold_batched::<D>(
@@ -248,6 +250,7 @@ where
                 let chunks = OneHotPoly::decompose_fold_batched_chunked_onehot::<D>(
                     source.polys,
                     challenges.as_slice(),
+                    challenges_per_poly,
                     chunk_ranges,
                     num_positions_per_block,
                     num_digits,
@@ -572,6 +575,7 @@ where
         Self::decompose_fold_batched_onehot::<D>(
             &[self],
             challenges,
+            challenges.len(),
             num_positions_per_block,
             num_digits,
         )
@@ -592,7 +596,7 @@ where
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        first
+        let challenges_per_poly = first
             .num_live_blocks_for(D, num_positions_per_block)
             .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
@@ -600,6 +604,7 @@ where
         Self::decompose_fold_batched_onehot::<D>(
             polys,
             challenges,
+            challenges_per_poly,
             num_positions_per_block,
             num_digits,
         )

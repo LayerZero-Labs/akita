@@ -165,6 +165,7 @@ schedule while checking a proof.
 The recursive catalog is intentionally narrower than the ordinary Akita
 catalogs. The current build can expose recursive setup schedules for:
 
+- the fp32, fp64, and fp128 dense configurations;
 - the fp128 one hot configuration; and
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
   distributed levels.
@@ -175,6 +176,26 @@ setup ring dimensions do not expose a recursive offloading catalog.
 Support depends on supplying the matching recursive family artifact. Other base
 configurations have no recursive catalog and are rejected rather than silently
 falling back to a direct schedule under the recursive adapter.
+
+The dense artifacts cover singleton polynomials with these variable counts:
+
+| Base configuration | Recursive artifact | Variable counts |
+| --- | --- | --- |
+| `fp32::Dense` | `fp32_dense_recursive.aks` | 20, 22, 24, 26, 28, 30 |
+| `fp64::Dense` | `fp64_dense_recursive.aks` | 21, 23, 25, 27, 29 |
+| `fp128::Dense` | `fp128_dense_recursive.aks` | 20, 22, 24, 26, 28 |
+
+Load the matching artifact into
+`TrustedScheduleCatalog<RecursiveCommitmentConfig<Cfg>>`. A recursive family
+allows offloading; individual rows may still select only direct edges when
+that is the planner's preferred feasible schedule.
+
+Regenerate these artifacts with the current planner:
+
+```bash
+scripts/generate-schedule-artifacts.sh --row-progress \
+  fp32_dense_recursive fp64_dense_recursive fp128_dense_recursive
+```
 
 When a grouped proof includes commitments formed earlier, those commitments are
 created under the base configuration. The later grouped opening selects

@@ -718,8 +718,10 @@ where
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<crate::opaque::CpuFoldResponses<F>, AkitaError> {
-        let challenges_per_poly = plan.challenges_per_poly(source.polys.len())?;
         let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
+        let challenges_per_poly = plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
                 Ok(crate::opaque::CpuFoldResponses::sparse(

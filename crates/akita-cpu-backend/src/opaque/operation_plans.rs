@@ -224,20 +224,36 @@ impl DecomposeFoldBatchPlan<'_> {
         }
     }
 
-    /// Validate a uniform batch and return each polynomial's challenge count.
-    pub(crate) fn challenges_per_poly(self, num_polys: usize) -> Result<usize, AkitaError> {
+    /// Validate the challenge layout against every source's live-block extent.
+    pub(crate) fn validate_uniform_batch(
+        self,
+        live_blocks: impl ExactSizeIterator<Item = usize>,
+    ) -> Result<usize, AkitaError> {
+        let num_polys = live_blocks.len();
         if num_polys == 0 {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold requires at least one polynomial".to_string(),
             ));
         }
-        let challenges = match self {
-            Self::Sparse { challenges, .. } => challenges,
-            Self::SparseChunked { challenges, .. } => challenges.as_slice(),
+        let (challenges, declared_challenges_per_poly, num_positions_per_block) = match self {
+            Self::Sparse {
+                challenges,
+                num_positions_per_block,
+                ..
+            } => (challenges, None, num_positions_per_block),
+            Self::SparseChunked {
+                challenges,
+                num_positions_per_block,
+                ..
+            } => (
+                challenges.as_slice(),
+                Some(challenges.num_live_blocks_per_claim()),
+                num_positions_per_block,
+            ),
         };
-        if challenges.is_empty() {
+        if challenges.is_empty() || num_positions_per_block == 0 {
             return Err(AkitaError::InvalidInput(
-                "batched decompose_fold requires at least one challenge per polynomial".to_string(),
+                "batched decompose_fold requires positive block geometry".to_string(),
             ));
         }
         if !challenges.len().is_multiple_of(num_polys) {
@@ -246,7 +262,27 @@ impl DecomposeFoldBatchPlan<'_> {
                     .to_string(),
             ));
         }
-        Ok(challenges.len() / num_polys)
+        let challenges_per_poly =
+            declared_challenges_per_poly.unwrap_or_else(|| challenges.len() / num_polys);
+        let expected =
+            akita_error::checked::product([num_polys, challenges_per_poly]).ok_or_else(|| {
+                AkitaError::InvalidInput("batched decompose_fold challenge count overflow".into())
+            })?;
+        if challenges.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: challenges.len(),
+            });
+        }
+        if live_blocks
+            .into_iter()
+            .any(|count| count != challenges_per_poly)
+        {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold sources have different live-block extents".into(),
+            ));
+        }
+        Ok(challenges_per_poly)
     }
 }
 

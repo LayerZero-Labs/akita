@@ -198,3 +198,47 @@ fn dense_field_constructor_rejects_arity_that_truncates_to_a_valid_shift() {
     let result = DensePoly::<F>::from_field_evals((1usize << 32) + 14, vec![F::zero(); 1 << 14]);
     assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
 }
+
+#[test]
+fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
+    use crate::opaque::{
+        CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel, RootOpeningSource,
+    };
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 64;
+    let polys = [
+        DensePoly::from_field_evals(6, vec![F::from_u64(1); 1 << 6]).unwrap(),
+        DensePoly::from_field_evals(7, vec![F::from_u64(1); 1 << 7]).unwrap(),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::for_arithmetic_tests();
+    let run = |refs: &[&DensePoly<F>]| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &backend,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        run(&[&polys[0], &polys[1]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        run(&[&polys[0], &polys[0], &polys[0]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}

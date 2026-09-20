@@ -49,6 +49,49 @@ fn aggregate_witnesses<F: Field, const D: usize>(
     DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs)
 }
 
+#[test]
+fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
+    use crate::opaque::{CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel};
+    use akita_challenges::SparseChallenge;
+
+    type F = Prime24Offset3;
+    const D: usize = 64;
+    let polys = [
+        OneHotPoly::<F>::new(64, vec![Some(0usize)]).unwrap(),
+        OneHotPoly::<F>::new(64, vec![Some(0usize); 2]).unwrap(),
+    ];
+    let challenges = vec![
+        SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
+        };
+        2
+    ];
+    let backend = CpuBackend::for_arithmetic_tests();
+    let run = |refs: &[&OneHotPoly<F>]| {
+        OpeningBatchKernel::decompose_fold_batch(
+            &backend,
+            None,
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(refs).unwrap(),
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(matches!(
+        run(&[&polys[0], &polys[1]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        run(&[&polys[0], &polys[0], &polys[0]]),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, I>) -> DensePoly<F>
 where
     F: Field + CanonicalEncoding,
