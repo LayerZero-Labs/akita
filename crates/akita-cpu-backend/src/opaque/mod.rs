@@ -242,7 +242,7 @@ where
                 self,
                 Some(self.prepared::<F>()?),
                 context.scope_id(),
-                prepared_opening_handles.to_vec(),
+                prepared_opening_handles,
                 commitment_material_handles,
                 level,
                 opening_batch,

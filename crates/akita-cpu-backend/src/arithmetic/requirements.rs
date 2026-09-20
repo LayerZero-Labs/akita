@@ -225,8 +225,8 @@ impl NttExecutionRequirements {
                 }),
                 entry.key.ring_d,
                 domain_order(entry.key.domain),
-                entry.routing_extent,
                 std::cmp::Reverse(entry.key.num_ring_elements),
+                entry.routing_extent,
             )
         });
         Ok(())
@@ -619,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn distinct_operation_extents_are_not_joined_before_routing() {
+    fn covering_prefixes_precede_smaller_requests() {
         let mut requirements = NttExecutionRequirements::default();
         requirements
             .add_matrix(
@@ -639,8 +639,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(requirements.entries.len(), 2);
-        assert_eq!(requirements.entries[0].routing_extent, 5);
-        assert_eq!(requirements.entries[1].routing_extent, 11);
+        assert_eq!(requirements.entries[0].routing_extent, 11);
+        assert_eq!(requirements.entries[1].routing_extent, 5);
     }
 
     #[test]

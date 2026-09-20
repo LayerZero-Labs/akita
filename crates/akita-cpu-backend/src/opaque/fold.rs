@@ -425,30 +425,69 @@ pub(crate) fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
 
     for witness in witnesses {
         let witness = witness?;
-        witness.ensure_ring_dim::<D>()?;
-        if witness.row_count() != row_count {
-            return Err(AkitaError::InvalidInput(
-                "batched decompose_fold witness length mismatch".to_string(),
-            ));
-        }
-        for (dst, src) in z_folded_coeffs
-            .iter_mut()
-            .zip(witness.z_folded_rings.coeffs())
-        {
-            *dst += *src;
-        }
-        for (dst, src) in centered_coeffs
-            .iter_mut()
-            .zip(witness.centered_coeffs_flat())
-        {
-            *dst = dst.checked_add(*src).ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "batched decompose_fold centered coefficient overflow".to_string(),
-                )
-            })?;
-        }
+        add_decompose_fold_witness::<F, D>(
+            &mut z_folded_coeffs,
+            &mut centered_coeffs,
+            row_count,
+            &witness,
+        )?;
     }
 
+    DecomposeFoldWitness::from_owned_flat_parts::<D>(
+        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
+        centered_coeffs,
+    )
+}
+
+fn add_decompose_fold_witness<F: Field, const D: usize>(
+    z_folded_coeffs: &mut [F],
+    centered_coeffs: &mut [i32],
+    row_count: usize,
+    witness: &DecomposeFoldWitness<F>,
+) -> Result<(), AkitaError> {
+    witness.ensure_ring_dim::<D>()?;
+    if witness.row_count() != row_count {
+        return Err(AkitaError::InvalidInput(
+            "batched decompose_fold witness length mismatch".into(),
+        ));
+    }
+    for (dst, src) in z_folded_coeffs
+        .iter_mut()
+        .zip(witness.z_folded_rings.coeffs())
+    {
+        *dst += *src;
+    }
+    for (dst, src) in centered_coeffs
+        .iter_mut()
+        .zip(witness.centered_coeffs_flat())
+    {
+        *dst = dst.checked_add(*src).ok_or_else(|| {
+            AkitaError::InvalidInput("batched decompose_fold centered coefficient overflow".into())
+        })?;
+    }
+    Ok(())
+}
+
+fn aggregate_chunk_responses<F: Field, const D: usize>(
+    chunks: &[DecomposeFoldWitness<F>],
+) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    let Some((first, rest)) = chunks.split_first() else {
+        return Err(AkitaError::InvalidInput(
+            "chunked decompose_fold requires at least one response".into(),
+        ));
+    };
+    first.ensure_ring_dim::<D>()?;
+    let row_count = first.row_count();
+    let mut z_folded_coeffs = first.z_folded_rings.coeffs().to_vec();
+    let mut centered_coeffs = first.centered_coeffs_flat().to_vec();
+    for witness in rest {
+        add_decompose_fold_witness::<F, D>(
+            &mut z_folded_coeffs,
+            &mut centered_coeffs,
+            row_count,
+            witness,
+        )?;
+    }
     DecomposeFoldWitness::from_owned_flat_parts::<D>(
         akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
         centered_coeffs,
@@ -472,12 +511,7 @@ impl<F: Field> CpuFoldResponses<F> {
     pub(crate) fn chunked<const D: usize>(
         chunks: Vec<DecomposeFoldWitness<F>>,
     ) -> Result<Self, AkitaError> {
-        let global = aggregate_decompose_fold_witnesses::<F, D>(chunks.iter().map(|chunk| {
-            DecomposeFoldWitness::from_owned_flat_parts::<D>(
-                chunk.z_folded_rings.clone(),
-                chunk.centered_coeffs_flat().to_vec(),
-            )
-        }))?;
+        let global = aggregate_chunk_responses::<F, D>(&chunks)?;
         Ok(Self {
             global,
             chunks: Some(chunks),
@@ -722,7 +756,7 @@ where
                 if !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
                     return Ok(FoldProbeOutcome::Rejected);
                 }
-                centered.push(chunk.centered_coeffs_flat().to_vec());
+                centered.push(chunk.into_owned_flat_parts().1);
             }
             Some(centered)
         }

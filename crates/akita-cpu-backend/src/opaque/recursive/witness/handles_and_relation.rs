@@ -10,7 +10,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 use crate::sources::poly_helpers::{
-    build_decompose_fold_witness, packed_tight_digit_fold_partitioned, sparse_mul_acc,
+    build_decompose_fold_witness, packed_tight_digit_fold_partitioned,
 };
 use crate::opaque::CpuBackend;
 use akita_types::{RingVec, WitnessLayout};
@@ -59,6 +59,10 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
         self.retained_source.as_ref().and_then(|source| source.downcast_ref()).ok_or_else(|| AkitaError::InvalidInput("opening has no matching retained source".into()))
     }
 
+    pub(crate) fn scalar_openings(&self) -> &[E] {
+        &self.scalar_openings
+    }
+
     pub(crate) const fn operation_binding(
         &self,
     ) -> crate::opaque::OperationBinding {
@@ -72,15 +76,8 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
         self.binding = binding;
     }
 
-    pub(crate) fn into_prepared_group_opening(
-        self,
-    ) -> crate::opaque::PreparedGroupOpening<E, Self> {
-        let scalar_openings = self.scalar_openings.clone();
-        crate::opaque::PreparedGroupOpening::new(scalar_openings, self)
-    }
-
-    pub(crate) fn into_relation_opening<const D: usize>(
-        self,
+    pub(crate) fn relation_opening<const D: usize>(
+        &self,
         level: &akita_types::CommittedGroupParams,
         opening_batch: &akita_types::OpeningClaimsLayout,
         geometry: &akita_types::RelationWitnessGeometry,
@@ -97,7 +94,7 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
         F: CanonicalEncoding,
     {
         let group = level.group_params_geometry(opening_batch, group_index)?;
-        match self.kind {
+        match &self.kind {
             OpaquePreparedGroupOpeningKind::EvaluationTrace {
                 point,
                 folded_by_claim,
@@ -114,13 +111,16 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
                 }
                 let opening =
                     crate::opaque::PreparedOpeningWitness::evaluation_trace::<D, E>(
-                        &point,
+                        point,
                         folded_by_claim,
                         group_dims.d_a() / group_dims.d_d(),
                         group.num_digits_open(),
                         group.log_basis_open(),
                     )?;
-                Ok((opening, akita_types::OpeningFamily::EvaluationTrace(point)))
+                Ok((
+                    opening,
+                    akita_types::OpeningFamily::EvaluationTrace(point.clone()),
+                ))
             }
             OpaquePreparedGroupOpeningKind::CoefficientPacking {
                 point,
@@ -140,11 +140,11 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
                         opening_batch,
                         geometry,
                         group_index,
-                        partials_by_claim,
+                        partials_by_claim.clone(),
                     )?;
                 Ok((
                     opening,
-                    akita_types::OpeningFamily::SubringCoefficientPacking(point),
+                    akita_types::OpeningFamily::SubringCoefficientPacking(point.clone()),
                 ))
             }
         }

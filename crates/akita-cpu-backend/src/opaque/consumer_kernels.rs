@@ -1,13 +1,12 @@
 //! Private execution contracts used after consumer binding validation.
 use crate::opaque::{
     ComputeBackendSetup, CpuWitnessBuildOutput, FoldHandleBackend, FoldProbeOutcome,
-    PreparedGroupOpening, PreparedRelationWitness, PreparedWitnessOpening, ProofScopeId,
-    ProverHandleFamily, RecursiveWitnessAssemblyFinish, RecursiveWitnessAssemblyStart,
-    RecursiveWitnessBuildStart, RecursiveWitnessFoldInput, RecursiveWitnessPublicInputs,
-    RelationWitnessFinalClaims, Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial,
-    Stage1Step, Stage1Transition, ValidatedFoldProbePlan, ValidatedRelationSessionPlan,
-    ValidatedRelationWitnessPlan, ValidatedStage1Plan, ValidatedTerminalFoldProbePlan,
-    ValidatedTerminalZEncodingPlan,
+    PreparedRelationWitness, PreparedWitnessOpening, ProofScopeId, ProverHandleFamily,
+    RecursiveWitnessAssemblyFinish, RecursiveWitnessAssemblyStart, RecursiveWitnessBuildStart,
+    RecursiveWitnessFoldInput, RecursiveWitnessPublicInputs, RelationWitnessFinalClaims,
+    Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
+    ValidatedFoldProbePlan, ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan,
+    ValidatedStage1Plan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
 };
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
@@ -105,7 +104,7 @@ where
     fn begin_recursive_witness_assembly(
         &self,
         prepared: Option<&Self::PreparedSetup>,
-        prepared_group_openings: Vec<PreparedGroupOpening<E, OpeningH>>,
+        prepared_group_openings: &[OpeningH],
         commitment_material: Vec<CommitH>,
         level: &akita_types::CommittedGroupParams,
         opening_batch: &akita_types::OpeningClaimsLayout,
@@ -147,7 +146,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         scope_id: ProofScopeId,
-        prepared_opening_handles: Vec<Self::PreparedOpeningHandle>,
+        prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
         level: &akita_types::CommittedGroupParams,
         opening_batch: &akita_types::OpeningClaimsLayout,

@@ -15,6 +15,40 @@ struct DecomposeSource<'a, F: Field, I: OneHotIndex> {
     ring_elems: usize,
 }
 
+fn decompose_position_chunk<F, I, const D: usize>(
+    sources: &[DecomposeSource<'_, F, I>],
+    num_positions_per_block: usize,
+    _independent_buffers: usize,
+) -> usize
+where
+    F: Field,
+    I: OneHotIndex,
+{
+    let row_alignment = sources
+        .iter()
+        .map(|source| (source.poly.onehot_k / D).max(1))
+        .max()
+        .unwrap_or(1);
+    #[cfg(feature = "parallel")]
+    let target_tasks = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .min(num_positions_per_block.saturating_mul(_independent_buffers))
+        .max(1)
+        .div_ceil(_independent_buffers);
+    #[cfg(not(feature = "parallel"))]
+    let target_tasks = 1usize;
+    let thread_balanced_chunk = num_positions_per_block
+        .div_ceil(target_tasks)
+        .next_multiple_of(row_alignment);
+    let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET
+        / std::mem::size_of::<[i32; D]>())
+    .max(row_alignment)
+    .next_multiple_of(row_alignment);
+    thread_balanced_chunk
+        .min(cache_sized_chunk)
+        .min(num_positions_per_block)
+}
+
 #[inline]
 fn accumulate_ring_range<F, I, const D: usize>(
     source: &DecomposeSource<'_, F, I>,
@@ -110,28 +144,7 @@ where
         .entered();
         prepare_rotations::<D>(challenges)
     };
-    let row_alignment = sources
-        .iter()
-        .map(|source| (source.poly.onehot_k / D).max(1))
-        .max()
-        .unwrap_or(1);
-    #[cfg(feature = "parallel")]
-    let target_tasks = rayon::current_num_threads()
-        .saturating_mul(TASKS_PER_RAYON_WORKER)
-        .min(num_positions_per_block)
-        .max(1);
-    #[cfg(not(feature = "parallel"))]
-    let target_tasks = 1usize;
-    let thread_balanced_chunk = num_positions_per_block
-        .div_ceil(target_tasks)
-        .next_multiple_of(row_alignment);
-    let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET
-        / std::mem::size_of::<[i32; D]>())
-    .max(row_alignment)
-    .next_multiple_of(row_alignment);
-    let position_chunk = thread_balanced_chunk
-        .min(cache_sized_chunk)
-        .min(num_positions_per_block);
+    let position_chunk = decompose_position_chunk::<F, I, D>(sources, num_positions_per_block, 1);
     let position_tasks = num_positions_per_block.div_ceil(position_chunk);
     let _span = tracing::info_span!(
         "onehot_accumulate_indices",
@@ -182,32 +195,67 @@ where
     F: Field,
     I: OneHotIndex,
 {
-    let rotations = prepare_rotations::<D>(challenges);
-    let mut chunks = vec![vec![[0i32; D]; num_positions_per_block]; chunk_ranges.len()];
-    for source in sources {
-        let mut chunk = 0usize;
-        for block in 0..source.active_blocks {
-            while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
-                chunk += 1;
-            }
-            if !chunk_ranges[chunk].contains(&block) {
-                continue;
-            }
-            let block_start = block * num_positions_per_block;
-            let block_end = (block_start + num_positions_per_block).min(source.ring_elems);
-            if block_start < block_end {
-                accumulate_ring_range(
-                    source,
-                    block_start,
-                    block_end,
-                    block_start,
-                    source.challenge_start + block,
-                    &mut chunks[chunk],
-                    &rotations,
-                );
-            }
-        }
+    if chunk_ranges.is_empty() {
+        return Vec::new();
     }
+    let rotations = {
+        let _span = tracing::info_span!(
+            "onehot_prepare_rotations",
+            challenges = challenges.len(),
+            ring_dimension = D,
+        )
+        .entered();
+        prepare_rotations::<D>(challenges)
+    };
+    let num_chunks = chunk_ranges.len();
+    let position_chunk =
+        decompose_position_chunk::<F, I, D>(sources, num_positions_per_block, num_chunks);
+    let _span = tracing::info_span!(
+        "onehot_accumulate_indices_chunked",
+        sources = sources.len(),
+        challenges = challenges.len(),
+        ring_dimension = D,
+        rotation_kind = rotations.kind(),
+        chunks = num_chunks,
+        position_tasks = num_positions_per_block
+            .div_ceil(position_chunk)
+            .saturating_mul(num_chunks),
+        position_chunk,
+    )
+    .entered();
+    let mut chunks = vec![vec![[0i32; D]; num_positions_per_block]; num_chunks];
+    cfg_iter_mut!(&mut chunks)
+        .enumerate()
+        .for_each(|(chunk_index, buffer)| {
+            cfg_chunks_mut!(buffer, position_chunk)
+                .enumerate()
+                .for_each(|(position_task, dst)| {
+                    let position_start = position_task * position_chunk;
+                    let position_end = position_start + dst.len();
+                    for source in sources {
+                        for block in chunk_ranges[chunk_index].clone() {
+                            if block >= source.active_blocks {
+                                break;
+                            }
+                            let block_base = block * num_positions_per_block;
+                            let ring_start = (block_base + position_start).min(source.ring_elems);
+                            let ring_end = (block_base + position_end).min(source.ring_elems);
+                            if ring_start >= ring_end {
+                                continue;
+                            }
+                            accumulate_ring_range(
+                                source,
+                                ring_start,
+                                ring_end,
+                                block_base + position_start,
+                                source.challenge_start + block,
+                                dst,
+                                &rotations,
+                            );
+                        }
+                    }
+                });
+        });
     chunks
 }
 

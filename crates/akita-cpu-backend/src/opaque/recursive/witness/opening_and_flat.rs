@@ -486,6 +486,7 @@ where
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 
+    #[tracing::instrument(skip_all, name = "SuffixWitnessView::decompose_fold_chunked")]
     pub(crate) fn decompose_fold_chunked(
         &self,
         challenges: &[SparseChallenge],
@@ -499,30 +500,36 @@ where
                 "recursive chunked fold plan disagrees with tight witness geometry".into(),
             ));
         }
-        let mut accumulators = vec![vec![[0i32; D]; num_positions_per_block]; chunk_ranges.len()];
-        let mut chunk = 0usize;
-        for ring_index in 0..self.live_ring_elems {
-            let block = ring_index / num_positions_per_block;
-            while chunk + 1 < chunk_ranges.len() && block >= chunk_ranges[chunk].end {
-                chunk += 1;
-            }
-            if chunk_ranges[chunk].contains(&block) {
-                let ring = self.ring_elem(ring_index).ok_or(AkitaError::InvalidProof)?;
-                sparse_mul_acc(
-                    &ring,
-                    &challenges[block],
-                    &mut accumulators[chunk][ring_index % num_positions_per_block],
-                );
-            }
-        }
         let q = (-F::one())
             .to_u128_checked()
             .expect("Akita field element must fit in u128")
             + 1;
-        Ok(accumulators
-            .into_iter()
-            .map(|coefficients| build_decompose_fold_witness::<F, D>(coefficients, q))
-            .collect())
+        chunk_ranges
+            .iter()
+            .map(|range| {
+                let ring_start = range
+                    .start
+                    .checked_mul(num_positions_per_block)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .min(self.live_ring_elems);
+                let ring_end = range
+                    .end
+                    .checked_mul(num_positions_per_block)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .min(self.live_ring_elems);
+                let digit_start = ring_start
+                    .checked_mul(D)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let digit_end = ring_end.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+                let coefficients = packed_tight_digit_fold_partitioned::<F, D>(
+                    self.digits.slice(digit_start..digit_end)?,
+                    ring_end - ring_start,
+                    challenges.get(range.clone()).ok_or(AkitaError::InvalidProof)?,
+                    num_positions_per_block,
+                );
+                Ok(build_decompose_fold_witness::<F, D>(coefficients, q))
+            })
+            .collect()
     }
 }
 

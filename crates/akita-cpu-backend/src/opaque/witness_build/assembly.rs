@@ -289,7 +289,7 @@ fn decompose_opening_rows<F: Field + CanonicalEncoding, const D: usize>(
 impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
     pub(crate) fn evaluation_trace<const D: usize, E: Field>(
         point: &akita_types::PreparedOpeningPoint<F, E>,
-        folded_by_claim: Vec<RingVec<F>>,
+        folded_by_claim: &[RingVec<F>],
         role_subcolumns: usize,
         depth_open: usize,
         log_basis: u32,
@@ -409,10 +409,7 @@ type PreparedGroupWitnessOutput<F, E> = (
 );
 
 pub(crate) fn prepare_group_opening_witness<F, E, const D: usize>(
-    prepared: crate::opaque::PreparedGroupOpening<
-        E,
-        crate::opaque::CpuPreparedOpeningHandle<F, E>,
-    >,
+    handle: &crate::opaque::CpuPreparedOpeningHandle<F, E>,
     level: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
     geometry: &akita_types::RelationWitnessGeometry,
@@ -423,15 +420,14 @@ where
     F: Field + CanonicalEncoding,
     E: jolt_field::ExtField<F>,
 {
-    let (scalar_openings, handle) = prepared.into_parts();
-    let (opening, public) = handle.into_relation_opening::<D>(
+    let (opening, public) = handle.relation_opening::<D>(
         level,
         opening_batch,
         geometry,
         group_index,
         group_dims,
     )?;
-    Ok((opening, public, scalar_openings))
+    Ok((opening, public, handle.scalar_openings().to_vec()))
 }
 
 pub(crate) fn prepare_opening_relation_rows<F, RB, const D: usize>(
@@ -531,12 +527,7 @@ macro_rules! impl_cpu_recursive_witness_assembly_kernel {
             fn begin_recursive_witness_assembly(
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
-                prepared_group_openings: Vec<
-                    crate::opaque::PreparedGroupOpening<
-                        E,
-                        crate::opaque::CpuPreparedOpeningHandle<F, E>,
-                    >,
-                >,
+                prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
                 commitment_material: Vec<CpuCommitmentMaterial<F>>,
                 level: &CommittedGroupParams,
                 opening_batch: &akita_types::OpeningClaimsLayout,
@@ -568,7 +559,7 @@ macro_rules! impl_cpu_recursive_witness_assembly_kernel {
                 )?;
                 let mut group_openings = Vec::with_capacity(opening_batch.num_groups());
                 let mut public_groups = Vec::with_capacity(opening_batch.num_groups());
-                for (group_index, opening) in prepared_group_openings.into_iter().enumerate() {
+                for (group_index, opening) in prepared_group_openings.iter().enumerate() {
                     let group_dims = level.group_role_dims_geometry(opening_batch, group_index)?;
                     let (opening, public_kind, scalar_openings) = dispatch_for_field!(
                         ProtocolDispatchSlot::Role(RingRole::Opening),
@@ -715,7 +706,7 @@ macro_rules! impl_cpu_opaque_recursive_witness_build {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 scope_id: crate::opaque::ProofScopeId,
-                prepared_opening_handles: Vec<Self::PreparedOpeningHandle>,
+                prepared_opening_handles: &[Self::PreparedOpeningHandle],
                 commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
                 level: &CommittedGroupParams,
                 opening_batch: &akita_types::OpeningClaimsLayout,
@@ -743,14 +734,10 @@ macro_rules! impl_cpu_opaque_recursive_witness_build {
                         .setup_seed,
                 )
                 .map_err(|err| AkitaError::InvalidSetup(format!("setup identity: {err}")))?;
-                let prepared_group_openings = prepared_opening_handles
-                    .into_iter()
-                    .map(crate::opaque::CpuPreparedOpeningHandle::into_prepared_group_opening)
-                    .collect();
                 let start = crate::opaque::consumer_kernels::RecursiveWitnessAssemblyKernel::begin_recursive_witness_assembly(
                     self,
                     Some(prepared),
-                    prepared_group_openings,
+                    prepared_opening_handles,
                     commitment_material_handles,
                     level,
                     opening_batch,
