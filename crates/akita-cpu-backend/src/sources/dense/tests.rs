@@ -47,21 +47,17 @@ fn chunked_fold_matches_windowed_reference_and_global() {
                 chunk.centered_coeffs_flat(),
                 expected.centered_coeffs_flat()
             );
-            assert_eq!(chunk.z_folded_rings, expected.z_folded_rings);
         }
-        let combined =
-            crate::opaque::aggregate_decompose_fold_witnesses::<F, D>(chunks.iter().map(|chunk| {
-                crate::opaque::DecomposeFoldWitness::from_owned_flat_parts::<D>(
-                    chunk.z_folded_rings.clone(),
-                    chunk.centered_coeffs_flat().to_vec(),
-                )
-            }))
-            .unwrap();
+        let combined = crate::opaque::aggregate_decompose_fold_witnesses::<D>(
+            chunks
+                .iter()
+                .map(|chunk| Ok::<_, AkitaError>(chunk.clone())),
+        )
+        .unwrap();
         assert_eq!(
             combined.centered_coeffs_flat(),
             global.centered_coeffs_flat()
         );
-        assert_eq!(combined.z_folded_rings, global.z_folded_rings);
     }
 }
 

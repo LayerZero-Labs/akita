@@ -32,7 +32,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError>;
+    ) -> Result<DecomposeFoldWitness, AkitaError>;
 }
 
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
@@ -50,7 +50,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<CpuFoldResponses<F>, AkitaError>;
+    ) -> Result<CpuFoldResponses, AkitaError>;
 }
 
 /// Private A-side relation work over a backend-owned accepted fold handle.

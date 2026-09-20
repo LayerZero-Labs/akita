@@ -459,7 +459,7 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
         let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
         if challenges.len() != num_live_blocks {
             return Err(AkitaError::InvalidSize {
@@ -473,17 +473,13 @@ where
             ));
         }
 
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
         let coeff_accum = packed_tight_digit_fold_partitioned::<F, D>(
             self.digits,
             self.live_ring_elems,
             challenges,
             num_positions_per_block,
         );
-        Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
+        Ok(DecomposeFoldWitness::from_centered_rows(coeff_accum))
     }
 
     #[tracing::instrument(skip_all, name = "SuffixWitnessView::decompose_fold_chunked")]
@@ -493,17 +489,13 @@ where
         chunk_ranges: &[std::ops::Range<usize>],
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
+    ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
         let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
         if challenges.len() != num_live_blocks || num_digits != 1 {
             return Err(AkitaError::InvalidSetup(
                 "recursive chunked fold plan disagrees with tight witness geometry".into(),
             ));
         }
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
         chunk_ranges
             .iter()
             .map(|range| {
@@ -527,7 +519,7 @@ where
                     challenges.get(range.clone()).ok_or(AkitaError::InvalidProof)?,
                     num_positions_per_block,
                 );
-                Ok(build_decompose_fold_witness::<F, D>(coefficients, q))
+                Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
             })
             .collect()
     }
@@ -705,7 +697,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
         source.decompose_fold(
             plan.challenges,
             plan.num_positions_per_block,
@@ -724,7 +716,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<crate::opaque::CpuFoldResponses<F>, AkitaError> {
+    ) -> Result<crate::opaque::CpuFoldResponses, AkitaError> {
         let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
         let challenges_per_poly = plan.validate_uniform_batch(source.polys.iter().map(|poly| {
             RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
@@ -732,7 +724,7 @@ where
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
                 Ok(crate::opaque::CpuFoldResponses::sparse(
-                    aggregate_decompose_fold_witnesses::<F, D>(
+                    aggregate_decompose_fold_witnesses::<D>(
                         source
                             .polys
                             .iter()
@@ -783,7 +775,7 @@ where
                 crate::opaque::CpuFoldResponses::chunked::<D>(
                     by_chunk
                         .into_iter()
-                        .map(aggregate_decompose_fold_witnesses::<F, D>)
+                        .map(aggregate_decompose_fold_witnesses::<D>)
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }

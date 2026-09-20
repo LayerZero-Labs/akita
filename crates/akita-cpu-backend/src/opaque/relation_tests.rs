@@ -119,10 +119,7 @@ fn reduced_group_witness(
     RingRelationGroupWitness::from_parts(
         crate::opaque::CpuAcceptedFold::from_cpu_for_test::<REDUCED_D>(
             ctx,
-            DecomposeFoldWitness::from_coefficient_parts::<REDUCED_D>(
-                vec![[ReducedF::zero(); REDUCED_D]; z_rows],
-                vec![[0; REDUCED_D]; z_rows],
-            ),
+            DecomposeFoldWitness::from_centered_rows::<REDUCED_D>(vec![[0; REDUCED_D]; z_rows]),
             &group_params,
             1,
             params.witness_chunk.num_chunks,

@@ -13,18 +13,15 @@ pub(crate) use decompose_fold_partitioned::cached_digit_decompose_fold_partition
 pub(crate) use decompose_fold_partitioned::packed_tight_digit_fold_partitioned;
 
 use crate::kernels::linear::try_centered_i8;
+#[cfg(target_arch = "aarch64")]
+use crate::kernels::neon_decompose_fold as decompose_fold_neon;
 use crate::opaque::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::try_balanced_decompose_coefficients_pow2_i8_u64_into;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_types::SubfieldMultiplierOpeningPoint;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
-use std::array::from_fn;
-
-#[cfg(target_arch = "aarch64")]
-use crate::kernels::neon_decompose_fold as decompose_fold_neon;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use crate::kernels::avx_decompose_fold as decompose_fold_avx;
@@ -101,7 +98,7 @@ pub(crate) fn balanced_ring_decompose_fold_chunked<F, const D: usize>(
     num_positions_per_block: usize,
     num_digits: usize,
     params: &DecomposeParams,
-) -> Vec<DecomposeFoldWitness<F>>
+) -> Vec<DecomposeFoldWitness>
 where
     F: Field + CanonicalEncoding,
 {
@@ -117,7 +114,7 @@ where
                 num_digits,
                 params,
             );
-            build_decompose_fold_witness(coefficients, params.q)
+            DecomposeFoldWitness::from_centered_rows(coefficients)
         })
         .collect()
 }
@@ -704,30 +701,6 @@ pub(crate) fn fill_rotated_challenge<const D: usize>(
             *dst = -*src;
         }
     }
-}
-
-fn signed_accum_to_coefficients<F: Field + CanonicalEncoding, const D: usize>(
-    coeff_accum: [i32; D],
-    modulus: u128,
-) -> [F; D] {
-    from_fn(|k| {
-        let v = coeff_accum[k];
-        if v >= 0 {
-            F::from_u128_reduced(v as u128)
-        } else {
-            F::from_u128_reduced(modulus - ((-v) as u128))
-        }
-    })
-}
-
-pub(crate) fn build_decompose_fold_witness<F: Field + CanonicalEncoding, const D: usize>(
-    centered_coeffs: Vec<[i32; D]>,
-    modulus: u128,
-) -> DecomposeFoldWitness<F> {
-    let z_folded_coeffs = cfg_iter!(centered_coeffs)
-        .map(|coeff_accum| signed_accum_to_coefficients::<F, D>(*coeff_accum, modulus))
-        .collect();
-    DecomposeFoldWitness::from_coefficient_parts(z_folded_coeffs, centered_coeffs)
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.

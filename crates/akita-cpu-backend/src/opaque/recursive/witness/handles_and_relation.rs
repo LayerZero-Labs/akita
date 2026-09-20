@@ -9,9 +9,7 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
-use crate::sources::poly_helpers::{
-    build_decompose_fold_witness, packed_tight_digit_fold_partitioned,
-};
+use crate::sources::poly_helpers::packed_tight_digit_fold_partitioned;
 use crate::opaque::CpuBackend;
 use akita_types::{RingVec, WitnessLayout};
 use std::marker::PhantomData;

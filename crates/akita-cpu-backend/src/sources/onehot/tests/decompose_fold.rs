@@ -82,7 +82,7 @@ fn batched_direct_indices_match_dense_aggregation() {
             coeffs: vec![1, -2].into(),
         })
         .collect::<Vec<_>>();
-    let expected = aggregate_witnesses::<F, D>(
+    let expected = aggregate_witnesses::<D>(
         &polys
             .iter()
             .zip(challenges.chunks_exact(4))

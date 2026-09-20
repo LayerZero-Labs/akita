@@ -32,7 +32,7 @@ use std::marker::PhantomData;
 use super::flat_blocks::FlatBlocks;
 use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::opaque::DecomposeFoldWitness;
-use crate::sources::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::sources::poly_helpers::fill_rotated_challenge;
 
 mod column_sweep;
 mod decompose_fold;

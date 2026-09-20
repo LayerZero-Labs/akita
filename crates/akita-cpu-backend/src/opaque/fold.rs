@@ -9,24 +9,27 @@ use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{gadget_row_scalars, RingMultiplierOpeningPoint};
 use jolt_field::{CanonicalEncoding, Field};
+use std::marker::PhantomData;
 
 /// CPU reference state retained behind an accepted fold handle.
 pub struct CpuAcceptedFold<F: Field> {
-    global: DecomposeFoldWitness<F>,
+    global: DecomposeFoldWitness,
     chunks: Option<Vec<Vec<i32>>>,
     challenges: akita_challenges::Challenges,
     manifest: AcceptedFoldManifest,
     binding: crate::opaque::OperationBinding,
+    _field: PhantomData<F>,
 }
 
 /// CPU reference state retained behind an accepted terminal-fold handle.
 pub struct CpuAcceptedTerminalFold<F: Field> {
-    witness: DecomposeFoldWitness<F>,
+    witness: DecomposeFoldWitness,
     ring_dimension: usize,
     rice_low_bits: u32,
     zigzag_width: u32,
     payload_bytes: usize,
     binding: crate::opaque::OperationBinding,
+    _field: PhantomData<F>,
 }
 
 pub(crate) type CpuAcceptedFoldHandle<F> = CpuAcceptedFold<F>;
@@ -47,7 +50,7 @@ where
     fn admit<B: ComputeBackendSetup<F>, const D: usize>(
         _backend: &B,
         _prepared: Option<&B::PreparedSetup>,
-        witness: DecomposeFoldWitness<F>,
+        witness: DecomposeFoldWitness,
         plan: &ValidatedTerminalFoldProbePlan<'_>,
     ) -> Result<Option<(Self, Option<u128>)>, AkitaError> {
         let centered = witness.centered_coeffs_flat();
@@ -92,6 +95,7 @@ where
                 zigzag_width,
                 payload_bytes: plan.payload_bytes(),
                 binding: crate::opaque::OperationBinding::legacy_unscoped(),
+                _field: PhantomData,
             },
             observed_l2_sq,
         )))
@@ -371,8 +375,8 @@ where
     }
 }
 
-fn admit_fold_response<F: Field>(
-    witness: &DecomposeFoldWitness<F>,
+fn admit_fold_response(
+    witness: &DecomposeFoldWitness,
     plan: &ValidatedFoldProbePlan<'_>,
     observed_l2_sq: &mut Option<u128>,
 ) -> Result<bool, AkitaError> {
@@ -408,9 +412,9 @@ fn admit_fold_response<F: Field>(
         .is_none_or(|cap| total <= cap))
 }
 
-pub(crate) fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
-    witnesses: impl IntoIterator<Item = Result<DecomposeFoldWitness<F>, AkitaError>>,
-) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+pub(crate) fn aggregate_decompose_fold_witnesses<const D: usize>(
+    witnesses: impl IntoIterator<Item = Result<DecomposeFoldWitness, AkitaError>>,
+) -> Result<DecomposeFoldWitness, AkitaError> {
     let mut witnesses = witnesses.into_iter();
     let Some(first) = witnesses.next() else {
         return Err(AkitaError::InvalidInput(
@@ -420,42 +424,26 @@ pub(crate) fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
     let first = first?;
     first.ensure_ring_dim::<D>()?;
     let row_count = first.row_count();
-    let (z_folded_rings, mut centered_coeffs) = first.into_owned_flat_parts();
-    let mut z_folded_coeffs = z_folded_rings.into_coeffs();
+    let mut centered_coeffs = first.into_centered_coeffs_flat();
 
     for witness in witnesses {
         let witness = witness?;
-        add_decompose_fold_witness::<F, D>(
-            &mut z_folded_coeffs,
-            &mut centered_coeffs,
-            row_count,
-            &witness,
-        )?;
+        add_decompose_fold_witness::<D>(&mut centered_coeffs, row_count, &witness)?;
     }
 
-    DecomposeFoldWitness::from_owned_flat_parts::<D>(
-        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
-        centered_coeffs,
-    )
+    DecomposeFoldWitness::from_centered_flat::<D>(centered_coeffs)
 }
 
-fn add_decompose_fold_witness<F: Field, const D: usize>(
-    z_folded_coeffs: &mut [F],
+fn add_decompose_fold_witness<const D: usize>(
     centered_coeffs: &mut [i32],
     row_count: usize,
-    witness: &DecomposeFoldWitness<F>,
+    witness: &DecomposeFoldWitness,
 ) -> Result<(), AkitaError> {
     witness.ensure_ring_dim::<D>()?;
     if witness.row_count() != row_count {
         return Err(AkitaError::InvalidInput(
             "batched decompose_fold witness length mismatch".into(),
         ));
-    }
-    for (dst, src) in z_folded_coeffs
-        .iter_mut()
-        .zip(witness.z_folded_rings.coeffs())
-    {
-        *dst += *src;
     }
     for (dst, src) in centered_coeffs
         .iter_mut()
@@ -468,9 +456,9 @@ fn add_decompose_fold_witness<F: Field, const D: usize>(
     Ok(())
 }
 
-fn aggregate_chunk_responses<F: Field, const D: usize>(
-    chunks: &[DecomposeFoldWitness<F>],
-) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+fn aggregate_chunk_responses<const D: usize>(
+    chunks: &[DecomposeFoldWitness],
+) -> Result<DecomposeFoldWitness, AkitaError> {
     let Some((first, rest)) = chunks.split_first() else {
         return Err(AkitaError::InvalidInput(
             "chunked decompose_fold requires at least one response".into(),
@@ -478,30 +466,21 @@ fn aggregate_chunk_responses<F: Field, const D: usize>(
     };
     first.ensure_ring_dim::<D>()?;
     let row_count = first.row_count();
-    let mut z_folded_coeffs = first.z_folded_rings.coeffs().to_vec();
     let mut centered_coeffs = first.centered_coeffs_flat().to_vec();
     for witness in rest {
-        add_decompose_fold_witness::<F, D>(
-            &mut z_folded_coeffs,
-            &mut centered_coeffs,
-            row_count,
-            witness,
-        )?;
+        add_decompose_fold_witness::<D>(&mut centered_coeffs, row_count, witness)?;
     }
-    DecomposeFoldWitness::from_owned_flat_parts::<D>(
-        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
-        centered_coeffs,
-    )
+    DecomposeFoldWitness::from_centered_flat::<D>(centered_coeffs)
 }
 
 /// Private CPU responses produced by one batch-fold dispatch.
-pub(crate) struct CpuFoldResponses<F: Field> {
-    pub(crate) global: DecomposeFoldWitness<F>,
-    pub(crate) chunks: Option<Vec<DecomposeFoldWitness<F>>>,
+pub(crate) struct CpuFoldResponses {
+    pub(crate) global: DecomposeFoldWitness,
+    pub(crate) chunks: Option<Vec<DecomposeFoldWitness>>,
 }
 
-impl<F: Field> CpuFoldResponses<F> {
-    pub(crate) fn sparse(global: DecomposeFoldWitness<F>) -> Self {
+impl CpuFoldResponses {
+    pub(crate) fn sparse(global: DecomposeFoldWitness) -> Self {
         Self {
             global,
             chunks: None,
@@ -509,9 +488,9 @@ impl<F: Field> CpuFoldResponses<F> {
     }
 
     pub(crate) fn chunked<const D: usize>(
-        chunks: Vec<DecomposeFoldWitness<F>>,
+        chunks: Vec<DecomposeFoldWitness>,
     ) -> Result<Self, AkitaError> {
-        let global = aggregate_chunk_responses::<F, D>(&chunks)?;
+        let global = aggregate_chunk_responses::<D>(&chunks)?;
         Ok(Self {
             global,
             chunks: Some(chunks),
@@ -543,7 +522,7 @@ where
     fn new<O, const D: usize>(
         _backend: &O,
         _prepared: Option<&O::PreparedSetup>,
-        global: DecomposeFoldWitness<F>,
+        global: DecomposeFoldWitness,
         chunks: Option<Vec<Vec<i32>>>,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<Self, AkitaError>
@@ -571,13 +550,14 @@ where
                 num_chunks: plan.geometry().chunk_ranges().map_or(1, <[_]>::len),
             },
             binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            _field: PhantomData,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn from_cpu_for_test<const D: usize>(
         _ctx: &crate::opaque::OperationCtx<'_, F, crate::opaque::CpuBackend>,
-        global: DecomposeFoldWitness<F>,
+        global: DecomposeFoldWitness,
         params: &akita_types::GroupOpenPhaseParams,
         source_claims: usize,
         num_chunks: usize,
@@ -603,6 +583,7 @@ where
                 num_chunks,
             },
             binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            _field: PhantomData,
         }
     }
 
@@ -756,7 +737,7 @@ where
                 if !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
                     return Ok(FoldProbeOutcome::Rejected);
                 }
-                centered.push(chunk.into_owned_flat_parts().1);
+                centered.push(chunk.into_centered_coeffs_flat());
             }
             Some(centered)
         }

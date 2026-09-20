@@ -21,7 +21,7 @@ impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend {
         _prepared: Option<&Self::PreparedSetup>,
         source: RecordingBatch,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<CpuFoldResponses<F>, AkitaError> {
+    ) -> Result<CpuFoldResponses, AkitaError> {
         BATCH_CALLS.fetch_add(1, Ordering::Relaxed);
         SOURCE_TRAVERSALS.fetch_add(1, Ordering::Relaxed);
         let DecomposeFoldBatchPlan::SparseChunked { chunk_ranges, .. } = plan else {
@@ -34,10 +34,11 @@ impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend {
                 .iter()
                 .enumerate()
                 .map(|(index, _)| {
-                    DecomposeFoldWitness::from_parts::<D>(
-                        vec![akita_algebra::CyclotomicRing::zero()],
-                        vec![source.centered.get(index).copied().unwrap_or([0; D])],
-                    )
+                    DecomposeFoldWitness::from_centered_rows::<D>(vec![source
+                        .centered
+                        .get(index)
+                        .copied()
+                        .unwrap_or([0; D])])
                 })
                 .collect(),
         )
@@ -147,18 +148,9 @@ fn chunk_admission_precedes_cancelling_aggregation() {
 #[test]
 fn chunk_aggregation_sums_exactly_and_accepts_empty_chunks() {
     let chunks = vec![
-        DecomposeFoldWitness::<F>::from_parts::<D>(
-            vec![akita_algebra::CyclotomicRing::zero()],
-            vec![[1, 2, 3, 4]],
-        ),
-        DecomposeFoldWitness::<F>::from_parts::<D>(
-            vec![akita_algebra::CyclotomicRing::zero()],
-            vec![[0; D]],
-        ),
-        DecomposeFoldWitness::<F>::from_parts::<D>(
-            vec![akita_algebra::CyclotomicRing::zero()],
-            vec![[4, 3, 2, 1]],
-        ),
+        DecomposeFoldWitness::from_centered_rows::<D>(vec![[1, 2, 3, 4]]),
+        DecomposeFoldWitness::from_centered_rows::<D>(vec![[0; D]]),
+        DecomposeFoldWitness::from_centered_rows::<D>(vec![[4, 3, 2, 1]]),
     ];
     let responses = CpuFoldResponses::chunked::<D>(chunks).unwrap();
     assert_eq!(responses.global.centered_coeffs_flat(), &[5, 5, 5, 5]);

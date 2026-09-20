@@ -62,7 +62,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.num_positions_per_block,
@@ -81,14 +81,14 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<CpuFoldResponses<F>, AkitaError> {
+    ) -> Result<CpuFoldResponses, AkitaError> {
         let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
         let challenges_per_poly = plan.validate_uniform_batch(source.polys.iter().map(|poly| {
             RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
         }))?;
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => Ok(CpuFoldResponses::sparse(
-                aggregate_decompose_fold_witnesses::<F, D>(
+                aggregate_decompose_fold_witnesses::<D>(
                     source
                         .polys
                         .iter()
@@ -131,7 +131,7 @@ where
                 CpuFoldResponses::chunked::<D>(
                     by_chunk
                         .into_iter()
-                        .map(aggregate_decompose_fold_witnesses::<F, D>)
+                        .map(aggregate_decompose_fold_witnesses::<D>)
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }

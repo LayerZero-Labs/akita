@@ -190,7 +190,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.num_positions_per_block,
@@ -210,7 +210,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<crate::opaque::CpuFoldResponses<F>, AkitaError> {
+    ) -> Result<crate::opaque::CpuFoldResponses, AkitaError> {
         let (num_positions_per_block, num_digits, log_basis) = plan.scalar_params();
         let challenges_per_poly = plan.validate_uniform_batch(source.polys.iter().map(|poly| {
             RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
@@ -225,7 +225,7 @@ where
                     log_basis,
                 ) {
                     Some(witness) => witness,
-                    None => aggregate_decompose_fold_witnesses::<F, D>(
+                    None => aggregate_decompose_fold_witnesses::<D>(
                         source
                             .polys
                             .iter()
@@ -569,7 +569,7 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F> {
+    ) -> DecomposeFoldWitness {
         self.view_layout(D, num_positions_per_block)
             .expect("OneHotPoly::decompose_fold: invalid block layout");
         Self::decompose_fold_batched_onehot::<D>(
@@ -594,7 +594,7 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F>> {
+    ) -> Option<DecomposeFoldWitness> {
         let first = polys.first()?;
         let challenges_per_poly = first
             .num_live_blocks_for(D, num_positions_per_block)

@@ -277,20 +277,15 @@ fn expand_onehot_accum<const D: usize>(
     expanded
 }
 
-pub(super) fn finish_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
+pub(super) fn finish_decompose_fold<const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
-) -> DecomposeFoldWitness<F> {
-    let modulus = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
+) -> DecomposeFoldWitness {
     let coeff_accum = {
         let _span = tracing::info_span!("onehot_expand_accum").entered();
         expand_onehot_accum(compressed_accum, num_digits)
     };
-    let _span = tracing::info_span!("onehot_convert").entered();
-    build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+    DecomposeFoldWitness::from_centered_rows(coeff_accum)
 }
 
 impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
@@ -301,7 +296,7 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
         chunk_ranges: &[std::ops::Range<usize>],
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Option<Vec<DecomposeFoldWitness<F>>>
+    ) -> Option<Vec<DecomposeFoldWitness>>
     where
         F: Field + CanonicalEncoding,
     {
@@ -328,15 +323,15 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
             challenge_start += challenges_per_poly;
         }
         Some({
-            accumulate_indices_chunked::<F, I, D>(
+            let accumulators = accumulate_indices_chunked::<F, I, D>(
                 &sources,
                 challenges,
                 chunk_ranges,
                 num_positions_per_block,
-            )
-            .into_iter()
-            .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
-            .collect()
+            );
+            cfg_into_iter!(accumulators)
+                .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
+                .collect()
         })
     }
 
@@ -346,7 +341,7 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
         challenges_per_poly: usize,
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F>>
+    ) -> Option<DecomposeFoldWitness>
     where
         F: Field + CanonicalEncoding,
     {

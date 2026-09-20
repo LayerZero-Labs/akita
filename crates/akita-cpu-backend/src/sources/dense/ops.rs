@@ -7,8 +7,8 @@ use super::poly::DensePoly;
 use crate::opaque::DecomposeFoldWitness;
 use crate::sources::poly_helpers::{
     balanced_ring_decompose_fold_chunked, balanced_ring_decompose_fold_partitioned,
-    build_decompose_fold_witness, cached_digit_decompose_fold_partitioned,
-    decompose_ring_single_digit, sparse_mul_acc, DecomposeParams,
+    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
+    DecomposeParams,
 };
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
@@ -29,7 +29,7 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Vec<DecomposeFoldWitness<F>> {
+    ) -> Vec<DecomposeFoldWitness> {
         let coeffs = self
             .ring_coeffs::<D>()
             .expect("DensePoly::decompose_fold_chunked: invalid ring view");
@@ -69,7 +69,7 @@ where
                     num_digits,
                     log_basis,
                 );
-                build_decompose_fold_witness(coefficients, q)
+                DecomposeFoldWitness::from_centered_rows(coefficients)
             })
             .collect()
     }
@@ -156,7 +156,7 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> DecomposeFoldWitness<F> {
+    ) -> DecomposeFoldWitness {
         let coeffs = self
             .ring_coeffs::<D>()
             .expect("DensePoly::decompose_fold: invalid ring view");
@@ -173,11 +173,7 @@ where
                     log_basis,
                 )
             };
-            let modulus = (-F::one())
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128")
-                + 1;
-            return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
+            return DecomposeFoldWitness::from_centered_rows(coeff_accum);
         }
 
         let q = (-F::one())
@@ -217,8 +213,7 @@ where
                         .collect()
                 };
 
-                let _span = tracing::info_span!("dense_single_digit_convert").entered();
-                return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
+                return DecomposeFoldWitness::from_centered_rows(coeff_accum);
             }
 
             let coeff_accum: Vec<[i32; D]> = {
@@ -243,8 +238,7 @@ where
                     .collect()
             };
 
-            let _span = tracing::info_span!("dense_single_digit_convert").entered();
-            return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
+            return DecomposeFoldWitness::from_centered_rows(coeff_accum);
         }
 
         let centered_coeffs = {
@@ -258,7 +252,6 @@ where
             )
         };
 
-        let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+        DecomposeFoldWitness::from_centered_rows(centered_coeffs)
     }
 }

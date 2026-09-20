@@ -8,32 +8,20 @@ use jolt_field::{Fp64, Prime128Offset275, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-fn aggregate_witnesses<F: Field, const D: usize>(
-    witnesses: &[DecomposeFoldWitness<F>],
-) -> DecomposeFoldWitness<F> {
+fn aggregate_witnesses<const D: usize>(witnesses: &[DecomposeFoldWitness]) -> DecomposeFoldWitness {
     let Some((first, rest)) = witnesses.split_first() else {
         panic!("aggregate_witnesses requires at least one witness");
     };
     first
         .ensure_ring_dim::<D>()
         .expect("witness ring dimension");
-    let mut z_folded_rings = first
-        .z_folded_rings_trusted::<D>()
-        .expect("witness ring storage")
-        .to_vec();
     let mut centered_coeffs = first.centered_coeffs_owned::<D>();
 
     for witness in rest {
         witness
             .ensure_ring_dim::<D>()
             .expect("witness ring dimension");
-        for (dst, src) in z_folded_rings.iter_mut().zip(
-            witness
-                .z_folded_rings_trusted::<D>()
-                .expect("witness ring storage"),
-        ) {
-            *dst += *src;
-        }
+        assert_eq!(witness.row_count(), centered_coeffs.len());
         for (dst, src) in centered_coeffs
             .iter_mut()
             .zip(witness.centered_coeffs_trusted::<D>())
@@ -46,7 +34,7 @@ fn aggregate_witnesses<F: Field, const D: usize>(
         }
     }
 
-    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs)
+    DecomposeFoldWitness::from_centered_rows(centered_coeffs)
 }
 
 #[test]
@@ -439,7 +427,7 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         },
     ];
 
-    let expected = aggregate_witnesses::<F, D>(
+    let expected = aggregate_witnesses::<D>(
         &polys
             .iter()
             .zip(challenges.chunks(2))

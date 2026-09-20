@@ -1,34 +1,24 @@
 //! CPU fold output retained for standalone kernels and backend implementations.
 
-#[cfg(test)]
-use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::RingVec;
 use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
 
 /// Prover-side output of the decompose + challenge-fold step.
 ///
 /// This is a CPU kernel value, not a protocol-facing witness. Protocol code
 /// transports the corresponding opaque accepted-fold handle instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DecomposeFoldWitness<F: Field> {
-    pub(crate) z_folded_rings: RingVec<F>,
+pub(crate) struct DecomposeFoldWitness {
     centered_coeffs_flat: Vec<i32>,
     centered_min: i32,
     centered_max: i32,
     ring_dim: usize,
 }
 
-impl<F: Field> DecomposeFoldWitness<F> {
-    pub(crate) fn from_coefficient_parts<const D: usize>(
-        z_folded_coeffs: Vec<[F; D]>,
-        centered_coeffs: Vec<[i32; D]>,
-    ) -> Self {
-        debug_assert_eq!(z_folded_coeffs.len(), centered_coeffs.len());
+impl DecomposeFoldWitness {
+    pub(crate) fn from_centered_rows<const D: usize>(centered_coeffs: Vec<[i32; D]>) -> Self {
         let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
         Self {
-            z_folded_rings: RingVec::from_coefficient_rows(z_folded_coeffs),
             centered_coeffs_flat: centered_coeffs.into_flattened(),
             centered_min,
             centered_max,
@@ -36,47 +26,32 @@ impl<F: Field> DecomposeFoldWitness<F> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_parts<const D: usize>(
-        z_folded_rings: Vec<CyclotomicRing<F, D>>,
-        centered_coeffs: Vec<[i32; D]>,
-    ) -> Self {
-        debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
-        let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
-        Self {
-            z_folded_rings: RingVec::from_ring_elems(&z_folded_rings),
-            centered_coeffs_flat: centered_coeffs.into_flattened(),
-            centered_min,
-            centered_max,
-            ring_dim: D,
-        }
-    }
-
-    pub(crate) fn from_owned_flat_parts<const D: usize>(
-        z_folded_rings: RingVec<F>,
+    pub(crate) fn from_centered_flat<const D: usize>(
         centered_coeffs_flat: Vec<i32>,
     ) -> Result<Self, AkitaError> {
+        if D == 0 {
+            return Err(AkitaError::InvalidInput(
+                "decompose fold witness ring dimension must be non-zero".into(),
+            ));
+        }
         let (centered_rows, remainder) = centered_coeffs_flat.as_chunks::<D>();
-        if remainder.is_empty()
-            && z_folded_rings.ring_dim() == D
-            && z_folded_rings.count() == centered_rows.len()
-        {
+        if remainder.is_empty() {
             let (centered_min, centered_max) = centered_coefficient_bounds(centered_rows);
             return Ok(Self {
-                z_folded_rings,
                 centered_coeffs_flat,
                 centered_min,
                 centered_max,
                 ring_dim: D,
             });
         }
-        Err(AkitaError::InvalidInput(
-            "owned decompose fold buffers have inconsistent ring geometry".into(),
-        ))
+        Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: centered_coeffs_flat.len(),
+        })
     }
 
-    pub(crate) fn into_owned_flat_parts(self) -> (RingVec<F>, Vec<i32>) {
-        (self.z_folded_rings, self.centered_coeffs_flat)
+    pub(crate) fn into_centered_coeffs_flat(self) -> Vec<i32> {
+        self.centered_coeffs_flat
     }
 
     /// Number of folded witness rows.
@@ -100,38 +75,17 @@ impl<F: Field> DecomposeFoldWitness<F> {
                 self.ring_dim
             )));
         }
-        if !self.centered_coeffs_flat.len().is_multiple_of(D) {
+        if D == 0 || !self.centered_coeffs_flat.len().is_multiple_of(D) {
             return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: self.centered_coeffs_flat.len(),
             });
-        }
-        if !self.z_folded_rings.can_decode_vec(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.z_folded_rings.coeff_len(),
-            });
-        }
-        let ring_count = self.z_folded_rings.count();
-        let row_count = self.centered_coeffs_flat.len() / D;
-        if ring_count != row_count {
-            return Err(AkitaError::InvalidInput(
-                "decompose fold witness ring row count mismatch".to_string(),
-            ));
         }
         Ok(())
     }
 
     pub(crate) fn centered_coeffs_flat(&self) -> &[i32] {
         &self.centered_coeffs_flat
-    }
-
-    #[cfg(test)]
-    pub(crate) fn z_folded_rings_trusted<const D: usize>(
-        &self,
-    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        self.z_folded_rings.as_ring_slice::<D>()
     }
 
     #[cfg(test)]
