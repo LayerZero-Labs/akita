@@ -211,6 +211,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             CpuBackend::new::<ProofCfg>(setup.expanded.clone(), proof_scheme.schedules()).unwrap();
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
+        let required_prefix_ids =
+            akita_config::required_setup_prefix_slot_ids_for_schedule(&schedule, &opening_layout)
+                .expect("resolve schedule setup-prefix slots");
+        backend
+            .import_setup_prefixes::<ProofCfg>(&setup.prefix_slots, &required_prefix_ids)
+            .expect("prewarm schedule setup-prefix slots");
         backend
             .prewarm::<FF>(&schedule)
             .expect("prewarm profile execution");

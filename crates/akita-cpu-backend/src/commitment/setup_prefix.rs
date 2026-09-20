@@ -138,11 +138,22 @@ impl<F: Field> SetupPrefixSlot<F> {
 }
 
 /// In-memory registry of prover-ready setup-prefix slots.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SetupPrefixProverRegistry<F: Field> {
     setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
+    /// True only for artifacts produced and retained inside this process by a
+    /// CPU backend. This capability is deliberately omitted from serialization.
+    backend_validated: bool,
 }
+
+impl<F: Field> PartialEq for SetupPrefixProverRegistry<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.setup_seed == other.setup_seed && self.slots == other.slots
+    }
+}
+
+impl<F: Field> Eq for SetupPrefixProverRegistry<F> {}
 
 impl<F: Field> SetupPrefixProverRegistry<F> {
     #[must_use]
@@ -150,7 +161,16 @@ impl<F: Field> SetupPrefixProverRegistry<F> {
         Self {
             setup_seed,
             slots: BTreeMap::new(),
+            backend_validated: false,
         }
+    }
+
+    pub(crate) fn mark_backend_validated(&mut self) {
+        self.backend_validated = true;
+    }
+
+    pub(crate) fn is_backend_validated(&self) -> bool {
+        self.backend_validated
     }
 
     /// Public field stream to which every committed prefix belongs.
@@ -178,6 +198,8 @@ impl<F: Field> SetupPrefixProverRegistry<F> {
     where
         F: Valid,
     {
+        // Public mutation invalidates the in-process provenance capability.
+        self.backend_validated = false;
         slot.check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         slot.validate_compression_hint()?;

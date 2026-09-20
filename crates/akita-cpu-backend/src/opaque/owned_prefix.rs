@@ -59,6 +59,126 @@ where
 }
 
 impl CpuBackend {
+    fn setup_prefix_source<F>(
+        &self,
+        id: &SetupPrefixSlotId,
+    ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError>
+    where
+        F: Field + CanonicalEncoding + 'static,
+    {
+        let prepared = self.prepared::<F>()?;
+        let coefficients = prepared
+            .expanded
+            .shared_matrix()
+            .as_field_slice()
+            .get(..id.n_prefix()?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
+            })?
+            .to_vec();
+        let polynomial =
+            DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
+        Ok(Arc::new(OwnedPolynomials {
+            polynomials: vec![polynomial],
+        }))
+    }
+
+    /// Return the commitment artifact and retained source for one setup prefix.
+    ///
+    /// Export and import deliberately share this path: profiles commonly export
+    /// an artifact during setup and import it immediately before proving, so a
+    /// second derivation in `import_setup_prefixes` would put setup work on the
+    /// timed prover path.
+    fn setup_prefix_material<F>(
+        &self,
+        id: &SetupPrefixSlotId,
+    ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
+    where
+        F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
+    {
+        let prepared = self.prepared::<F>()?;
+        self.memoized_setup_prefix(id, || {
+            let executor = CommitmentExecutor::cpu(
+                self,
+                prepared,
+                &prepared.expanded,
+                vec![PolynomialType::Dense(DenseType::Coefficients)],
+                PortableStatePolicy,
+            )?;
+            let artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
+            Ok(CachedSetupPrefix {
+                artifact,
+                source: self.setup_prefix_source(id)?,
+            })
+        })
+    }
+
+    /// Adopt material already committed by a CPU backend in this process.
+    fn cache_validated_setup_prefix<F>(
+        &self,
+        artifact: &crate::commitment::SetupPrefixSlot<F>,
+    ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
+    where
+        F: Field + CanonicalEncoding + 'static,
+    {
+        self.memoized_setup_prefix(&artifact.id, || {
+            Ok(CachedSetupPrefix {
+                artifact: artifact.clone(),
+                source: self.setup_prefix_source(&artifact.id)?,
+            })
+        })
+    }
+
+    fn issue_setup_prefix_handle<F, E>(
+        &self,
+        id: &SetupPrefixSlotId,
+        cached: Arc<CachedSetupPrefix<F>>,
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError>
+    where
+        F: Field
+            + CanonicalEncoding
+            + AkitaSerialize
+            + Valid
+            + Ring
+            + Unreduced
+            + WithCommitAccumulator
+            + 'static,
+        F::Wide: From<F> + AdditiveGroup,
+        E: ExtField<F>
+            + FpExtEncoding<F>
+            + MulBaseUnreduced<F>
+            + Unreduced
+            + Fold
+            + AkitaSerialize
+            + 'static,
+    {
+        let artifact = &cached.artifact;
+        let public_commitment = artifact
+            .commitment
+            .rows
+            .first()
+            .ok_or(AkitaError::InvalidProof)?
+            .clone();
+        let committed = Arc::new(CommittedSource {
+            commitment_id: self.owner().next_operation_id()?,
+            source: cached.source.clone(),
+            metadata: akita_prover::SourceMetadata::try_new(
+                1,
+                id.commitment_profile.group.num_vars(),
+            )?,
+            parameters: id.commitment_profile,
+            public: Commitment::new(public_commitment),
+            retained: artifact.hint.clone(),
+        });
+        Ok(PreparedSetupPrefix {
+            public: artifact.verifier_slot(),
+            commitment_handle: CommitmentHandle {
+                owner: self.owner_id(),
+                committed,
+            },
+        })
+    }
+
     /// Build portable setup-prefix artifacts for application-managed persistence.
     pub fn export_setup_prefixes<F>(
         &self,
@@ -68,18 +188,11 @@ impl CpuBackend {
         F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
     {
         let prepared = self.prepared::<F>()?;
-        let executor = CommitmentExecutor::cpu(
-            self,
-            prepared,
-            &prepared.expanded,
-            vec![PolynomialType::Dense(DenseType::Coefficients)],
-            PortableStatePolicy,
-        )?;
         let mut artifacts = crate::commitment::SetupPrefixProverRegistry::new(
             prepared.expanded.descriptor().setup_seed.clone(),
         );
         for id in ids {
-            let mut artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
+            let mut artifact = self.setup_prefix_material::<F>(id)?.artifact.clone();
             // Portable public rows take their dimension from the frozen profile,
             // matching their canonical serialized representation.
             artifact.commitment.rows = artifact
@@ -90,6 +203,7 @@ impl CpuBackend {
                 .collect();
             artifacts.insert(artifact)?;
         }
+        artifacts.mark_backend_validated();
         Ok(artifacts)
     }
 
@@ -117,65 +231,14 @@ impl CpuBackend {
             + 'static,
     {
         self.validate_extension::<E>()?;
-        let prepared = self.prepared::<F>()?;
 
         // The commitment and the prefix coefficients are a pure function of the
         // owned setup and the slot id, so derive them at most once per backend.
         // Only the per-proof operation identity below is minted fresh, keeping
         // handle lineage exactly as it was when every call re-derived.
-        let cached = self.memoized_setup_prefix(id, || {
-            let executor = CommitmentExecutor::cpu(
-                self,
-                prepared,
-                &prepared.expanded,
-                vec![PolynomialType::Dense(DenseType::Coefficients)],
-                PortableStatePolicy,
-            )?;
-            let artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
-            let coefficients = prepared
-                .expanded
-                .shared_matrix()
-                .as_field_slice()
-                .get(..id.n_prefix()?)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup prefix exceeds backend capacity".into())
-                })?
-                .to_vec();
-            let polynomial =
-                DensePoly::from_field_evals(id.commitment_profile.group.num_vars(), coefficients)?;
-            Ok(CachedSetupPrefix {
-                artifact,
-                source: Arc::new(OwnedPolynomials {
-                    polynomials: vec![polynomial],
-                }),
-            })
-        })?;
+        let cached = self.setup_prefix_material::<F>(id)?;
 
-        let artifact = &cached.artifact;
-        let public_commitment = artifact
-            .commitment
-            .rows
-            .first()
-            .ok_or(AkitaError::InvalidProof)?
-            .clone();
-        let committed = Arc::new(CommittedSource {
-            commitment_id: self.owner().next_operation_id()?,
-            source: cached.source.clone(),
-            metadata: akita_prover::SourceMetadata::try_new(
-                1,
-                id.commitment_profile.group.num_vars(),
-            )?,
-            parameters: id.commitment_profile,
-            public: Commitment::new(public_commitment),
-            retained: artifact.hint.clone(),
-        });
-        Ok(PreparedSetupPrefix {
-            public: artifact.verifier_slot(),
-            commitment_handle: CommitmentHandle {
-                owner: self.owner_id(),
-                committed,
-            },
-        })
+        self.issue_setup_prefix_handle(id, cached)
     }
 
     /// Validate portable artifacts and issue handles owned by this backend.
@@ -223,7 +286,12 @@ impl CpuBackend {
             let artifact = artifacts.get(id).ok_or_else(|| {
                 AkitaError::InvalidSetup("required setup prefix artifact is missing".into())
             })?;
-            let slot = self.prepare_setup_prefix::<Cfg::Field, Cfg::ExtField>(id)?;
+            let slot = if artifacts.is_backend_validated() {
+                let cached = self.cache_validated_setup_prefix(artifact)?;
+                self.issue_setup_prefix_handle(id, cached)?
+            } else {
+                self.prepare_setup_prefix::<Cfg::Field, Cfg::ExtField>(id)?
+            };
             if slot.public.id != artifact.id
                 || slot.public.commitment.rows.len() != artifact.commitment.rows.len()
                 || slot
@@ -289,6 +357,18 @@ mod tests {
                 let artifacts = first
                     .export_setup_prefixes::<F>(std::slice::from_ref(&id))
                     .unwrap();
+                assert!(artifacts.is_backend_validated());
+                let cached_after_export = first
+                    .memoized_setup_prefix::<CachedSetupPrefix<F>, _>(&id, || {
+                        panic!("export must seed the setup-prefix cache")
+                    })
+                    .unwrap();
+                let exported = artifacts.get(&id).unwrap();
+                assert_eq!(cached_after_export.artifact.id, exported.id);
+                assert_eq!(
+                    cached_after_export.artifact.commitment.rows[0].coeffs(),
+                    exported.commitment.rows[0].coeffs()
+                );
                 let mut bytes = Vec::new();
                 artifacts.serialize_compressed(&mut bytes).unwrap();
                 let decoded =
@@ -298,6 +378,7 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(decoded, artifacts);
+                assert!(!decoded.is_backend_validated());
                 let second = CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
                 let imported_first = first
                     .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
