@@ -1,5 +1,6 @@
 //! Declarative NTT requirements for one resolved prover execution.
 
+use super::{ComputeBackendSetup, CpuBackend, CpuPreparedSetup};
 use crate::commitment::{CommitmentNttRoute, CommitmentNttStage};
 use akita_error::AkitaError;
 use akita_types::{
@@ -500,6 +501,40 @@ impl NttExecutionRequirements {
             )?,
         )
     }
+}
+
+/// Warm the joined cache requirements for one ownership-separated relation level.
+///
+/// The canonical requirement planner supplies the D/A/B shapes and per-role
+/// routing extents. Retained requests are joined only when ring dimension and
+/// transform domain match, before any relation kernel can build a smaller
+/// prefix independently.
+pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::CanonicalEncoding>(
+    backend: &CpuBackend,
+    prepared: &CpuPreparedSetup<F>,
+    level: &CommittedGroupParams,
+) -> Result<(), AkitaError> {
+    let mut planned = NttExecutionRequirements::default();
+    planned.add_group_relation(0, level, level.witness_chunk.num_chunks)?;
+    planned.add_opening_relation(0, level)?;
+
+    let mut joined = Vec::<NttCacheKey>::new();
+    for requirement in planned.entries() {
+        if !backend.ntt_requirement_is_cached(prepared, *requirement)? {
+            continue;
+        }
+        if let Some(current) = joined.iter_mut().find(|current| {
+            current.ring_d == requirement.key.ring_d && current.domain == requirement.key.domain
+        }) {
+            *current = current.join(requirement.key)?;
+        } else {
+            joined.push(requirement.key);
+        }
+    }
+    for requirement in joined {
+        backend.ensure_ntt_slot(prepared, requirement)?;
+    }
+    Ok(())
 }
 
 fn matrix_extent(num_rows: usize, active_width: usize) -> Result<usize, AkitaError> {

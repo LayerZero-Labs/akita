@@ -3,8 +3,11 @@ use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::opaque::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
+use akita_challenges::SparseChallengeConfig;
 use akita_types::MAX_I8_LOG_BASIS;
-use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use akita_types::{
+    CommittedGroupParams, NttCacheKey, NttTransformDomain, SetupMatrixCapacity, SisModulusProfileId,
+};
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -382,4 +385,117 @@ fn cyclic_only_ring_switch_rows_do_not_prepare_negacyclic_state() {
         domain: NttTransformDomain::Cyclic,
     }));
     assert_eq!(cache.len(), 1);
+}
+
+#[test]
+fn relation_prewarm_joins_d_a_b_prefixes_before_kernel_execution() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q64Offset59,
+        D,
+        2,
+        2,
+        3,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(4, 8, 1, 2, 2)
+    .expect("relation cache test params");
+    let open = params.open();
+    let extent = |rows, width| akita_error::checked::product([rows, width]).unwrap();
+    let cyclic_extent = [
+        extent(open.matrix.output_rank(), open.matrix.input_width()),
+        extent(
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
+        ),
+        extent(
+            params.outer().matrix.output_rank(),
+            params.outer().matrix.input_width(),
+        ),
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    let negacyclic_extent = [
+        extent(open.matrix.output_rank(), open.matrix.input_width()),
+        extent(
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
+        ),
+    ]
+    .into_iter()
+    .max()
+    .unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        setup_capacity(cyclic_extent.max(negacyclic_extent)),
+    )
+    .unwrap();
+    let backend = CpuBackend::for_arithmetic_tests();
+    let prepared = backend.prepare_setup(&setup).unwrap();
+
+    super::requirements::warm_relation_ntt_cache(&backend, &prepared, &params)
+        .expect("warm joined relation prefixes");
+
+    let metrics = prepared.shared_ntt_cache_metrics().unwrap();
+    assert_eq!(metrics.len(), 2);
+    assert!(metrics.iter().any(|metric| {
+        metric.key
+            == NttCacheKey {
+                ring_d: D,
+                num_ring_elements: cyclic_extent,
+                domain: NttTransformDomain::Cyclic,
+            }
+    }));
+    assert!(metrics.iter().any(|metric| {
+        metric.key
+            == NttCacheKey {
+                ring_d: D,
+                num_ring_elements: negacyclic_extent,
+                domain: NttTransformDomain::Negacyclic,
+            }
+    }));
+    assert_eq!(prepared.ntt_slot_build_count(), 2);
+
+    for key in [
+        NttCacheKey::from_matrix_shape(
+            D,
+            open.matrix.output_rank(),
+            open.matrix.input_width(),
+            NttTransformDomain::Negacyclic,
+        )
+        .unwrap(),
+        NttCacheKey::from_matrix_shape(
+            D,
+            open.matrix.output_rank(),
+            open.matrix.input_width(),
+            NttTransformDomain::Cyclic,
+        )
+        .unwrap(),
+        NttCacheKey::from_matrix_shape(
+            D,
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
+            NttTransformDomain::Negacyclic,
+        )
+        .unwrap(),
+        NttCacheKey::from_matrix_shape(
+            D,
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
+            NttTransformDomain::Cyclic,
+        )
+        .unwrap(),
+        NttCacheKey::from_matrix_shape(
+            D,
+            params.outer().matrix.output_rank(),
+            params.outer().matrix.input_width(),
+            NttTransformDomain::Cyclic,
+        )
+        .unwrap(),
+    ] {
+        backend.ensure_ntt_slot(&prepared, key).unwrap();
+    }
+    assert_eq!(prepared.ntt_slot_build_count(), 2);
 }

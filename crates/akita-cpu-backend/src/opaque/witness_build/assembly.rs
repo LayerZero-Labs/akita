@@ -580,6 +580,9 @@ macro_rules! impl_cpu_recursive_witness_assembly_kernel {
                         scalar_openings,
                     ));
                 }
+                crate::arithmetic::requirements::warm_relation_ntt_cache(
+                    self, prepared, level,
+                )?;
                 let dims = level.role_dims();
                 let (v, d_quotients) = dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Opening),
