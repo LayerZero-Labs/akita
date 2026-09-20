@@ -1307,7 +1307,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("12 bit fold response", report)
 
     def test_native_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
-        from scripts.profile_bench_report import extract_summary
+        from scripts.profile_bench_report import (
+            extract_summary,
+            l2_grind_observations_for_run,
+            missing_required_run_metrics,
+        )
 
         log = "\n".join(
             [
@@ -1326,10 +1330,15 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(summary["proof_size_bytes"], 101)
         self.assertEqual(summary["accounted_bytes"], 101)
+        self.assertEqual(summary["proof_encoding"], "spongefish_native")
         self.assertEqual(summary["native_nonce_bytes"], 9)
         self.assertEqual(summary["nonce_stream_bits"], 54)
         self.assertEqual(summary["grinding_plan"]["nonce_stream_bytes"], 7)
         self.assertEqual(summary["grinding_plan"]["native_nonce_bytes"], 9)
+        self.assertNotIn("proof_levels", missing_required_run_metrics(summary))
+        summary["planned_levels"] = [{"level": 0, "security_route": "L2"}]
+        summary["exit_code"] = 0
+        self.assertEqual(l2_grind_observations_for_run(summary), [])
 
     def test_grinding_round_groups_split_when_security_terms_change(self) -> None:
         from scripts.profile_bench_fold_details import aggregate_grinding_runs

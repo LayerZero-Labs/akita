@@ -108,7 +108,7 @@ REQUIRED_RUN_METRICS = (
     "ext_degree",
     "akita_levels",
 )
-REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
+REQUIRED_RUN_SEQUENCES = ("planned_levels",)
 
 
 @dataclass(frozen=True)
@@ -674,6 +674,10 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
             missing.append(key)
+    if summary.get("proof_encoding") != "spongefish_native":
+        proof_levels = summary.get("proof_levels")
+        if not isinstance(proof_levels, list) or not proof_levels:
+            missing.append("proof_levels")
     tail_bytes = summary.get("tail_bytes")
     tail_encoding = summary.get("tail_encoding")
     if tail_bytes not in (None, 0) and tail_encoding is None:
@@ -955,6 +959,7 @@ def extract_summary(
         ) and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "native proof summary" in line and kvs.get("label") == mode:
+            summary["proof_encoding"] = "spongefish_native"
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(
                 kvs.get("accounted_bytes", kvs["proof_size_bytes"])
@@ -1666,6 +1671,8 @@ def l2_grind_observations_for_run(
         l2_planned_levels.append(terminal_plan)
     run_failed = int(summary.get("exit_code", 0)) != 0
     if not isinstance(proof_levels, list):
+        if summary.get("proof_encoding") == "spongefish_native":
+            return []
         if l2_planned_levels and not run_failed:
             raise ValueError("successful L2 run is missing proof-level grinding diagnostics")
         return []
