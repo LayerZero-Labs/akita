@@ -6,38 +6,6 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
-#[cfg(feature = "catalog-gen")]
-#[allow(clippy::too_many_arguments)]
-fn prepared_root_candidates(
-    key: &akita_types::AkitaScheduleLookupKey,
-    final_source_contract: akita_types::sis::CommittedSourceContract,
-    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
-    policy: &crate::PlannerPolicy,
-    dimensions: CommitmentRingDims,
-    opening: PlannerOpeningCandidate,
-    precommitted_openings: &[PlannerOpeningCandidate],
-    inner_lb: u32,
-    open_lb: u32,
-    guide: Option<CandidateLayoutGuide>,
-) -> Result<Vec<(CommittedGroupParams, usize)>, akita_error::AkitaError> {
-    let Some(mut prepared) = crate::planner::PreparedRootLevelCandidates::prepare(
-        crate::planner::RootLevelPreparationRequest {
-            key,
-            final_source_contract,
-            precommitted_source_contracts,
-            policy,
-            dimensions,
-            opening,
-            precommitted_openings,
-            candidate_log_basis_open: open_lb,
-        },
-    )?
-    else {
-        return Ok(Vec::new());
-    };
-    prepared.candidates_for_inner_basis(inner_lb, guide)
-}
-
 fn synthetic_profile(
     group: PolynomialGroupLayout,
     params: &CommittedGroupParams,
@@ -556,7 +524,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap()
             .unwrap();
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
-    let candidates = prepared_root_candidates(
+    let candidates = crate::planner::root_level_candidates_for_basis(
         &key,
         Dense::committed_source_contract().unwrap(),
         &[],
@@ -655,19 +623,44 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
             .unwrap()
             .unwrap();
-    let grouped = prepared_root_candidates(
-        &grouped_key,
-        Dense::committed_source_contract().unwrap(),
-        &[Dense::committed_source_contract().unwrap()],
-        &policy,
-        dimensions,
-        opening,
-        &[precommit_opening],
-        Dense::inner_basis_range().0,
-        Dense::opening_basis_range().0,
-        None,
+    let source_contract = Dense::committed_source_contract().unwrap();
+    let source_contracts = [source_contract];
+    let prepared = crate::planner::PreparedRootLevelCandidates::prepare(
+        crate::planner::RootLevelPreparationRequest {
+            key: &grouped_key,
+            final_source_contract: source_contract,
+            precommitted_source_contracts: &source_contracts,
+            policy: &policy,
+            dimensions,
+            opening,
+            precommitted_openings: &[precommit_opening],
+            candidate_log_basis_open: Dense::opening_basis_range().0,
+        },
     )
-    .expect("group-local packing candidates");
+    .expect("root preparation")
+    .expect("supported root preparation");
+    let grouped = prepared
+        .candidates_for_inner_basis(Dense::inner_basis_range().0, None)
+        .expect("group-local packing candidates");
+    let next_inner_basis = Dense::inner_basis_range().0 + 1;
+    assert_eq!(
+        prepared
+            .candidates_for_inner_basis(next_inner_basis, None)
+            .expect("reused root preparation"),
+        crate::planner::root_level_candidates_for_basis(
+            &grouped_key,
+            source_contract,
+            &source_contracts,
+            &policy,
+            dimensions,
+            opening,
+            &[precommit_opening],
+            next_inner_basis,
+            Dense::opening_basis_range().0,
+            None,
+        )
+        .expect("fresh root preparation"),
+    );
     assert!(!grouped.is_empty());
     for (params, _) in grouped {
         assert_eq!(params.precommitted_groups().len(), 1);
@@ -699,7 +692,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
         SparseChallengeConfig::production_for_ring_dim(dimensions.d_a()).unwrap(),
     );
-    assert!(prepared_root_candidates(
+    assert!(crate::planner::root_level_candidates_for_basis(
         &grouped_key,
         Dense::committed_source_contract().unwrap(),
         &[Dense::committed_source_contract().unwrap()],
@@ -753,7 +746,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         products
             .iter()
             .flat_map(|product| {
-                prepared_root_candidates(
+                crate::planner::root_level_candidates_for_basis(
                     &product_key,
                     Dense::committed_source_contract().unwrap(),
                     &[Dense::committed_source_contract().unwrap(); 2],
@@ -839,7 +832,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid final packing opening")
             .expect("final packing geometry");
     let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
-    let scalar = prepared_root_candidates(
+    let scalar = crate::planner::root_level_candidates_for_basis(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
         &[],
@@ -865,7 +858,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid precommit packing opening")
             .expect("precommit packing geometry");
     let derive = |guide| {
-        prepared_root_candidates(
+        crate::planner::root_level_candidates_for_basis(
             &grouped_key,
             Dense::committed_source_contract().unwrap(),
             &[Dense::committed_source_contract().unwrap()],
@@ -934,7 +927,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     );
     let pre_group = PolynomialGroupLayout::new(14, 1);
     let pre_key = AkitaScheduleLookupKey::single(pre_group);
-    let pre_candidates = prepared_root_candidates(
+    let pre_candidates = crate::planner::root_level_candidates_for_basis(
         &pre_key,
         Dense::committed_source_contract().unwrap(),
         &[],

@@ -284,7 +284,6 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
             root_main_constraint: None,
             adaptation_guide: None,
             query_prefix_count: akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT - query_count,
-            reuse_root_preparation: true,
         },
     )
     .unwrap();
