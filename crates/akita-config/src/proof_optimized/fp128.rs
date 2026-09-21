@@ -193,3 +193,7 @@ impl_multi_chunk_companion!(
     akita_types::MultiChunkProfileId::W8R2,
     "fp128_dense_multi_chunk"
 );
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_dense_recursive";
+}
