@@ -11,14 +11,12 @@ impl WitnessLayout {
     /// its address ranges.
     ///
     /// This is the candidate-aware counterpart of [`Self::new`] for planner
-    /// hot paths. It constructs the canonical relation geometry without
-    /// materializing witness address ranges. The caller validates
-    /// compression-source feasibility first; all malformed geometry is an
-    /// error.
+    /// hot paths. The caller validates compression-source feasibility before
+    /// constructing `relation_geometry`; all malformed geometry is an error.
     pub fn scalar_live_coeff_len(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        extension_degree: usize,
+        relation_geometry: &RelationWitnessGeometry,
         num_chunks: usize,
         quotient_plan: RelationQuotientPlan,
     ) -> Result<usize, AkitaError> {
@@ -42,8 +40,17 @@ impl WitnessLayout {
                 "witness chunk count exceeds verifier cap".into(),
             ));
         }
-        let relation_geometry =
-            RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
+        let expected_relation_geometry = RelationWitnessGeometry::for_level(
+            lp,
+            opening_batch,
+            relation_geometry.extension_degree(),
+        )?;
+        if &expected_relation_geometry != relation_geometry {
+            return Err(AkitaError::InvalidSetup(
+                "scalar witness sizing received relation geometry for different level parameters"
+                    .into(),
+            ));
+        }
         let relation_group_order = opening_batch.root_group_order()?;
         let group_index = *relation_group_order.first().ok_or_else(|| {
             AkitaError::InvalidSetup("scalar witness relation group is missing".into())
@@ -86,7 +93,7 @@ impl WitnessLayout {
         let successor_a_alignment = relation_geometry.relation_coefficient_block_len()?;
         super::tail::measure(
             lp,
-            &relation_geometry,
+            relation_geometry,
             1,
             successor_a_alignment,
             cursor,
@@ -156,46 +163,44 @@ mod tests {
                     crate::RingRelationMode::ReducedEvaluation,
                 ] {
                     for num_polynomials in [1, 2, 5] {
-                        for extension_degree in [1, 2, 4] {
-                            for num_chunks in [1, 2, 4] {
-                                let mut params = base.clone();
-                                params.payload_mode = payload_mode;
-                                params.ring_relation_mode = ring_relation_mode;
-                                let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
-                                    .expect("scalar opening batch");
-                                let relation_geometry = RelationWitnessGeometry::for_level(
+                        for num_chunks in [1, 2, 4] {
+                            let mut params = base.clone();
+                            params.payload_mode = payload_mode;
+                            params.ring_relation_mode = ring_relation_mode;
+                            let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
+                                .expect("scalar opening batch");
+                            let relation_geometry =
+                                RelationWitnessGeometry::for_evaluation_trace_execution(
                                     &params,
                                     &opening_batch,
-                                    extension_degree,
                                 )
                                 .expect("relation geometry");
-                                let quotient_plan = match ring_relation_mode {
-                                    crate::RingRelationMode::QuotientLift => {
-                                        RelationQuotientPlan::quotient_lift(2).unwrap()
-                                    }
-                                    crate::RingRelationMode::ReducedEvaluation => {
-                                        RelationQuotientPlan::ReducedEvaluation
-                                    }
-                                };
-                                let materialized = WitnessLayout::new(
-                                    &params,
-                                    &opening_batch,
-                                    &relation_geometry,
-                                    num_chunks,
-                                    quotient_plan,
-                                )
-                                .expect("materialized witness layout")
-                                .live_coeff_len();
-                                let scalar = WitnessLayout::scalar_live_coeff_len(
-                                    &params,
-                                    &opening_batch,
-                                    extension_degree,
-                                    num_chunks,
-                                    quotient_plan,
-                                )
-                                .expect("scalar witness sizing");
-                                assert_eq!(scalar, materialized);
-                            }
+                            let quotient_plan = match ring_relation_mode {
+                                crate::RingRelationMode::QuotientLift => {
+                                    RelationQuotientPlan::quotient_lift(2).unwrap()
+                                }
+                                crate::RingRelationMode::ReducedEvaluation => {
+                                    RelationQuotientPlan::ReducedEvaluation
+                                }
+                            };
+                            let materialized = WitnessLayout::new(
+                                &params,
+                                &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                quotient_plan,
+                            )
+                            .expect("materialized witness layout")
+                            .live_coeff_len();
+                            let scalar = WitnessLayout::scalar_live_coeff_len(
+                                &params,
+                                &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                quotient_plan,
+                            )
+                            .expect("scalar witness sizing");
+                            assert_eq!(scalar, materialized);
                         }
                     }
                 }
@@ -385,7 +390,7 @@ mod tests {
                 let scalar = WitnessLayout::scalar_live_coeff_len(
                     &params,
                     &opening_batch,
-                    relation_geometry.extension_degree(),
+                    &relation_geometry,
                     num_chunks,
                     RelationQuotientPlan::quotient_lift(2).unwrap(),
                 )
@@ -698,35 +703,17 @@ mod tests {
     }
 
     #[test]
-    fn relation_geometry_and_scalar_sizing_reject_invalid_extension_or_subring_shapes() {
+    fn relation_geometry_rejects_invalid_extension_or_subring_shapes() {
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
         let params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
         assert!(RelationWitnessGeometry::for_level(&params, &opening_batch, 0).is_err());
         assert!(RelationWitnessGeometry::for_level(&params, &opening_batch, 3).is_err());
-        for extension_degree in [0, 3] {
-            assert!(WitnessLayout::scalar_live_coeff_len(
-                &params,
-                &opening_batch,
-                extension_degree,
-                1,
-                RelationQuotientPlan::quotient_lift(2).unwrap(),
-            )
-            .is_err());
-        }
 
         let mut invalid = params;
         invalid.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 32,
         };
         assert!(RelationWitnessGeometry::for_level(&invalid, &opening_batch, 2).is_err());
-        assert!(WitnessLayout::scalar_live_coeff_len(
-            &invalid,
-            &opening_batch,
-            2,
-            1,
-            RelationQuotientPlan::quotient_lift(2).unwrap(),
-        )
-        .is_err());
         assert!(
             RelationWitnessGeometry::for_evaluation_trace_execution(&invalid, &opening_batch)
                 .is_err()

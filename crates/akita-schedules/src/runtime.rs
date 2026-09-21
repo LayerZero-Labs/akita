@@ -911,17 +911,17 @@ pub fn planned_next_witness_len(
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     if params.setup_prefix().is_none() {
         return Ok(Some(WitnessLayout::scalar_live_coeff_len(
             params,
             &opening_batch,
-            extension_degree,
+            &relation_geometry,
             num_chunks,
             quotient_plan,
         )?));
     }
-    let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     Ok(Some(
         WitnessLayout::new(
             params,
