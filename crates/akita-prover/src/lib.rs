@@ -1,3 +1,13 @@
+// Policy-only builds intentionally omit every executable field dispatch body.
+#![cfg_attr(
+    not(any(
+        feature = "field-fp32",
+        feature = "field-fp64",
+        feature = "field-fp128"
+    )),
+    allow(dead_code, unused_imports, unused_mut, unused_variables)
+)]
+
 //! Prover-facing API surface for the Akita PCS.
 //!
 //! This crate owns prover-side polynomial backends, setup artifacts, recursive
