@@ -402,7 +402,6 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         level_zero_is_root: true,
         relation_traversal_order: super::RelationTraversalOrder::Canonical,
         relation_mode_filter: super::RelationModeFilter::All,
-        reuse_root_preparation: true,
     };
     let state = super::SuffixState {
         level: 1,

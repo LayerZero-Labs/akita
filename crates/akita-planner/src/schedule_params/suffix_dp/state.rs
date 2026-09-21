@@ -285,8 +285,6 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) level_zero_is_root: bool,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     pub(crate) relation_mode_filter: RelationModeFilter,
-    #[cfg(test)]
-    pub(crate) reuse_root_preparation: bool,
 }
 
 #[derive(Clone, Copy)]

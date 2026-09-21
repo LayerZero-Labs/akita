@@ -57,78 +57,6 @@ struct OpeningWork {
     purpose: OpeningPurpose,
 }
 
-struct RootWorkPreparation<'a> {
-    prepared: Option<PreparedRootLevelCandidates<'a>>,
-    unsupported: bool,
-    #[cfg(test)]
-    preparation_attempts: usize,
-}
-
-struct RootCandidateBasisRequest<'a> {
-    root_key: &'a AkitaScheduleLookupKey,
-    final_source_contract: akita_types::sis::CommittedSourceContract,
-    inner_lb: u32,
-    open_lb: u32,
-    guide: Option<CandidateLayoutGuide>,
-}
-
-impl<'a> RootWorkPreparation<'a> {
-    const fn pending() -> Self {
-        Self {
-            prepared: None,
-            unsupported: false,
-            #[cfg(test)]
-            preparation_attempts: 0,
-        }
-    }
-
-    fn candidates_for_inner_basis(
-        &mut self,
-        ctx: &SuffixCtx<'a>,
-        work: &OpeningWork,
-        request: RootCandidateBasisRequest<'_>,
-    ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-        let RootCandidateBasisRequest {
-            root_key,
-            final_source_contract,
-            inner_lb,
-            open_lb,
-            guide,
-        } = request;
-        #[cfg(test)]
-        if !ctx.reuse_root_preparation {
-            self.prepared = None;
-            self.unsupported = false;
-        }
-        if self.prepared.is_none() && !self.unsupported {
-            #[cfg(test)]
-            {
-                self.preparation_attempts += 1;
-            }
-            match PreparedRootLevelCandidates::prepare(RootLevelPreparationRequest {
-                key: root_key,
-                final_source_contract,
-                precommitted_source_contracts: ctx.precommitted_source_contracts,
-                policy: ctx.policy,
-                dimensions: work.dimensions,
-                opening: work.opening,
-                precommitted_openings: &work.precommitted_openings,
-                candidate_log_basis_open: open_lb,
-            })? {
-                Some(prepared) => self.prepared = Some(prepared),
-                None => self.unsupported = true,
-            }
-        }
-        if self.unsupported {
-            return Ok(Vec::new());
-        }
-        self.prepared
-            .as_mut()
-            .ok_or_else(|| AkitaError::InvalidSetup("root work preparation is missing".into()))?
-            .candidates_for_inner_basis(inner_lb, guide)
-    }
-}
-
 pub(super) struct RawTerminalCandidate {
     pub(super) params: CommittedGroupParams,
     pub(super) opening_reduction_bytes: usize,
@@ -746,6 +674,30 @@ impl<'a> CandidateDomain<'a> {
         })
     }
 
+    fn prepare_root_work<'ctx>(
+        &self,
+        ctx: &SuffixCtx<'ctx>,
+        root_key: &AkitaScheduleLookupKey,
+        final_source_contract: akita_types::sis::CommittedSourceContract,
+        open_lb: u32,
+    ) -> Result<Vec<Option<PreparedRootLevelCandidates<'ctx>>>, AkitaError> {
+        self.opening_work
+            .iter()
+            .map(|work| {
+                PreparedRootLevelCandidates::prepare(RootLevelPreparationRequest {
+                    key: root_key,
+                    final_source_contract,
+                    precommitted_source_contracts: ctx.precommitted_source_contracts,
+                    policy: ctx.policy,
+                    dimensions: work.dimensions,
+                    opening: work.opening,
+                    precommitted_openings: &work.precommitted_openings,
+                    candidate_log_basis_open: open_lb,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn generate_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
@@ -757,36 +709,25 @@ impl<'a> CandidateDomain<'a> {
         let incoming_setup_prefix = state.topology.incoming_setup_prefix();
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
-        let mut root_preparations = self.root_level_key.map(|_| {
-            self.opening_work
-                .iter()
-                .map(|_| RootWorkPreparation::pending())
-                .collect::<Vec<_>>()
-        });
-
-        for inner_lb in self.inner_basis_range.clone() {
-            if let Some(root_key) = self.root_level_key {
+        let root_preparations = match self.root_level_key {
+            Some(root_key) => {
                 let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
                     AkitaError::InvalidSetup("root batch is missing its source contract".into())
                 })?;
-                for (work, preparation) in self.opening_work.iter().zip(
-                    root_preparations
-                        .as_mut()
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("root preparation cache is missing".into())
-                        })?
-                        .iter_mut(),
-                ) {
+                Some(self.prepare_root_work(ctx, root_key, final_source_contract, open_lb)?)
+            }
+            None => None,
+        };
+
+        for inner_lb in self.inner_basis_range.clone() {
+            if let Some(root_preparations) = &root_preparations {
+                for (work, preparation) in self.opening_work.iter().zip(root_preparations.iter()) {
+                    let Some(preparation) = preparation else {
+                        continue;
+                    };
                     let mut dimension_candidates = preparation.candidates_for_inner_basis(
-                        ctx,
-                        work,
-                        RootCandidateBasisRequest {
-                            root_key,
-                            final_source_contract,
-                            inner_lb,
-                            open_lb,
-                            guide: self.root_main_constraint.map(candidate_layout_guide),
-                        },
+                        inner_lb,
+                        self.root_main_constraint.map(candidate_layout_guide),
                     )?;
                     if let Some(constraint) = self.root_main_constraint {
                         dimension_candidates.retain(|(params, _)| {
@@ -971,23 +912,16 @@ impl<'a> CandidateDomain<'a> {
         let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
-        let mut root_preparations = self
-            .opening_work
-            .iter()
-            .map(|_| RootWorkPreparation::pending())
-            .collect::<Vec<_>>();
+        let root_preparations =
+            self.prepare_root_work(ctx, root_key, final_source_contract, open_lb)?;
         for inner_lb in self.inner_basis_range.clone() {
-            for (work, preparation) in self.opening_work.iter().zip(root_preparations.iter_mut()) {
+            for (work, preparation) in self.opening_work.iter().zip(root_preparations.iter()) {
+                let Some(preparation) = preparation else {
+                    continue;
+                };
                 let mut dimension_candidates = preparation.candidates_for_inner_basis(
-                    ctx,
-                    work,
-                    RootCandidateBasisRequest {
-                        root_key,
-                        final_source_contract,
-                        inner_lb,
-                        open_lb,
-                        guide: self.root_main_constraint.map(candidate_layout_guide),
-                    },
+                    inner_lb,
+                    self.root_main_constraint.map(candidate_layout_guide),
                 )?;
                 if let Some(constraint) = self.root_main_constraint {
                     dimension_candidates.retain(|(params, _)| {
@@ -1037,211 +971,6 @@ impl<'a> CandidateDomain<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::schedule_params::{
-        initial_dimension_ceiling, RelationModeFilter, RelationTraversalOrder, RingRelationPhase,
-        SuffixTopology,
-    };
-    use akita_config::{policy_of, proof_optimized::fp128::Dense, CommitmentConfig};
-
-    fn grouped_fixture() -> (
-        PlannerPolicy,
-        AkitaScheduleLookupKey,
-        [akita_types::sis::CommittedSourceContract; 3],
-    ) {
-        let mut policy = policy_of::<Dense>();
-        policy.inner_basis_range = (3, 4);
-        policy.opening_basis_range = (6, 6);
-        let producer_group = PolynomialGroupLayout::singleton(14);
-        let profile = akita_config::test_support::workspace_schedule_catalog::<Dense>()
-            .expect("schedule catalog")
-            .resolve_key(&AkitaScheduleLookupKey::single(producer_group))
-            .expect("producer row")
-            .profiles()
-            .final_group;
-        let wide = Dense::committed_source_contract().expect("dense source contract");
-        let tight = akita_types::sis::CommittedSourceContract::try_new(
-            wide.class(),
-            akita_types::DecompositionParams {
-                log_commit_bound: 6,
-                log_open_bound: Some(wide.decomposition().field_bits()),
-                ..wide.decomposition()
-            },
-        )
-        .expect("tight source contract");
-        (
-            policy,
-            AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::singleton(18),
-                precommitteds: vec![profile; 3],
-            },
-            [tight, wide, tight],
-        )
-    }
-
-    type TerminalSignatures = Vec<(Vec<u8>, usize)>;
-    type FoldSignatures = Vec<(Vec<u8>, usize, usize)>;
-
-    fn signatures(generated: GeneratedCandidates) -> (TerminalSignatures, FoldSignatures) {
-        (
-            generated
-                .terminal
-                .into_iter()
-                .map(|candidate| {
-                    (
-                        candidate.params.canonical_descriptor_bytes(),
-                        candidate.opening_reduction_bytes,
-                    )
-                })
-                .collect(),
-            generated
-                .folds
-                .into_iter()
-                .map(|candidate| {
-                    (
-                        candidate.params.canonical_descriptor_bytes(),
-                        candidate.next_witness_len,
-                        candidate.opening_reduction_bytes,
-                    )
-                })
-                .collect(),
-        )
-    }
-
-    #[test]
-    fn reused_root_preparation_preserves_batched_and_streamed_candidate_order() {
-        let (policy, key, contracts) = grouped_fixture();
-        let challenge_config = |dimension| Dense::ring_challenge_config(dimension);
-        let make_ctx = |reuse_root_preparation| SuffixCtx {
-            policy: &policy,
-            diagnostics: None,
-            ring_challenge_config: &challenge_config,
-            key: key.final_group,
-            setup_field_budget: None,
-            root_lookup_key: Some(&key),
-            root_main_constraint: None,
-            adaptation_guide: None,
-            root_source_contract: Some(
-                Dense::committed_source_contract().expect("dense source contract"),
-            ),
-            precommitted_source_contracts: &contracts,
-            level_zero_is_root: true,
-            relation_traversal_order: RelationTraversalOrder::Canonical,
-            relation_mode_filter: RelationModeFilter::All,
-            reuse_root_preparation,
-        };
-        let state = SuffixState {
-            level: 0,
-            current_witness_len: 1 << key.final_group.num_vars(),
-            current_lb: 0,
-            source_moment: None,
-            dimension_ceiling: initial_dimension_ceiling(&policy).expect("dimension ceiling"),
-            topology: SuffixTopology::Direct {
-                payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-                relation_phase: RingRelationPhase::QuotientPrefix,
-            },
-        };
-        let uncached_ctx = make_ctx(false);
-        let reused_ctx = make_ctx(true);
-        let uncached_domain = CandidateDomain::prepare(&uncached_ctx, state).expect("domain");
-        let reused_domain = CandidateDomain::prepare(&reused_ctx, state).expect("domain");
-        let open_lb = *reused_domain.opening_basis_range.start();
-
-        let mut uncached_prefixes = SetupPrefixSearchCache::default();
-        let uncached_batch = signatures(
-            uncached_domain
-                .generate_for_opening_basis(&uncached_ctx, state, open_lb, &mut uncached_prefixes)
-                .expect("uncached batched candidates"),
-        );
-        let mut reused_prefixes = SetupPrefixSearchCache::default();
-        let reused_batch = signatures(
-            reused_domain
-                .generate_for_opening_basis(&reused_ctx, state, open_lb, &mut reused_prefixes)
-                .expect("reused batched candidates"),
-        );
-        assert_eq!(reused_batch, uncached_batch);
-
-        let mut uncached_stream = Vec::new();
-        uncached_domain
-            .visit_root_batches(&uncached_ctx, state, open_lb, |batch| {
-                uncached_stream.push(signatures(batch));
-                Ok(())
-            })
-            .expect("uncached streamed candidates");
-        let mut reused_stream = Vec::new();
-        reused_domain
-            .visit_root_batches(&reused_ctx, state, open_lb, |batch| {
-                reused_stream.push(signatures(batch));
-                Ok(())
-            })
-            .expect("reused streamed candidates");
-        assert_eq!(reused_stream, uncached_stream);
-    }
-
-    #[test]
-    fn unsupported_root_work_preparation_is_cached() {
-        let (policy, key, contracts) = grouped_fixture();
-        let challenge_config = |dimension| Dense::ring_challenge_config(dimension);
-        let ctx = SuffixCtx {
-            policy: &policy,
-            diagnostics: None,
-            ring_challenge_config: &challenge_config,
-            key: key.final_group,
-            setup_field_budget: None,
-            root_lookup_key: Some(&key),
-            root_main_constraint: None,
-            adaptation_guide: None,
-            root_source_contract: Some(
-                Dense::committed_source_contract().expect("dense source contract"),
-            ),
-            precommitted_source_contracts: &contracts,
-            level_zero_is_root: true,
-            relation_traversal_order: RelationTraversalOrder::Canonical,
-            relation_mode_filter: RelationModeFilter::All,
-            reuse_root_preparation: true,
-        };
-        let dimensions = CommitmentRingDims::uniform(64);
-        let opening = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
-            0,
-            policy.claim_ext_degree,
-            dimensions,
-            64,
-        )
-        .expect("opening domain")
-        .expect("packing opening");
-        let incompatible = crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
-                .expect("trace challenge"),
-        );
-        let work = OpeningWork {
-            dimensions,
-            opening,
-            precommitted_openings: vec![incompatible; key.precommitteds.len()],
-            opening_reduction_bytes: 0,
-            purpose: OpeningPurpose::FoldOnly,
-        };
-        let mut preparation = RootWorkPreparation::pending();
-        for inner_lb in 3..=4 {
-            assert!(preparation
-                .candidates_for_inner_basis(
-                    &ctx,
-                    &work,
-                    RootCandidateBasisRequest {
-                        root_key: &key,
-                        final_source_contract: Dense::committed_source_contract()
-                            .expect("dense source contract"),
-                        inner_lb,
-                        open_lb: 6,
-                        guide: None,
-                    },
-                )
-                .expect("unsupported work")
-                .is_empty());
-        }
-        assert_eq!(preparation.preparation_attempts, 1);
-        assert!(preparation.unsupported);
-        assert!(preparation.prepared.is_none());
-    }
 
     #[test]
     fn trace_purpose_separates_early_packing_and_terminal_admission() {
