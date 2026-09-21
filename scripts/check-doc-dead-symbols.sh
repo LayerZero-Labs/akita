@@ -15,6 +15,9 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 dead_patterns=(
+  'CpuBackend::with_resource_limits'
+  'commit_scratch_bytes_per_worker'
+  'DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER'
   'akita-scheme'
   'akita-cfg'
   'akita-derive'
@@ -30,6 +33,9 @@ dead_patterns=(
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 removed_api_patterns=(
+  'CpuBackend::with_resource_limits'
+  'commit_scratch_bytes_per_worker'
+  'DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER'
   'effective_batched_schedule'
   'trusted_setup_matrix_capacity'
   'setup_prefix_slot_ids_from_catalog'
