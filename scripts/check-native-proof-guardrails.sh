@@ -84,7 +84,8 @@ fail_if_match 'ProverState::default|VerifierState::default' "${proof_input_roots
 
 raw_state_files="$(search_files 'duplex_sponge_state' "${proof_input_roots[@]}" | sort)"
 expected_raw_state_files='crates/akita-transcript/src/native.rs
-crates/akita-transcript/src/native/sampling.rs'
+crates/akita-transcript/src/native/sampling.rs
+crates/akita-transcript/src/native/verifier.rs'
 if [ "$raw_state_files" != "$expected_raw_state_files" ]; then
     echo "error: native raw-state access escaped its reviewed allowlist" >&2
     printf '%s\n' "$raw_state_files" >&2

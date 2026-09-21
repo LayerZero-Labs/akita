@@ -387,6 +387,14 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+def parse_packed_nonce_estimate_bytes(kvs: dict[str, str]) -> int:
+    """Read the canonical planner metric from current or merge-base logs."""
+    value = kvs.get("packed_nonce_estimate_bytes", kvs.get("nonce_stream_bytes"))
+    if value is None:
+        raise ValueError("grinding summary is missing its packed nonce byte estimate")
+    return int(value)
+
+
 def parse_tracing_optional_int(value: str | None) -> int | None:
     if value is None or value == "None":
         return None
@@ -987,7 +995,7 @@ def extract_summary(
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])
             summary["akita_fold_bytes"] = int(kvs["akita_fold_bytes"])
-            summary["packed_nonce_estimate_bytes"] = int(kvs.get("packed_nonce_estimate_bytes", 0))
+            summary["packed_nonce_estimate_bytes"] = parse_packed_nonce_estimate_bytes(kvs)
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
@@ -995,7 +1003,7 @@ def extract_summary(
             grinding_plan_summary = {
                 "nominal_capacity_bits": int(kvs["nominal_capacity_bits"]),
                 "total_nonce_bits": int(kvs["total_nonce_bits"]),
-                "packed_nonce_estimate_bytes": int(kvs["packed_nonce_estimate_bytes"]),
+                "packed_nonce_estimate_bytes": parse_packed_nonce_estimate_bytes(kvs),
                 "padding_bits": int(kvs["padding_bits"]),
                 "run_count": int(kvs["run_count"]),
                 "expanded_query_count": int(kvs["expanded_query_count"]),

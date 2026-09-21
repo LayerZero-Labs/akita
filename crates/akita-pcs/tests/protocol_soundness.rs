@@ -226,8 +226,7 @@ where
     .expect("native proof bound");
     assert!(
         proof.len() <= native_bound,
-        "valid native proof ({} bytes) exceeds its schedule-derived parser bound ({native_bound} bytes)",
-        proof.len()
+        "valid native proof exceeds its schedule-derived parser bound"
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
         scheme.batched_verify(

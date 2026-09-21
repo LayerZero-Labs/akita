@@ -1306,6 +1306,27 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("stored in a 32 bit field", report)
         self.assertIn("12 bit fold response", report)
 
+    def test_merge_base_nonce_stream_name_maps_to_packed_estimate(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = "\n".join(
+            [
+                "INFO proof summary label=onehot_fp128 levels=0 proof_size_bytes=7 "
+                "accounted_bytes=7 akita_fold_bytes=0 nonce_stream_bytes=7 tail_bytes=0",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=1 "
+                "expanded_query_count=1",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=stage2 query=claim_batch protocol=none stage=None round=None "
+                "group=None kind=proof_of_work loss_factor=1 grind_bits=47 nonce_bits=54 "
+                "multiplicity=1 run_nonce_bits=54",
+            ]
+        )
+
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        self.assertEqual(summary["packed_nonce_estimate_bytes"], 7)
+        self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
+
     def test_native_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
         from scripts.profile_bench_report import (
             extract_summary,
