@@ -97,6 +97,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             root_main_constraint: None,
             adaptation_guide: None,
             query_prefix_count: 0,
+            reuse_root_preparation: true,
         },
     )
     .unwrap();
@@ -112,6 +113,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
             root_main_constraint: None,
             adaptation_guide: None,
             query_prefix_count: 0,
+            reuse_root_preparation: true,
         },
     )
     .unwrap();

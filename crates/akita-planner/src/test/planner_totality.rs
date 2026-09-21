@@ -6,6 +6,35 @@ use akita_config::{
     CommitmentConfig,
 };
 
+#[allow(clippy::too_many_arguments)]
+fn prepared_root_candidates(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    dimensions: CommitmentRingDims,
+    opening: PlannerOpeningCandidate,
+    precommitted_openings: &[PlannerOpeningCandidate],
+    inner_lb: u32,
+    open_lb: u32,
+    guide: Option<crate::schedule_params::CandidateLayoutGuide>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let Some(mut prepared) = PreparedRootLevelCandidates::prepare(RootLevelPreparationRequest {
+        key,
+        final_honest_fold_policy,
+        precommitted_source_contracts,
+        policy,
+        dimensions,
+        opening,
+        precommitted_openings,
+        candidate_log_basis_open: open_lb,
+    })?
+    else {
+        return Ok(Vec::new());
+    };
+    prepared.candidates_for_inner_basis(inner_lb, guide)
+}
+
 fn root_contracts(schedule: &PlannedFoldSchedule, field_bits: u32) -> bool {
     let root = &schedule.schedule.root;
     root.output_witness_len * (root.params.open().digits.log_basis as usize)
@@ -32,7 +61,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
         )? {
             for inner_basis in Cfg::inner_basis_range().0..=Cfg::inner_basis_range().1 {
                 for opening_basis in Cfg::opening_basis_range().0..=Cfg::opening_basis_range().1 {
-                    for (params, output_witness_len) in root_level_candidates_for_basis(
+                    for (params, output_witness_len) in prepared_root_candidates(
                         &key,
                         Cfg::committed_source_contract().unwrap(),
                         &[],
@@ -181,7 +210,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     )
     .expect("valid D64 producer opening request")
     .expect("D64 producer opening");
-    let producer = root_level_candidates_for_basis(
+    let producer = prepared_root_candidates(
         &producer_key,
         Dense::committed_source_contract().unwrap(),
         &[],
