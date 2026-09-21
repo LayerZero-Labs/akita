@@ -10,7 +10,7 @@ use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 #[allow(clippy::too_many_arguments)]
 fn prepared_root_candidates(
     key: &akita_types::AkitaScheduleLookupKey,
-    final_honest_fold_policy: akita_types::sis::HonestFoldPolicySpec,
+    final_source_contract: akita_types::sis::CommittedSourceContract,
     precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
     policy: &crate::PlannerPolicy,
     dimensions: CommitmentRingDims,
@@ -23,7 +23,7 @@ fn prepared_root_candidates(
     let Some(mut prepared) = crate::planner::PreparedRootLevelCandidates::prepare(
         crate::planner::RootLevelPreparationRequest {
             key,
-            final_honest_fold_policy,
+            final_source_contract,
             precommitted_source_contracts,
             policy,
             dimensions,
@@ -542,9 +542,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::{AkitaScheduleLookupKey, InnerCommitSecurityRoute, OpeningMethod};
 
     let policy = policy_of::<Dense>();
@@ -560,7 +558,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
     let candidates = prepared_root_candidates(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,
@@ -659,7 +657,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap();
     let grouped = prepared_root_candidates(
         &grouped_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
@@ -703,7 +701,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
     assert!(prepared_root_candidates(
         &grouped_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
@@ -757,7 +755,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .flat_map(|product| {
                 prepared_root_candidates(
                     &product_key,
-                    honest_fold_policy_of::<Dense>(),
+                    Dense::committed_source_contract().unwrap(),
                     &[Dense::committed_source_contract().unwrap(); 2],
                     &policy,
                     dimensions,
@@ -825,9 +823,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn guided_root_slice_survives_grouped_local_pruning() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
@@ -845,7 +841,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
     let scalar = prepared_root_candidates(
         &scalar_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,
@@ -871,7 +867,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     let derive = |guide| {
         prepared_root_candidates(
             &grouped_key,
-            honest_fold_policy_of::<Dense>(),
+            Dense::committed_source_contract().unwrap(),
             &[Dense::committed_source_contract().unwrap()],
             &policy,
             dimensions,
@@ -924,9 +920,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
@@ -942,7 +936,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     let pre_key = AkitaScheduleLookupKey::single(pre_group);
     let pre_candidates = prepared_root_candidates(
         &pre_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,

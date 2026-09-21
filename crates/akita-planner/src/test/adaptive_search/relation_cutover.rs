@@ -16,7 +16,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -28,7 +28,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .unwrap();
@@ -87,7 +87,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
     let lookup_key = akita_types::AkitaScheduleLookupKey::single(key);
     let canonical = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -103,7 +103,7 @@ fn selected_cutover_is_invariant_under_relation_traversal_order() {
     .unwrap();
     let reversed = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,

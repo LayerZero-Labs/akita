@@ -5,8 +5,8 @@ use std::time::Instant;
 use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, OpenCommitMatrixParams, SisMatrixRole,
+    rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
+    OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
@@ -173,8 +173,16 @@ fn materialize_precommitted_group_for_open_basis(
 
         num_chunks,
         num_fold_coeffs,
-        witness_norms: honest_fold_policy
-            .witness_norms_for_inner_basis(layout.inner.digits.log_basis, ring_dimension)?,
+        witness_norms: source_contract
+            .source_norms(
+                layout.inner.digits.log_basis,
+                layout.inner.digits.num_digits,
+                ring_dimension,
+                akita_error::checked::pow2(layout.group.num_vars())
+                    .and_then(|len| len.checked_mul(group_claims))
+                    .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
+            )?
+            .fold_witness,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
     })?;
@@ -229,7 +237,7 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     final_num_vars: usize,
     main_num_polys: usize,
     source: crate::InnerBasisSource,
@@ -295,7 +303,7 @@ pub(crate) fn root_batch_next_w_len(
 
 pub(crate) struct RootLevelPreparationRequest<'input, 'policy> {
     pub(crate) key: &'input AkitaScheduleLookupKey,
-    pub(crate) final_honest_fold_policy: HonestFoldPolicySpec,
+    pub(crate) final_source_contract: CommittedSourceContract,
     pub(crate) precommitted_source_contracts: &'input [CommittedSourceContract],
     pub(crate) policy: &'policy PlannerPolicy,
     pub(crate) dimensions: CommitmentRingDims,
@@ -333,7 +341,7 @@ impl<'a> PreparedRootLevelCandidates<'a> {
     ) -> Result<Option<Self>, AkitaError> {
         let RootLevelPreparationRequest {
             key,
-            final_honest_fold_policy,
+            final_source_contract,
             precommitted_source_contracts,
             policy,
             dimensions,
@@ -377,13 +385,10 @@ impl<'a> PreparedRootLevelCandidates<'a> {
                 policy,
                 dimensions,
                 opening,
-                final_honest_fold_policy,
+                final_source_contract,
                 final_num_vars: key.final_group.num_vars(),
                 main_num_polys: key.final_group.num_polynomials(),
-                source: crate::schedule_params::root_inner_basis_source(
-                    final_honest_fold_policy,
-                    policy.decomposition.log_commit_bound,
-                ),
+                source: crate::schedule_params::root_inner_basis_source(final_source_contract),
             },
             opening_batch: key.opening_layout()?,
             reduced_vars,
@@ -577,11 +582,22 @@ fn root_final_group_level_params_candidate(
     };
     let num_chunks = policy.chunks_at_level(0);
     let witness_norms = ctx
-        .final_honest_fold_policy
-        .witness_norms_for_inner_basis(log_basis_inner, d_a)?;
+        .final_source_contract
+        .source_norms(
+            log_basis_inner,
+            num_digits_inner,
+            d_a,
+            akita_error::checked::pow2(ctx.final_num_vars)
+                .and_then(|len| len.checked_mul(ctx.main_num_polys))
+                .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
+        )?
+        .fold_witness;
     let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
         policy,
-        fold_policy: &ctx.final_honest_fold_policy,
+        fold_policy: &ctx
+            .final_source_contract
+            .class()
+            .honest_fold_policy(decomp.field_bits()),
         ring_challenge_cfg: &ctx.opening.challenge_config(),
         challenge_dimension: ctx.opening.challenge_dimension(d_a),
         dimensions,
@@ -701,14 +717,14 @@ fn root_final_group_level_params_candidate(
 /// verifier continues to enforce the response caps frozen into the schedule.
 pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_in_relation_order(
         key,
-        final_honest_fold_policy,
+        final_source_contract,
         precommitted_source_contracts,
         policy,
         ring_challenge_config,
@@ -738,7 +754,7 @@ pub fn find_schedule(
 pub fn find_adapted_schedule(
     main_row: &ResolvedScheduleRow,
     request: &crate::emit::GroupedGenerationRequest,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -753,7 +769,7 @@ pub fn find_adapted_schedule(
     find_adapted_schedule_for_key(
         main_row,
         &key,
-        final_honest_fold_policy,
+        final_source_contract,
         &precommitted_source_contracts,
         policy,
         ring_challenge_config,
@@ -763,7 +779,7 @@ pub fn find_adapted_schedule(
 fn find_adapted_schedule_for_key(
     main_row: &ResolvedScheduleRow,
     key: &AkitaScheduleLookupKey,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -807,7 +823,7 @@ fn find_adapted_schedule_for_key(
 
     find_schedule_in_relation_order(
         key,
-        final_honest_fold_policy,
+        final_source_contract,
         precommitted_source_contracts,
         policy,
         ring_challenge_config,
@@ -823,7 +839,7 @@ fn find_adapted_schedule_for_key(
 #[cfg(feature = "test-support")]
 pub fn find_schedule_for_test_relation_mode(
     key: &AkitaScheduleLookupKey,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -831,7 +847,7 @@ pub fn find_schedule_for_test_relation_mode(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_in_relation_order(
         key,
-        final_honest_fold_policy,
+        final_source_contract,
         precommitted_source_contracts,
         policy,
         ring_challenge_config,
@@ -846,7 +862,7 @@ pub fn find_schedule_for_test_relation_mode(
 /// prove that candidate enumeration does not affect selection.
 pub(crate) fn find_schedule_in_relation_order(
     key: &AkitaScheduleLookupKey,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -856,6 +872,14 @@ pub(crate) fn find_schedule_in_relation_order(
     let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
+    if final_source_contract.decomposition().field_bits() != policy.decomposition.field_bits()
+        || final_source_contract.decomposition().log_commit_bound
+            != policy.decomposition.log_commit_bound
+    {
+        return Err(AkitaError::InvalidInput(
+            "final source contract field and bound must match the planner policy".into(),
+        ));
+    }
     if key.precommitteds.len() != precommitted_source_contracts.len() {
         return Err(AkitaError::InvalidInput(
             "schedule planning requires one source contract per precommitted group".into(),
@@ -903,7 +927,7 @@ pub(crate) fn find_schedule_in_relation_order(
         root_lookup_key: Some(key),
         root_main_constraint: options.root_main_constraint,
         adaptation_guide: options.adaptation_guide,
-        root_honest_fold_policy: Some(final_honest_fold_policy),
+        root_source_contract: Some(final_source_contract),
         precommitted_source_contracts,
         level_zero_is_root: true,
         relation_traversal_order: options.relation_traversal_order,

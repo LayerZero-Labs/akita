@@ -66,7 +66,7 @@ struct RootWorkPreparation<'a> {
 
 struct RootCandidateBasisRequest<'a> {
     root_key: &'a AkitaScheduleLookupKey,
-    final_policy: akita_types::sis::HonestFoldPolicySpec,
+    final_source_contract: akita_types::sis::CommittedSourceContract,
     inner_lb: u32,
     open_lb: u32,
     guide: Option<CandidateLayoutGuide>,
@@ -90,7 +90,7 @@ impl<'a> RootWorkPreparation<'a> {
     ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
         let RootCandidateBasisRequest {
             root_key,
-            final_policy,
+            final_source_contract,
             inner_lb,
             open_lb,
             guide,
@@ -107,7 +107,7 @@ impl<'a> RootWorkPreparation<'a> {
             }
             match PreparedRootLevelCandidates::prepare(RootLevelPreparationRequest {
                 key: root_key,
-                final_honest_fold_policy: final_policy,
+                final_source_contract,
                 precommitted_source_contracts: ctx.precommitted_source_contracts,
                 policy: ctx.policy,
                 dimensions: work.dimensions,
@@ -661,12 +661,9 @@ impl<'a> CandidateDomain<'a> {
         };
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         let inner_source = if ctx.level_zero_is_root && state.level == 0 {
-            crate::schedule_params::root_inner_basis_source(
-                ctx.root_honest_fold_policy.ok_or_else(|| {
-                    AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
-                })?,
-                policy.decomposition.log_commit_bound,
-            )
+            crate::schedule_params::root_inner_basis_source(ctx.root_source_contract.ok_or_else(
+                || AkitaError::InvalidSetup("root batch is missing its source contract".into()),
+            )?)
         } else {
             crate::InnerBasisSource::BalancedDigits {
                 log_basis: state.current_lb,
@@ -769,8 +766,8 @@ impl<'a> CandidateDomain<'a> {
 
         for inner_lb in self.inner_basis_range.clone() {
             if let Some(root_key) = self.root_level_key {
-                let final_policy = ctx.root_honest_fold_policy.ok_or_else(|| {
-                    AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
+                let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
+                    AkitaError::InvalidSetup("root batch is missing its source contract".into())
                 })?;
                 for (work, preparation) in self.opening_work.iter().zip(
                     root_preparations
@@ -785,7 +782,7 @@ impl<'a> CandidateDomain<'a> {
                         work,
                         RootCandidateBasisRequest {
                             root_key,
-                            final_policy,
+                            final_source_contract,
                             inner_lb,
                             open_lb,
                             guide: self.root_main_constraint.map(candidate_layout_guide),
@@ -971,8 +968,8 @@ impl<'a> CandidateDomain<'a> {
         let root_key = self.root_level_key.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
         })?;
-        let final_policy = ctx.root_honest_fold_policy.ok_or_else(|| {
-            AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
+        let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
+            AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
         let mut root_preparations = self
             .opening_work
@@ -986,7 +983,7 @@ impl<'a> CandidateDomain<'a> {
                     work,
                     RootCandidateBasisRequest {
                         root_key,
-                        final_policy,
+                        final_source_contract,
                         inner_lb,
                         open_lb,
                         guide: self.root_main_constraint.map(candidate_layout_guide),
@@ -1045,9 +1042,7 @@ mod tests {
         initial_dimension_ceiling, RelationModeFilter, RelationTraversalOrder, RingRelationPhase,
         SuffixTopology,
     };
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp128::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp128::Dense, CommitmentConfig};
 
     fn grouped_fixture() -> (
         PlannerPolicy,
@@ -1126,7 +1121,9 @@ mod tests {
             root_lookup_key: Some(&key),
             root_main_constraint: None,
             adaptation_guide: None,
-            root_honest_fold_policy: Some(honest_fold_policy_of::<Dense>()),
+            root_source_contract: Some(
+                Dense::committed_source_contract().expect("dense source contract"),
+            ),
             precommitted_source_contracts: &contracts,
             level_zero_is_root: true,
             relation_traversal_order: RelationTraversalOrder::Canonical,
@@ -1194,7 +1191,9 @@ mod tests {
             root_lookup_key: Some(&key),
             root_main_constraint: None,
             adaptation_guide: None,
-            root_honest_fold_policy: Some(honest_fold_policy_of::<Dense>()),
+            root_source_contract: Some(
+                Dense::committed_source_contract().expect("dense source contract"),
+            ),
             precommitted_source_contracts: &contracts,
             level_zero_is_root: true,
             relation_traversal_order: RelationTraversalOrder::Canonical,
@@ -1229,7 +1228,8 @@ mod tests {
                     &work,
                     RootCandidateBasisRequest {
                         root_key: &key,
-                        final_policy: honest_fold_policy_of::<Dense>(),
+                        final_source_contract: Dense::committed_source_contract()
+                            .expect("dense source contract"),
                         inner_lb,
                         open_lb: 6,
                         guide: None,

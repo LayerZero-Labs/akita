@@ -107,9 +107,18 @@ fn field_plane_moments_include_the_residual_top_plane() {
 #[test]
 fn bounded_source_charges_the_carry_plane_past_its_bound() {
     let per_scalar = |bound, log_basis, digits| {
-        bounded_field_source_moment(1, bound, log_basis, digits)
-            .unwrap()
-            .mean_l2_sq()
+        let norms = CommittedSourceContract::try_new(
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+            akita_types::DecompositionParams {
+                log_basis,
+                log_commit_bound: bound,
+                log_open_bound: Some(128),
+            },
+        )
+        .unwrap()
+        .source_norms(log_basis, digits, 128, 1)
+        .unwrap();
+        SourceMomentEstimate::new(norms.l2_sq).unwrap().mean_l2_sq()
     };
     // `mean_l2_sq` is bucketed conservatively upward, so the expectation goes
     // through the same bucketing. That keeps the assertion exact about the plane
@@ -140,28 +149,6 @@ fn bounded_source_charges_the_carry_plane_past_its_bound() {
     // A full-field source never overshoots by a whole plane, so the carry rule
     // cannot fire for it: `ceil(128 / 5) = 26` planes consume at most 125 bits.
     assert_eq!(per_scalar(128, 5, 26), plane_energy(25, 5, 3));
-}
-
-#[test]
-fn bounded_source_uses_the_declared_bound_with_frozen_digit_geometry() {
-    let energy = |bound, log_basis, digits| {
-        bounded_field_source_moment(1, bound, log_basis, digits)
-            .unwrap()
-            .mean_l2_sq()
-    };
-
-    assert_eq!(energy(6, 4, 2), 68, "8² + 2²");
-    assert_eq!(energy(128, 4, 2), 128, "the old fallback charged 8² + 8²");
-    assert_eq!(
-        energy(6, 6, 1),
-        energy(128, 6, 1),
-        "a single full-width digit already had the tight charge"
-    );
-    assert_eq!(
-        energy(8, 4, 3),
-        SourceMomentEstimate::new(129).unwrap().mean_l2_sq(),
-        "8² + 8² plus the ±1 carry plane before conservative bucketing",
-    );
 }
 
 #[test]

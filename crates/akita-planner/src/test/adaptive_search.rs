@@ -36,14 +36,14 @@ fn materialized_first_direct_setup_capacity(
 fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
+    source_contract: akita_types::sis::CommittedSourceContract,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     dimensions.validate_for_policy(policy)?;
     crate::planner::find_schedule(
         &akita_types::AkitaScheduleLookupKey::single(key),
-        honest_fold_policy,
+        source_contract,
         &[],
         policy,
         ring_challenge_config,
@@ -121,7 +121,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -149,7 +149,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let candidate = find_schedule(
         key,
         &uniform_policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &uniform,
         OneHot::ring_challenge_config,
     )
@@ -204,7 +204,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     let selected = find_schedule(
         onehot_group(14, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &dimensions,
         OneHot::ring_challenge_config,
     )
@@ -216,7 +216,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     let unpruned = unpruned_search::find_schedule(
         onehot_group(14, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .unwrap();
@@ -274,7 +274,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     .expanded_query_count();
     let constrained = crate::planner::find_schedule_in_relation_order(
         &lookup_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -314,7 +314,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     let error = find_schedule(
         onehot_group(14, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &dimensions,
         OneHot::ring_challenge_config,
     )
@@ -323,7 +323,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     let error = unpruned_search::find_schedule(
         onehot_group(14, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .expect_err("the bounds-disabled oracle must use the same hard packing policy");
@@ -356,7 +356,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &dimensions,
         OneHot::ring_challenge_config,
     )
@@ -368,7 +368,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .expect("unpruned packing schedule from mixed domain");
@@ -453,7 +453,7 @@ fn adaptive_dimension_search_is_canonical() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &reversed_with_duplicate,
         OneHot::ring_challenge_config,
     )
@@ -461,7 +461,7 @@ fn adaptive_dimension_search_is_canonical() {
     let repeated = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &canonical,
         OneHot::ring_challenge_config,
     )
@@ -485,7 +485,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     let selected = find_schedule(
         onehot_group(40, 1),
         &fp128_policy,
-        akita_config::honest_fold_policy_of::<fp128::OneHot>(),
+        fp128::OneHot::committed_source_contract().unwrap(),
         &domain,
         fp128::OneHot::ring_challenge_config,
     )
@@ -506,8 +506,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
 #[test]
 fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp128::OneHot, CommitmentConfig,
-        RecursiveCommitmentConfig,
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
@@ -524,7 +523,7 @@ fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     let bounded_schedule = find_schedule(
         key,
         &bounded,
-        honest_fold_policy_of::<Recursive>(),
+        Recursive::committed_source_contract().unwrap(),
         &domain,
         Recursive::ring_challenge_config,
     )
@@ -532,7 +531,7 @@ fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     let exhaustive_schedule = find_schedule(
         key,
         &exhaustive,
-        honest_fold_policy_of::<Recursive>(),
+        Recursive::committed_source_contract().unwrap(),
         &domain,
         Recursive::ring_challenge_config,
     )
@@ -608,7 +607,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         let selected = find_schedule(
             key,
             &policy,
-            akita_config::honest_fold_policy_of::<OneHot>(),
+            OneHot::committed_source_contract().unwrap(),
             &domain,
             OneHot::ring_challenge_config,
         )
@@ -616,7 +615,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         let unpruned = unpruned_search::find_schedule(
             key,
             &policy,
-            akita_config::honest_fold_policy_of::<OneHot>(),
+            OneHot::committed_source_contract().unwrap(),
             OneHot::ring_challenge_config,
         )
         .expect("unpruned adaptive search");
@@ -677,7 +676,7 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
                 find_schedule(
                     onehot_group(16, 1),
                     &policy,
-                    akita_config::honest_fold_policy_of::<OneHot>(),
+                    OneHot::committed_source_contract().unwrap(),
                     &domain,
                     OneHot::ring_challenge_config,
                 )
@@ -708,7 +707,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
     let error = find_schedule(
         onehot_group(16, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -740,7 +739,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     let selected = find_schedule(
         onehot_group(36, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -752,7 +751,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     let rank_one_capped = find_schedule(
         onehot_group(36, 1),
         &comparison_policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &rank_one_capped_domain,
         OneHot::ring_challenge_config,
     )
@@ -826,7 +825,7 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     let error = find_schedule(
         onehot_group(16, 1),
         &missing_policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &missing_d64,
         OneHot::ring_challenge_config,
     )
@@ -846,7 +845,7 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     let error = find_schedule(
         onehot_group(16, 1),
         &below_policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &below_d64,
         OneHot::ring_challenge_config,
     )
@@ -871,7 +870,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
     let schedule = find_schedule(
         onehot_group(16, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -909,7 +908,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
     let error = find_schedule(
         onehot_group(16, 0),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -923,7 +922,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
     let error = find_schedule(
         onehot_group(16, 1),
         &invalid_policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -968,7 +967,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     let selected = find_schedule(
         onehot_group(16, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -980,7 +979,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     let budgeted = find_schedule(
         onehot_group(16, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -994,7 +993,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     let tighter = find_schedule(
         onehot_group(16, 1),
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )

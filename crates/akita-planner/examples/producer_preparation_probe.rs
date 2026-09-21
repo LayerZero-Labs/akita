@@ -9,7 +9,7 @@
 //! from the printed elapsed time. Compare descriptors as well as timings.
 
 use akita_config::proof_optimized::fp64::{Dense, ExtensionField, Field};
-use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, RingDimensionScheduleMode};
+use akita_config::{policy_of, CommitmentConfig, RingDimensionScheduleMode};
 use akita_types::{
     AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout, SisModulusProfileId,
 };
@@ -84,7 +84,6 @@ fn main() {
         ))
     };
     let policy = policy_of::<Probe<6>>();
-    let honest = honest_fold_policy_of::<Probe<6>>();
     let policies = (0..key.precommitteds.len())
         .map(|i| {
             if (1..=2).contains(&i) {
@@ -97,7 +96,7 @@ fn main() {
     let start = std::time::Instant::now();
     let result = akita_planner::find_schedule(
         &key,
-        honest,
+        Probe::<6>::committed_source_contract().unwrap(),
         &policies,
         &policy,
         Probe::<6>::ring_challenge_config,
@@ -107,9 +106,8 @@ fn main() {
     result.schedule.validate_structure().unwrap();
     std::fs::write(&args[2], result.schedule.canonical_descriptor_bytes()).unwrap();
     println!(
-        "{mode}: elapsed={elapsed:?} groups={} polys={} estimate={:?}",
+        "{mode}: elapsed={elapsed:?} groups={} polys={}",
         key.precommitteds.len() + 1,
         key.final_group.num_polynomials(),
-        result.estimate
     );
 }

@@ -21,13 +21,10 @@ pub(super) fn attach_source_moments(
                 crate::response_model::root_group_source_moments(
                     &params,
                     current_opening_layout,
-                    ctx.root_honest_fold_policy.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "root batch is missing its response source policy".into(),
-                        )
+                    ctx.root_source_contract.ok_or_else(|| {
+                        AkitaError::InvalidSetup("root batch is missing its source contract".into())
                     })?,
                     ctx.precommitted_source_contracts,
-                    policy.decomposition,
                 )?
             } else if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let prefix_params = params.group_params(current_opening_layout, 0)?;
