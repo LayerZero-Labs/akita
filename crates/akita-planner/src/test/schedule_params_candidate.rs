@@ -628,7 +628,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let grouped = crate::planner::root_level_candidates_for_basis(
         &grouped_key,
         honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
+        &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
         opening,
@@ -672,7 +672,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     assert!(crate::planner::root_level_candidates_for_basis(
         &grouped_key,
         honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
+        &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
         opening,
@@ -692,10 +692,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &product_key,
-        &[
-            honest_fold_policy_of::<Dense>(),
-            honest_fold_policy_of::<Dense>(),
-        ],
+        &[Dense::committed_source_contract().unwrap(); 2],
         None,
     )
     .expect("root precommit opening products");
@@ -729,10 +726,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 crate::planner::root_level_candidates_for_basis(
                     &product_key,
                     honest_fold_policy_of::<Dense>(),
-                    &[
-                        honest_fold_policy_of::<Dense>(),
-                        honest_fold_policy_of::<Dense>(),
-                    ],
+                    &[Dense::committed_source_contract().unwrap(); 2],
                     &policy,
                     dimensions,
                     opening,
@@ -762,7 +756,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &repeated_key,
-        &vec![honest_fold_policy_of::<Dense>(); 16],
+        &vec![Dense::committed_source_contract().unwrap(); 16],
         None,
     )
     .expect("symmetric root precommit opening products");
@@ -774,7 +768,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &repeated_key,
-        &vec![honest_fold_policy_of::<Dense>(); 16],
+        &vec![Dense::committed_source_contract().unwrap(); 16],
         Some(16),
     )
     .expect_err("the cap must reject before materializing 17 assignments");
@@ -789,10 +783,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 opening: 512,
             },
             &product_key,
-            &[
-                honest_fold_policy_of::<Dense>(),
-                honest_fold_policy_of::<Dense>(),
-            ],
+            &[Dense::committed_source_contract().unwrap(); 2],
             None,
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
@@ -849,7 +840,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         crate::planner::root_level_candidates_for_basis(
             &grouped_key,
             honest_fold_policy_of::<Dense>(),
-            &[honest_fold_policy_of::<Dense>()],
+            &[Dense::committed_source_contract().unwrap()],
             &policy,
             dimensions,
             opening,

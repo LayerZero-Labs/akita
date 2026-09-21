@@ -281,7 +281,7 @@ pub(crate) struct SuffixCtx<'a> {
     /// planning. All length-, rank-, and security-derived values are rebuilt.
     pub(crate) adaptation_guide: Option<&'a akita_types::FoldSchedule>,
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
-    pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
+    pub(crate) precommitted_source_contracts: &'a [akita_types::sis::CommittedSourceContract],
     pub(crate) level_zero_is_root: bool,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     pub(crate) relation_mode_filter: RelationModeFilter,

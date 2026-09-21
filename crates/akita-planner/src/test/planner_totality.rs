@@ -208,7 +208,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     let schedule = find_schedule(
         &key,
         honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
+        &[Dense::committed_source_contract().unwrap()],
         &policy,
         Dense::ring_challenge_config,
     )

@@ -143,6 +143,28 @@ fn bounded_source_charges_the_carry_plane_past_its_bound() {
 }
 
 #[test]
+fn bounded_source_uses_the_declared_bound_with_frozen_digit_geometry() {
+    let energy = |bound, log_basis, digits| {
+        bounded_field_source_moment(1, bound, log_basis, digits)
+            .unwrap()
+            .mean_l2_sq()
+    };
+
+    assert_eq!(energy(6, 4, 2), 68, "8² + 2²");
+    assert_eq!(energy(128, 4, 2), 128, "the old fallback charged 8² + 8²");
+    assert_eq!(
+        energy(6, 6, 1),
+        energy(128, 6, 1),
+        "a single full-width digit already had the tight charge"
+    );
+    assert_eq!(
+        energy(8, 4, 3),
+        SourceMomentEstimate::new(129).unwrap().mean_l2_sq(),
+        "8² + 8² plus the ±1 carry plane before conservative bucketing",
+    );
+}
+
+#[test]
 fn tensor_pack_moments_match_supported_extension_factors() {
     assert_eq!(tensor_packed_moments(400, 100, 1), Some((400, 100, 100)));
     assert_eq!(tensor_packed_moments(400, 100, 2), Some((600, 150, 200)));

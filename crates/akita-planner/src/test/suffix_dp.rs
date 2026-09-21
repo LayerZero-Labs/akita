@@ -398,7 +398,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         root_main_constraint: None,
         adaptation_guide: None,
         root_honest_fold_policy: Some(akita_config::honest_fold_policy_of::<OneHot>()),
-        precommitted_honest_fold_policies: &[],
+        precommitted_source_contracts: &[],
         level_zero_is_root: true,
         relation_traversal_order: super::RelationTraversalOrder::Canonical,
         relation_mode_filter: super::RelationModeFilter::All,

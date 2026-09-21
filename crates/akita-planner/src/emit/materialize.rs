@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -82,6 +83,20 @@ pub(crate) fn materialized_entries_for_specs(
     specs: &[EmitSpec],
     diagnostics: MaterializationDiagnostics,
 ) -> Result<Vec<Vec<MaterializedEntry>>, String> {
+    for spec in specs {
+        let mut requests_by_key = HashMap::with_capacity(spec.grouped_requests.len());
+        for request in &spec.grouped_requests {
+            if requests_by_key
+                .insert(request.key(), request)
+                .is_some_and(|prior| prior != request)
+            {
+                return Err(format!(
+                    "{}: duplicate grouped lookup geometry has conflicting producer contracts",
+                    spec.family_name,
+                ));
+            }
+        }
+    }
     let request_count = specs
         .iter()
         .map(|spec| spec.keys.len() + spec.grouped_requests.len())
@@ -252,5 +267,92 @@ fn materialized_entry(
             };
             Err(format!("{}: {kind} {key:?}: {error}", spec.family_name))
         }
+    }
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod tests {
+    use super::*;
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp128::Dense, CommitmentConfig,
+    };
+
+    fn unsupported_scalar(_: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+        Err(AkitaError::UnsupportedSchedule("test request".into()))
+    }
+
+    fn unsupported_group(_: GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError> {
+        Err(AkitaError::UnsupportedSchedule("test request".into()))
+    }
+
+    fn producer(
+        descriptor: GroupCommitPhaseParams,
+        contract: CommittedSourceContract,
+    ) -> PrecommittedProducer {
+        PrecommittedProducer::try_new(descriptor, contract, honest_fold_policy_of::<Dense>())
+            .expect("valid test producer")
+    }
+
+    fn spec(grouped_requests: Vec<GroupedGenerationRequest>) -> EmitSpec {
+        EmitSpec {
+            family_name: "materialize_identity_test",
+            policy: policy_of::<Dense>(),
+            source_contract: Dense::committed_source_contract().expect("dense contract"),
+            keys: Vec::new(),
+            grouped_requests,
+            preplanned_scalar: Vec::new(),
+            output_dir: PathBuf::new(),
+            regen: unsupported_scalar,
+            regen_group_batch: unsupported_group,
+            ring_challenge_config: Dense::ring_challenge_config,
+        }
+    }
+
+    #[test]
+    fn conflicting_contracts_for_one_lookup_geometry_reject_before_planning() {
+        let group = PolynomialGroupLayout::singleton(14);
+        let descriptor = akita_config::test_support::workspace_schedule_catalog::<Dense>()
+            .expect("dense catalog")
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .expect("dense scalar row")
+            .profiles()
+            .final_group;
+        let wide = Dense::committed_source_contract().expect("dense contract");
+        let tight = CommittedSourceContract::try_new(
+            wide.class(),
+            akita_types::DecompositionParams {
+                log_commit_bound: 6,
+                log_open_bound: Some(wide.decomposition().field_bits()),
+                ..wide.decomposition()
+            },
+        )
+        .expect("tight contract");
+        let final_group = PolynomialGroupLayout::singleton(16);
+        let conflicting = spec(vec![
+            GroupedGenerationRequest::new(final_group, vec![producer(descriptor, tight)]),
+            GroupedGenerationRequest::new(final_group, vec![producer(descriptor, wide)]),
+        ]);
+        let error = match materialized_entries_for_specs(
+            &[conflicting],
+            MaterializationDiagnostics::default(),
+        ) {
+            Ok(_) => panic!("one geometry cannot carry two producer declarations"),
+            Err(error) => error,
+        };
+        assert!(error.contains("conflicting producer contracts"));
+
+        let distinct = spec(vec![
+            GroupedGenerationRequest::new(final_group, vec![producer(descriptor, tight)]),
+            GroupedGenerationRequest::new(
+                PolynomialGroupLayout::singleton(17),
+                vec![producer(descriptor, wide)],
+            ),
+        ]);
+        assert!(
+            materialized_entries_for_specs(&[distinct], MaterializationDiagnostics::default())
+                .expect("distinct lookup keys remain independent")
+                .iter()
+                .all(Vec::is_empty)
+        );
     }
 }

@@ -60,7 +60,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 ## Inputs And Outputs
 
 The public search entry point is
-`find_schedule(&key, final_honest_fold_policy, &precommitted_honest_fold_policies, &policy, ring_challenge_config)`.
+`find_schedule(&key, final_honest_fold_policy, &precommitted_source_contracts, &policy, ring_challenge_config)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and

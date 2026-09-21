@@ -26,7 +26,7 @@ pub(super) fn attach_source_moments(
                             "root batch is missing its response source policy".into(),
                         )
                     })?,
-                    ctx.precommitted_honest_fold_policies,
+                    ctx.precommitted_source_contracts,
                     policy.decomposition,
                 )?
             } else if let Some(natural_prefix_len) = incoming_setup_prefix {

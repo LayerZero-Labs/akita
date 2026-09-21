@@ -14,7 +14,7 @@
 //! Markov interpretation once that envelope bounds the conditional mean.
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::HonestFoldPolicySpec;
+use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -662,23 +662,30 @@ fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<
 /// Source moments of each root opening group before its first fold.
 ///
 /// `decomposition` supplies both the field width and the final group's declared
-/// committed-source bound (`log_commit_bound`). Precommitted groups were frozen
-/// by a possibly different producer whose bound is not carried in their params,
-/// so they are priced at the shared field width — always a valid upper bound on
-/// their source energy, and exactly the previous behavior.
+/// committed-source bound (`log_commit_bound`). Each precommitted group's
+/// producer contract supplies its independent source class and bound while its
+/// frozen commit-phase params continue to supply its exact digit geometry.
 pub(crate) fn root_group_source_moments(
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
     final_policy: HonestFoldPolicySpec,
-    precommitted_policies: &[HonestFoldPolicySpec],
+    precommitted_source_contracts: &[CommittedSourceContract],
     decomposition: akita_types::DecompositionParams,
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
     let field_bits = decomposition.field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
     params.validate_opening_batch(opening_layout)?;
-    if precommitted_policies.len() != final_group_index {
+    if precommitted_source_contracts.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
-            "root response model requires one policy per precommitted group".into(),
+            "root response model requires one source contract per precommitted group".into(),
+        ));
+    }
+    if precommitted_source_contracts
+        .iter()
+        .any(|contract| contract.decomposition().field_bits() != field_bits)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "precommitted source contract field must match the root response field".into(),
         ));
     }
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
@@ -696,13 +703,20 @@ pub(crate) fn root_group_source_moments(
         };
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
-        let policy = if group_index == final_group_index {
-            final_policy
+        let source_contract = if group_index == final_group_index {
+            None
         } else {
-            *precommitted_policies.get(group_index).ok_or_else(|| {
-                AkitaError::InvalidSetup("precommitted response policy is missing".into())
-            })?
+            Some(
+                *precommitted_source_contracts
+                    .get(group_index)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("precommitted source contract is missing".into())
+                    })?,
+            )
         };
+        let policy = source_contract.map_or(final_policy, |contract| {
+            contract.class().honest_fold_policy(field_bits)
+        });
         let moment = match policy {
             HonestFoldPolicySpec::UnitOneHot(onehot) => {
                 let chunk = onehot.source_chunk_size();
@@ -740,11 +754,10 @@ pub(crate) fn root_group_source_moments(
                 })?
             }
             HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-                let source_log_bound = if group_index == final_group_index {
-                    decomposition.log_commit_bound
-                } else {
-                    field_bits
-                };
+                let source_log_bound = source_contract
+                    .map_or(decomposition.log_commit_bound, |contract| {
+                        contract.decomposition().log_commit_bound
+                    });
                 bounded_field_source_moment(
                     logical_len,
                     source_log_bound,

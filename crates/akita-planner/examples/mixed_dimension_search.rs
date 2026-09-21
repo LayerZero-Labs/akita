@@ -100,14 +100,11 @@ fn main() -> Result<(), akita_error::AkitaError> {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let precommitted_honest_fold_policies = vec![
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        akita_config::honest_fold_policy_of::<OneHot>(),
-    ];
+    let precommitted_source_contracts = vec![OneHot::committed_source_contract()?; 2];
     let adaptive_recursive = find_schedule(
         &recursive_key,
         akita_config::honest_fold_policy_of::<Recursive>(),
-        &precommitted_honest_fold_policies,
+        &precommitted_source_contracts,
         &recursive_policy,
         Recursive::ring_challenge_config,
     )?;
