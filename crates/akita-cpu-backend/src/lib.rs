@@ -18,11 +18,11 @@ use jolt_field::Field;
 
 pub(crate) use akita_prover::protocol;
 pub use commitment::{GroupContext, SetupPrefixProverRegistry, SetupPrefixSlot};
+pub use opaque::standalone;
 pub use opaque::{
     evaluate_root_polynomial, CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric,
     RootPolyMeta, RootPolyShape, RootPolynomialEvaluator,
 };
-pub use opaque::{prg, standalone};
 pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
 pub(crate) use setup::commit_setup_prefix;
 pub use setup::AkitaProverSetup;
@@ -64,16 +64,7 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
 }
 
 #[cfg(test)]
-mod commitment_contract_tests;
-
-#[cfg(test)]
-mod external_commitment_backend_tests;
-
-#[cfg(test)]
 mod stage1_roundtrip_tests;
 
 #[cfg(test)]
-mod distributed_setup_ntt_tests;
-
-#[cfg(test)]
-mod extension_opening_reduction_tests;
+mod tests;

@@ -18,7 +18,6 @@ mod owned_commit;
 mod owned_prefix;
 pub(crate) mod plans;
 mod prepared_opening;
-pub mod prg;
 pub(crate) mod recursive;
 pub(crate) mod relation_weights;
 mod source;

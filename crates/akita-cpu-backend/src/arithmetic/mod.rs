@@ -22,7 +22,6 @@ mod kernel_tests;
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
-pub(crate) mod recursive_primitives;
 pub(crate) mod requirements;
 pub(crate) mod ring_switch;
 pub(crate) mod ring_switch_relation;

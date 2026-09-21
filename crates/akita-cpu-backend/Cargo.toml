@@ -22,17 +22,14 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
-aes = "0.9.3"
-ctr = "0.10.1"
-rand_core = "0.6"
 rayon = { version = "1.10", optional = true }
-shake = "0.1.0"
 tracing = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 rand = "0.8"
+rand_core = "0.6"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
