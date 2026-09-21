@@ -19,7 +19,7 @@ pub(super) fn emit_grinding_plan_report(label: &str, plan: &GrindingPlan) {
         total_nonce_bits,
         nonce_stream_bytes,
         padding_bits,
-        native_nonce_bytes = plan.native_nonce_bytes(),
+        native_nonce_max_bytes = plan.native_nonce_max_bytes(),
         run_count = plan.runs().len(),
         expanded_query_count = plan.expanded_query_count(),
         "grinding plan summary"

@@ -322,6 +322,20 @@ fn native_proof_budget_is_derived_from_the_selected_schedule() {
     )
     .expect("native proof bound");
     assert!(bound > 0);
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group: row.profiles().final_group.group,
+        precommitteds: row.profiles().precommitteds.clone(),
+    };
+    let planner_estimate = akita_schedules::expanded_schedule_proof_payload_bytes(
+        &key,
+        row.schedule(),
+        &akita_config::policy_of::<TestCfg>(),
+    )
+    .expect("packed planner estimate");
+    assert!(
+        bound >= planner_estimate,
+        "native parser bound must cover the packed selection estimate"
+    );
 
     let mut encoded_oversize = Vec::new();
     ((bound as u64) + 1)

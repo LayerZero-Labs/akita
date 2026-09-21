@@ -205,8 +205,29 @@ where
     Cfg::ExtField: ExtField<F> + FpExtEncoding<F> + Unreduced + Fold + AkitaSerialize,
 {
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
+    #[cfg(feature = "logging-transcript")]
+    akita_transcript::clear_thread_events();
     let (setup, commitment, proof, point, opening, selection) =
         make_dense_fixture::<F, Cfg>(&scheme, num_vars, label);
+    #[cfg(feature = "logging-transcript")]
+    let proof_ranges = akita_transcript::thread_proof_ranges();
+    let resolved = scheme
+        .schedules()
+        .resolve_selection(selection)
+        .expect("selected schedule");
+    let native_bound = akita_schedules::expanded_schedule_native_proof_bound(
+        &AkitaScheduleLookupKey {
+            final_group: resolved.profiles().final_group.group,
+            precommitteds: resolved.profiles().precommitteds.clone(),
+        },
+        resolved.schedule(),
+        &akita_config::policy_of::<Cfg>(),
+    )
+    .expect("native proof bound");
+    assert!(
+        proof.len() <= native_bound,
+        "valid native proof exceeds its schedule-derived parser bound"
+    );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
         scheme.batched_verify(
             candidate,
@@ -227,13 +248,34 @@ where
     verify(&trailing, opening, label).expect_err("trailing bytes must reject");
     verify(&proof[..proof.len() - 1], opening, label).expect_err("truncation must reject");
 
-    for offset in [
+    #[cfg(feature = "logging-transcript")]
+    let mutation_offsets = {
+        let mut by_family = std::collections::BTreeMap::new();
+        for range in proof_ranges.into_iter().filter(|range| range.len != 0) {
+            let family = u32::from_le_bytes(range.context.site_id[..4].try_into().unwrap());
+            by_family.entry(family).or_insert(range.start);
+        }
+        assert!(
+            !by_family.is_empty(),
+            "native proof must expose fixed-shape family ranges"
+        );
+        if Cfg::ExtField::DEGREE > 1 {
+            assert!(
+                by_family.contains_key(&akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
+                "extension-field workload must exercise native EOR messages"
+            );
+        }
+        by_family.into_values().collect::<Vec<_>>()
+    };
+    #[cfg(not(feature = "logging-transcript"))]
+    let mutation_offsets = vec![
         0,
         proof.len() / 4,
         proof.len() / 2,
         proof.len() * 3 / 4,
         proof.len() - 1,
-    ] {
+    ];
+    for offset in mutation_offsets {
         let mut malformed = proof.clone();
         malformed[offset] ^= 1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

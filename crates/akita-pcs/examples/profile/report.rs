@@ -24,19 +24,18 @@ pub(crate) fn print_native_proof_summary(
 ) {
     grinding::emit_grinding_plan_report(label, grinding_plan);
     let levels = schedule.num_fold_levels();
-    let nonce_bytes = grinding_plan.native_nonce_bytes();
+    let nonce_max_bytes = grinding_plan.native_nonce_max_bytes();
     tracing::info!(
         label,
         levels,
         proof_size_bytes = proof.len(),
-        accounted_bytes = proof.len(),
-        native_nonce_bytes = nonce_bytes,
+        native_nonce_max_bytes = nonce_max_bytes,
         "native proof summary"
     );
     eprintln!(
         "[{label}] proof: native_total={} bytes, native_nonce_messages_max={} bytes, levels={levels}",
         proof.len(),
-        nonce_bytes,
+        nonce_max_bytes,
     );
     #[cfg(feature = "logging-transcript")]
     print_native_wire_contexts(label);

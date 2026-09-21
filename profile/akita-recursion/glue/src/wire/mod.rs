@@ -710,7 +710,7 @@ where
             final_group: resolved.profiles().final_group.group,
             precommitteds: resolved.profiles().precommitteds.clone(),
         };
-        akita_schedules::expanded_schedule_proof_payload_bytes(
+        akita_schedules::expanded_schedule_native_proof_bound(
             &key,
             resolved.schedule(),
             &akita_config::policy_of::<Cfg>(),

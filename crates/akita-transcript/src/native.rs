@@ -1085,6 +1085,22 @@ mod tests {
         Ring,
     };
 
+    #[cfg(feature = "transcript-blake2b")]
+    #[test]
+    fn blake2b_transcript_has_a_cross_width_known_answer() {
+        let mut prover =
+            new_native_prover(b"cross-width/session", b"cross-width/instance").unwrap();
+        prover.public_message(b"public-message");
+        let challenge = prover.verifier_message::<[u8; 32]>();
+        assert_eq!(
+            challenge,
+            [
+                201, 136, 33, 135, 212, 244, 192, 54, 83, 100, 55, 94, 134, 73, 251, 26, 106, 36,
+                194, 243, 193, 218, 24, 14, 176, 202, 86, 216, 95, 37, 125, 31,
+            ]
+        );
+    }
+
     #[test]
     fn exact_rejection_sampling_covers_every_production_field() {
         assert!(native_field_sampling_is_certified(

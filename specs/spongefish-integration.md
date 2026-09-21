@@ -10,7 +10,7 @@ relations, the complete grinding plan, and Spongefish `check_eof` succeed.
 
 There is no compatibility promise for earlier proof bytes. The active native
 protocol identifier is version 6 and is backend-specific. The pinned Spongefish
-revision is `d2d190b1329d35ac9577438d05aed4f17a57b9f9`.
+revision is `ef9741346a150039427d9e0c02d6b2d73e93ec81` (the v0.7.4 release).
 
 This design preserves proof-of-work grinding, fold-response search, all schedule
 modes, and Akita's verifier no-panic contract. Spongefish owns state evolution,
@@ -151,6 +151,30 @@ the migration. Parser bounds, nonce ranges, security accounting, and grinding
 plan validation continue to use the actual schedule-derived limits and must not
 reuse the approximate selection estimate as a safety bound.
 
+Three quantities are intentionally distinct:
+
+- the packed planner objective, `ceil(sum(nonce_bits) / 8)`;
+- the native wire maximum, `sum(ceil(nonce_bits / 7))` over messages that are
+  present; and
+- the actual sum of canonical LEB128 widths of the accepted nonces.
+
+The canonical grinding plan owns the native maximum. Replay reports the actual
+size. Planner candidate costs carry only semantic nonce bits and query counts,
+so a packed estimate cannot be mistaken for a native bound.
+
+LEB128 was selected because each nonce is emitted at its protocol position and
+honest upward search normally produces compact values. Fixed-width inline
+atoms would give simpler per-message sizes but round every nonce separately.
+Retaining the old aggregate bit stream would require a separate transport and
+absorption design across interleaved sites. Canonical LEB128 does not require
+the verifier to prove that a satisfying nonce was the first winner. A valid
+large nonce may therefore reach the native maximum.
+
+Recursive input decoding uses a separate schedule-derived native bound. It
+sums fixed proof atoms, the scheduled terminal response cap and framing, and
+the canonical plan's per-message nonce maxima with checked arithmetic. It does
+not use the packed selection estimate or a tighter planner-only terminal price.
+
 ## Performance and size contract
 
 The primary parity workload is fp128 one-hot, one polynomial, nv=36, Blake2b,
@@ -170,6 +194,18 @@ Schedules must remain byte-identical to main. Other fields, dense, grouped,
 recursive, Keccak, and malformed-proof paths remain regression coverage even
 when nv=36 is the headline comparison.
 
+The returned `Vec<u8>` is the external Spongefish argument string and the
+exact byte sequence absorbed during replay. A recursive implementation may use
+typed witnesses internally, but it must constrain their canonical encodings
+and reproduce these byte transitions. Changing nonce encoding, framing, or
+message order is a versioned protocol change rather than a storage-only change.
+
+When Akita is nested in an outer transcript, the caller must derive the Akita
+session from already-bound outer state. If later outer challenges must depend
+on the Akita proof, the outer protocol must also absorb an agreed binding of
+that proof or result before drawing them. The standalone Akita API cannot infer
+that composition policy.
+
 ## Verification and maintenance gates
 
 - Run the repository preflight and all three Clippy feature graphs from
@@ -187,6 +223,9 @@ when nv=36 is the headline comparison.
 - Treat any new raw Spongefish-state access as security-sensitive. Public-state
   cloning is limited to reviewed grinding/fold previews; live state replacement
   or rollback is forbidden.
+- Keep cross-width known-answer vectors for the Blake2b digest bridge. The
+  v0.7.4 pin uses fixed-width `u64` squeeze counters, allowing 32-bit and
+  64-bit implementations to agree on transcript bytes.
 
 ## Ownership
 

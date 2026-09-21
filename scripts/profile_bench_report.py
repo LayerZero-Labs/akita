@@ -674,7 +674,15 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
             missing.append(key)
-    if summary.get("proof_encoding") != "spongefish_native":
+    if summary.get("proof_encoding") == "spongefish_native":
+        for key in (
+            "native_non_nonce_bytes_actual",
+            "native_nonce_bytes_actual",
+            "native_nonce_max_bytes",
+        ):
+            if summary.get(key) is None:
+                missing.append(key)
+    else:
         proof_levels = summary.get("proof_levels")
         if not isinstance(proof_levels, list) or not proof_levels:
             missing.append("proof_levels")
@@ -952,6 +960,8 @@ def extract_summary(
                 else "verify_akita_s"
             )
             summary[key] = float(kvs["elapsed_s"])
+        elif "native proof nonce bytes" in line and kvs.get("role") == "prover":
+            summary["native_nonce_bytes_actual"] = int(kvs["native_nonce_bytes_actual"])
         elif "verify single threaded OK" in line and kvs.get("label") == mode:
             summary["verify_single_total_s"] = float(kvs["elapsed_s"])
         elif (
@@ -961,11 +971,16 @@ def extract_summary(
         elif "native proof summary" in line and kvs.get("label") == mode:
             summary["proof_encoding"] = "spongefish_native"
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
-            summary["accounted_bytes"] = int(
-                kvs.get("accounted_bytes", kvs["proof_size_bytes"])
-            )
-            if "native_nonce_bytes" in kvs:
-                summary["native_nonce_bytes"] = int(kvs["native_nonce_bytes"])
+            if "native_nonce_max_bytes" in kvs:
+                summary["native_nonce_max_bytes"] = int(kvs["native_nonce_max_bytes"])
+            actual_nonce_bytes = summary.get("native_nonce_bytes_actual")
+            if actual_nonce_bytes is not None:
+                summary["native_non_nonce_bytes_actual"] = (
+                    summary["proof_size_bytes"] - int(actual_nonce_bytes)
+                )
+                summary["accounted_bytes"] = (
+                    int(actual_nonce_bytes) + summary["native_non_nonce_bytes_actual"]
+                )
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
         elif "proof summary" in line and kvs.get("label") == mode:
@@ -985,9 +1000,9 @@ def extract_summary(
                 "run_count": int(kvs["run_count"]),
                 "expanded_query_count": int(kvs["expanded_query_count"]),
             }
-            if "native_nonce_bytes" in kvs:
-                grinding_plan_summary["native_nonce_bytes"] = int(
-                    kvs["native_nonce_bytes"]
+            if "native_nonce_max_bytes" in kvs:
+                grinding_plan_summary["native_nonce_max_bytes"] = int(
+                    kvs["native_nonce_max_bytes"]
                 )
             summary["nonce_stream_bits"] = int(kvs["total_nonce_bits"])
             summary["nonce_stream_padding_bits"] = int(kvs["padding_bits"])
@@ -1806,6 +1821,9 @@ SUMMARY_CSV_COLUMNS = (
     "max_rss_kib",
     "proof_size_bytes",
     "accounted_bytes",
+    "native_non_nonce_bytes_actual",
+    "native_nonce_bytes_actual",
+    "native_nonce_max_bytes",
     "akita_fold_bytes",
     "nonce_stream_bytes",
     "nonce_stream_bits",
@@ -2951,6 +2969,30 @@ def render_matrix_summary(
             True,
         ),
         (
+            "Native proof accounting",
+            [
+                Metric(
+                    "native_non_nonce_bytes_actual",
+                    "Non-nonce proof",
+                    " bytes",
+                    fmt_bytes,
+                ),
+                Metric(
+                    "native_nonce_bytes_actual",
+                    "Nonce messages",
+                    " bytes",
+                    fmt_bytes,
+                ),
+                Metric(
+                    "native_nonce_max_bytes",
+                    "Nonce maximum",
+                    " bytes",
+                    fmt_bytes,
+                ),
+            ],
+            False,
+        ),
+        (
             "Memory and setup size",
             [
                 Metric("setup_vector_bytes", "Setup vector", " MiB", fmt_mib_from_bytes),
@@ -3086,6 +3128,26 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             "proof accounting mismatch: "
             f"proof_size_bytes={proof_size}, accounted_bytes={accounted}"
         )
+    actual_nonce = summary.get("native_nonce_bytes_actual")
+    nonce_max = summary.get("native_nonce_max_bytes")
+    non_nonce = summary.get("native_non_nonce_bytes_actual")
+    if proof_size is not None and actual_nonce is not None and int(actual_nonce) > int(proof_size):
+        raise ValueError(
+            "native nonce bytes exceed the complete proof: "
+            f"actual={actual_nonce}, proof_size_bytes={proof_size}"
+        )
+    if actual_nonce is not None and nonce_max is not None and int(actual_nonce) > int(nonce_max):
+        raise ValueError(
+            "native nonce bytes exceed their schedule maximum: "
+            f"actual={actual_nonce}, maximum={nonce_max}"
+        )
+    if proof_size is not None and actual_nonce is not None and non_nonce is not None:
+        component_total = int(actual_nonce) + int(non_nonce)
+        if component_total != int(proof_size):
+            raise ValueError(
+                "native proof component mismatch: "
+                f"proof_size_bytes={proof_size}, component_total={component_total}"
+            )
 
     tail_component_keys = ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
     if summary.get("tail_bytes") is not None and all(

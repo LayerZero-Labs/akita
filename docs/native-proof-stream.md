@@ -83,5 +83,27 @@ planner estimate is therefore a selection objective, not an exact wire-size or
 parser-safety bound. Runtime diagnostics report the native maximum and the
 actual committed nonce bytes separately.
 
+Recursive decoders use `expanded_schedule_native_proof_bound`, which replaces
+the packed nonce estimate with the sum of canonical LEB128 maxima and uses the
+scheduled terminal response cap. The planner estimate and native parser bound
+remain separate so wire hardening cannot silently change schedule rows.
+
+## Adversarial coverage
+
+Native tests cover the old verifier obligations at the byte-stream boundary:
+
+| Obligation | Native coverage |
+| --- | --- |
+| Fixed-shape sumcheck rounds | exact public coefficient counts, truncation, role-labelled challenge order, fuzzed canonical receipt |
+| Root and recursive payload binding | logged family ranges, statement/session mutation, truncation, successor binding and EOF |
+| Extension-opening reduction | native prefix/final-claim grammar, truncation, and end-to-end fp32 extension proofs |
+| Stage-1 range and L2 claims | role-specific native codecs plus end-to-end family mutation and algebraic verification |
+| Terminal response | bounded length before allocation, canonical Golomb--Rice decode, family mutation, direct norm/relation/trace checks |
+| Grinding | canonical and malformed nonce codecs, 4095/4096 fold boundary, range and predicate checks, preview/live/verifier agreement, plan completion |
+
+Byte mutation checks establish binding and parser rejection. Algebraic unit and
+end-to-end tests remain responsible for the corresponding equations; a byte
+flip is not used as a substitute for an equation-specific test.
+
 The canonical design and performance contract are in
 [`specs/spongefish-integration.md`](../specs/spongefish-integration.md).

@@ -424,8 +424,6 @@ impl PackedProofCost {
     pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.nonce_bits,
-            native_nonce_bytes: akita_error::checked::div_ceil(self.nonce_bits, 8)
-                .expect("validated packed proof cost"),
             expanded_query_count: self.expanded_query_count,
         }
     }

@@ -705,7 +705,9 @@ mod tests {
         FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw, NativeVerifierFoldDraw,
         SparseChallengeConfig,
     };
-    use akita_transcript::{new_native_prover, new_native_verifier};
+    use akita_transcript::{
+        new_native_prover, new_native_verifier, preview_native_grinding_predicate,
+    };
     use jolt_field::Prime128Offset275 as F;
 
     fn plan() -> GrindingPlan {
@@ -737,7 +739,7 @@ mod tests {
 
         // One PoW nonce and one response nonce; public context records occupy
         // no argument bytes.
-        assert!(proof.len() <= plan.native_nonce_bytes());
+        assert!(proof.len() <= plan.native_nonce_max_bytes());
         let state = new_native_verifier(b"native-grinding", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
         let verifier_challenge = verifier
@@ -751,6 +753,31 @@ mod tests {
             7
         );
         verifier.record_fold_challenges(0, 0, 2).unwrap();
+        verifier.finish().unwrap();
+    }
+
+    #[test]
+    fn verifier_accepts_a_valid_nonminimal_two_byte_pow_nonce() {
+        let site = GrindingSite::EvaluationBatch { level: 0 };
+        let plan = GrindingPlan::new(vec![GrindingRun::proof_of_work(site, 2, 128).unwrap()], 128)
+            .unwrap();
+        let mut state = new_native_prover(b"native-long-nonce", b"fixture").unwrap();
+        let nonce = (128..=u8::MAX as u32)
+            .find(|&candidate| {
+                grinding_predicate_accepts(
+                    &preview_native_grinding_predicate(&state, candidate),
+                    NonZeroU8::new(1).unwrap(),
+                )
+            })
+            .expect("the two-byte half of an 8-bit nonce domain must contain a winner");
+        let (nonce_record, predicate_record) = grinding_records(site, 1, 8);
+        let _ = commit_native_grinding_nonce(&mut state, nonce_record, nonce, predicate_record);
+        let proof = state.narg_string().to_vec();
+        assert_eq!(proof.len(), 2);
+
+        let state = new_native_verifier(b"native-long-nonce", b"fixture", &proof).unwrap();
+        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        verifier.grinded_ext_challenge::<F, F>(site).unwrap();
         verifier.finish().unwrap();
     }
 
@@ -772,7 +799,7 @@ mod tests {
             .grinded_ext_challenges::<F, F>(GrindingSite::ExtensionOpeningPoint { level: 4 }, 3)
             .unwrap();
         let proof = prover.finish().unwrap();
-        assert!(proof.len() <= plan.native_nonce_bytes());
+        assert!(proof.len() <= plan.native_nonce_max_bytes());
 
         let state = new_native_verifier(b"native-vector-grinding", b"fixture", &proof).unwrap();
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
@@ -796,6 +823,24 @@ mod tests {
             Err(AkitaError::InvalidProof)
         );
         assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
+
+        for (proof, expected) in [
+            (&[0xff, 0x1f][..], Ok(4095)),
+            (&[0x80, 0x20][..], Err(AkitaError::InvalidProof)),
+        ] {
+            let should_accept = expected.is_ok();
+            let state = new_native_verifier(b"native-grinding", b"fixture", proof).unwrap();
+            let mut verifier = NativeVerifierGrinding::new(state, &plan);
+            assert_eq!(
+                verifier.read_fold_response(GrindingSite::FoldResponse { level: 0 }),
+                expected
+            );
+            if should_accept {
+                verifier.finish().unwrap();
+            } else {
+                assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
+            }
+        }
     }
 
     #[test]

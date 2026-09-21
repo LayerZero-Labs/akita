@@ -658,16 +658,19 @@ pub fn nonterminal_level_payload_bytes(
     })
 }
 
-/// Recompute the exact serialized proof payload for one expanded schedule.
-///
-/// This is the non-leaking reporting counterpart to artifact validation. It
-/// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact intermediate row or planner candidate is constructed.
-pub fn expanded_schedule_proof_payload_bytes(
+struct ExpandedScheduleProofComponents {
+    fixed_bytes: usize,
+    terminal_planner_bytes: usize,
+    terminal_max_bytes: usize,
+    packed_nonce_bytes: usize,
+    native_nonce_max_bytes: usize,
+}
+
+fn expanded_schedule_proof_components(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
-) -> Result<usize, AkitaError> {
+) -> Result<ExpandedScheduleProofComponents, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
     key.validate(field_bits)?;
     schedule.validate_structure()?;
@@ -719,24 +722,66 @@ pub fn expanded_schedule_proof_payload_bytes(
         policy.claim_ext_degree,
         PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
-    let terminal_response = akita_types::terminal_response_planner_bytes(
+    let terminal_planner_bytes = akita_types::terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
     );
+    let terminal_max_bytes =
+        akita_types::terminal_response_bytes(field_bits, &schedule.terminal.response_shape);
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
         field_bits,
         policy.claim_ext_degree,
     )?;
-    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+    let packed_nonce_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
-    total
+    let fixed_bytes = total
         .checked_add(terminal_eor)
-        .and_then(|value| value.checked_add(terminal_response))
-        .and_then(|value| value.checked_add(nonce_stream_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
+    Ok(ExpandedScheduleProofComponents {
+        fixed_bytes,
+        terminal_planner_bytes,
+        terminal_max_bytes,
+        packed_nonce_bytes,
+        native_nonce_max_bytes: grinding_plan.native_nonce_max_bytes(),
+    })
+}
+
+/// Recompute the packed schedule-selection estimate for one expanded schedule.
+///
+/// This intentionally retains main's aggregate packed nonce objective and may
+/// use a tighter planner-only terminal estimate. It is not a native parser
+/// bound.
+pub fn expanded_schedule_proof_payload_bytes(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_planner_bytes)
+        .and_then(|value| value.checked_add(components.packed_nonce_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
+}
+
+/// Conservative byte bound for the canonical native Spongefish proof stream.
+///
+/// Unlike the schedule-selection estimate, this uses every inline nonce's
+/// maximum canonical LEB128 width and the scheduled terminal response cap.
+pub fn expanded_schedule_native_proof_bound(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_max_bytes)
+        .and_then(|value| value.checked_add(components.native_nonce_max_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("native proof byte bound overflow".into()))
 }
 
 /// Materialize and validate the schedule shared by offline search and generated replay.

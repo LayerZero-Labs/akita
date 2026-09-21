@@ -17,6 +17,11 @@ separator includes a backend-specific protocol tag, the caller's length-framed
 session bytes, and canonical instance bytes. The selected backend is BLAKE2b
 or Keccak; each has its own protocol tag.
 
+Akita pins Spongefish v0.7.4. Its digest bridge encodes squeeze counters as
+fixed-width `u64` values, so Blake2b transcript bytes do not depend on whether
+the implementation uses 32-bit or 64-bit pointers. Akita keeps a known-answer
+vector for this boundary.
+
 Every logical message or challenge has a fixed public diagnostic context
 record. Proof values use native prover emission and verifier receipt, derived
 or public values use native public messages, and verifier challenges use native
