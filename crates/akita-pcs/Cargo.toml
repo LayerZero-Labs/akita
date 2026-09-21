@@ -28,6 +28,8 @@ features = ["parallel", "transcript-blake2b"]
 ignored = ["akita-setup"]
 
 [features]
+# Application-selected executable domain; see akita-types dispatch module.
+dispatch-aerie = ["akita-types/dispatch-aerie"]
 default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",

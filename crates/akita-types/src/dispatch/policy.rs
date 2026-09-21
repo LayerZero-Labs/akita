@@ -250,6 +250,7 @@ macro_rules! __dispatch_protocol_policy_tiers {
 }
 
 #[doc(hidden)]
+#[cfg(not(feature = "dispatch-aerie"))]
 #[macro_export]
 macro_rules! __dispatch_protocol_policy_slot {
     (

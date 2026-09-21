@@ -3,10 +3,23 @@
 //! Fold / ring-switch paths use **role × PCS field tier** tables (see
 //! `book/src/foundations/ntt-crt.md`). NTT cache build uses field tier only.
 //!
+//! The opt-in `dispatch-aerie` feature restricts the executable domain to the
+//! Fp64 tier, degree 128 for inner/outer/opening and ordinary NTT, and degrees
+//! 16/32 for compression. It changes macro expansion in this crate, including
+//! downstream uses, before monomorphization. The default remains unrestricted.
+//! This is a whole dependency-graph feature (Cargo features unify), not a
+//! per-config setting. Protocol/security policy and artifact digests do not
+//! change. Unsupported requests fail at dispatch; catalog validation alone is
+//! not a promise that this executable can run a catalog. Applications can use
+//! [`validate_compiled_dispatch`] before allocating or preparing backend state.
+//!
 //! Arm lists come from the policy block in `dispatch/policy.rs`; validators and
 //! [`crate::dispatch_for_field!`] expand from that single declaration.
 
+mod compiled;
 mod policy;
+
+pub use compiled::validate_compiled_dispatch;
 
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::sis::SisModulusProfileId;
@@ -259,6 +272,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn inner_dispatch_fp128_accepts_through_d1024() {
         for d in [64usize, 128, 256, 512, 1024] {
@@ -287,6 +301,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn small_field_commitment_dispatch_reaches_profile_caps() {
         for (d, expected) in [(512usize, 512), (1024, 1024), (2048, 2048)] {
@@ -327,6 +342,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn outer_dispatch_floor_is_d64_on_every_profile() {
         for d in [16usize, 32] {
@@ -347,6 +363,7 @@ mod tests {
         .is_ok());
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn outer_dispatch_fp32_rejects_d32() {
         assert!(dispatch_for_field!(
@@ -365,6 +382,7 @@ mod tests {
         .is_ok());
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_reaches_d1024() {
         assert!(dispatch_for_field!(
@@ -397,6 +415,7 @@ mod tests {
         .is_ok());
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn ntt_dispatch_fp64_reaches_d2048() {
         assert!(
@@ -407,6 +426,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn ntt_dispatch_fp32_rejects_d32() {
         assert!(
@@ -417,6 +437,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "dispatch-aerie"))]
     #[test]
     fn ntt_dispatch_fp32_reaches_2048() {
         assert!(
