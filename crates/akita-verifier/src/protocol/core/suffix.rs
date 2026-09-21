@@ -442,7 +442,7 @@ where
     )
     .map(RingVec::from_coeffs)
     .map_err(|_| AkitaError::InvalidProof)?;
-    let nonce = grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if scheduled.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
@@ -464,7 +464,6 @@ where
             scheduled.blocks.live_blocks,
             1,
             &scheduled.fold_challenge_config,
-            nonce,
             operator_rejection,
         )?
     };

@@ -14,8 +14,6 @@ use jolt_field::{Fold, Unreduced};
 const RANGE_Q_MAX_DEGREE: usize = 4;
 const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;
 const NORM_MAX_DEGREE: usize = 3;
-
-#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
 pub(in crate::protocol) struct NativePhysicalL2Proof<E: Field> {
     pub(in crate::protocol) response_l2_sq: u128,
     pub(in crate::protocol) virtual_evaluations: Vec<E>,

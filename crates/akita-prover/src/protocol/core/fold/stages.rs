@@ -24,8 +24,6 @@ where
     where
         P: akita_sumcheck::SumcheckInstanceProver<E> + ?Sized;
 }
-
-#[allow(dead_code)] // Constructed by the native fold driver during cutover.
 struct NativeStage2ProverStream<'a, 'plan> {
     grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
     level: u32,
@@ -53,8 +51,6 @@ where
         Ok(((), point, final_claim))
     }
 }
-
-#[allow(dead_code)] // Called by the native fold driver during cutover.
 pub(super) fn prove_stage1_native<F, E>(
     grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
@@ -125,8 +121,6 @@ where
         physical_l2,
     })
 }
-
-#[allow(dead_code)] // Called by the native fold driver during production cutover.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prove_stage2_native<F, E>(
     level: usize,
@@ -288,8 +282,6 @@ where
         prover: stage2_prover,
     })
 }
-
-#[allow(dead_code)] // Called by the native fold driver during cutover.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prove_stage3_native<F, E>(
     level: usize,

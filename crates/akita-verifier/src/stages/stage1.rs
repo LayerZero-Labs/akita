@@ -13,8 +13,6 @@ use akita_types::{
     GroupFoldChallenges, OpeningClaimsLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-#[allow(dead_code)] // Consumed by the native fold verifier during production cutover.
 pub(crate) struct NativeStage1VerifyOutput<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) range_image_evaluation: E,
@@ -28,13 +26,11 @@ pub(crate) struct RangeLeafVerifierInput<E: Field> {
 }
 
 /// Native Spongefish replay of all sparse fold roots for one recursive level.
-#[allow(dead_code)] // Called by the native outer verifier during cutover.
 pub(crate) fn derive_multi_group_stage1_challenges_native<F, E>(
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
-    grind_nonce: u32,
 ) -> Result<Vec<GroupFoldChallenges>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
@@ -47,13 +43,7 @@ where
         let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
         let drawn = {
             let mut live = NativeVerifierFoldDraw::new(grinding.state_mut(), level, group);
-            draw_group_fold_challenges::<F, E, _>(
-                &mut live,
-                &group_lp,
-                group_index,
-                k_g,
-                grind_nonce,
-            )?
+            draw_group_fold_challenges::<F, E, _>(&mut live, &group_lp, group_index, k_g)?
         };
         let coordinate_count = group_lp
             .num_live_blocks()
@@ -154,7 +144,6 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
     }
 
     /// Replay the non-L2 stage-1 proof directly from Spongefish.
-    #[allow(dead_code)] // Called by the native fold verifier during production cutover.
     pub(crate) fn verify_native<F>(
         &self,
         grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,

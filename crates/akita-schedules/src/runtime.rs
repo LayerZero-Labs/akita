@@ -727,8 +727,10 @@ fn expanded_schedule_proof_components(
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
     );
-    let terminal_max_bytes =
-        akita_types::terminal_response_bytes(field_bits, &schedule.terminal.response_shape);
+    let terminal_max_bytes = akita_types::native_terminal_response_max_bytes(
+        field_bits,
+        &schedule.terminal.response_shape,
+    )?;
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
@@ -807,7 +809,7 @@ pub fn materialize_candidate_schedule(
         )
     })?;
     let mut estimate = FoldScheduleEstimate {
-        nonce_stream_bytes: 0,
+        packed_nonce_estimate_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: recursive_folds
@@ -844,7 +846,7 @@ pub fn materialize_candidate_schedule(
             grinding_plan.expanded_query_count(),
         )));
     }
-    estimate.nonce_stream_bytes =
+    estimate.packed_nonce_estimate_bytes =
         akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
             .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     let recomputed = estimate.estimated_proof_payload_bytes()?;

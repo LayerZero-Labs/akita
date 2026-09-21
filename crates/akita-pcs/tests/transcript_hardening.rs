@@ -89,6 +89,19 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             assert!(!prover_events.is_empty());
             assert_eq!(verifier_events, prover_events);
 
+            let mut ordered_ranges = prover_ranges.clone();
+            ordered_ranges.sort_unstable_by_key(|range| range.start);
+            let mut cursor = 0usize;
+            for range in &ordered_ranges {
+                assert_eq!(range.start, cursor, "native proof ranges must be gap-free");
+                cursor = range.start.checked_add(range.len).expect("range end");
+            }
+            assert_eq!(
+                cursor,
+                proof.len(),
+                "native proof ranges must cover the proof"
+            );
+
             let mut family_ranges = std::collections::BTreeMap::new();
             for range in prover_ranges.iter().filter(|range| range.len != 0) {
                 let family = u32::from_le_bytes(range.context.site_id[..4].try_into().unwrap());

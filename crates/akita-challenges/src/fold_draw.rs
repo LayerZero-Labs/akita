@@ -11,7 +11,6 @@ const SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN: &[u8] =
 
 /// Algebraic domain of one fold-challenge draw.
 ///
-/// The evaluation-trace variant preserves the historical transcript encoding.
 /// Coefficient packing adds an explicit method domain and challenge-subring
 /// dimension before the seed is squeezed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +50,10 @@ pub fn fold_challenge_sample_label(
 }
 
 pub trait FoldDraw {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN];
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
 
     #[cfg(feature = "logging-transcript")]
     fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
@@ -63,7 +65,6 @@ pub trait FoldDraw {
         num_live_blocks: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
-        grind_nonce: u32,
     ) -> Result<Challenges, AkitaError> {
         self.draw_folding_challenges_with_rejection(
             FoldChallengeDrawDomain::EvaluationTrace,
@@ -72,7 +73,6 @@ pub trait FoldDraw {
             num_live_blocks,
             num_claims,
             cfg,
-            grind_nonce,
             None,
         )
     }
@@ -86,7 +86,6 @@ pub trait FoldDraw {
         num_live_blocks: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
-        grind_nonce: u32,
         rejection: Option<OperatorNormRejection>,
     ) -> Result<Challenges, AkitaError> {
         if let FoldChallengeDrawDomain::SubringCoefficientPacking {
@@ -128,12 +127,11 @@ pub trait FoldDraw {
         })?;
         let sample_label = fold_challenge_sample_label(group_index, num_live_blocks, num_claims)?;
         let domain_sep = cfg.domain_separator_bytes();
-        let mut absorb_buf = Vec::with_capacity(sample_label.len() + 8 + 8 + domain_sep.len() + 4);
+        let mut absorb_buf = Vec::with_capacity(sample_label.len() + 8 + 8 + domain_sep.len());
         absorb_buf.extend_from_slice(&sample_label);
         absorb_buf.extend_from_slice(&(total as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&domain_sep);
-        absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
         if matches!(
             domain,
             FoldChallengeDrawDomain::SubringCoefficientPacking { .. }
@@ -143,7 +141,7 @@ pub trait FoldDraw {
         if let Some(rejection) = rejection {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
-        let seed = self.absorb_and_squeeze(&absorb_buf);
+        let seed = self.absorb_and_squeeze(&absorb_buf)?;
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
@@ -188,8 +186,11 @@ impl<'a> NativePreviewFoldDraw<'a> {
 }
 
 impl FoldDraw for NativePreviewFoldDraw<'_> {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        self.preview.fold_root(payload)
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Ok(self.preview.fold_root(payload))
     }
 }
 
@@ -217,12 +218,15 @@ impl<'a> NativeProverFoldDraw<'a> {
 }
 
 impl FoldDraw for NativeProverFoldDraw<'_> {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        akita_transcript::native_prover_fold_root(
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Ok(akita_transcript::native_prover_fold_root(
             self.state,
             native_fold_record(self.level, self.group, payload.len()),
             payload,
-        )
+        ))
     }
 }
 
@@ -250,12 +254,16 @@ impl<'a, 'proof> NativeVerifierFoldDraw<'a, 'proof> {
 }
 
 impl FoldDraw for NativeVerifierFoldDraw<'_, '_> {
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
         akita_transcript::native_verifier_fold_root(
             self.state,
             native_fold_record(self.level, self.group, payload.len()),
             payload,
         )
+        .map_err(|_| AkitaError::InvalidProof)
     }
 }
 
@@ -269,14 +277,17 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+        fn absorb_and_squeeze(
+            &mut self,
+            payload: &[u8],
+        ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
             self.payloads.push(payload.to_vec());
-            [7; FOLD_CHALLENGE_SEED_LEN]
+            Ok([7; FOLD_CHALLENGE_SEED_LEN])
         }
     }
 
     #[test]
-    fn evaluation_trace_draw_preserves_legacy_payload() {
+    fn evaluation_trace_draw_uses_nonce_free_group_payload() {
         let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
         let mut draw = CapturingDraw::default();
         draw.draw_folding_challenges_with_rejection(
@@ -286,7 +297,6 @@ mod tests {
             3,
             4,
             &config,
-            5,
             None,
         )
         .unwrap();
@@ -295,7 +305,6 @@ mod tests {
         expected.extend_from_slice(&12u64.to_le_bytes());
         expected.extend_from_slice(&64u64.to_le_bytes());
         expected.extend_from_slice(&config.domain_separator_bytes());
-        expected.extend_from_slice(&5u32.to_le_bytes());
         assert_eq!(draw.payloads, vec![expected]);
     }
 
@@ -313,7 +322,6 @@ mod tests {
                 2,
                 1,
                 &config_64,
-                0,
                 None,
             )
             .unwrap();
@@ -331,7 +339,6 @@ mod tests {
                 2,
                 1,
                 &config_128,
-                0,
                 None,
             )
             .unwrap();
@@ -346,7 +353,6 @@ mod tests {
                 2,
                 1,
                 &config_128,
-                0,
                 None,
             )
             .is_err());
@@ -360,7 +366,6 @@ mod tests {
                 2,
                 1,
                 &config_64,
-                0,
                 None,
             )
             .unwrap();

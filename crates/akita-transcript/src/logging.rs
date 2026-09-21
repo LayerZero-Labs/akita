@@ -6,6 +6,7 @@ use std::cell::RefCell;
 thread_local! {
     static THREAD_EVENTS: RefCell<Vec<TranscriptEvent>> = const { RefCell::new(Vec::new()) };
     static THREAD_PROOF_RANGES: RefCell<Vec<ProofMessageRange>> = const { RefCell::new(Vec::new()) };
+    static PENDING_PROOF_RANGE: RefCell<Option<(ProtocolContextRecord, usize)>> = const { RefCell::new(None) };
 }
 
 /// One native transcript event recorded for structural diagnostics.
@@ -22,7 +23,7 @@ pub struct ProofMessageRange {
     pub context: ProtocolContextRecord,
     /// Byte offset in the Spongefish argument before the group is emitted.
     pub start: usize,
-    /// Public fixed byte length recorded for the group.
+    /// Actual number of argument bytes emitted for the group.
     pub len: usize,
 }
 
@@ -30,26 +31,45 @@ pub(crate) fn record_context(record: ProtocolContextRecord) {
     THREAD_EVENTS.with(|events| events.borrow_mut().push(TranscriptEvent::Context(record)));
 }
 
-pub(crate) fn record_proof_range(record: ProtocolContextRecord, start: usize) {
-    if record.kind != crate::ProtocolMessageKind::ProofAtoms as u32 {
+fn finish_pending(end: usize) {
+    let pending = PENDING_PROOF_RANGE.with(|pending| pending.borrow_mut().take());
+    let Some((context, start)) = pending else {
         return;
-    }
-    let Ok(len) = usize::try_from(record.encoded_bytes) else {
+    };
+    let Some(len) = end.checked_sub(start) else {
         return;
     };
     THREAD_PROOF_RANGES.with(|ranges| {
         ranges.borrow_mut().push(ProofMessageRange {
-            context: record,
+            context,
             start,
             len,
         });
     });
 }
 
+pub(crate) fn record_proof_boundary(record: ProtocolContextRecord, start: usize) {
+    finish_pending(start);
+    if matches!(
+        record.kind,
+        kind if kind == crate::ProtocolMessageKind::ProofLength as u32
+            || kind == crate::ProtocolMessageKind::ProofAtoms as u32
+            || kind == crate::ProtocolMessageKind::GrindingNonce as u32
+            || kind == crate::ProtocolMessageKind::FoldResponseNonce as u32
+    ) {
+        PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = Some((record, start)));
+    }
+}
+
+pub(crate) fn finish_proof_ranges(end: usize) {
+    finish_pending(end);
+}
+
 /// Clear native transcript events recorded by the current thread.
 pub fn clear_thread_events() {
     THREAD_EVENTS.with(|events| events.borrow_mut().clear());
     THREAD_PROOF_RANGES.with(|ranges| ranges.borrow_mut().clear());
+    PENDING_PROOF_RANGE.with(|pending| *pending.borrow_mut() = None);
 }
 
 /// Clone native transcript events recorded by the current thread.

@@ -10,8 +10,6 @@ pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<
     pub(in crate::protocol::core) reduction: R,
     pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
 }
-
-#[allow(dead_code)] // Removed once the production fold caller switches to this native result.
 pub(in crate::protocol::core) struct NativeExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) final_claims: Vec<E>,
     pub(in crate::protocol::core) final_factors: Vec<E>,
@@ -69,8 +67,6 @@ where
         final_factors: Vec<E>,
     ) -> Self::Reduction;
 }
-
-#[allow(dead_code)] // Constructed by the native migration entry point below.
 struct NativeEorProverStream<'a, 'plan> {
     grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
     level: u32,
@@ -193,7 +189,6 @@ where
 }
 
 /// Prove EOR directly into the authoritative native Spongefish stream.
-#[allow(dead_code)] // Called by the production native fold driver in the next cutover slice.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_extension_opening_reduction_native<F, E, G, B>(
     tensor_backend: &B,

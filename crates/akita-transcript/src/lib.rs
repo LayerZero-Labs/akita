@@ -21,6 +21,8 @@ pub use grinding::{
 pub use logging::{
     clear_thread_events, thread_events, thread_proof_ranges, ProofMessageRange, TranscriptEvent,
 };
+#[cfg(feature = "logging-transcript")]
+pub use native::finish_native_proof_ranges;
 pub use native::{
     commit_native_grinding_nonce, native_field_challenge_bytes, native_field_sampling_is_certified,
     native_nonce_encoded_len, native_nonce_max_bytes, native_prover_ext_challenge,

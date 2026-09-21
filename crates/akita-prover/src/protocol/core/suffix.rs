@@ -44,7 +44,6 @@ impl<F: Field, E: Field, S> SuffixProverState<F, E, S> {
 }
 
 impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
-    #[allow(dead_code)] // Called by the native production entry point during cutover.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prove_suffix_native<Cfg, O, TS, R, SP>(
         &self,

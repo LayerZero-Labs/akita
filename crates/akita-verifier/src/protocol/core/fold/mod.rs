@@ -246,8 +246,6 @@ where
         degree_bound: usize,
     ) -> Result<Stage2RoundReplay<E>, AkitaError>;
 }
-
-#[allow(dead_code)] // Constructed by the native fold verifier during cutover.
 struct NativeStage2VerifierStream<'a, 'proof, 'plan> {
     grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
     level: u32,
@@ -286,67 +284,6 @@ where
         })
     }
 }
-
-#[allow(dead_code)] // Called by the native fold verifier during production cutover.
-#[allow(clippy::too_many_arguments)]
-fn verify_stage2_native<F, E>(
-    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
-    level: u32,
-    setup: &AkitaVerifierSetup<F>,
-    stage1: Stage1Replay<'_, E>,
-    rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    setup_claim: Option<E>,
-    opening_semantics: Stage2OpeningSemantics<'_, E>,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-{
-    let mut stream = NativeStage2VerifierStream { grinding, level };
-    verify_stage2_with_stream::<F, E, _>(
-        &mut stream,
-        setup,
-        stage1,
-        rs,
-        relation_claim,
-        setup_claim,
-        opening_semantics,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_stage2_with_stream<F, E, S>(
-    stream: &mut S,
-    setup: &AkitaVerifierSetup<F>,
-    stage1: Stage1Replay<'_, E>,
-    rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    setup_claim: Option<E>,
-    opening_semantics: Stage2OpeningSemantics<'_, E>,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    S: Stage2VerifierStream<F, E>,
-{
-    let input_claim = stage1.batching_coeff * stage1.range_image_evaluation
-        + relation_claim
-        + opening_semantics.opening_claim()
-        + stage1.physical_l2_claim;
-    let num_rounds = stage1.stage1_point.len();
-    let replay = stream.replay(input_claim, num_rounds, 3)?;
-    validate_stage2_replay(
-        setup,
-        stage1,
-        rs,
-        relation_claim,
-        setup_claim,
-        opening_semantics,
-        replay,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
@@ -435,7 +372,7 @@ where
     if prefix.prepared_points.len() != num_groups {
         return Err(AkitaError::InvalidProof);
     }
-    let fold_grind_nonce = grinding
+    grinding
         .read_fold_response(akita_types::GrindingSite::FoldResponse {
             level: prepared.level,
         })
@@ -447,7 +384,6 @@ where
         prepared.level,
         &opening_shape,
         prepared.lp,
-        fold_grind_nonce,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!("native fold challenge replay failed: {error:?}"))

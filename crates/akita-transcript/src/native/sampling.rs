@@ -84,5 +84,12 @@ pub fn native_prover_field_challenge<F: CanonicalEncoding>(
 pub fn native_verifier_field_challenge<F: CanonicalEncoding>(
     state: &mut NativeVerifierState<'_>,
 ) -> Result<F, NativeContextError> {
-    sample_native_field(&mut state.duplex_sponge_state)
+    if state.is_invalid() {
+        return Err(NativeContextError);
+    }
+    let result = sample_native_field(state.sponge_mut());
+    if result.is_err() {
+        state.invalidate();
+    }
+    result
 }

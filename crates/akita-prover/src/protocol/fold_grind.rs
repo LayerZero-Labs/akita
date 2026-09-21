@@ -188,7 +188,6 @@ where
 }
 
 /// Native Spongefish terminal fold-response search and live replay.
-#[allow(dead_code)] // Called by the native outer proof driver during cutover.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_terminal_fold_response_native<F, P, B>(
     backend: &B,
@@ -246,7 +245,6 @@ where
                 params.blocks.live_blocks,
                 1,
                 sparse,
-                nonce,
                 operator_rejection,
             )?;
             let witness = probe_terminal_response(
@@ -271,7 +269,6 @@ where
             params.blocks.live_blocks,
             1,
             sparse,
-            nonce,
             operator_rejection,
         )?;
     if live_challenges != challenges {
@@ -407,7 +404,6 @@ where
                         &group.params,
                         group.group_index,
                         group.group.num_polynomials(),
-                        nonce,
                     )?
                 };
                 let output =
@@ -441,7 +437,6 @@ where
                 &group.params,
                 group.group_index,
                 group.group.num_polynomials(),
-                nonce,
             )?
         };
         if challenges != output.challenges {
@@ -529,7 +524,6 @@ where
 
 /// Probe all groups with a native Spongefish candidate transaction and commit
 /// the first jointly accepted fold-response nonce.
-#[allow(dead_code)] // Called by the native outer proof driver during cutover.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B>(
     opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
@@ -575,9 +569,9 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> [u8; 32] {
+        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
             self.draws += 1;
-            [11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
+            Ok([11; akita_transcript::FOLD_CHALLENGE_SEED_LEN])
         }
     }
 
@@ -602,8 +596,7 @@ mod tests {
 
         let mut draw = FixedDraw::default();
         let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2, 7)
-                .unwrap();
+            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2).unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -650,14 +643,10 @@ mod tests {
         ] {
             params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
-            assert!(draw_group_fold_challenges::<F, F, _>(
-                &mut draw,
-                &params.final_group(),
-                0,
-                1,
-                0
-            )
-            .is_err());
+            assert!(
+                draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 0, 1)
+                    .is_err()
+            );
             assert_eq!(draw.draws, 0);
         }
     }

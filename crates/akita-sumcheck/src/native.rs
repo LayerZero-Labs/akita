@@ -443,7 +443,7 @@ mod tests {
         native_verifier_field_challenge, new_native_prover, new_native_verifier,
         SITE_FAMILY_SUMCHECK,
     };
-    use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
+    use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
 
     struct DenseInstance {
         evaluations: Vec<F>,
@@ -607,6 +607,131 @@ mod tests {
         invocation: u32,
     }
 
+    struct FixedProverChannel {
+        state: NativeProverState,
+        challenges: Vec<F>,
+    }
+
+    impl NativeSumcheckProverChannel<F> for FixedProverChannel {
+        fn state_mut(&mut self) -> &mut NativeProverState {
+            &mut self.state
+        }
+
+        fn sumcheck_site(
+            &self,
+            invocation: u32,
+            round: u32,
+            role: NativeSumcheckRole,
+        ) -> ProtocolSiteId {
+            ProtocolSiteId {
+                family: SITE_FAMILY_SUMCHECK,
+                invocation,
+                round,
+                detail: role as u32,
+                ..ProtocolSiteId::default()
+            }
+        }
+
+        fn round_challenge(&mut self, _invocation: u32, round: u32) -> Result<F, AkitaError> {
+            self.challenges
+                .get(round as usize)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
+        }
+    }
+
+    struct FixedVerifierChannel<'proof> {
+        state: NativeVerifierState<'proof>,
+        challenges: Vec<F>,
+    }
+
+    impl<'proof> NativeSumcheckVerifierChannel<'proof, F> for FixedVerifierChannel<'proof> {
+        fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
+            &mut self.state
+        }
+
+        fn sumcheck_site(
+            &self,
+            invocation: u32,
+            round: u32,
+            role: NativeSumcheckRole,
+        ) -> ProtocolSiteId {
+            ProtocolSiteId {
+                family: SITE_FAMILY_SUMCHECK,
+                invocation,
+                round,
+                detail: role as u32,
+                ..ProtocolSiteId::default()
+            }
+        }
+
+        fn round_challenge(&mut self, _invocation: u32, round: u32) -> Result<F, AkitaError> {
+            self.challenges
+                .get(round as usize)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
+        }
+    }
+
+    struct TwoRoundEq {
+        equality: [F; 2],
+        split: GruenSplitEq<F>,
+        coefficients: [F; 4],
+        first_challenge: Option<F>,
+    }
+
+    impl TwoRoundEq {
+        fn new(equality: [F; 2], coefficients: [F; 4]) -> Self {
+            Self {
+                equality,
+                split: GruenSplitEq::new(&equality).unwrap(),
+                coefficients,
+                first_challenge: None,
+            }
+        }
+
+        fn evaluate(&self, x: F, y: F) -> F {
+            let [a, b, c, d] = self.coefficients;
+            a + b * x + c * y + d * x * y
+        }
+    }
+
+    impl EqFactoredSumcheckInstanceProver<F> for TwoRoundEq {
+        fn num_rounds(&self) -> usize {
+            2
+        }
+
+        fn degree_bound(&self) -> usize {
+            1
+        }
+
+        fn input_claim(&self) -> F {
+            self.evaluate(self.equality[0], self.equality[1])
+        }
+
+        fn current_tau(&self) -> F {
+            self.split.current_tau()
+        }
+
+        fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<F> {
+            let [a, b, c, d] = self.coefficients;
+            let coefficients = if round == 0 {
+                vec![a + c * self.equality[1], b + d * self.equality[1]]
+            } else {
+                let first = self.first_challenge.unwrap();
+                vec![a + b * first, c + d * first]
+            };
+            EqFactoredUniPoly::from_q_coeffs(coefficients)
+        }
+
+        fn ingest_challenge(&mut self, round: usize, challenge: F) {
+            if round == 0 {
+                self.first_challenge = Some(challenge);
+            }
+            self.split.bind(challenge);
+        }
+    }
+
     impl<'proof> NativeSumcheckVerifierChannel<'proof, F> for TestVerifierChannel<'proof> {
         fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
             &mut self.state
@@ -737,5 +862,73 @@ mod tests {
         .unwrap();
         assert_eq!(verifier_point, prover_point);
         assert!(verifier.state.check_eof().is_ok());
+    }
+
+    #[test]
+    fn native_eq_factored_rejects_old_wire_forgery_when_tau_is_zero() {
+        let coefficients = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
+        let instance = OneRoundEq::new(F::zero(), coefficients);
+        let challenge = F::from_u64(11);
+        let mut proof_state = new_native_prover(b"native-eq-forgery", b"fixture").unwrap();
+        send_native_extension::<F, F>(&mut proof_state, instance.claim());
+        send_native_extension::<F, F>(&mut proof_state, F::from_u64(101));
+        let proof = proof_state.narg_string().to_vec();
+        let mut verifier = FixedVerifierChannel {
+            state: new_native_verifier(b"native-eq-forgery", b"fixture", &proof).unwrap(),
+            challenges: vec![challenge],
+        };
+
+        assert_eq!(
+            verify_eq_factored_sumcheck_native::<F, F, _, _>(
+                &[F::zero()],
+                instance.claim(),
+                instance.degree_bound(),
+                &mut verifier,
+                19,
+                |_| Ok(instance.evaluate(challenge)),
+            ),
+            Err(AkitaError::InvalidProof)
+        );
+    }
+
+    #[test]
+    fn native_eq_factored_rejects_late_tampering_after_vanished_factor() {
+        let equality = [F::from_u64(2), F::from_u64(5)];
+        let coefficients = [
+            F::from_u64(3),
+            F::from_u64(7),
+            F::from_u64(11),
+            F::from_u64(13),
+        ];
+        let point = [F::from_u64(3).inverse().unwrap(), F::from_u64(17)];
+        let mut instance = TwoRoundEq::new(equality, coefficients);
+        let input_claim = instance.input_claim();
+        let mut prover = FixedProverChannel {
+            state: new_native_prover(b"native-eq-late", b"fixture").unwrap(),
+            challenges: point.to_vec(),
+        };
+        prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, 23).unwrap();
+        let honest = prover.state.narg_string().to_vec();
+        let expected = TwoRoundEq::new(equality, coefficients).evaluate(point[0], point[1]);
+        let verify = |proof: &[u8]| {
+            let mut verifier = FixedVerifierChannel {
+                state: new_native_verifier(b"native-eq-late", b"fixture", proof).unwrap(),
+                challenges: point.to_vec(),
+            };
+            verify_eq_factored_sumcheck_native::<F, F, _, _>(
+                &equality,
+                input_claim,
+                1,
+                &mut verifier,
+                23,
+                |_| Ok(expected),
+            )
+        };
+        assert_eq!(verify(&honest), Ok(point.to_vec()));
+
+        let mut tampered = honest;
+        let second = F::from_u64(11) + F::from_u64(13) * point[0] + F::one();
+        tampered[F::NUM_BYTES..2 * F::NUM_BYTES].copy_from_slice(&second.to_bytes_le_vec());
+        assert_eq!(verify(&tampered), Err(AkitaError::InvalidProof));
     }
 }

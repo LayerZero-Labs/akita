@@ -154,7 +154,9 @@ pub struct NativeProverGrinding<'plan> {
 impl<'plan> NativeProverGrinding<'plan> {
     /// Attach a native prover state to its public grinding plan.
     #[must_use]
-    pub const fn new(state: NativeProverState, plan: &'plan GrindingPlan) -> Self {
+    pub fn new(state: NativeProverState, plan: &'plan GrindingPlan) -> Self {
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::clear_thread_events();
         Self {
             state,
             cursor: GrindingPlanCursor::new(plan),
@@ -354,6 +356,8 @@ impl<'plan> NativeProverGrinding<'plan> {
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
+        #[cfg(feature = "logging-transcript")]
+        akita_transcript::finish_native_proof_ranges(&self.state);
         Ok(self.state.narg_string().to_vec())
     }
 }
@@ -376,6 +380,11 @@ pub struct NativeProofAcceptance {
 }
 
 impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
+    fn invalidate(&mut self) {
+        self.invalid = true;
+        self.state.invalidate();
+    }
+
     /// Attach a native verifier state to its public grinding plan.
     #[must_use]
     pub const fn new(state: NativeVerifierState<'proof>, plan: &'plan GrindingPlan) -> Self {
@@ -389,9 +398,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
 
     /// Borrow the native state for ordinary protocol receipt and challenges.
     ///
-    /// Operations performed through this raw role-specific state are outside
-    /// replay poisoning. Callers must propagate their errors before `finish`;
-    /// the completion token certifies only plan exhaustion and proof EOF.
+    /// The Akita state owner records every decoding or bounded-receipt failure,
+    /// including errors returned through this borrow. Callers must still
+    /// propagate errors so algebraic verification stops at the failing step.
     pub fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
         &mut self.state
     }
@@ -399,7 +408,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     /// Receive and validate one scheduled proof-of-work nonce.
     pub fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
         let result = self.grind_query_inner(site);
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -413,7 +424,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         let result =
             native_verifier_ext_challenge(&mut self.state, site.native_site_id(u32::default()))
                 .map_err(|_| AkitaError::InvalidProof);
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -429,7 +442,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
         E: ExtField<F>,
     {
         let result = self.grinded_ext_challenges_inner::<F, E>(site, count);
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -467,7 +482,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     {
         let result = native_verifier_ext_challenge(&mut self.state, site)
             .map_err(|_| AkitaError::InvalidProof);
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -496,7 +513,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     /// Receive the next scheduled fold-response nonce.
     pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let result = self.read_fold_response_inner(site);
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -537,7 +556,9 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
                     multiplicity,
                 )
             });
-        self.invalid |= result.is_err();
+        if result.is_err() {
+            self.invalidate();
+        }
         result
     }
 
@@ -838,6 +859,7 @@ mod tests {
             if should_accept {
                 verifier.finish().unwrap();
             } else {
+                assert!(verifier.state_mut().verifier_message::<[u8; 32]>().is_err());
                 assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
             }
         }
@@ -896,20 +918,20 @@ mod tests {
         let (preview_first, preview_second) = {
             let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
             let first = NativePreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+                .draw_folding_challenges(64, 0, 2, 1, &config)
                 .unwrap();
             let second = NativePreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+                .draw_folding_challenges(64, 1, 1, 2, &config)
                 .unwrap();
             (first, second)
         };
         prover.commit_fold_response(site, nonce).unwrap();
         let live_first = NativeProverFoldDraw::new(prover.state_mut(), 3, 0)
-            .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+            .draw_folding_challenges(64, 0, 2, 1, &config)
             .unwrap();
         prover.record_fold_challenges(3, 0, 2).unwrap();
         let live_second = NativeProverFoldDraw::new(prover.state_mut(), 3, 1)
-            .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+            .draw_folding_challenges(64, 1, 1, 2, &config)
             .unwrap();
         prover.record_fold_challenges(3, 1, 2).unwrap();
         assert_eq!(
@@ -922,11 +944,11 @@ mod tests {
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
         assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
         let verified_first = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 0)
-            .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
+            .draw_folding_challenges(64, 0, 2, 1, &config)
             .unwrap();
         verifier.record_fold_challenges(3, 0, 2).unwrap();
         let verified_second = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 1)
-            .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
+            .draw_folding_challenges(64, 1, 1, 2, &config)
             .unwrap();
         verifier.record_fold_challenges(3, 1, 2).unwrap();
         assert_eq!((verified_first, verified_second), (live_first, live_second));

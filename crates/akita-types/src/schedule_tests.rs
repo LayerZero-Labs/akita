@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
-        nonce_stream_bytes: 0,
+        packed_nonce_estimate_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],

@@ -32,8 +32,6 @@ pub(crate) struct SetupSumcheckVerifier<E: Field> {
     ring_bits: usize,
     rounds: usize,
 }
-
-#[allow(dead_code)] // Consumed by the native fold verifier during production cutover.
 pub(crate) struct NativeSetupSumcheckReplay<E: Field> {
     pub(crate) claim: E,
     pub(crate) setup_prefix_eval: E,
@@ -79,7 +77,6 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     }
 
     /// Replay stage 3 directly from the native Spongefish stream.
-    #[allow(dead_code)] // Called by the native fold verifier during production cutover.
     pub(crate) fn verify_stage3_native<F>(
         &self,
         setup: &AkitaVerifierSetup<F>,

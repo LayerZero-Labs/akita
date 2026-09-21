@@ -28,6 +28,44 @@ pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -
     )
 }
 
+/// Maximum bytes emitted by the native terminal suffix grammar.
+///
+/// The proof bound reserves the scheduled `e` and `t` field payload budget
+/// across the predecessor-to-suffix boundary. The suffix uses one `u32` length
+/// followed by the bounded `z` payload for each group.
+/// This differs from the legacy structured response only in using four, not
+/// eight, framing bytes per group.
+pub fn native_terminal_response_max_bytes(
+    field_bits: u32,
+    shape: &TerminalResponseShape,
+) -> Result<usize, AkitaError> {
+    let field_bytes = field_bytes(field_bits);
+    let (field_count, framed_z_bytes) = shape.layout.groups.iter().try_fold(
+        (0usize, 0usize),
+        |(field_count, framed_z_bytes), group| {
+            let field_count = field_count
+                .checked_add(group.e_field_elems)
+                .and_then(|value| value.checked_add(group.t_field_elems))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("native terminal field-count overflow".into())
+                })?;
+            let framed_z_bytes = framed_z_bytes
+                .checked_add(4)
+                .and_then(|value| value.checked_add(group.z_payload_bytes))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("native terminal z-size overflow".into())
+                })?;
+            Ok::<_, AkitaError>((field_count, framed_z_bytes))
+        },
+    )?;
+    let field_payload_bytes = field_count
+        .checked_mul(field_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("native terminal field-size overflow".into()))?;
+    field_payload_bytes
+        .checked_add(framed_z_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("native terminal response size overflow".into()))
+}
+
 /// Planner byte estimate for a terminal response.
 ///
 /// The scheduled Golomb payload cap remains unchanged. For a single-group L2
@@ -361,6 +399,14 @@ mod tests {
         );
         assert_eq!(shape.layout.groups[0].z_payload_bytes, 4_096);
         assert_eq!(terminal_response_planner_bytes(64, &shape, None), scheduled);
+    }
+
+    #[test]
+    fn native_terminal_bound_uses_u32_group_framing() {
+        let shape = sample_terminal_shape();
+        let legacy = terminal_response_bytes(64, &shape);
+        let native = native_terminal_response_max_bytes(64, &shape).unwrap();
+        assert_eq!(legacy - native, 4 * shape.layout.groups.len());
     }
 
     #[test]

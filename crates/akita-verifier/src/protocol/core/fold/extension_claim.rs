@@ -54,8 +54,6 @@ where
 
     fn final_claims(&mut self, opening_batch: &OpeningClaimsLayout) -> Result<Vec<E>, AkitaError>;
 }
-
-#[allow(dead_code)] // Used by the native fold verifier during the production cutover.
 struct NativeEorVerifierStream<'a, 'proof, 'plan> {
     grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
     level: u32,
@@ -160,8 +158,6 @@ where
         })
         .collect()
 }
-
-#[allow(dead_code)] // Called by the native fold verifier in the production cutover.
 fn verify_eor_sumcheck_native<F, E>(
     group_points: &[&[E]],
     openings: &[E],

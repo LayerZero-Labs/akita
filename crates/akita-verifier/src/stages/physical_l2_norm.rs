@@ -206,7 +206,6 @@ where
 }
 
 /// Replay a physical-L2 proof directly from the native Spongefish stream.
-#[allow(dead_code)] // Called by the native fold verifier during production cutover.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_physical_l2_norm_native<F, E>(
     plan: &PhysicalResponsePlan,

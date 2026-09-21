@@ -1236,9 +1236,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         log = "\n".join(
             [
                 "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=107 "
-                "accounted_bytes=107 akita_fold_bytes=100 nonce_stream_bytes=7 tail_bytes=0",
+                "accounted_bytes=107 akita_fold_bytes=100 packed_nonce_estimate_bytes=7 tail_bytes=0",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
-                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=5 "
+                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 run_count=5 "
                 "expanded_query_count=12",
                 "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
                 "component=fold_response query=response_search protocol=none stage=None "
@@ -1289,7 +1289,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
 
         self.assertIn("Transcript grinding bits", report)
-        self.assertIn("Proof-global packed nonce stream", report)
+        self.assertIn("Legacy aggregate packed objective (not native wire encoding)", report)
         self.assertIn("54<br><sub>Merge base</sub><br>12", report)
         self.assertIn("2<br><sub>Merge base</sub><br>20", report)
         self.assertIn(
@@ -1319,8 +1319,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "INFO native proof nonce bytes role=prover native_nonce_bytes_actual=6",
                 "INFO native proof summary label=onehot_fp128 levels=2 "
                 "proof_size_bytes=101 native_nonce_max_bytes=9",
+                "INFO native proof byte accounting label=onehot_fp128 accounted_bytes=101 "
+                "native_nonce_bytes_observed=6 native_non_nonce_bytes_observed=95",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
-                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 "
+                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 "
                 "native_nonce_max_bytes=9 run_count=1 expanded_query_count=1",
                 "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
                 "component=stage2 query=claim_batch protocol=none stage=None "
@@ -1334,12 +1336,20 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["accounted_bytes"], 101)
         self.assertEqual(summary["proof_encoding"], "spongefish_native")
         self.assertEqual(summary["native_nonce_bytes_actual"], 6)
-        self.assertEqual(summary["native_non_nonce_bytes_actual"], 95)
+        self.assertEqual(summary["native_non_nonce_bytes_observed"], 95)
         self.assertEqual(summary["native_nonce_max_bytes"], 9)
         self.assertEqual(summary["nonce_stream_bits"], 54)
-        self.assertEqual(summary["grinding_plan"]["nonce_stream_bytes"], 7)
+        self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
         self.assertEqual(summary["grinding_plan"]["native_nonce_max_bytes"], 9)
         self.assertNotIn("proof_levels", missing_required_run_metrics(summary))
+        without_diagnostics = dict(summary)
+        without_diagnostics.pop("accounted_bytes")
+        without_diagnostics.pop("native_nonce_bytes_observed")
+        without_diagnostics.pop("native_non_nonce_bytes_observed")
+        missing = missing_required_run_metrics(without_diagnostics)
+        self.assertNotIn("accounted_bytes", missing)
+        self.assertNotIn("native_nonce_bytes_observed", missing)
+        self.assertNotIn("native_non_nonce_bytes_observed", missing)
         summary["planned_levels"] = [{"level": 0, "security_route": "L2"}]
         summary["exit_code"] = 0
         self.assertEqual(l2_grind_observations_for_run(summary), [])

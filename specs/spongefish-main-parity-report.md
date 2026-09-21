@@ -11,12 +11,17 @@ primary fp128 one-hot nv=36 workload:
 | Build | Proof bytes | Multi-verifier median | Single-verifier median |
 | --- | ---: | ---: | ---: |
 | Pinned main | 69,776 | 11.760 ms | 54.639 ms |
-| Native Spongefish candidate | 69,756 | 11.672 ms | 54.554 ms |
+| Native Spongefish candidate, protocol v6 | 69,756 | 11.672 ms | 54.554 ms |
+| Native Spongefish candidate, protocol v7 | 69,724 | — | — |
 
-These are five alternating warm runs on the same host with one polynomial,
-Blake2b, release mode, 16 prover/multi-verifier threads, and one single-verifier
-thread. The candidate is 20 bytes smaller; timing differences are below 1% and
-favor the candidate at the median.
+The timing rows are five alternating warm runs on the same host with one
+polynomial, Blake2b, release mode, 16 prover/multi-verifier threads, and one
+single-verifier thread. The v6 candidate is 20 bytes smaller; timing differences
+are below 1% and favor the candidate at the median. Protocol v7 removes the
+redundant four-byte nonce copy from each of eight fold challenge-group payloads,
+making its proof 52 bytes smaller than main in the same nv=36 workload. Its
+69,724-byte size is from a release smoke run; verifier medians were not reused
+across the protocol epoch change.
 
 ## Schedule parity
 
@@ -48,7 +53,8 @@ accounting debt, not a verifier safety bound.
 
 Exact instrumentation showed:
 
-- actual native nonce bytes are 335, already smaller than main's 400-byte
+- actual native nonce bytes are 334 in the protocol-v7 smoke run, already
+  smaller than main's 400-byte
   packed nonce stream;
 - the native terminal response is also slightly smaller than main;
 - the complete 1,224-byte nonterminal excess was 306 redundant native
@@ -59,7 +65,8 @@ pads lower-degree honest polynomials with high zero coefficients to the public
 degree bound, and verification receives exactly that many canonical atoms.
 Removing the redundant proof-controlled lengths preserves bounded allocation
 and eliminates alternate parses. Challenge changes move Golomb-compressed tail
-size slightly, yielding the final 69,756-byte proof.
+size slightly. Protocol v7 additionally removes the duplicate fold nonce bytes,
+yielding the current 69,724-byte proof in the measured workload.
 
 Nonce encoding is stack-backed canonical unsigned LEB128. The profiler records
 actual committed nonce bytes separately from the schedule-derived maximum.
@@ -72,7 +79,7 @@ The measurable overhead was cumulative:
 - context records were hashed before hundreds of fixed-grammar operations;
 - fold public payloads used one absorption call per byte;
 - terminal replay decoded `z`, converted and re-encoded all coefficients for a
-  byte comparison, then decoded the same canonical payload again;
+byte comparison, then decoded the same canonical payload again;
 - nonce preview encoding allocated small vectors.
 
 The final path uses exact canonical rejection sampling at the field's byte
@@ -91,7 +98,9 @@ reconverge after a later absorb.
 - Spongefish remains the sole production transcript and proof transport.
 - Every proof message is absorbed before its dependent challenge.
 - Proof-of-work and fold-response grinding retain bounded search, nonce ranges,
-  predicates, plan ordering, and verifier checks.
+  predicates, plan ordering, and verifier checks. Each fold nonce is committed
+  once as its native LEB128 proof message; challenge-group payloads do not copy
+  it a second time.
 - Fields and nonces use canonical decoding; sumcheck counts come only from the
   validated public shape.
 - Terminal allocation is bounded before receipt, Golomb decoding is canonical,

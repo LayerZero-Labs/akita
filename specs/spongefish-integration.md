@@ -9,7 +9,10 @@ from the native duplex state. Verification succeeds only after all Akita
 relations, the complete grinding plan, and Spongefish `check_eof` succeed.
 
 There is no compatibility promise for earlier proof bytes. The active native
-protocol identifier is version 6 and is backend-specific. The pinned Spongefish
+protocol identifier is version 7 and is backend-specific. Version 7 removes the
+legacy fixed-width copy of a fold-response nonce from every group-local public
+challenge payload; the canonical native nonce message is its only absorption.
+The pinned Spongefish
 revision is `ef9741346a150039427d9e0c02d6b2d73e93ec81` (the v0.7.4 release).
 
 This design preserves proof-of-work grinding, fold-response search, all schedule
@@ -205,6 +208,12 @@ session from already-bound outer state. If later outer challenges must depend
 on the Akita proof, the outer protocol must also absorb an agreed binding of
 that proof or result before drawing them. The standalone Akita API cannot infer
 that composition policy.
+
+The in-repository `profile/akita-recursion` guest uses this native verifier
+path and canonical instance binding. That establishes migration of the local
+recursion profile only. External Jolt Akita adapters and their outer-transcript
+composition are outside this change's completed scope and require separate,
+pinned end-to-end validation before being described as migrated.
 
 ## Verification and maintenance gates
 

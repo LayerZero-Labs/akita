@@ -33,8 +33,6 @@ where
             .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
     }
 }
-
-#[allow(dead_code)] // Called by the native fold driver during production cutover.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ring_switch_finalize_native<F, E>(
     instance: &RingRelationInstance<F>,

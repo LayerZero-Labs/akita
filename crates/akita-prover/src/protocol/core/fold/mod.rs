@@ -57,7 +57,6 @@ pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
 }
 
 /// Native Spongefish variant of fold-relation preparation.
-#[allow(dead_code)] // Called by the native root/suffix drivers during cutover.
 #[allow(clippy::needless_lifetimes, clippy::too_many_arguments)]
 pub(super) fn prepare_fold_relation_native<'a, F, E, Q, S, O, TS, R, SP>(
     stack: &'a ProverComputeStack<'a, F, O, TS, R, SP>,
@@ -551,7 +550,6 @@ where
 }
 
 /// Prove one recursive fold level directly into the native Spongefish stream.
-#[allow(dead_code)] // Called by the native root/suffix driver during cutover.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(in crate::protocol::core) fn prove_fold_native<'stack, F, E, O, TS, R, SP, Cfg>(

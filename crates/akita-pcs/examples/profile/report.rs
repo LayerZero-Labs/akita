@@ -67,6 +67,44 @@ fn print_native_wire_contexts(label: &str) {
             "[{label}] native_wire_context: family={family} level={level} kind={kind} atoms={atoms} declared_bytes={bytes}"
         );
     }
+
+    let mut ranges = akita_transcript::thread_proof_ranges();
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut cursor = 0usize;
+    let mut nonce_bytes = 0usize;
+    let mut non_nonce_bytes = 0usize;
+    let mut complete = true;
+    for range in ranges {
+        let Some(end) = range.start.checked_add(range.len) else {
+            complete = false;
+            break;
+        };
+        if range.start != cursor {
+            complete = false;
+            break;
+        }
+        cursor = end;
+        if matches!(
+            range.context.kind,
+            kind if kind == akita_transcript::ProtocolMessageKind::GrindingNonce as u32
+                || kind == akita_transcript::ProtocolMessageKind::FoldResponseNonce as u32
+        ) {
+            nonce_bytes = nonce_bytes.saturating_add(range.len);
+        } else {
+            non_nonce_bytes = non_nonce_bytes.saturating_add(range.len);
+        }
+    }
+    if complete {
+        tracing::info!(
+            label,
+            accounted_bytes = cursor,
+            native_nonce_bytes_observed = nonce_bytes,
+            native_non_nonce_bytes_observed = non_nonce_bytes,
+            "native proof byte accounting"
+        );
+    } else {
+        tracing::warn!(label, "native proof byte accounting is incomplete");
+    }
 }
 
 pub(crate) fn emit_native_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {

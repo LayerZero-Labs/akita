@@ -480,7 +480,6 @@ where
 }
 
 impl RingRelationProver {
-    #[allow(dead_code)] // Called by the native outer fold driver during cutover.
     #[allow(clippy::too_many_arguments)]
     #[allow(private_bounds)]
     pub(in crate::protocol) fn prepare_native<'a, F, PointF, P, S, OB, RB>(

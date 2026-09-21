@@ -36,8 +36,6 @@ use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use jolt_field::{Fold, Unreduced};
-
-#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
 pub(in crate::protocol) struct NativeDigitRangeProveOutput<E: Field> {
     pub(in crate::protocol) point: Vec<E>,
     pub(in crate::protocol) range_image_evaluation: E,
@@ -282,7 +280,6 @@ impl<E: Field + Ring> DigitRangeProver<E> {
 
 impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
     /// Stream the non-L2 stage-1 range proof directly into Spongefish.
-    #[allow(dead_code)] // Called by the native fold driver during production cutover.
     pub(in crate::protocol) fn prove_native<F>(
         self,
         grinding: &mut akita_types::NativeProverGrinding<'_>,

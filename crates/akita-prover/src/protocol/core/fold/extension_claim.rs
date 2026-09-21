@@ -13,7 +13,6 @@ pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
 
 /// Prepare an extension-field fold directly against the native Spongefish
 /// stream, including native EOR when scheduled.
-#[allow(dead_code)] // Called by the native root/suffix driver during cutover.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_extension_claim_fold_native<'a, F, E, P, S, O, TS, R, SP>(
     stack: &ProverComputeStack<'_, F, O, TS, R, SP>,

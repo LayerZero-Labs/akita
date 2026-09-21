@@ -24,10 +24,7 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
-
-#[allow(dead_code)] // Consumed by the native fold driver during production cutover.
 pub(crate) struct NativeAkitaStage3ProverOutput<E: Field> {
-    pub(in crate::protocol) setup_product_claim: E,
     pub(in crate::protocol) setup_prefix_eval: E,
     pub(in crate::protocol) setup_prefix_point: Vec<E>,
 }
@@ -44,7 +41,6 @@ where
     E: Field + Ring + MulBaseUnreduced<F>,
 {
     /// Construct stage 3 while binding its selected setup slot natively.
-    #[allow(dead_code)] // Called by the native fold driver during production cutover.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::protocol) fn new_native(
         expanded: &'a AkitaExpandedSetup<F>,
@@ -92,7 +88,6 @@ where
     }
 
     /// Stream stage 3 without retaining a structured sumcheck proof.
-    #[allow(dead_code)] // Called by the native fold driver during production cutover.
     pub(in crate::protocol) fn prove_native(
         &mut self,
         grinding: &mut akita_types::NativeProverGrinding<'_>,
@@ -114,7 +109,6 @@ where
         let setup_prefix_eval = self.setup.folded_table_value()?;
         akita_types::native_stage3_prover_prefix_eval::<F, E>(grinding, level, setup_prefix_eval)?;
         Ok(NativeAkitaStage3ProverOutput {
-            setup_product_claim: self.setup_product_claim,
             setup_prefix_eval,
             setup_prefix_point,
         })

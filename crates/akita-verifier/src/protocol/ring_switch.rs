@@ -166,8 +166,6 @@ where
             .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
     }
 }
-
-#[allow(dead_code)] // Called by the native fold verifier during production cutover.
 pub(crate) fn ring_switch_verifier_native<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,

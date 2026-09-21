@@ -6,7 +6,6 @@ use crate::compute::{
 use jolt_field::AdditiveGroup;
 
 impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
-    #[allow(dead_code)] // Called by the native production entry point during cutover.
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(crate) fn prove_root_native<F, E, P, S, O, TS, R, SP, Cfg>(

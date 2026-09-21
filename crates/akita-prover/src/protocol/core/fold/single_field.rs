@@ -14,7 +14,6 @@ use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnred
 use jolt_field::{Fold, Unreduced};
 
 /// Prepare a degree-one fold directly against the native Spongefish stream.
-#[allow(dead_code)] // Called by the native root/suffix driver during cutover.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_single_field_fold_native<'a, F, E, P, S, O, TS, R, SP>(
     stack: &ProverComputeStack<'_, F, O, TS, R, SP>,

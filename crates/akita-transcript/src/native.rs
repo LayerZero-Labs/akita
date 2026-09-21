@@ -3,7 +3,7 @@
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
     protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
-    VerificationError, VerifierState, WithoutInstance,
+    VerificationError, WithoutInstance,
 };
 use std::marker::PhantomData;
 use std::{error::Error, fmt};
@@ -18,12 +18,14 @@ pub use sampling::{
     native_prover_field_challenge, native_verifier_field_challenge, NATIVE_FIELD_CHALLENGE_BYTES,
     NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
 };
+mod verifier;
+pub use verifier::NativeVerifierState;
 
 /// Native transcript and proof-stream format version.
-pub const NATIVE_PROTOCOL_VERSION: u32 = 6;
+pub const NATIVE_PROTOCOL_VERSION: u32 = 7;
 
 /// Domain tag stored in every native diagnostic context record.
-pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v6\0\0\0\0\0";
+pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v7\0\0\0\0\0";
 
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;
@@ -157,9 +159,6 @@ impl ProtocolSiteId {
 /// Native Spongefish prover state used by Akita.
 pub type NativeProverState = ProverState<TranscriptSponge>;
 
-/// Native Spongefish verifier state used by Akita.
-pub type NativeVerifierState<'proof> = VerifierState<'proof, TranscriptSponge>;
-
 /// Failure to construct a native transcript from an unrepresentable public input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeInitializationError;
@@ -210,9 +209,9 @@ impl Encoding<[u8]> for FramedBytes<'_> {
 
 fn native_protocol_id() -> [u8; 64] {
     #[cfg(feature = "transcript-blake2b")]
-    let name = "akita-pcs/native-proof-stream/v6/blake2b";
+    let name = "akita-pcs/native-proof-stream/v7/blake2b";
     #[cfg(feature = "transcript-keccak")]
-    let name = "akita-pcs/native-proof-stream/v6/keccak";
+    let name = "akita-pcs/native-proof-stream/v7/keccak";
     protocol_id(format_args!("{name}"))
 }
 
@@ -247,7 +246,9 @@ pub fn new_native_verifier<'proof>(
     instance: &[u8],
     proof: &'proof [u8],
 ) -> Result<NativeVerifierState<'proof>, NativeInitializationError> {
-    Ok(native_domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof))
+    Ok(NativeVerifierState::new(
+        native_domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof),
+    ))
 }
 
 /// A fixed-width, canonical field atom for native proof transport.
@@ -587,8 +588,12 @@ pub fn receive_native_bounded_bytes(
         ),
     );
     let len = state.prover_message::<u32>()?;
-    let len = usize::try_from(len).map_err(|_| VerificationError)?;
+    let len = usize::try_from(len).map_err(|_| {
+        state.invalidate();
+        VerificationError
+    })?;
     if len > max_len {
+        state.invalidate();
         return Err(VerificationError);
     }
     let mut payload_site = site;
@@ -741,10 +746,16 @@ pub fn prover_context(state: &mut NativeProverState, record: ProtocolContextReco
     #[cfg(feature = "logging-transcript")]
     {
         crate::logging::record_context(record);
-        crate::logging::record_proof_range(record, state.narg_string().len());
+        crate::logging::record_proof_boundary(record, state.narg_string().len());
     }
     #[cfg(not(feature = "logging-transcript"))]
     let _ = (state, record);
+}
+
+/// Close the final diagnostic proof range at the authoritative argument end.
+#[cfg(feature = "logging-transcript")]
+pub fn finish_native_proof_ranges(state: &NativeProverState) {
+    crate::logging::finish_proof_ranges(state.narg_string().len());
 }
 
 /// Record verifier-side protocol metadata when transcript diagnostics are enabled.
@@ -800,12 +811,11 @@ pub fn native_prover_fold_root(
 
 /// Absorb one public fold payload and draw its root live on the
 /// verifier side.
-#[must_use]
 pub fn native_verifier_fold_root(
     state: &mut NativeVerifierState<'_>,
     record: ProtocolContextRecord,
     payload: &[u8],
-) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
+) -> Result<[u8; crate::FOLD_CHALLENGE_SEED_LEN], VerificationError> {
     verifier_context(state, record);
     state.public_message(payload);
     state.verifier_message()
@@ -1074,7 +1084,7 @@ pub fn receive_native_grinding_nonce(
     verifier_context(state, nonce_record);
     let nonce = state.prover_message::<NativeNonce>()?.into_inner();
     verifier_context(state, predicate_record);
-    Ok((nonce, state.verifier_message()))
+    Ok((nonce, state.verifier_message()?))
 }
 
 #[cfg(test)]
@@ -1095,8 +1105,8 @@ mod tests {
         assert_eq!(
             challenge,
             [
-                201, 136, 33, 135, 212, 244, 192, 54, 83, 100, 55, 94, 134, 73, 251, 26, 106, 36,
-                194, 243, 193, 218, 24, 14, 176, 202, 86, 216, 95, 37, 125, 31,
+                174, 120, 165, 116, 108, 247, 146, 33, 182, 143, 40, 94, 150, 167, 244, 49, 71, 31,
+                91, 26, 214, 49, 240, 75, 87, 142, 44, 99, 169, 37, 81, 104,
             ]
         );
     }
@@ -1208,7 +1218,10 @@ mod tests {
             let mut verifier = new_native_verifier(b"chunked-bytes", b"instance", &proof).unwrap();
             assert_eq!(receive_native_bytes(&mut verifier, len).unwrap(), bytes);
             public_native_bytes_verifier(&mut verifier, site, &bytes).unwrap();
-            assert_eq!(verifier.verifier_message::<[u8; 32]>(), chunked_challenge);
+            assert_eq!(
+                verifier.verifier_message::<[u8; 32]>().unwrap(),
+                chunked_challenge
+            );
             verifier.check_eof().unwrap();
         }
     }
@@ -1313,7 +1326,7 @@ mod tests {
             nonce
         );
         assert_eq!(
-            native_verifier_fold_root(&mut verifier, root_record, &payload),
+            native_verifier_fold_root(&mut verifier, root_record, &payload).unwrap(),
             live
         );
         verifier.check_eof().unwrap();
@@ -1351,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_payload_receipt_uses_its_public_limit() {
+    fn ignored_bounded_receipt_failure_poisons_eof() {
         let site = ProtocolSiteId {
             family: SITE_FAMILY_TERMINAL,
             stage: 7,
@@ -1363,6 +1376,9 @@ mod tests {
 
         let mut verifier = new_native_verifier(b"bounded", b"fixture", &proof).unwrap();
         assert!(receive_native_bounded_bytes(&mut verifier, site, 8).is_err());
+        assert!(verifier.verifier_message::<[u8; 32]>().is_err());
+        assert!(verifier.prover_message::<u32>().is_err());
+        assert!(verifier.check_eof().is_err());
     }
 
     #[test]
