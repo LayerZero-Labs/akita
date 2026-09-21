@@ -75,7 +75,7 @@ fn local_pruning_per_opening_basis_microbench() {
         root_main_constraint: None,
         adaptation_guide: None,
         root_honest_fold_policy: None,
-        precommitted_honest_fold_policies: &[],
+        precommitted_source_contracts: &[],
         level_zero_is_root: false,
         relation_traversal_order: RelationTraversalOrder::Canonical,
         relation_mode_filter: RelationModeFilter::All,
