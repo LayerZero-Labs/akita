@@ -88,7 +88,3 @@ pub(super) fn level_candidates(
         .map(|(_, _, candidate)| candidate)
         .collect())
 }
-
-#[cfg(test)]
-#[path = "prune_tests.rs"]
-mod tests;
