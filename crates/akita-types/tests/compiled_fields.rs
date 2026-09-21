@@ -5,7 +5,7 @@ use akita_types::{
     compiled_field_tier_enabled, dispatch_for_field, validate_compiled_field, ProtocolDispatchSlot,
     ProtocolRingDispatchTierId, RingRole,
 };
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::Prime64Offset59;
 
 #[test]
 fn compiled_capabilities_match_positive_features() {
@@ -84,7 +84,7 @@ fn assert_fp64_dispatches(slot: ProtocolDispatchSlot, dimensions: &[usize]) {
 #[test]
 fn disabled_fields_report_the_required_feature() {
     #[cfg(not(feature = "field-fp32"))]
-    assert!(validate_compiled_field::<Prime32Offset99>()
+    assert!(validate_compiled_field::<jolt_field::Prime32Offset99>()
         .unwrap_err()
         .to_string()
         .contains("field-fp32"));
@@ -94,7 +94,7 @@ fn disabled_fields_report_the_required_feature() {
         .to_string()
         .contains("field-fp64"));
     #[cfg(not(feature = "field-fp128"))]
-    assert!(validate_compiled_field::<Prime128OffsetA7F7>()
+    assert!(validate_compiled_field::<jolt_field::Prime128OffsetA7F7>()
         .unwrap_err()
         .to_string()
         .contains("field-fp128"));

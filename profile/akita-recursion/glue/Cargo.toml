@@ -38,6 +38,11 @@ akita-config = { version = "0.1.0", path = "../../../crates/akita-config", defau
   "test-support",
   "transcript-blake2b",
 ] }
+akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false, features = [
+  "field-fp32",
+  "field-fp64",
+  "field-fp128",
+] }
 
 [lints.rust]
 missing_docs = "warn"
