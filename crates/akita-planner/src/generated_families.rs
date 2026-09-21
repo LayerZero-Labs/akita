@@ -23,7 +23,7 @@ use akita_types::{
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 struct ScalarPreplan {
     source: TypeId,
@@ -246,8 +246,8 @@ pub struct GeneratedFamily {
     pub scalar_keys: &'static [PolynomialGroupLayout],
     /// Exact producer type used to distinguish scalar preplans.
     scalar_plan_source: fn() -> TypeId,
-    /// Pure DP regeneration that ignores any checked-in artifact
-    /// (`find_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
+    /// Pure scalar DP regeneration using the family's source contract,
+    /// ignoring any checked-in artifact.
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any checked-in artifact.
     pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
@@ -298,7 +298,7 @@ fn plan_regen<Cfg: CommitmentConfig>(
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_schedule(
         key,
-        honest_fold_policy_of::<Cfg>(),
+        Cfg::committed_source_contract()?,
         precommitted_source_contracts,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

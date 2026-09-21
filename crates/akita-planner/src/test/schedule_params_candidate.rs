@@ -510,9 +510,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::{AkitaScheduleLookupKey, InnerCommitSecurityRoute, OpeningMethod};
 
     let policy = policy_of::<Dense>();
@@ -528,7 +526,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
     let candidates = crate::planner::root_level_candidates_for_basis(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,
@@ -627,7 +625,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap();
     let grouped = crate::planner::root_level_candidates_for_basis(
         &grouped_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
@@ -671,7 +669,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
     assert!(crate::planner::root_level_candidates_for_basis(
         &grouped_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[Dense::committed_source_contract().unwrap()],
         &policy,
         dimensions,
@@ -725,7 +723,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .flat_map(|product| {
                 crate::planner::root_level_candidates_for_basis(
                     &product_key,
-                    honest_fold_policy_of::<Dense>(),
+                    Dense::committed_source_contract().unwrap(),
                     &[Dense::committed_source_contract().unwrap(); 2],
                     &policy,
                     dimensions,
@@ -793,9 +791,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn guided_root_slice_survives_grouped_local_pruning() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
@@ -813,7 +809,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
     let scalar = crate::planner::root_level_candidates_for_basis(
         &scalar_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,
@@ -839,7 +835,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     let derive = |guide| {
         crate::planner::root_level_candidates_for_basis(
             &grouped_key,
-            honest_fold_policy_of::<Dense>(),
+            Dense::committed_source_contract().unwrap(),
             &[Dense::committed_source_contract().unwrap()],
             &policy,
             dimensions,
@@ -892,9 +888,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
-    use akita_config::{
-        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
-    };
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
     use akita_types::AkitaScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
@@ -910,7 +904,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     let pre_key = AkitaScheduleLookupKey::single(pre_group);
     let pre_candidates = crate::planner::root_level_candidates_for_basis(
         &pre_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         dimensions,

@@ -163,7 +163,7 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let adapted = find_adapted_schedule(
         &main_row,
         &request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -191,9 +191,8 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         let moments = crate::response_model::root_group_source_moments(
             &adapted.schedule.root.params,
             &layout,
-            honest_fold_policy_of::<Dense>(),
+            Dense::committed_source_contract().unwrap(),
             &[contract],
-            policy.decomposition,
         )
         .unwrap();
         moments[0].mean_l2_sq()
@@ -260,7 +259,7 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
     let error = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy_of::<OneHot>(),
         |_| panic!("oversized request must reject before planner search"),
     )
@@ -287,7 +286,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     let scalar_error = find_adapted_schedule(
         &main_row,
         &scalar_request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -302,7 +301,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     let mismatch_error = find_adapted_schedule(
         &main_row,
         &mismatch_request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -328,7 +327,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
     let adapted = find_adapted_schedule(
         &main_row,
         &request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -357,7 +356,7 @@ fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
     let error = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
     )
@@ -392,7 +391,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
     )
@@ -444,7 +443,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<RecursiveOneHot>(),
+        RecursiveOneHot::committed_source_contract().unwrap(),
         &policy,
         RecursiveOneHot::ring_challenge_config,
     )
@@ -562,7 +561,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
         let result = find_adapted_schedule(
             main_row,
             &request,
-            honest_fold_policy_of::<OneHot>(),
+            OneHot::committed_source_contract().unwrap(),
             &policy,
             OneHot::ring_challenge_config,
         );
@@ -574,7 +573,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
             .or_else(|_| {
                 find_schedule(
                     &key,
-                    honest_fold_policy_of::<OneHot>(),
+                    OneHot::committed_source_contract().unwrap(),
                     &request.source_contracts(),
                     &policy,
                     OneHot::ring_challenge_config,
