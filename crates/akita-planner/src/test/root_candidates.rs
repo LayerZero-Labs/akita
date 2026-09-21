@@ -5,7 +5,7 @@ use super::*;
 /// independent of production split bounds and local slice pruning.
 pub(crate) fn exhaustive_root_candidates_for_reference(
     key: &AkitaScheduleLookupKey,
-    final_honest_fold_policy: HonestFoldPolicySpec,
+    final_source_contract: CommittedSourceContract,
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
@@ -29,13 +29,10 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
         policy,
         dimensions,
         opening,
-        final_honest_fold_policy,
+        final_source_contract,
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
-        source: crate::schedule_params::root_inner_basis_source(
-            final_honest_fold_policy,
-            policy.decomposition.log_commit_bound,
-        ),
+        source: crate::schedule_params::root_inner_basis_source(final_source_contract),
     };
     let opening_batch = key.opening_layout()?;
     let min_split = usize::from(reduced_vars >= 3);
