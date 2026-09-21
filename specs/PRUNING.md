@@ -50,10 +50,11 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
-The current set temporarily contains 22. The active commitment-execution,
+The current set temporarily contains 23. The active commitment-execution,
 external-catalog, paired quotient-free tail-ring, Jolt field-unification, and
-guided-adaptation records and the load-bearing Spongefish integration record
-account for the seven-record overage. Each record
+guided-adaptation records, the load-bearing Spongefish integration record, and
+its grinding-nonce encoding review companion account for the eight-record
+overage. Each record
 returns to the archive after its durable contract is folded into the Book.
 
 ## Status transitions (required actions)
@@ -103,10 +104,11 @@ The root live set is deliberately small and is synchronized with
 18. `structured-e-term.md`
 19. `subring-coefficient-packing.md`
 20. `transcript-grinding.md`
-21. `guided-schedule-adaptation.md`
-22. `spongefish-integration.md`
+21. `grinding-nonce-encoding.md`
+22. `guided-schedule-adaptation.md`
+23. `spongefish-integration.md`
 
-All 22 current live specifications must pass the default dead-symbol scan. A record
+All 23 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

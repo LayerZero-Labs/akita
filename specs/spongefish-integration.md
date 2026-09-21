@@ -241,3 +241,7 @@ that composition policy.
 There is one production proof path and no legacy decoder or compatibility
 adapter. Any future format change bumps the native protocol/descriptor identity
 and updates this specification, tests, measurements, and affected artifacts.
+
+For a from-first-principles explanation of grinding, main's packed stream, and
+the native LEB128 tradeoff, see
+[`grinding-nonce-encoding.md`](grinding-nonce-encoding.md).
