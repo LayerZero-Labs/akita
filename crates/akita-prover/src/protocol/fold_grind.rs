@@ -238,7 +238,7 @@ where
     let (nonce, (witness, challenges)) =
         first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview_state = grinding.preview_fold_response(site, nonce)?;
-            let mut preview = NativePreviewFoldDraw::new(&mut preview_state, level, 0);
+            let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
             let challenges = preview.draw_folding_challenges_with_rejection(
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
@@ -400,11 +400,8 @@ where
             let mut candidate_outputs = Vec::with_capacity(groups.len());
             for prepared_group in groups {
                 let group = &prepared_group.input;
-                let group_u32 = u32::try_from(group.group_index)
-                    .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u32".into()))?;
                 let challenges = {
-                    let mut preview =
-                        NativePreviewFoldDraw::new(&mut preview_state, level, group_u32);
+                    let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
                     draw_group_fold_challenges::<F, E, _>(
                         &mut preview,
                         &group.params,
@@ -578,7 +575,7 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _label: &[u8], _payload: &[u8]) -> [u8; 32] {
+        fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> [u8; 32] {
             self.draws += 1;
             [11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
         }

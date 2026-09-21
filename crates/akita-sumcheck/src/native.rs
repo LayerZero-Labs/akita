@@ -13,8 +13,17 @@ use akita_transcript::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
-const ROLE_CLAIM: u32 = 1;
-const ROLE_ROUND_BODY: u32 = 3;
+/// Typed discriminator for native sumcheck transcript sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum NativeSumcheckRole {
+    /// Public input claim.
+    Claim = 1,
+    /// Proof-supplied compressed round polynomial.
+    RoundBody = 3,
+    /// Verifier challenge drawn after a round body.
+    Challenge = 4,
+}
 
 /// Prover-side native operations required by the standard sumcheck driver.
 pub trait NativeSumcheckProverChannel<E> {
@@ -22,7 +31,12 @@ pub trait NativeSumcheckProverChannel<E> {
     fn state_mut(&mut self) -> &mut NativeProverState;
 
     /// Return the complete public identity for one sumcheck record.
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId;
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: NativeSumcheckRole,
+    ) -> ProtocolSiteId;
 
     /// Apply scheduled work and draw the challenge for `round`.
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError>;
@@ -34,7 +48,12 @@ pub trait NativeSumcheckVerifierChannel<'proof, E> {
     fn state_mut(&mut self) -> &mut NativeVerifierState<'proof>;
 
     /// Return the complete public identity for one sumcheck record.
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId;
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: NativeSumcheckRole,
+    ) -> ProtocolSiteId;
 
     /// Verify scheduled work and draw the challenge for `round`.
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError>;
@@ -51,15 +70,15 @@ pub struct NativeSumcheckRoundResult<E: Field> {
 
 fn context(
     site: ProtocolSiteId,
-    role: u32,
+    role: NativeSumcheckRole,
     atom_count: usize,
     encoded_bytes: usize,
     challenge_bytes: usize,
 ) -> Result<ProtocolContextRecord, AkitaError> {
     let kind = match role {
-        ROLE_CLAIM => ProtocolMessageKind::PublicValue,
-        ROLE_ROUND_BODY => ProtocolMessageKind::ProofAtoms,
-        _ => return Err(AkitaError::InvalidProof),
+        NativeSumcheckRole::Claim => ProtocolMessageKind::PublicValue,
+        NativeSumcheckRole::RoundBody => ProtocolMessageKind::ProofAtoms,
+        NativeSumcheckRole::Challenge => return Err(AkitaError::InvalidProof),
     };
     Ok(ProtocolContextRecord::new(
         site.to_bytes(),
@@ -96,7 +115,7 @@ where
         state,
         context(
             site,
-            ROLE_CLAIM,
+            NativeSumcheckRole::Claim,
             coefficients.len(),
             field_bytes::<F>(coefficients.len())?,
             0,
@@ -122,7 +141,7 @@ where
         state,
         context(
             site,
-            ROLE_CLAIM,
+            NativeSumcheckRole::Claim,
             coefficients.len(),
             field_bytes::<F>(coefficients.len())?,
             0,
@@ -152,7 +171,7 @@ where
     let num_rounds = prover.num_rounds();
     let degree_bound = prover.degree_bound();
     let mut claim = prover.input_claim();
-    let claim_site = channel.sumcheck_site(invocation, 0, ROLE_CLAIM);
+    let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
@@ -168,12 +187,12 @@ where
             .coeffs_except_linear_term
             .resize(degree_bound, E::zero());
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
-        let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
+        let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         prover_context(
             channel.state_mut(),
             context(
                 body_site,
-                ROLE_ROUND_BODY,
+                NativeSumcheckRole::RoundBody,
                 atom_count,
                 field_bytes::<F>(atom_count)?,
                 0,
@@ -232,7 +251,7 @@ where
     E: ExtField<F>,
     C: NativeSumcheckVerifierChannel<'proof, E>,
 {
-    let claim_site = channel.sumcheck_site(invocation, 0, ROLE_CLAIM);
+    let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
@@ -242,12 +261,12 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
-        let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
+        let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         verifier_context(
             channel.state_mut(),
             context(
                 body_site,
-                ROLE_ROUND_BODY,
+                NativeSumcheckRole::RoundBody,
                 atom_count,
                 field_bytes::<F>(atom_count)?,
                 0,
@@ -292,7 +311,7 @@ where
     let num_rounds = prover.num_rounds();
     let degree_bound = prover.degree_bound();
     let mut claim = prover.input_claim();
-    let claim_site = channel.sumcheck_site(invocation, 0, ROLE_CLAIM);
+    let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
     let mut challenges = Vec::with_capacity(num_rounds);
 
@@ -306,12 +325,12 @@ where
         poly.coeffs_except_constant_term
             .resize(degree_bound, E::zero());
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
-        let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
+        let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         prover_context(
             channel.state_mut(),
             context(
                 body_site,
-                ROLE_ROUND_BODY,
+                NativeSumcheckRole::RoundBody,
                 atom_count,
                 field_bytes::<F>(atom_count)?,
                 0,
@@ -372,19 +391,19 @@ where
 {
     let mut equality = GruenSplitEq::new(equality_point)?;
     let mut claim = input_claim;
-    let claim_site = channel.sumcheck_site(invocation, 0, ROLE_CLAIM);
+    let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
     let mut challenges = Vec::with_capacity(equality_point.len());
 
     for round in 0..equality_point.len() {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
-        let body_site = channel.sumcheck_site(invocation, round_id, ROLE_ROUND_BODY);
+        let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         verifier_context(
             channel.state_mut(),
             context(
                 body_site,
-                ROLE_ROUND_BODY,
+                NativeSumcheckRole::RoundBody,
                 atom_count,
                 field_bytes::<F>(atom_count)?,
                 0,
@@ -551,19 +570,24 @@ mod tests {
             &mut self.state
         }
 
-        fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+        fn sumcheck_site(
+            &self,
+            invocation: u32,
+            round: u32,
+            role: NativeSumcheckRole,
+        ) -> ProtocolSiteId {
             ProtocolSiteId {
                 family: SITE_FAMILY_SUMCHECK,
                 invocation: self.invocation,
                 round,
                 group: invocation,
-                detail: role,
+                detail: role as u32,
                 ..ProtocolSiteId::default()
             }
         }
 
         fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
-            let site = self.sumcheck_site(invocation, round, 4);
+            let site = self.sumcheck_site(invocation, round, NativeSumcheckRole::Challenge);
             prover_context(
                 &mut self.state,
                 ProtocolContextRecord::new(
@@ -574,7 +598,7 @@ mod tests {
                     native_field_challenge_bytes::<F>(),
                 ),
             );
-            Ok(native_prover_field_challenge(&mut self.state))
+            native_prover_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)
         }
     }
 
@@ -588,19 +612,24 @@ mod tests {
             &mut self.state
         }
 
-        fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+        fn sumcheck_site(
+            &self,
+            invocation: u32,
+            round: u32,
+            role: NativeSumcheckRole,
+        ) -> ProtocolSiteId {
             ProtocolSiteId {
                 family: SITE_FAMILY_SUMCHECK,
                 invocation: self.invocation,
                 round,
                 group: invocation,
-                detail: role,
+                detail: role as u32,
                 ..ProtocolSiteId::default()
             }
         }
 
         fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
-            let site = self.sumcheck_site(invocation, round, 4);
+            let site = self.sumcheck_site(invocation, round, NativeSumcheckRole::Challenge);
             verifier_context(
                 &mut self.state,
                 ProtocolContextRecord::new(
@@ -611,7 +640,7 @@ mod tests {
                     native_field_challenge_bytes::<F>(),
                 ),
             );
-            Ok(native_verifier_field_challenge(&mut self.state))
+            native_verifier_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)
         }
     }
 

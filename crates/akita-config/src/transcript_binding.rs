@@ -45,7 +45,8 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
-    if !akita_transcript::native_field_sampling_budget_is_certified(
+    if !akita_transcript::native_field_sampling_is_certified(
+        F::NUM_BYTES,
         F::MODULUS_BITS,
         akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT,
     ) {

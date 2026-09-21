@@ -22,6 +22,7 @@ use akita_types::{
 };
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
@@ -153,6 +154,7 @@ where
 
     /// Produce the canonical native Spongefish argument stream.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     pub fn batched_prove<'a, P, B, SP>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
@@ -194,7 +196,8 @@ where
         SP: CommitmentStatePolicy<Cfg::Field> + 'a,
         SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
     {
-        akita_prover::batched_prove::<Cfg, P, _, B, B, B, SP>(
+        let started = Instant::now();
+        let proof = akita_prover::batched_prove::<Cfg, P, _, B, B, B, SP>(
             &setup.expanded,
             &setup.prefix_slots,
             &self.schedules,
@@ -202,10 +205,17 @@ where
             opening,
             session,
             basis,
-        )
+        )?;
+        tracing::info!(
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
+            "akita batched prove complete"
+        );
+        Ok(proof)
     }
 
     /// Verify the canonical native Spongefish argument stream.
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     pub fn batched_verify(
         &self,
         proof: &[u8],
@@ -214,6 +224,7 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
+        let started = Instant::now();
         akita_verifier::batched_verify::<Cfg>(
             proof,
             setup,
@@ -221,7 +232,13 @@ where
             session,
             statement,
             basis,
-        )
+        )?;
+        tracing::info!(
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
+            "akita batched verify complete"
+        );
+        Ok(())
     }
 
     /// Protocol identifier.

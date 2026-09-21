@@ -18,13 +18,15 @@ pub use grinding::{
     GRINDING_PREDICATE_BYTES, GRINDING_PREDICATE_LEN, MAX_GRINDING_BITS,
 };
 #[cfg(feature = "logging-transcript")]
-pub use logging::{clear_thread_events, thread_events, TranscriptEvent};
+pub use logging::{
+    clear_thread_events, thread_events, thread_proof_ranges, ProofMessageRange, TranscriptEvent,
+};
 pub use native::{
-    commit_native_grinding_nonce, native_field_challenge_bytes,
-    native_field_sampling_budget_is_certified, native_nonce_encoded_len, native_nonce_max_bytes,
-    native_prover_ext_challenge, native_prover_field_challenge, native_prover_fold_root,
-    native_verifier_ext_challenge, native_verifier_field_challenge, native_verifier_fold_root,
-    new_native_prover, new_native_verifier, preview_native_grinding_predicate, prover_context,
+    commit_native_grinding_nonce, native_field_challenge_bytes, native_field_sampling_is_certified,
+    native_nonce_encoded_len, native_nonce_max_bytes, native_prover_ext_challenge,
+    native_prover_field_challenge, native_prover_fold_root, native_verifier_ext_challenge,
+    native_verifier_field_challenge, native_verifier_fold_root, new_native_prover,
+    new_native_verifier, preview_native_grinding_predicate, prover_context,
     public_native_bytes_prover, public_native_bytes_verifier, public_native_extensions_prover,
     public_native_extensions_verifier, public_native_fields_prover, public_native_fields_verifier,
     receive_native_bounded_bytes, receive_native_byte_group, receive_native_bytes,
@@ -35,7 +37,7 @@ pub use native::{
     NativeContextError, NativeExtension, NativeField, NativeFoldPreview, NativeInitializationError,
     NativeNonce, NativeProverState, NativeU128, NativeVerifierState, ProtocolContextRecord,
     ProtocolMessageKind, ProtocolSiteId, NATIVE_CONTEXT_DOMAIN, NATIVE_FIELD_CHALLENGE_BYTES,
-    NATIVE_FIELD_SAMPLING_DRAW_LIMIT, NATIVE_PROTOCOL_VERSION,
+    NATIVE_FIELD_SAMPLING_QUERY_LIMIT, NATIVE_PROTOCOL_VERSION,
     SITE_FAMILY_EXTENSION_OPENING_REDUCTION, SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_FOLD_CHALLENGE,
     SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_PHYSICAL_L2,
     SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_STAGE3,

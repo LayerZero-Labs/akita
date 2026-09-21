@@ -92,17 +92,13 @@ pub const fn native_nonce_max_bytes(nonce_bits: u8) -> usize {
 /// Number of bytes in one canonical unsigned LEB128 nonce.
 #[must_use]
 pub const fn native_nonce_encoded_len(value: u32) -> usize {
-    if value < (1 << 7) {
+    let significant_bits = u32::BITS - value.leading_zeros();
+    let encoded_bits = if significant_bits == 0 {
         1
-    } else if value < (1 << 14) {
-        2
-    } else if value < (1 << 21) {
-        3
-    } else if value < (1 << 28) {
-        4
     } else {
-        5
-    }
+        significant_bits
+    };
+    (encoded_bits as usize).div_ceil(7)
 }
 
 #[cfg(test)]
@@ -122,6 +118,7 @@ mod tests {
         ] {
             let encoded = NativeNonce::new(value).encode().as_ref().to_vec();
             assert_eq!(encoded.len(), expected_len);
+            assert_eq!(encoded.len(), native_nonce_encoded_len(value));
             let suffix = [0xa5, 0x5a];
             let mut argument = encoded.clone();
             argument.extend_from_slice(&suffix);

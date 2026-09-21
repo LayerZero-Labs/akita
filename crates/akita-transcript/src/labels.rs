@@ -23,8 +23,6 @@ pub const CHALLENGE_LINEAR_RELATION: &[u8] = b"ak/c/lr";
 pub const ABSORB_RING_SWITCH_MESSAGE: &[u8] = b"ak/a/rs";
 /// Challenge used by ring-switching relation checks (paper §4.3).
 pub const CHALLENGE_RING_SWITCH: &[u8] = b"ak/c/rs";
-/// Absorb sparse-challenge sampling context (e.g. for short/sparse ring `c`).
-pub const ABSORB_SPARSE_CHALLENGE: &[u8] = b"ak/a/sp";
 /// Challenge bytes used to sample sparse challenges (e.g. ring `c` with weight ω).
 pub const CHALLENGE_SPARSE_CHALLENGE: &[u8] = b"ak/c/sp";
 /// Absorb the initial sumcheck claim before round messages begin.
@@ -73,8 +71,7 @@ pub const ABSORB_OPENING_PAYLOAD: &[u8] = b"ak/a/v";
 /// Challenge label for witness-fold sparse ring elements `c_i`.
 ///
 /// Prefixes the sparse-challenge Fiat–Shamir absorb buffer for one draw batch.
-/// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not
-/// absorbed by itself into the positional production sponge.
+/// This string is embedded directly in the public fold payload.
 pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
 
 /// Absorb field-element evaluation claims for γ-batching.
@@ -112,7 +109,6 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_LINEAR_RELATION,
     ABSORB_RING_SWITCH_MESSAGE,
     CHALLENGE_RING_SWITCH,
-    ABSORB_SPARSE_CHALLENGE,
     CHALLENGE_SPARSE_CHALLENGE,
     ABSORB_SUMCHECK_CLAIM,
     ABSORB_SETUP_PREFIX_SLOT,

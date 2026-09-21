@@ -2,14 +2,15 @@
 
 use super::{GrindingPlan, GrindingQueryKind, GrindingSite};
 use akita_error::AkitaError;
-use akita_sumcheck::{NativeSumcheckProverChannel, NativeSumcheckVerifierChannel};
+use akita_sumcheck::{
+    NativeSumcheckProverChannel, NativeSumcheckRole, NativeSumcheckVerifierChannel,
+};
 use akita_transcript::{
     commit_native_grinding_nonce, grinding_predicate_accepts, native_nonce_encoded_len,
     native_nonce_max_bytes, native_prover_ext_challenge, native_verifier_ext_challenge,
-    preview_native_grinding_predicate, prover_context, receive_native_grinding_nonce,
-    search_native_grinding_nonce, verifier_context, NativeFoldPreview, NativeNonce,
-    NativeProverState, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
-    ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
+    prover_context, receive_native_grinding_nonce, search_native_grinding_nonce, verifier_context,
+    NativeFoldPreview, NativeNonce, NativeProverState, NativeVerifierState, ProtocolContextRecord,
+    ProtocolMessageKind, ProtocolSiteId, GRINDING_PREDICATE_LEN, SITE_FAMILY_SUMCHECK,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
@@ -88,7 +89,11 @@ impl<'a> GrindingPlanCursor<'a> {
 }
 
 const fn value_fits(value: u32, width: u8) -> bool {
-    width == 32 || value < (1u32 << width)
+    match width {
+        0..=31 => value < (1u32 << width),
+        32 => true,
+        _ => false,
+    }
 }
 
 fn next_entry(
@@ -159,6 +164,10 @@ impl<'plan> NativeProverGrinding<'plan> {
     }
 
     /// Borrow the native state for ordinary protocol messages and challenges.
+    ///
+    /// Operations performed through this raw role-specific state are outside
+    /// replay poisoning. Callers must propagate their errors before `finish`;
+    /// the completion boundary certifies only plan exhaustion and proof EOF.
     pub fn state_mut(&mut self) -> &mut NativeProverState {
         &mut self.state
     }
@@ -187,6 +196,20 @@ impl<'plan> NativeProverGrinding<'plan> {
     /// Apply one scheduled grinding query and draw `count` independently
     /// context-bound extension challenges protected by that query.
     pub fn grinded_ext_challenges<F, E>(
+        &mut self,
+        site: GrindingSite,
+        count: usize,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let result = self.grinded_ext_challenges_inner::<F, E>(site, count);
+        self.invalid |= result.is_err();
+        result
+    }
+
+    fn grinded_ext_challenges_inner<F, E>(
         &mut self,
         site: GrindingSite,
         count: usize,
@@ -237,19 +260,12 @@ impl<'plan> NativeProverGrinding<'plan> {
         };
         let (nonce_record, predicate_record) =
             grinding_records(site, entry.grind_bits, entry.nonce_bits);
-        let nonce = search_native_grinding_nonce(
-            &self.state,
-            entry.grind_bits,
-            entry.nonce_bits,
-            nonce_record,
-            predicate_record,
-        )
-        .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
-        let preview =
-            preview_native_grinding_predicate(&self.state, nonce_record, nonce, predicate_record);
+        let (nonce, winning_predicate) =
+            search_native_grinding_nonce(&self.state, entry.grind_bits, entry.nonce_bits)
+                .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
         let predicate =
             commit_native_grinding_nonce(&mut self.state, nonce_record, nonce, predicate_record);
-        if preview != predicate || !grinding_predicate_accepts(&predicate, bits) {
+        if winning_predicate != predicate || !grinding_predicate_accepts(&predicate, bits) {
             return Err(AkitaError::InvalidProof);
         }
         self.serialized_nonce_bytes = self
@@ -305,11 +321,7 @@ impl<'plan> NativeProverGrinding<'plan> {
         {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(NativeFoldPreview::new(
-            &self.state,
-            fold_response_record(site, entry.nonce_bits),
-            counter,
-        ))
+        Ok(NativeFoldPreview::new(&self.state, counter))
     }
 
     /// Consume the plan entries for one sparse fold group.
@@ -338,6 +350,7 @@ impl<'plan> NativeProverGrinding<'plan> {
             return Err(AkitaError::InvalidProof);
         }
         tracing::info!(
+            role = "prover",
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
@@ -375,6 +388,10 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     }
 
     /// Borrow the native state for ordinary protocol receipt and challenges.
+    ///
+    /// Operations performed through this raw role-specific state are outside
+    /// replay poisoning. Callers must propagate their errors before `finish`;
+    /// the completion token certifies only plan exhaustion and proof EOF.
     pub fn state_mut(&mut self) -> &mut NativeVerifierState<'proof> {
         &mut self.state
     }
@@ -403,6 +420,20 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
     /// Verify one scheduled grinding query and draw `count` independently
     /// context-bound extension challenges protected by that query.
     pub fn grinded_ext_challenges<F, E>(
+        &mut self,
+        site: GrindingSite,
+        count: usize,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let result = self.grinded_ext_challenges_inner::<F, E>(site, count);
+        self.invalid |= result.is_err();
+        result
+    }
+
+    fn grinded_ext_challenges_inner<F, E>(
         &mut self,
         site: GrindingSite,
         count: usize,
@@ -516,6 +547,7 @@ impl<'proof, 'plan> NativeVerifierGrinding<'proof, 'plan> {
             return Err(AkitaError::InvalidProof);
         }
         tracing::info!(
+            role = "verifier",
             native_nonce_bytes_actual = self.serialized_nonce_bytes,
             "native proof nonce bytes"
         );
@@ -563,7 +595,12 @@ where
         self.grinding.state_mut()
     }
 
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: NativeSumcheckRole,
+    ) -> ProtocolSiteId {
         ProtocolSiteId {
             family: SITE_FAMILY_SUMCHECK,
             invocation: self.protocol.tag(),
@@ -571,7 +608,7 @@ where
             stage: self.stage,
             round,
             group: invocation,
-            detail: role,
+            detail: role as u32,
             ..ProtocolSiteId::default()
         }
     }
@@ -628,7 +665,12 @@ where
         self.grinding.state_mut()
     }
 
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: NativeSumcheckRole,
+    ) -> ProtocolSiteId {
         ProtocolSiteId {
             family: SITE_FAMILY_SUMCHECK,
             invocation: self.protocol.tag(),
@@ -636,7 +678,7 @@ where
             stage: self.stage,
             round,
             group: invocation,
-            detail: role,
+            detail: role as u32,
             ..ProtocolSiteId::default()
         }
     }
@@ -757,6 +799,40 @@ mod tests {
     }
 
     #[test]
+    fn replay_poison_survives_post_advance_allocation_failure() {
+        let site = GrindingSite::ExtensionOpeningPoint { level: 9 };
+        let plan = GrindingPlan::new(vec![GrindingRun::proof_of_work(site, 1, 128).unwrap()], 128)
+            .unwrap();
+
+        let state = new_native_prover(b"native-poison", b"fixture").unwrap();
+        let mut prover = NativeProverGrinding::new(state, &plan);
+        assert_eq!(
+            prover.grinded_ext_challenges::<F, F>(site, usize::MAX),
+            Err(AkitaError::InvalidProof)
+        );
+        assert_eq!(prover.finish(), Err(AkitaError::InvalidProof));
+
+        let state = new_native_verifier(b"native-poison", b"fixture", &[]).unwrap();
+        let mut verifier = NativeVerifierGrinding::new(state, &plan);
+        assert_eq!(
+            verifier.grinded_ext_challenges::<F, F>(site, usize::MAX),
+            Err(AkitaError::InvalidProof)
+        );
+        assert!(matches!(verifier.finish(), Err(AkitaError::InvalidProof)));
+    }
+
+    #[test]
+    fn nonce_width_membership_is_total() {
+        assert!(value_fits(0, 0));
+        assert!(!value_fits(1, 0));
+        assert!(value_fits((1 << 31) - 1, 31));
+        assert!(!value_fits(1 << 31, 31));
+        assert!(value_fits(u32::MAX, 32));
+        assert!(!value_fits(0, 33));
+        assert!(!value_fits(u32::MAX, u8::MAX));
+    }
+
+    #[test]
     fn native_fold_candidate_replays_all_groups_as_one_transaction() {
         let plan = GrindingPlan::new(
             vec![
@@ -774,10 +850,10 @@ mod tests {
         let mut prover = NativeProverGrinding::new(state, &plan);
         let (preview_first, preview_second) = {
             let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
-            let first = NativePreviewFoldDraw::new(&mut preview_state, 3, 0)
+            let first = NativePreviewFoldDraw::new(&mut preview_state)
                 .draw_folding_challenges(64, 0, 2, 1, &config, nonce)
                 .unwrap();
-            let second = NativePreviewFoldDraw::new(&mut preview_state, 3, 1)
+            let second = NativePreviewFoldDraw::new(&mut preview_state)
                 .draw_folding_challenges(64, 1, 1, 2, &config, nonce)
                 .unwrap();
             (first, second)

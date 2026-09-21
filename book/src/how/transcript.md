@@ -17,17 +17,17 @@ separator includes a backend-specific protocol tag, the caller's length-framed
 session bytes, and canonical instance bytes. The selected backend is BLAKE2b
 or Keccak; each has its own protocol tag.
 
-Every logical message or challenge is preceded by a fixed public context
+Every logical message or challenge has a fixed public diagnostic context
 record. Proof values use native prover emission and verifier receipt, derived
 or public values use native public messages, and verifier challenges use native
 verifier messages. Field atoms are canonical. The one variable-size terminal
 payload carries a checked native length atom before its body.
 
-Production absorbs and squeezes are positional. Their callsite labels are
-diagnostics and do not enter sponge bytes. The session label and explicitly
-encoded protocol context do enter the cryptographic state. Renaming a
-diagnostic label therefore differs from changing a session label, an encoded
-domain string, or replay order.
+Production absorbs and squeezes are positional. Context records and callsite
+labels are diagnostics and do not enter sponge bytes. The backend-specific
+protocol identifier, length-framed session, canonical instance descriptor,
+messages, and replay order do enter the cryptographic state. Renaming a
+diagnostic label therefore differs from changing any of those bound values.
 
 Prover and verifier must execute the same sequence, including challenge
 lengths and canonical ordering within a batch. Equal proof objects alone do

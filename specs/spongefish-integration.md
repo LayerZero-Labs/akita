@@ -95,15 +95,22 @@ from Spongefish:
 3. accept only a canonical field representative, otherwise repeat.
 
 This distribution is exactly uniform, so there is no modular-reduction bias or
-aggregate statistical-distance budget. The admitted native codec supports
-fields up to 64 bytes; Akita's production fields use 4, 8, or 16 bytes.
+aggregate statistical-distance budget. One checked support predicate is used
+by descriptor construction and direct generic draws. It requires a canonical
+width from 1 through 64 bytes, a positive modulus bit length that fits that
+width, and fewer than eight unused high bits. Unsupported codecs return an
+error; they never fall back to modular reduction. Akita's production fields
+use 4, 8, or 16 bytes.
 Extension challenges sample their base coordinates independently in fixed limb
 order.
 
 The pinned Keccak duplex can forget a prior squeeze length after a later
 absorb. Keccak builds therefore absorb the accepted rejection-attempt count
 after each coordinate draw, preventing distinct retry histories from
-reconverging. Blake2b needs no retry marker and pays no production cost for it.
+reconverging. Counter overflow is an error rather than a saturating collision.
+Blake2b retains the squeeze history and needs no retry marker. The declared
+field-challenge query budget bounds protocol oracle queries; it is not a
+runtime cap on local rejection attempts.
 
 ## Grinding
 

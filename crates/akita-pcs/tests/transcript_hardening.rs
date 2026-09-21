@@ -68,6 +68,8 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             .expect("prove");
         #[cfg(feature = "logging-transcript")]
         let prover_events = akita_transcript::thread_events();
+        #[cfg(feature = "logging-transcript")]
+        let prover_ranges = akita_transcript::thread_proof_ranges();
         let verify = |candidate: &[u8], session: &[u8], claimed: F, basis| {
             scheme.batched_verify(
                 candidate,
@@ -86,6 +88,28 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             let verifier_events = akita_transcript::thread_events();
             assert!(!prover_events.is_empty());
             assert_eq!(verifier_events, prover_events);
+
+            for family in [
+                akita_transcript::SITE_FAMILY_SUMCHECK,
+                akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+                akita_transcript::SITE_FAMILY_TERMINAL,
+            ] {
+                let range = prover_ranges
+                    .iter()
+                    .find(|range| {
+                        u32::from_le_bytes(range.context.site_id[..4].try_into().unwrap()) == family
+                            && range.len != 0
+                    })
+                    .expect("workload must exercise the targeted proof-message family");
+                let end = range.start.checked_add(range.len).expect("range end");
+                assert!(end <= proof.len(), "recorded proof range must be in bounds");
+                let mut mutated = proof.clone();
+                mutated[range.start] ^= 1;
+                assert!(
+                    verify(&mutated, LABEL, opening, BasisMode::Lagrange).is_err(),
+                    "fixed-shape mutation in native family {family} must reject",
+                );
+            }
         }
         assert!(verify(
             &proof,

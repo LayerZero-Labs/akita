@@ -62,47 +62,18 @@ where
     Ok((split_bits, num_claims))
 }
 
-fn prover_batch_challenges<F, E>(
-    grinding: &mut NativeProverGrinding<'_>,
+fn batch_challenges<E>(
     opening_batch: &OpeningClaimsLayout,
     level: u32,
     split_bits: usize,
+    mut draw: impl FnMut(GrindingSite, usize) -> Result<Vec<E>, AkitaError>,
 ) -> Result<(Vec<E>, Vec<E>), AkitaError>
 where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
+    E: Field,
 {
-    let eta = grinding.grinded_ext_challenges::<F, E>(
-        GrindingSite::ExtensionOpeningPoint { level },
-        split_bits,
-    )?;
+    let eta = draw(GrindingSite::ExtensionOpeningPoint { level }, split_bits)?;
     let claim_coefficients = if opening_batch.requires_row_batch_challenge() {
-        grinding.grinded_ext_challenges::<F, E>(
-            GrindingSite::ExtensionOpeningClaimBatch { level },
-            opening_batch.num_total_polynomials(),
-        )?
-    } else {
-        vec![E::one()]
-    };
-    Ok((eta, claim_coefficients))
-}
-
-fn verifier_batch_challenges<F, E>(
-    grinding: &mut NativeVerifierGrinding<'_, '_>,
-    opening_batch: &OpeningClaimsLayout,
-    level: u32,
-    split_bits: usize,
-) -> Result<(Vec<E>, Vec<E>), AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    let eta = grinding.grinded_ext_challenges::<F, E>(
-        GrindingSite::ExtensionOpeningPoint { level },
-        split_bits,
-    )?;
-    let claim_coefficients = if opening_batch.requires_row_batch_challenge() {
-        grinding.grinded_ext_challenges::<F, E>(
+        draw(
             GrindingSite::ExtensionOpeningClaimBatch { level },
             opening_batch.num_total_polynomials(),
         )?
@@ -138,7 +109,9 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     let (eta, claim_coefficients) =
-        prover_batch_challenges::<F, E>(grinding, opening_batch, level, split_bits)?;
+        batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
+            grinding.grinded_ext_challenges::<F, E>(site, count)
+        })?;
     Ok(NativeEorPrefix {
         partials: partials.to_vec(),
         eta,
@@ -174,7 +147,9 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
     let (eta, claim_coefficients) =
-        verifier_batch_challenges::<F, E>(grinding, opening_batch, level, split_bits)?;
+        batch_challenges::<E>(opening_batch, level, split_bits, |site, count| {
+            grinding.grinded_ext_challenges::<F, E>(site, count)
+        })?;
     Ok(NativeEorPrefix {
         partials,
         eta,

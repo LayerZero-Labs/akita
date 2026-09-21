@@ -14,5 +14,5 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let _ = public_native_bytes_prover(&mut transcript, ProtocolSiteId::default(), bytes);
-    let _: Prime128Offset275 = native_prover_field_challenge(&mut transcript);
+    let _: Prime128Offset275 = native_prover_field_challenge(&mut transcript).unwrap();
 });

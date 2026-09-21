@@ -3,7 +3,6 @@
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
-use akita_transcript::labels::ABSORB_SPARSE_CHALLENGE;
 use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
@@ -52,8 +51,7 @@ pub fn fold_challenge_sample_label(
 }
 
 pub trait FoldDraw {
-    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8])
-        -> [u8; FOLD_CHALLENGE_SEED_LEN];
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN];
 
     #[cfg(feature = "logging-transcript")]
     fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
@@ -145,7 +143,7 @@ pub trait FoldDraw {
         if let Some(rejection) = rejection {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
-        let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
+        let seed = self.absorb_and_squeeze(&absorb_buf);
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
@@ -179,36 +177,19 @@ fn native_fold_record(
 /// One group-local fold-root draw against a candidate native public state.
 pub struct NativePreviewFoldDraw<'a> {
     preview: &'a mut akita_transcript::NativeFoldPreview,
-    level: u32,
-    group: u32,
 }
 
 impl<'a> NativePreviewFoldDraw<'a> {
     /// Bind this short-lived draw adapter to one schedule-derived fold group.
     #[must_use]
-    pub const fn new(
-        preview: &'a mut akita_transcript::NativeFoldPreview,
-        level: u32,
-        group: u32,
-    ) -> Self {
-        Self {
-            preview,
-            level,
-            group,
-        }
+    pub const fn new(preview: &'a mut akita_transcript::NativeFoldPreview) -> Self {
+        Self { preview }
     }
 }
 
 impl FoldDraw for NativePreviewFoldDraw<'_> {
-    fn absorb_and_squeeze(
-        &mut self,
-        _label: &[u8],
-        payload: &[u8],
-    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        self.preview.fold_root(
-            native_fold_record(self.level, self.group, payload.len()),
-            payload,
-        )
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+        self.preview.fold_root(payload)
     }
 }
 
@@ -236,11 +217,7 @@ impl<'a> NativeProverFoldDraw<'a> {
 }
 
 impl FoldDraw for NativeProverFoldDraw<'_> {
-    fn absorb_and_squeeze(
-        &mut self,
-        _label: &[u8],
-        payload: &[u8],
-    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         akita_transcript::native_prover_fold_root(
             self.state,
             native_fold_record(self.level, self.group, payload.len()),
@@ -273,11 +250,7 @@ impl<'a, 'proof> NativeVerifierFoldDraw<'a, 'proof> {
 }
 
 impl FoldDraw for NativeVerifierFoldDraw<'_, '_> {
-    fn absorb_and_squeeze(
-        &mut self,
-        _label: &[u8],
-        payload: &[u8],
-    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         akita_transcript::native_verifier_fold_root(
             self.state,
             native_fold_record(self.level, self.group, payload.len()),
@@ -296,11 +269,7 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn absorb_and_squeeze(
-            &mut self,
-            _label: &[u8],
-            payload: &[u8],
-        ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
             self.payloads.push(payload.to_vec());
             [7; FOLD_CHALLENGE_SEED_LEN]
         }

@@ -120,6 +120,7 @@ where
         ),
     );
     akita_transcript::native_prover_field_challenge::<FF>(&mut transcript)
+        .expect("supported protocol field")
         .to_bytes_le_vec()
         .iter()
         .map(|byte| format!("{byte:02x}"))

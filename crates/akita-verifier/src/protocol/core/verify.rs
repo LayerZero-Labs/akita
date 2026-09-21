@@ -16,7 +16,6 @@ use akita_types::{
 };
 
 /// Verify one authoritative native Spongefish argument under config `Cfg`.
-#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn batched_verify<Cfg>(
     proof: &[u8],
@@ -147,8 +146,7 @@ where
         root_params,
         schedule.recursive_folds.first(),
         &schedule.terminal,
-    )
-    .map_err(|error| AkitaError::InvalidInput(format!("native root replay failed: {error:?}")))?;
+    )?;
     verify_suffix_native::<Cfg::Field, Cfg::ExtField>(
         setup,
         &mut grinding,
@@ -161,11 +159,8 @@ where
             witness_len: schedule.root_fold().output_witness_len,
             setup_prefix_opening: root.setup_prefix_opening,
         },
-    )
-    .map_err(|error| AkitaError::InvalidInput(format!("native suffix replay failed: {error:?}")))?;
-    grinding.finish().map(|_accepted| ()).map_err(|error| {
-        AkitaError::InvalidInput(format!("native proof completion failed: {error:?}"))
-    })
+    )?;
+    grinding.finish().map(|_accepted| ())
 }
 
 #[cfg(test)]

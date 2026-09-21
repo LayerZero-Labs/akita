@@ -12,32 +12,18 @@ use crate::TranscriptSponge;
 
 mod nonce;
 pub use nonce::{native_nonce_encoded_len, native_nonce_max_bytes, NativeNonce};
+mod sampling;
+pub use sampling::{
+    native_field_challenge_bytes, native_field_sampling_is_certified,
+    native_prover_field_challenge, native_verifier_field_challenge, NATIVE_FIELD_CHALLENGE_BYTES,
+    NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+};
 
 /// Native transcript and proof-stream format version.
 pub const NATIVE_PROTOCOL_VERSION: u32 = 6;
 
 /// Domain tag stored in every native diagnostic context record.
 pub const NATIVE_CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v6\0\0\0\0\0";
-
-/// Maximum candidate width supported by native exact field sampling.
-pub const NATIVE_FIELD_CHALLENGE_BYTES: u64 = 64;
-
-/// Global cap used to account for honest draws and adversarial oracle queries.
-pub const NATIVE_FIELD_SAMPLING_DRAW_LIMIT: u64 = u32::MAX as u64;
-
-/// Certify that exact rejection sampling supports the requested field width.
-#[must_use]
-pub const fn native_field_sampling_budget_is_certified(modulus_bits: u32, draw_limit: u64) -> bool {
-    modulus_bits > 0
-        && modulus_bits <= (NATIVE_FIELD_CHALLENGE_BYTES as u32) * 8
-        && draw_limit <= NATIVE_FIELD_SAMPLING_DRAW_LIMIT
-}
-
-/// Candidate bytes consumed by one attempt of exact native field sampling.
-#[must_use]
-pub const fn native_field_challenge_bytes<F: CanonicalEncoding>() -> u64 {
-    F::NUM_BYTES as u64
-}
 
 /// Stable family identifier for standard and batched sumcheck sites.
 pub const SITE_FAMILY_SUMCHECK: u32 = 1;
@@ -192,7 +178,7 @@ pub struct NativeContextError;
 
 impl fmt::Display for NativeContextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("native protocol context coordinate exceeds u32")
+        formatter.write_str("native protocol value is unsupported or cannot be represented safely")
     }
 }
 
@@ -646,55 +632,6 @@ pub fn public_native_bytes_verifier(
     Ok(())
 }
 
-fn sample_native_field<F: CanonicalEncoding>(sponge: &mut TranscriptSponge) -> F {
-    let mut candidate = [0u8; NATIVE_FIELD_CHALLENGE_BYTES as usize];
-    let width = F::NUM_BYTES.min(candidate.len());
-    let modulus_bits = F::MODULUS_BITS as usize;
-    if width == 0 || F::NUM_BYTES > candidate.len() || modulus_bits > width * 8 {
-        sponge.squeeze(&mut candidate);
-        return F::from_challenge_bytes(&candidate);
-    }
-    let excess_bits = width * 8 - modulus_bits;
-    if excess_bits >= 8 {
-        sponge.squeeze(&mut candidate);
-        return F::from_challenge_bytes(&candidate);
-    }
-    #[cfg(feature = "transcript-keccak")]
-    let mut attempts = 0u32;
-    loop {
-        #[cfg(feature = "transcript-keccak")]
-        {
-            attempts = attempts.saturating_add(1);
-        }
-        sponge.squeeze(&mut candidate[..width]);
-        if excess_bits != 0 {
-            candidate[width - 1] &= u8::MAX >> excess_bits;
-        }
-        if let Some(value) = F::from_bytes_le_checked(&candidate[..width]) {
-            // The pinned Keccak duplex forgets squeeze length after a later
-            // absorb. Bind rejection-path length so distinct retry histories
-            // cannot reconverge when the next protocol message is absorbed.
-            #[cfg(feature = "transcript-keccak")]
-            sponge.absorb(&attempts.to_le_bytes());
-            return value;
-        }
-    }
-}
-
-/// Draw one exactly uniform base-field challenge by canonical rejection sampling.
-#[must_use]
-pub fn native_prover_field_challenge<F: CanonicalEncoding>(state: &mut NativeProverState) -> F {
-    sample_native_field(&mut state.duplex_sponge_state)
-}
-
-/// Draw one exactly uniform base-field challenge by canonical rejection sampling.
-#[must_use]
-pub fn native_verifier_field_challenge<F: CanonicalEncoding>(
-    state: &mut NativeVerifierState<'_>,
-) -> F {
-    sample_native_field(&mut state.duplex_sponge_state)
-}
-
 /// Draw a context-bound extension-field challenge on the prover side.
 pub fn native_prover_ext_challenge<F, E>(
     state: &mut NativeProverState,
@@ -721,7 +658,7 @@ where
                 native_field_challenge_bytes::<F>(),
             ),
         );
-        coefficients.push(native_prover_field_challenge(state));
+        coefficients.push(native_prover_field_challenge(state)?);
     }
     Ok(E::from_base_slice(&coefficients))
 }
@@ -752,7 +689,7 @@ where
                 native_field_challenge_bytes::<F>(),
             ),
         );
-        coefficients.push(native_verifier_field_challenge(state));
+        coefficients.push(native_verifier_field_challenge(state)?);
     }
     Ok(E::from_base_slice(&coefficients))
 }
@@ -800,11 +737,14 @@ impl ProtocolContextRecord {
 
 /// Record prover-side protocol metadata when transcript diagnostics are enabled.
 #[inline(always)]
-pub fn prover_context(_state: &mut NativeProverState, record: ProtocolContextRecord) {
+pub fn prover_context(state: &mut NativeProverState, record: ProtocolContextRecord) {
     #[cfg(feature = "logging-transcript")]
-    crate::logging::record_context(record);
+    {
+        crate::logging::record_context(record);
+        crate::logging::record_proof_range(record, state.narg_string().len());
+    }
     #[cfg(not(feature = "logging-transcript"))]
-    let _ = record;
+    let _ = (state, record);
 }
 
 /// Record verifier-side protocol metadata when transcript diagnostics are enabled.
@@ -829,11 +769,7 @@ pub struct NativeFoldPreview {
 impl NativeFoldPreview {
     /// Clone the public state and absorb one candidate native nonce message.
     #[must_use]
-    pub fn new(
-        state: &NativeProverState,
-        _nonce_record: ProtocolContextRecord,
-        nonce: u32,
-    ) -> Self {
+    pub fn new(state: &NativeProverState, nonce: u32) -> Self {
         let mut sponge = state.duplex_sponge_state.clone();
         sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
         Self { sponge }
@@ -841,11 +777,7 @@ impl NativeFoldPreview {
 
     /// Absorb one public fold payload and squeeze its root.
     #[must_use]
-    pub fn fold_root(
-        &mut self,
-        _record: ProtocolContextRecord,
-        payload: &[u8],
-    ) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
+    pub fn fold_root(&mut self, payload: &[u8]) -> [u8; crate::FOLD_CHALLENGE_SEED_LEN] {
         self.sponge.absorb(payload);
         let mut root = [0u8; crate::FOLD_CHALLENGE_SEED_LEN];
         self.sponge.squeeze(&mut root);
@@ -1096,9 +1028,7 @@ where
 #[must_use]
 pub fn preview_native_grinding_predicate(
     state: &NativeProverState,
-    _nonce_record: ProtocolContextRecord,
     nonce: u32,
-    _predicate_record: ProtocolContextRecord,
 ) -> [u8; crate::GRINDING_PREDICATE_LEN] {
     let mut sponge = state.duplex_sponge_state.clone();
     sponge.absorb(NativeNonce::new(nonce).encode().as_ref());
@@ -1115,16 +1045,9 @@ pub fn search_native_grinding_nonce(
     state: &NativeProverState,
     grind_bits: u8,
     nonce_bits: u8,
-    nonce_record: ProtocolContextRecord,
-    predicate_record: ProtocolContextRecord,
-) -> Option<u32> {
+) -> Option<(u32, [u8; crate::GRINDING_PREDICATE_LEN])> {
     crate::grinding::search_grinding_nonce_with(grind_bits, nonce_bits, |nonce| {
-        Some(preview_native_grinding_predicate(
-            state,
-            nonce_record,
-            nonce,
-            predicate_record,
-        ))
+        Some(preview_native_grinding_predicate(state, nonce))
     })
 }
 
@@ -1154,42 +1077,66 @@ pub fn receive_native_grinding_nonce(
     Ok((nonce, state.verifier_message()))
 }
 
-impl Encoding<[u8]> for ProtocolContextRecord {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = [0u8; 60];
-        out[..32].copy_from_slice(&self.site_id);
-        out[32..36].copy_from_slice(&self.kind.to_le_bytes());
-        out[36..44].copy_from_slice(&self.atom_count.to_le_bytes());
-        out[44..52].copy_from_slice(&self.encoded_bytes.to_le_bytes());
-        out[52..60].copy_from_slice(&self.challenge_bytes.to_le_bytes());
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use jolt_field::{
-        CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime64Offset59, Ring,
+        CanonicalBytes, Prime128OffsetA7F7, Prime32Offset99 as F, Prime48Offset59, Prime64Offset59,
+        Ring,
     };
 
     #[test]
     fn exact_rejection_sampling_covers_every_production_field() {
-        assert!(native_field_sampling_budget_is_certified(
+        assert!(native_field_sampling_is_certified(
+            F::NUM_BYTES,
             F::MODULUS_BITS,
-            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
         ));
-        assert!(native_field_sampling_budget_is_certified(
+        assert!(native_field_sampling_is_certified(
+            Prime64Offset59::NUM_BYTES,
             Prime64Offset59::MODULUS_BITS,
-            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
         ));
-        assert!(native_field_sampling_budget_is_certified(
+        assert!(native_field_sampling_is_certified(
+            Prime128OffsetA7F7::NUM_BYTES,
             Prime128OffsetA7F7::MODULUS_BITS,
-            NATIVE_FIELD_SAMPLING_DRAW_LIMIT,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
         ));
         assert_eq!(native_field_challenge_bytes::<F>(), 4);
         assert_eq!(native_field_challenge_bytes::<Prime64Offset59>(), 8);
         assert_eq!(native_field_challenge_bytes::<Prime128OffsetA7F7>(), 16);
+    }
+
+    #[test]
+    fn exact_rejection_sampling_rejects_unsupported_metadata() {
+        assert!(!native_field_sampling_is_certified(
+            0,
+            1,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+        ));
+        assert!(!native_field_sampling_is_certified(
+            NATIVE_FIELD_CHALLENGE_BYTES as usize + 1,
+            1,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+        ));
+        assert!(!native_field_sampling_is_certified(
+            8,
+            48,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+        ));
+        assert!(!native_field_sampling_is_certified(
+            8,
+            65,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT,
+        ));
+        assert!(!native_field_sampling_is_certified(
+            8,
+            64,
+            NATIVE_FIELD_SAMPLING_QUERY_LIMIT + 1,
+        ));
+
+        let mut prover = new_native_prover(b"unsupported-field", b"fixture").unwrap();
+        assert!(native_prover_field_challenge::<Prime48Offset59>(&mut prover).is_err());
     }
 
     #[test]
@@ -1332,8 +1279,7 @@ mod tests {
         let payload = [5, 8, 13];
         let nonce = 7u32;
         let mut prover = new_native_prover(b"fold-preview", b"fixture").unwrap();
-        let preview =
-            NativeFoldPreview::new(&prover, nonce_record, nonce).fold_root(root_record, &payload);
+        let preview = NativeFoldPreview::new(&prover, nonce).fold_root(&payload);
         prover_context(&mut prover, nonce_record);
         prover.prover_message(&NativeNonce::new(nonce));
         let live = native_prover_fold_root(&mut prover, root_record, &payload);
@@ -1389,6 +1335,21 @@ mod tests {
     }
 
     #[test]
+    fn bounded_payload_receipt_uses_its_public_limit() {
+        let site = ProtocolSiteId {
+            family: SITE_FAMILY_TERMINAL,
+            stage: 7,
+            ..ProtocolSiteId::default()
+        };
+        let mut prover = new_native_prover(b"bounded", b"fixture").unwrap();
+        prover.prover_message(&9u32);
+        let proof = prover.narg_string().to_vec();
+
+        let mut verifier = new_native_verifier(b"bounded", b"fixture", &proof).unwrap();
+        assert!(receive_native_bounded_bytes(&mut verifier, site, 8).is_err());
+    }
+
+    #[test]
     fn session_and_instance_are_independent_domains() {
         let mut left = new_native_prover(b"session-a", b"instance").unwrap();
         let mut right = new_native_prover(b"session-b", b"instance").unwrap();
@@ -1396,20 +1357,6 @@ mod tests {
             left.verifier_message::<[u8; 32]>(),
             right.verifier_message::<[u8; 32]>()
         );
-    }
-
-    #[test]
-    fn context_record_encoding_is_fixed_width() {
-        let record = ProtocolContextRecord {
-            domain: [1; 32],
-            version: NATIVE_PROTOCOL_VERSION,
-            site_id: [2; 32],
-            kind: 3,
-            atom_count: 4,
-            encoded_bytes: 5,
-            challenge_bytes: 6,
-        };
-        assert_eq!(record.encode().as_ref().len(), 60);
     }
 
     #[cfg(feature = "transcript-keccak")]
@@ -1442,6 +1389,22 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "transcript-blake2b")]
+    #[test]
+    fn blake2b_retains_distinct_squeeze_histories_across_absorb() {
+        let mut short = new_native_prover(b"width", b"substrate").unwrap();
+        let mut long = new_native_prover(b"width", b"substrate").unwrap();
+        let _: [u8; 1] = short.verifier_message();
+        let _: [u8; 2] = long.verifier_message();
+        short.public_message(&[17u8]);
+        long.public_message(&[17u8]);
+        assert_ne!(
+            short.verifier_message::<[u8; 32]>(),
+            long.verifier_message::<[u8; 32]>(),
+            "Blake2b must retain distinct rejection histories without a marker",
+        );
+    }
+
     #[test]
     fn grinding_preview_matches_live_replay_without_mutation() {
         let nonce_record = ProtocolContextRecord::new(
@@ -1471,8 +1434,7 @@ mod tests {
         );
         let mut prover = new_native_prover(b"grinding", b"fixture").unwrap();
         let before = prover.narg_string().to_vec();
-        let preview =
-            preview_native_grinding_predicate(&prover, nonce_record, 17, predicate_record);
+        let preview = preview_native_grinding_predicate(&prover, 17);
         assert_eq!(prover.narg_string(), before);
         let live = commit_native_grinding_nonce(&mut prover, nonce_record, 17, predicate_record);
         assert_eq!(preview, live);

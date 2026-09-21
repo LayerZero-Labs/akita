@@ -2,9 +2,9 @@ use super::*;
 use crate::RecursiveWitnessFlat;
 use akita_config::proof_optimized::fp128::OneHot;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
-use jolt_field::{Fp32, FpExt2, TwoNr};
+use jolt_field::{FpExt2, Prime32Offset99, TwoNr};
 
-type F = Fp32<251>;
+type F = Prime32Offset99;
 type E = FpExt2<F, TwoNr>;
 
 fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {

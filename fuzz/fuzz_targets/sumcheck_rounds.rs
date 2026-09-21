@@ -1,7 +1,9 @@
 #![no_main]
 
 use akita_error::AkitaError;
-use akita_sumcheck::{verify_sumcheck_rounds_native, NativeSumcheckVerifierChannel};
+use akita_sumcheck::{
+    verify_sumcheck_rounds_native, NativeSumcheckRole, NativeSumcheckVerifierChannel,
+};
 use akita_transcript::{
     native_field_challenge_bytes, native_verifier_field_challenge, new_native_verifier,
     verifier_context, NativeVerifierState, ProtocolContextRecord, ProtocolMessageKind,
@@ -19,18 +21,23 @@ impl<'proof> NativeSumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'p
         &mut self.state
     }
 
-    fn sumcheck_site(&self, invocation: u32, round: u32, role: u32) -> ProtocolSiteId {
+    fn sumcheck_site(
+        &self,
+        invocation: u32,
+        round: u32,
+        role: NativeSumcheckRole,
+    ) -> ProtocolSiteId {
         ProtocolSiteId {
             family: SITE_FAMILY_SUMCHECK,
             invocation,
             round,
-            detail: role,
+            detail: role as u32,
             ..ProtocolSiteId::default()
         }
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
-        let site = self.sumcheck_site(invocation, round, 4);
+        let site = self.sumcheck_site(invocation, round, NativeSumcheckRole::Challenge);
         verifier_context(
             &mut self.state,
             ProtocolContextRecord::new(
@@ -41,7 +48,7 @@ impl<'proof> NativeSumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'p
                 native_field_challenge_bytes::<F>(),
             ),
         );
-        Ok(native_verifier_field_challenge(&mut self.state))
+        native_verifier_field_challenge(&mut self.state).map_err(|_| AkitaError::InvalidProof)
     }
 }
 

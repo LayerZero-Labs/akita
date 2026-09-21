@@ -49,12 +49,18 @@ fixed positional grammar and versioned descriptor are the cryptographic domain.
 Each base-field coordinate is sampled exactly uniformly. Spongefish squeezes
 `F::NUM_BYTES`, unused high bits are cleared, and noncanonical candidates are
 rejected. Production fp32, fp64, and fp128 fields consume 4, 8, and 16 bytes per
-attempt. There is no modular-reduction bias to budget.
+attempt. The shared support predicate requires 1 through 64 canonical bytes, a
+positive modulus bit length that fits that width, and fewer than eight unused
+high bits. Descriptor construction and direct generic draws both reject an
+unsupported codec instead of reducing biased bytes modulo the field. There is
+no modular-reduction bias to budget.
 
 The pinned Keccak duplex can forget squeeze length after a later absorb, so the
 Keccak backend absorbs the accepted rejection-attempt count after each field
-coordinate. This prevents distinct retry paths from reconverging. Blake2b does
-not need or perform this additional transition.
+coordinate. Counter overflow is an error. This prevents distinct retry paths
+from reconverging. Blake2b does not need or perform this additional transition.
+The declared query budget bounds protocol oracle queries, not local rejection
+attempts.
 
 ## Malformed input and completion
 

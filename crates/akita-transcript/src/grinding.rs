@@ -31,9 +31,9 @@ pub(crate) fn search_grinding_nonce_with(
     grind_bits: u8,
     nonce_bits: u8,
     mut predicate_for_candidate: impl FnMut(u32) -> Option<[u8; GRINDING_PREDICATE_LEN]>,
-) -> Option<u32> {
+) -> Option<(u32, [u8; GRINDING_PREDICATE_LEN])> {
     let Some(grind_bits_nonzero) = NonZeroU8::new(grind_bits) else {
-        return (nonce_bits == 0).then_some(u32::default());
+        return (nonce_bits == 0).then_some((u32::default(), [0; GRINDING_PREDICATE_LEN]));
     };
     if grind_bits > MAX_GRINDING_BITS
         || nonce_bits != grind_bits.checked_add(GRINDING_NONCE_SLACK_BITS)?
@@ -45,7 +45,7 @@ pub(crate) fn search_grinding_nonce_with(
     (0..attempts).find_map(|candidate| {
         let counter = u32::try_from(candidate).ok()?;
         let predicate = predicate_for_candidate(counter)?;
-        grinding_predicate_accepts(&predicate, grind_bits_nonzero).then_some(counter)
+        grinding_predicate_accepts(&predicate, grind_bits_nonzero).then_some((counter, predicate))
     })
 }
 
@@ -69,13 +69,16 @@ mod tests {
     fn bounded_search_enforces_canonical_width_and_exhaustion() {
         assert_eq!(
             search_grinding_nonce_with(0, 0, |_| unreachable!()),
-            Some(0)
+            Some((0, [0; GRINDING_PREDICATE_LEN]))
         );
         assert_eq!(search_grinding_nonce_with(1, 7, |_| Some([0; 32])), None);
         assert_eq!(
             search_grinding_nonce_with(1, 8, |_| Some([u8::MAX; 32])),
             None
         );
-        assert_eq!(search_grinding_nonce_with(1, 8, |_| Some([0; 32])), Some(0));
+        assert_eq!(
+            search_grinding_nonce_with(1, 8, |_| Some([0; 32])),
+            Some((0, [0; 32]))
+        );
     }
 }
