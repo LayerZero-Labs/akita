@@ -6,6 +6,7 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
+#[cfg(feature = "catalog-gen")]
 #[allow(clippy::too_many_arguments)]
 fn prepared_root_candidates(
     key: &akita_types::AkitaScheduleLookupKey,
