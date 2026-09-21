@@ -6,8 +6,8 @@ use akita_types::{
 
 use crate::{
     planner::{
-        precommitted_group_equivalence_classes, PreparedRootLevelCandidates,
-        RootLevelPreparationRequest,
+        precommitted_group_equivalence_classes, root_level_candidates_for_prepared_producers,
+        PreparedRootProducers,
     },
     PlannerPolicy,
 };
@@ -674,26 +674,24 @@ impl<'a> CandidateDomain<'a> {
         })
     }
 
-    fn prepare_root_work<'ctx>(
+    fn prepare_root_work(
         &self,
-        ctx: &SuffixCtx<'ctx>,
+        ctx: &SuffixCtx<'_>,
         root_key: &AkitaScheduleLookupKey,
-        final_source_contract: akita_types::sis::CommittedSourceContract,
         open_lb: u32,
-    ) -> Result<Vec<Option<PreparedRootLevelCandidates<'ctx>>>, AkitaError> {
+    ) -> Result<Vec<Option<PreparedRootProducers>>, AkitaError> {
         self.opening_work
             .iter()
             .map(|work| {
-                PreparedRootLevelCandidates::prepare(RootLevelPreparationRequest {
-                    key: root_key,
-                    final_source_contract,
-                    precommitted_source_contracts: ctx.precommitted_source_contracts,
-                    policy: ctx.policy,
-                    dimensions: work.dimensions,
-                    opening: work.opening,
-                    precommitted_openings: &work.precommitted_openings,
-                    candidate_log_basis_open: open_lb,
-                })
+                PreparedRootProducers::prepare(
+                    root_key,
+                    ctx.precommitted_source_contracts,
+                    ctx.policy,
+                    work.dimensions,
+                    work.opening,
+                    &work.precommitted_openings,
+                    open_lb,
+                )
             })
             .collect()
     }
@@ -714,19 +712,30 @@ impl<'a> CandidateDomain<'a> {
                 let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
                     AkitaError::InvalidSetup("root batch is missing its source contract".into())
                 })?;
-                Some(self.prepare_root_work(ctx, root_key, final_source_contract, open_lb)?)
+                Some((
+                    root_key,
+                    final_source_contract,
+                    self.prepare_root_work(ctx, root_key, open_lb)?,
+                ))
             }
             None => None,
         };
 
         for inner_lb in self.inner_basis_range.clone() {
-            if let Some(root_preparations) = &root_preparations {
+            if let Some((root_key, final_source_contract, root_preparations)) = &root_preparations {
                 for (work, preparation) in self.opening_work.iter().zip(root_preparations.iter()) {
                     let Some(preparation) = preparation else {
                         continue;
                     };
-                    let mut dimension_candidates = preparation.candidates_for_inner_basis(
+                    let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                        root_key,
+                        *final_source_contract,
+                        ctx.policy,
+                        work.dimensions,
+                        work.opening,
+                        preparation,
                         inner_lb,
+                        open_lb,
                         self.root_main_constraint.map(candidate_layout_guide),
                     )?;
                     if let Some(constraint) = self.root_main_constraint {
@@ -912,15 +921,21 @@ impl<'a> CandidateDomain<'a> {
         let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
-        let root_preparations =
-            self.prepare_root_work(ctx, root_key, final_source_contract, open_lb)?;
+        let root_preparations = self.prepare_root_work(ctx, root_key, open_lb)?;
         for inner_lb in self.inner_basis_range.clone() {
             for (work, preparation) in self.opening_work.iter().zip(root_preparations.iter()) {
                 let Some(preparation) = preparation else {
                     continue;
                 };
-                let mut dimension_candidates = preparation.candidates_for_inner_basis(
+                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                    root_key,
+                    final_source_contract,
+                    ctx.policy,
+                    work.dimensions,
+                    work.opening,
+                    preparation,
                     inner_lb,
+                    open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
                 )?;
                 if let Some(constraint) = self.root_main_constraint {

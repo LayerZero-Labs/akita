@@ -625,28 +625,35 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap();
     let source_contract = Dense::committed_source_contract().unwrap();
     let source_contracts = [source_contract];
-    let prepared = crate::planner::PreparedRootLevelCandidates::prepare(
-        crate::planner::RootLevelPreparationRequest {
-            key: &grouped_key,
-            final_source_contract: source_contract,
-            precommitted_source_contracts: &source_contracts,
-            policy: &policy,
-            dimensions,
-            opening,
-            precommitted_openings: &[precommit_opening],
-            candidate_log_basis_open: Dense::opening_basis_range().0,
-        },
+    let prepared = crate::planner::PreparedRootProducers::prepare(
+        &grouped_key,
+        &source_contracts,
+        &policy,
+        dimensions,
+        opening,
+        &[precommit_opening],
+        Dense::opening_basis_range().0,
     )
     .expect("root preparation")
     .expect("supported root preparation");
-    let grouped = prepared
-        .candidates_for_inner_basis(Dense::inner_basis_range().0, None)
+    let candidates_from_prepared = |inner_basis| {
+        crate::planner::root_level_candidates_for_prepared_producers(
+            &grouped_key,
+            source_contract,
+            &policy,
+            dimensions,
+            opening,
+            &prepared,
+            inner_basis,
+            Dense::opening_basis_range().0,
+            None,
+        )
+    };
+    let grouped = candidates_from_prepared(Dense::inner_basis_range().0)
         .expect("group-local packing candidates");
     let next_inner_basis = Dense::inner_basis_range().0 + 1;
     assert_eq!(
-        prepared
-            .candidates_for_inner_basis(next_inner_basis, None)
-            .expect("reused root preparation"),
+        candidates_from_prepared(next_inner_basis).expect("reused root preparation"),
         crate::planner::root_level_candidates_for_basis(
             &grouped_key,
             source_contract,
