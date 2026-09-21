@@ -1,10 +1,12 @@
 //! Executable field capabilities are additive and separate from protocol policy.
 
+#[cfg(feature = "field-fp64")]
 use akita_error::AkitaError;
 use akita_types::{
-    compiled_field_tier_enabled, dispatch_for_field, validate_compiled_field, ProtocolDispatchSlot,
-    ProtocolRingDispatchTierId, RingRole,
+    compiled_field_tier_enabled, validate_compiled_field, ProtocolRingDispatchTierId,
 };
+#[cfg(feature = "field-fp64")]
+use akita_types::{dispatch_for_field, ProtocolDispatchSlot, RingRole};
 use jolt_field::Prime64Offset59;
 
 #[test]
@@ -107,7 +109,11 @@ fn disabled_fields_report_the_required_feature() {
 )))]
 #[test]
 fn zero_field_build_has_no_implicit_full_support() {
-    let result: Result<usize, AkitaError> =
-        dispatch_for_field!(ProtocolDispatchSlot::Ntt, Prime64Offset59, 32, |D| Ok(D));
+    let result: Result<usize, akita_error::AkitaError> = akita_types::dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Ntt,
+        Prime64Offset59,
+        32,
+        |D| Ok(D)
+    );
     assert!(result.unwrap_err().to_string().contains("field-fp64"));
 }
