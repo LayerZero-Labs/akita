@@ -23,41 +23,6 @@ struct CachedSetupPrefix<F: Field> {
     source: Arc<OwnedPolynomials<DensePoly<F>>>,
 }
 
-impl<F, E> akita_prover::SetupPrefixKernel<F, E> for CpuBackend
-where
-    F: Field
-        + CanonicalEncoding
-        + AkitaSerialize
-        + Valid
-        + jolt_field::PseudoMersenne
-        + Ring
-        + Unreduced
-        + WithCommitAccumulator
-        + 'static,
-    F::Wide: From<F> + AdditiveGroup,
-    E: ExtField<F>
-        + FpExtEncoding<F>
-        + MulBaseUnreduced<F>
-        + Unreduced
-        + Fold
-        + AkitaSerialize
-        + 'static,
-    CpuBackend: akita_prover::ProverHandleFamily<F, E, CommitmentHandle = CommitmentHandle<F, E>>,
-{
-    fn prepare_setup_prefix(
-        &self,
-        setup: &akita_types::AkitaSetupDescriptor,
-        prefix: &SetupPrefixSlotId,
-    ) -> Result<PreparedSetupPrefix<F, Self::CommitmentHandle>, AkitaError> {
-        if self.prepared::<F>()?.expanded.descriptor() != setup {
-            return Err(AkitaError::InvalidSetup(
-                "setup prefix request belongs to another setup".into(),
-            ));
-        }
-        self.prepare_setup_prefix::<F, E>(prefix)
-    }
-}
-
 impl CpuBackend {
     fn setup_prefix_source<F>(
         &self,
@@ -281,7 +246,7 @@ impl CpuBackend {
         artifacts
             .check()
             .map_err(|_| AkitaError::InvalidSetup("invalid setup prefix artifacts".into()))?;
-        let mut imported = SetupPrefixProverRegistry::new(artifacts.setup_seed().clone());
+        let mut imported = SetupPrefixProverRegistry::default();
         for id in required_ids {
             let artifact = artifacts.get(id).ok_or_else(|| {
                 AkitaError::InvalidSetup("required setup prefix artifact is missing".into())

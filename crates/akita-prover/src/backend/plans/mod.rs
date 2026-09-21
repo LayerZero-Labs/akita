@@ -73,7 +73,6 @@ impl ValidatedFoldAcceptancePlan {
 /// forge, challenge geometry or admission policy.
 #[derive(Debug, Clone, Copy)]
 pub struct ValidatedFoldProbePlan<'a> {
-    proof_context: Option<&'a crate::backend::ProofContext>,
     ring_dimension: usize,
     challenges: &'a Challenges,
     geometry: FoldProbeGeometry<'a>,
@@ -126,7 +125,6 @@ impl<'a> ValidatedFoldProbePlan<'a> {
             }
         }
         Ok(Self {
-            proof_context: None,
             ring_dimension: D,
             challenges,
             geometry,
@@ -145,15 +143,6 @@ impl<'a> ValidatedFoldProbePlan<'a> {
 
     pub const fn ring_dimension(&self) -> usize {
         self.ring_dimension
-    }
-
-    /// Bind the private result to this proof execution context.
-    pub fn with_proof_context(mut self, context: Option<&'a crate::backend::ProofContext>) -> Self {
-        self.proof_context = context;
-        self
-    }
-    pub const fn proof_context(&self) -> Option<&'a crate::backend::ProofContext> {
-        self.proof_context
     }
 
     /// Validated response geometry.
@@ -236,7 +225,6 @@ impl<E: Field> ValidatedStage1Plan<E> {
 }
 
 impl<'a, F: Field> ValidatedRecursiveWitnessPlan<'a, F> {
-    #[allow(dead_code)]
     pub(crate) const fn new(expected_logical_len: usize, commitment_ring_dimension: usize) -> Self {
         Self {
             expected_logical_len,
@@ -275,7 +263,6 @@ pub struct ValidatedRecursiveWitnessCommitPlan {
 }
 
 impl ValidatedRecursiveWitnessCommitPlan {
-    #[allow(dead_code)]
     pub(crate) const fn new(
         logical_len: usize,
         padded_len: usize,

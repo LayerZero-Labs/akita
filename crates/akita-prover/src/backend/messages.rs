@@ -86,11 +86,6 @@ impl<F: Field, E: Field, BuildHandle> RecursiveWitnessBuildStart<F, E, BuildHand
         self.opening_payload_ring_dimension
     }
 
-    /// Consume public artifacts and retain the private build handle.
-    pub fn into_build_handle(self) -> BuildHandle {
-        self.build_handle
-    }
-
     pub fn into_parts(self) -> RecursiveWitnessBuildParts<F, E, BuildHandle> {
         (
             self.public_groups,

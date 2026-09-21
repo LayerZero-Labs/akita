@@ -26,4 +26,4 @@ pub use protocol::{
     batched_prove, ProveLevelOutput, RecursiveSuffixOutcome, RingRelationInstance,
     RingRelationProver, RingSwitchOutput, SuffixProverState,
 };
-pub use setup::{PreparedSetupPrefix, SetupPrefixKernel, SetupPrefixProverRegistry};
+pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
