@@ -1,3 +1,13 @@
+// Shared/offline consumers may compile policy types without an executable field tier.
+#![cfg_attr(
+    not(any(
+        feature = "field-fp32",
+        feature = "field-fp64",
+        feature = "field-fp128"
+    )),
+    allow(dead_code, unused_imports, unused_mut, unused_variables)
+)]
+
 //! Shared Akita protocol data shapes.
 //!
 //! This crate contains proof objects, commitment/opening wrappers, opening
