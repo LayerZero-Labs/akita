@@ -17,7 +17,7 @@ pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
@@ -294,12 +294,12 @@ pub fn emitted_scalar_keys(
 
 fn plan_regen<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
-    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    precommitted_source_contracts: &[CommittedSourceContract],
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_schedule(
         key,
         honest_fold_policy_of::<Cfg>(),
-        precommitted_honest_fold_policies,
+        precommitted_source_contracts,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
     )?;
@@ -331,10 +331,10 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     request: GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
-    // Planning consumes the offline sizing projection; the record owns it beside
-    // the descriptor so the two can never drift apart by index.
-    let policies = request.fold_policies();
-    plan_regen::<Cfg>(&request.key(), &policies)
+    // Planning consumes the complete producer declaration; the record owns it
+    // beside the descriptor so geometry, class, and bound cannot drift by index.
+    let contracts = request.source_contracts();
+    plan_regen::<Cfg>(&request.key(), &contracts)
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -526,9 +526,10 @@ fn heterogeneous_onehot_catalog_key(
 /// This is the mixed-bound cell: the precommitted group is frozen by
 /// `fp128::DenseBounded` (`log_commit_bound = 65` inside the 128-bit field) while the
 /// root is planned under `fp128::OneHot` (`log_commit_bound = 1`). It exercises
-/// the fact that a precommitted group carries its own committed-source bound in
-/// its frozen `inner_commit_matrix` and does not have to agree with the planning
-/// config's bound — only the shared full-width opening geometry has to line up.
+/// the fact that a precommitted producer carries its own committed-source
+/// contract beside the frozen matrix geometry and does not have to agree with
+/// the planning config's bound — only the shared full-width opening geometry
+/// has to line up.
 fn bounded_dense_onehot_catalog_key(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequest, AkitaError> {

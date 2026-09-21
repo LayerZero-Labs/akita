@@ -35,7 +35,6 @@ pub struct MaterializationDiagnostics {
 pub struct PrecommittedProducer {
     descriptor: GroupCommitPhaseParams,
     contract: CommittedSourceContract,
-    fold_policy: HonestFoldPolicySpec,
 }
 
 impl PrecommittedProducer {
@@ -62,7 +61,6 @@ impl PrecommittedProducer {
         Ok(Self {
             descriptor,
             contract,
-            fold_policy,
         })
     }
 
@@ -89,10 +87,6 @@ impl PrecommittedProducer {
     #[must_use]
     pub const fn source_contract(self) -> CommittedSourceContract {
         self.contract
-    }
-
-    const fn fold_policy(self) -> HonestFoldPolicySpec {
-        self.fold_policy
     }
 }
 
@@ -132,11 +126,14 @@ impl GroupedGenerationRequest {
         &self.precommitted_producers
     }
 
-    pub(crate) fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
+    /// Complete producer declarations in the same order as the frozen
+    /// precommit descriptors returned by [`Self::key`].
+    #[must_use]
+    pub fn source_contracts(&self) -> Vec<CommittedSourceContract> {
         self.precommitted_producers
             .iter()
             .copied()
-            .map(PrecommittedProducer::fold_policy)
+            .map(PrecommittedProducer::source_contract)
             .collect()
     }
 }
