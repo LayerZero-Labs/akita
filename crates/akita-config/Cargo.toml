@@ -37,5 +37,12 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 
+[dev-dependencies]
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+  "field-fp32",
+  "field-fp64",
+  "field-fp128",
+] }
+
 [lints]
 workspace = true
