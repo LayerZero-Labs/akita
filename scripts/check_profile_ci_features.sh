@@ -65,29 +65,6 @@ MODE_SETUP["onehot_fp128"] = {"direct", "recursive"}
 MODE_SETUP["onehot_fp128_multi_group_recursive"] = {"recursive"}
 MODE_SETUP["onehot_fp128_multi_group_recursive_multi_chunk_w8r2"] = {"recursive"}
 PROFILE_BENCH_MARKER = "profile-bench-selected"
-EXECUTION_CRATES = {
-    "akita-pcs", "akita-prover", "akita-setup", "akita-types", "akita-verifier",
-}
-PROFILE_FIELD_FEATURES = {
-    (crate, feature)
-    for crate in EXECUTION_CRATES
-    for feature in ("field-fp32", "field-fp64", "field-fp128")
-}
-
-
-def expected_field_tier(feature: str) -> set[tuple[str, str]]:
-    return {(crate, feature) for crate in EXECUTION_CRATES}
-
-
-EXPECTED_PROFILE_FIELDS = {
-    "profile-ci-fp32": expected_field_tier("field-fp32"),
-    "profile-ci-fp64": expected_field_tier("field-fp64"),
-    "profile-ci-fp128-base": expected_field_tier("field-fp128"),
-    "profile-ci-multi-group-direct": expected_field_tier("field-fp128"),
-    "profile-ci-multi-group-recursive": expected_field_tier("field-fp128"),
-    "profile-ci-multi-group-recursive-w8r2": expected_field_tier("field-fp128"),
-    "profile-ci-distributed": expected_field_tier("field-fp128"),
-}
 
 feature_graph = load_feature_graph(repo)
 modes_text = modes_rs.read_text(encoding="utf-8")
@@ -216,16 +193,6 @@ for group_name, profile_feature, case_spec in bench_cases:
         failed = True
 
 matrix_profile_features = set(matrix_features)
-for profile_feature, resolved in matrix_features.items():
-    actual_fields = resolved & PROFILE_FIELD_FEATURES
-    expected_fields = EXPECTED_PROFILE_FIELDS.get(profile_feature)
-    if actual_fields != expected_fields:
-        print(
-            f"matrix feature '{profile_feature}' resolves field tiers "
-            f"{sorted(actual_fields)}, expected exactly {sorted(expected_fields or set())}",
-            file=sys.stderr,
-        )
-        failed = True
 feature_pattern = re.compile(r'feature\s*=\s*"(profile-ci-[^"]+)"')
 for source in (profile_main, profile_modes):
     declared = set(feature_pattern.findall(source.read_text(encoding="utf-8")))

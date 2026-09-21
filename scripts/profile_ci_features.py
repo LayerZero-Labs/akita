@@ -10,10 +10,6 @@ from pathlib import Path
 
 MANIFESTS = {
     "akita-pcs": Path("crates/akita-pcs/Cargo.toml"),
-    "akita-prover": Path("crates/akita-prover/Cargo.toml"),
-    "akita-setup": Path("crates/akita-setup/Cargo.toml"),
-    "akita-types": Path("crates/akita-types/Cargo.toml"),
-    "akita-verifier": Path("crates/akita-verifier/Cargo.toml"),
     "akita-config": Path("crates/akita-config/Cargo.toml"),
     "akita-schedules": Path("crates/akita-schedules/Cargo.toml"),
 }

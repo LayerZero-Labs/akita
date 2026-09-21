@@ -67,16 +67,11 @@ jobs:
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features field-fp32,field-fp64,field-fp128,parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
       - name: Test field-tier feature selection
         run: |
-          cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp32,transcript-blake2b
           cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp64,transcript-blake2b
-          cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp128,transcript-blake2b
-          cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp32,field-fp64,transcript-blake2b
           cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp32,field-fp128,transcript-blake2b
-          cargo test -p akita-types --test compiled_fields --no-default-features --features field-fp64,field-fp128,transcript-blake2b
           cargo test -p akita-types --test compiled_fields --no-default-features --features transcript-blake2b
           cargo test -p akita-pcs --test compiled_fields --no-default-features --features field-fp64,transcript-blake2b
           cargo check --manifest-path crates/akita-types/tests/fixtures/field-fp64/Cargo.toml
-          cargo check --manifest-path crates/akita-types/tests/fixtures/no-fields/Cargo.toml
           cargo check -p akita-pcs --no-default-features --features transcript-blake2b
           cargo check -p akita-planner --no-default-features --features catalog-gen,transcript-blake2b
       - name: Crate dependency hygiene

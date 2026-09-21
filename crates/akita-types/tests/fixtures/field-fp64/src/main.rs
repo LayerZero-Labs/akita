@@ -4,27 +4,25 @@ use jolt_field::Prime64Offset59;
 
 struct Degree<const D: usize>;
 
-trait Fp64NttDegree {
+trait Fp64CompressionDegree {
     const D: usize;
 }
 
-macro_rules! impl_degrees {
-    ($($dimension:literal),+ $(,)?) => {
-        $(impl Fp64NttDegree for Degree<$dimension> {
-            const D: usize = $dimension;
-        })+
-    };
+impl Fp64CompressionDegree for Degree<16> {
+    const D: usize = 16;
 }
 
-impl_degrees!(32, 64, 128, 256, 512, 1024, 2048);
+impl Fp64CompressionDegree for Degree<32> {
+    const D: usize = 32;
+}
 
 fn main() -> Result<(), AkitaError> {
     let dimension = dispatch_for_field!(
-        ProtocolDispatchSlot::Ntt,
+        ProtocolDispatchSlot::Compression,
         Prime64Offset59,
-        2048,
-        |D| Ok(<Degree<D> as Fp64NttDegree>::D)
+        32,
+        |D| Ok(<Degree<D> as Fp64CompressionDegree>::D)
     )?;
-    assert_eq!(dimension, 2048);
+    assert_eq!(dimension, 32);
     Ok(())
 }
