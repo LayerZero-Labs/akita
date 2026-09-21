@@ -624,7 +624,11 @@ pub(crate) fn root_group_source_moments(
         ));
     }
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
-    for group_index in 0..opening_layout.num_groups() {
+    let source_contracts = precommitted_source_contracts
+        .iter()
+        .copied()
+        .chain(std::iter::once(final_source_contract));
+    for (group_index, contract) in source_contracts.enumerate() {
         let group_layout = *opening_layout.group_layout(group_index)?;
         // Validate the grouped batch once above, then resolve each source view
         // directly. The public group accessor would revalidate every group for
@@ -638,11 +642,6 @@ pub(crate) fn root_group_source_moments(
         };
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
-        let contract = if group_index == final_group_index {
-            final_source_contract
-        } else {
-            precommitted_source_contracts[group_index]
-        };
         let norms = contract.source_norms(
             group_params.log_basis_inner(),
             group_params.num_digits_inner(),
