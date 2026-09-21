@@ -6,6 +6,37 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
+#[allow(clippy::too_many_arguments)]
+fn prepared_root_candidates(
+    key: &akita_types::AkitaScheduleLookupKey,
+    final_honest_fold_policy: akita_types::sis::HonestFoldPolicySpec,
+    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
+    policy: &crate::PlannerPolicy,
+    dimensions: CommitmentRingDims,
+    opening: PlannerOpeningCandidate,
+    precommitted_openings: &[PlannerOpeningCandidate],
+    inner_lb: u32,
+    open_lb: u32,
+    guide: Option<CandidateLayoutGuide>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, akita_error::AkitaError> {
+    let Some(mut prepared) = crate::planner::PreparedRootLevelCandidates::prepare(
+        crate::planner::RootLevelPreparationRequest {
+            key,
+            final_honest_fold_policy,
+            precommitted_source_contracts,
+            policy,
+            dimensions,
+            opening,
+            precommitted_openings,
+            candidate_log_basis_open: open_lb,
+        },
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    prepared.candidates_for_inner_basis(inner_lb, guide)
+}
+
 fn synthetic_profile(
     group: PolynomialGroupLayout,
     params: &CommittedGroupParams,
@@ -526,7 +557,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap()
             .unwrap();
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
-    let candidates = crate::planner::root_level_candidates_for_basis(
+    let candidates = prepared_root_candidates(
         &key,
         honest_fold_policy_of::<Dense>(),
         &[],
@@ -625,7 +656,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
             .unwrap()
             .unwrap();
-    let grouped = crate::planner::root_level_candidates_for_basis(
+    let grouped = prepared_root_candidates(
         &grouped_key,
         honest_fold_policy_of::<Dense>(),
         &[Dense::committed_source_contract().unwrap()],
@@ -669,7 +700,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
         SparseChallengeConfig::production_for_ring_dim(dimensions.d_a()).unwrap(),
     );
-    assert!(crate::planner::root_level_candidates_for_basis(
+    assert!(prepared_root_candidates(
         &grouped_key,
         honest_fold_policy_of::<Dense>(),
         &[Dense::committed_source_contract().unwrap()],
@@ -723,7 +754,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         products
             .iter()
             .flat_map(|product| {
-                crate::planner::root_level_candidates_for_basis(
+                prepared_root_candidates(
                     &product_key,
                     honest_fold_policy_of::<Dense>(),
                     &[Dense::committed_source_contract().unwrap(); 2],
@@ -811,7 +842,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid final packing opening")
             .expect("final packing geometry");
     let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
-    let scalar = crate::planner::root_level_candidates_for_basis(
+    let scalar = prepared_root_candidates(
         &scalar_key,
         honest_fold_policy_of::<Dense>(),
         &[],
@@ -837,7 +868,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid precommit packing opening")
             .expect("precommit packing geometry");
     let derive = |guide| {
-        crate::planner::root_level_candidates_for_basis(
+        prepared_root_candidates(
             &grouped_key,
             honest_fold_policy_of::<Dense>(),
             &[Dense::committed_source_contract().unwrap()],
@@ -908,7 +939,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     );
     let pre_group = PolynomialGroupLayout::new(14, 1);
     let pre_key = AkitaScheduleLookupKey::single(pre_group);
-    let pre_candidates = crate::planner::root_level_candidates_for_basis(
+    let pre_candidates = prepared_root_candidates(
         &pre_key,
         honest_fold_policy_of::<Dense>(),
         &[],

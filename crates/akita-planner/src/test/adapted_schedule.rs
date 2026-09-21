@@ -175,6 +175,56 @@ fn identical_geometry_with_different_bounds_is_not_interchangeable() {
 }
 
 #[test]
+fn reused_producer_preparation_preserves_complete_grouped_schedule() {
+    let policy = policy_of::<Dense>();
+    let final_group = PolynomialGroupLayout::singleton(24);
+    let main_row = scalar_row(final_group).expect("scalar main row");
+    let profile = scalar_row(PolynomialGroupLayout::singleton(14))
+        .expect("scalar producer row")
+        .profiles()
+        .final_group;
+    let wide = Dense::committed_source_contract().expect("dense source contract");
+    let tight = akita_types::sis::CommittedSourceContract::try_new(
+        wide.class(),
+        akita_types::DecompositionParams {
+            log_commit_bound: 6,
+            log_open_bound: Some(wide.decomposition().field_bits()),
+            ..wide.decomposition()
+        },
+    )
+    .expect("tight source contract");
+    let key = AkitaScheduleLookupKey {
+        final_group,
+        precommitteds: vec![profile; 3],
+    };
+    let contracts = [tight, wide, tight];
+    let plan = |reuse_root_preparation| {
+        find_schedule_in_relation_order(
+            &key,
+            honest_fold_policy_of::<Dense>(),
+            &contracts,
+            &policy,
+            Dense::ring_challenge_config,
+            ScheduleSearchOptions {
+                root_main_constraint: Some(&main_row.schedule().root.params),
+                adaptation_guide: Some(main_row.schedule()),
+                reuse_root_preparation,
+                ..ScheduleSearchOptions::canonical()
+            },
+        )
+        .expect("grouped schedule")
+    };
+
+    let uncached = plan(false);
+    let reused = plan(true);
+    assert_eq!(
+        reused.schedule.canonical_descriptor_bytes(),
+        uncached.schedule.canonical_descriptor_bytes()
+    );
+    assert_eq!(reused.estimate, uncached.estimate);
+}
+
+#[test]
 fn full_planning_rejects_missing_and_cross_field_producer_contracts() {
     let final_group = PolynomialGroupLayout::singleton(14);
     let profile = scalar_row(final_group)

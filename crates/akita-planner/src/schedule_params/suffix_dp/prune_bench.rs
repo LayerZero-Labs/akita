@@ -79,6 +79,7 @@ fn local_pruning_per_opening_basis_microbench() {
         level_zero_is_root: false,
         relation_traversal_order: RelationTraversalOrder::Canonical,
         relation_mode_filter: RelationModeFilter::All,
+        reuse_root_preparation: true,
     };
     for witness_len in [4_096, 65_536, 948_672] {
         for level in [1, 3] {
