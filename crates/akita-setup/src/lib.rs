@@ -68,6 +68,7 @@ where
         + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
+    akita_types::validate_compiled_field::<F>()?;
     let requirements =
         SetupRequirements::from_catalog::<Cfg>(schedules, max_num_vars, max_num_batched_polys)?;
     #[cfg(feature = "disk-persistence")]

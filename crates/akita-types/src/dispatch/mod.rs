@@ -136,6 +136,48 @@ pub fn protocol_dispatch_tier<F: Field + CanonicalEncoding>() -> ProtocolRingDis
     }
 }
 
+/// Whether this build includes executable dispatch for `tier`.
+///
+/// The canonical protocol tables remain complete regardless of this result.
+/// Cargo feature unification is additive: any dependency enabling a field tier
+/// makes it available to the whole final build.
+#[inline]
+#[must_use]
+pub const fn compiled_field_tier_enabled(tier: ProtocolRingDispatchTierId) -> bool {
+    match tier {
+        ProtocolRingDispatchTierId::Fp128 => cfg!(feature = "field-fp128"),
+        ProtocolRingDispatchTierId::Fp64 => cfg!(feature = "field-fp64"),
+        ProtocolRingDispatchTierId::Fp32 => cfg!(feature = "field-fp32"),
+    }
+}
+
+#[doc(hidden)]
+pub fn compiled_field_tier_error(tier: ProtocolRingDispatchTierId) -> AkitaError {
+    let feature = match tier {
+        ProtocolRingDispatchTierId::Fp128 => "field-fp128",
+        ProtocolRingDispatchTierId::Fp64 => "field-fp64",
+        ProtocolRingDispatchTierId::Fp32 => "field-fp32",
+    };
+    AkitaError::InvalidSetup(format!(
+        "PCS field tier {tier:?} is not enabled in this Akita build; enable feature `{feature}`"
+    ))
+}
+
+/// Validate that this build includes executable dispatch for PCS field `F`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when the corresponding positive field
+/// feature is absent.
+#[inline]
+pub fn validate_compiled_field<F: Field + CanonicalEncoding>() -> Result<(), AkitaError> {
+    let tier = protocol_dispatch_tier::<F>();
+    if compiled_field_tier_enabled(tier) {
+        return Ok(());
+    }
+    Err(compiled_field_tier_error(tier))
+}
+
 /// Whether `d` is a supported NTT ring degree for `tier`.
 #[inline]
 #[must_use]

@@ -228,6 +228,69 @@ macro_rules! __dispatch_ring_dim_arms {
 
 #[doc(hidden)]
 #[macro_export]
+#[cfg(feature = "field-fp128")]
+macro_rules! __dispatch_protocol_policy_fp128 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {
+        $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($dim),+ })
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+#[cfg(not(feature = "field-fp128"))]
+macro_rules! __dispatch_protocol_policy_fp128 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {{
+        let _ = &$d;
+        Err($crate::dispatch::compiled_field_tier_error(
+            $crate::ProtocolRingDispatchTierId::Fp128,
+        ))
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+#[cfg(feature = "field-fp64")]
+macro_rules! __dispatch_protocol_policy_fp64 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {
+        $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($dim),+ })
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+#[cfg(not(feature = "field-fp64"))]
+macro_rules! __dispatch_protocol_policy_fp64 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {{
+        let _ = &$d;
+        Err($crate::dispatch::compiled_field_tier_error(
+            $crate::ProtocolRingDispatchTierId::Fp64,
+        ))
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+#[cfg(feature = "field-fp32")]
+macro_rules! __dispatch_protocol_policy_fp32 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {
+        $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($dim),+ })
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+#[cfg(not(feature = "field-fp32"))]
+macro_rules! __dispatch_protocol_policy_fp32 {
+    ($d:expr, |$D:ident| $body:expr, [$($dim:literal),+ $(,)?]) => {{
+        let _ = &$d;
+        Err($crate::dispatch::compiled_field_tier_error(
+            $crate::ProtocolRingDispatchTierId::Fp32,
+        ))
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! __dispatch_protocol_policy_tiers {
     (
         $F:ty, $d:expr, |$D:ident| $body:expr;
@@ -237,13 +300,13 @@ macro_rules! __dispatch_protocol_policy_tiers {
     ) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d128),+ })
+                $crate::__dispatch_protocol_policy_fp128!($d, |$D| $body, [$($d128),+])
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d64),+ })
+                $crate::__dispatch_protocol_policy_fp64!($d, |$D| $body, [$($d64),+])
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d32),+ })
+                $crate::__dispatch_protocol_policy_fp32!($d, |$D| $body, [$($d32),+])
             }
         }
     }};

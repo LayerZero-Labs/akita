@@ -33,9 +33,9 @@ CI runs these exact Clippy configurations; all must pass because the feature
 graphs differ:
 
 ```bash
-cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
-cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
-cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features field-fp32,field-fp64,field-fp128,parallel,disk-persistence,transcript-blake2b -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features field-fp32,field-fp64,field-fp128,transcript-blake2b -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features field-fp32,field-fp64,field-fp128,parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,
@@ -94,6 +94,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 ## Feature flags
 
 - `parallel` — Rayon parallelization (default)
+- `field-fp32`, `field-fp64`, `field-fp128` — additive executable PCS field tiers (all default)
 - `disk-persistence` — disk-backed persistence for some commitment flows
 - `logging-transcript` — `LoggingTranscript` schedule events and smell checks
 - `response-model-diagnostics` — expensive source and response energy measurements for model calibration

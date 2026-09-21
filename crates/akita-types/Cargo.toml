@@ -29,8 +29,13 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["field-fp32", "field-fp64", "field-fp128", "transcript-blake2b"]
 test-support = []
+# Positive executable field capabilities. Protocol tables and offline planning
+# remain complete even when one or more tiers are omitted from a final binary.
+field-fp32 = []
+field-fp64 = []
+field-fp128 = []
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",

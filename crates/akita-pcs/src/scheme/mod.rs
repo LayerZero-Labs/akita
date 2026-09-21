@@ -52,8 +52,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error when decoding, row audit, or config binding fails.
+    /// Returns an error when the scheme field tier was not compiled in, or when
+    /// decoding, row audit, or config binding fails. Field capability is checked
+    /// before the artifact bytes are decoded.
     pub fn from_schedule_artifact(bytes: &[u8]) -> Result<Self, AkitaError> {
+        akita_types::validate_compiled_field::<Cfg::Field>()?;
         Ok(Self::new(
             TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes)?,
         ))

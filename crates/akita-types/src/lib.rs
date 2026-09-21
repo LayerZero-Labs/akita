@@ -11,11 +11,12 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 mod subring_coefficient_packing;
 pub use dispatch::{
-    compression_ring_dim_supported_for_tier, field_modulus, field_modulus_be_bytes, ntt_max_ring_d,
-    ntt_min_ring_d, ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
-    outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    compiled_field_tier_enabled, compression_ring_dim_supported_for_tier, field_modulus,
+    field_modulus_be_bytes, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
+    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
+    protocol_dispatch_tier_for_sis_profile, validate_compiled_field, validate_ring_dispatch,
+    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
+    ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;

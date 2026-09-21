@@ -15,7 +15,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-sumcheck = { path = "../crates/akita-sumcheck" }
 akita-transcript = { path = "../crates/akita-transcript" }
-akita-types = { path = "../crates/akita-types" }
+akita-types = { path = "../crates/akita-types", default-features = false }
 libfuzzer-sys = "0.4.12"
 
 [[bin]]

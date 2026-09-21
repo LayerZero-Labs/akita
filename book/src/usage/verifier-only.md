@@ -159,10 +159,12 @@ Run these checks when changing a verifier integration:
 scripts/check-crate-deps.sh akita-verifier
 cargo clippy -p akita-verifier --all-targets --release \
   --no-default-features \
-  --features transcript-blake2b \
+  --features field-fp64,transcript-blake2b \
   -- -D warnings
 ```
 
 The first command confirms that the verifier crate has not gained prover or
 planner dependencies. The second checks the narrow feature graph used by a
-minimal verifier build.
+minimal Fp64 verifier build. Every executable verifier must select at least one
+`field-fp32`, `field-fp64`, or `field-fp128` capability; a zero-field build is
+valid for dependency and policy inspection but rejects every proof.

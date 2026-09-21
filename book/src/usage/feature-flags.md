@@ -1,17 +1,21 @@
 # Feature flags and build recipes
 
-Akita uses Cargo features for transcript backends and compute support. Schedule
-rows are external runtime artifacts, not Cargo features. The default
-`akita-pcs` build is a parallel CPU configuration for ordinary use.
+Akita uses Cargo features for executable PCS field tiers, transcript backends,
+and compute support. Schedule rows are external runtime artifacts, not Cargo
+features. The default `akita-pcs` build is a parallel CPU configuration with
+all protocol field tiers available.
 
 ## Default features
 
 | Feature | What it provides |
 | --- | --- |
+| `field-fp32` | Executable dispatch for PCS fields up to 32 bits |
+| `field-fp64` | Executable dispatch for PCS fields from 33 through 64 bits |
+| `field-fp128` | Executable dispatch for PCS fields wider than 64 bits |
 | `parallel` | Rayon execution across field arithmetic, setup, proving, sumcheck, and verification |
 | `transcript-blake2b` | The default Spongefish transcript backend |
 
-The normal build uses both:
+The normal build uses all five:
 
 ```bash
 cargo build -p akita-pcs --release
@@ -26,11 +30,37 @@ Keep the default transcript while removing Rayon:
 ```bash
 cargo build -p akita-pcs --release \
   --no-default-features \
-  --features transcript-blake2b
+  --features field-fp32,field-fp64,field-fp128,transcript-blake2b
 ```
 
 This build produces the same protocol results. It changes local execution and
 performance.
+
+### Field-tier pruning
+
+Applications that use only one PCS field tier can omit the other dispatch
+branches before typechecking and monomorphization. For example, an Fp64-only
+build is:
+
+```bash
+cargo build -p akita-pcs --release \
+  --no-default-features \
+  --features field-fp64,parallel,transcript-blake2b
+```
+
+Field features are positive and additive. Selecting `field-fp64` retains every
+Fp64 ring degree in the canonical protocol tables; it does not select a ring
+degree, schedule family, or application profile. Selecting no field feature is
+valid for shared-type and offline-planning crates, but setup, proving,
+verification, and dispatch reject every PCS field with `InvalidSetup`.
+
+Cargo unifies features across the dependency graph. If any dependency enables
+the default features or another field tier on `akita-types`, `akita-prover`,
+`akita-verifier`, `akita-setup`, or `akita-pcs`, the final binary includes that
+tier. Use `default-features = false` consistently on direct Akita execution
+dependencies when pruning matters. Offline schedule planning still uses the
+complete protocol tables and is not restricted by the host executable's field
+features.
 
 ### Schedule families
 

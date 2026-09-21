@@ -19,8 +19,11 @@ Update it when a protocol invariant changes or a new verifier-facing surface is 
 ```bash
 cargo fmt --all --check
 cargo clippy --all --all-targets --all-features -- -D warnings
-cargo clippy --all --all-targets --no-default-features -- -D warnings
-cargo nextest run --no-default-features --features parallel,disk-persistence
+cargo clippy --all --all-targets --no-default-features \
+  --features field-fp32,field-fp64,field-fp128,transcript-blake2b \
+  -- -D warnings
+cargo nextest run --no-default-features \
+  --features field-fp32,field-fp64,field-fp128,parallel,disk-persistence,transcript-blake2b
 cargo nextest run --all-features
 cargo doc -q --no-deps --all-features
 cargo deny check bans licenses sources advisories

@@ -9,7 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 libm = "0.2"
 num-bigint = "0.5.1"
 num-traits = "0.2"

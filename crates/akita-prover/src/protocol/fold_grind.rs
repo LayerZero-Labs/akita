@@ -194,7 +194,7 @@ where
                 nonce,
                 operator_rejection,
             )?;
-            let witness = dispatch_for_field!(
+            let witness: DecomposeFoldWitness<F> = dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
                 F,
                 params.d_a(),

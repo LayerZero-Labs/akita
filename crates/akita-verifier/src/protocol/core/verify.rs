@@ -232,6 +232,7 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
+    akita_types::validate_compiled_field::<Cfg::Field>()?;
     let selection = statement.selection();
     let claims = statement.into_claims();
     claims

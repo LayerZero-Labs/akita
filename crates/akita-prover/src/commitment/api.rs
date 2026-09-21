@@ -105,6 +105,7 @@ fn validate_commitment_geometry<F>(
 where
     F: Field + CanonicalEncoding,
 {
+    akita_types::validate_compiled_field::<F>()?;
     signed_digit_kernel_for_setup(
         profile.inner.digits.log_basis,
         "for signed witness commitment decomposition",

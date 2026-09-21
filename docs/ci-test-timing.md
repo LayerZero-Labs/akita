@@ -14,7 +14,8 @@ Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`
 ## Local repro
 
 ```bash
-cargo nextest run --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence
+cargo nextest run --profile ci --cargo-profile ci-test --no-default-features \
+  --features field-fp32,field-fp64,field-fp128,parallel,disk-persistence,transcript-blake2b
 python3 -m unittest discover -s scripts/tests -p "test_ci_test_timing_report.py"
 ```
 

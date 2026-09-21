@@ -50,7 +50,7 @@ where
     SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
-    let packed_witness = dispatch_for_field!(
+    let packed_witness: Option<RecursiveWitnessFlat> = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
         dims.d_a(),
@@ -122,7 +122,7 @@ where
     SP::State: InnerRelationState<Cfg::Field>,
 {
     let ring_dim = commit_params.d_a();
-    let packed_witness = dispatch_for_field!(
+    let packed_witness: Option<RecursiveWitnessFlat> = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
         ring_dim,

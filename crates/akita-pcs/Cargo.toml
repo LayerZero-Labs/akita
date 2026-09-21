@@ -22,13 +22,43 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["parallel", "transcript-blake2b"]
+features = [
+  "field-fp32",
+  "field-fp64",
+  "field-fp128",
+  "parallel",
+  "transcript-blake2b",
+]
 
 [package.metadata.cargo-machete]
 ignored = ["akita-setup"]
 
 [features]
-default = ["parallel", "transcript-blake2b"]
+default = [
+  "field-fp32",
+  "field-fp64",
+  "field-fp128",
+  "parallel",
+  "transcript-blake2b",
+]
+field-fp32 = [
+  "akita-prover/field-fp32",
+  "akita-setup/field-fp32",
+  "akita-types/field-fp32",
+  "akita-verifier/field-fp32",
+]
+field-fp64 = [
+  "akita-prover/field-fp64",
+  "akita-setup/field-fp64",
+  "akita-types/field-fp64",
+  "akita-verifier/field-fp64",
+]
+field-fp128 = [
+  "akita-prover/field-fp128",
+  "akita-setup/field-fp128",
+  "akita-types/field-fp128",
+  "akita-verifier/field-fp128",
+]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
@@ -74,16 +104,19 @@ profile-ci = [
 # compatibility union for local use and older merge-base checkouts. It is the
 # transitive union of the narrow features above, so those lists cannot drift.
 profile-bench-selected = []
-profile-ci-fp32 = ["profile-bench-selected"]
-profile-ci-fp64 = ["profile-bench-selected"]
-profile-ci-fp128-base = ["profile-bench-selected"]
-profile-ci-multi-group-direct = ["profile-bench-selected"]
-profile-ci-multi-group-recursive = ["profile-bench-selected"]
-profile-ci-multi-group-recursive-w8r2 = ["profile-bench-selected"]
-profile-ci-distributed = ["profile-bench-selected"]
+profile-ci-fp32 = ["field-fp32", "profile-bench-selected"]
+profile-ci-fp64 = ["field-fp64", "profile-bench-selected"]
+profile-ci-fp128-base = ["field-fp128", "profile-bench-selected"]
+profile-ci-multi-group-direct = ["field-fp128", "profile-bench-selected"]
+profile-ci-multi-group-recursive = ["field-fp128", "profile-bench-selected"]
+profile-ci-multi-group-recursive-w8r2 = [
+  "field-fp128",
+  "profile-bench-selected",
+]
+profile-ci-distributed = ["field-fp128", "profile-bench-selected"]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
 # configuration. Schedule rows remain external artifacts.
-profile-onehot-fp128 = []
+profile-onehot-fp128 = ["field-fp128"]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",

@@ -553,7 +553,10 @@ where
             group_dims.d_b(),
         )?;
 
-        let (consistency_quotient, a_quotients) = akita_types::dispatch_for_field!(
+        let (consistency_quotient, a_quotients): (
+            RelationQuotientRow<F>,
+            Vec<RelationQuotientRow<F>>,
+        ) = akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             group_dims.d_a(),

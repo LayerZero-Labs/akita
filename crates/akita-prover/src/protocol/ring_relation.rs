@@ -805,7 +805,7 @@ impl RingRelationProver {
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
             })?;
-        let row_coefficient_rings = dispatch_for_field!(
+        let row_coefficient_rings: RingVec<F> = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             lp.role_dims().d_a(),

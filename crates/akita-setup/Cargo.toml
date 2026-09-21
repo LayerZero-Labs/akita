@@ -9,7 +9,10 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["transcript-blake2b"]
+default = ["field-fp32", "field-fp64", "field-fp128", "transcript-blake2b"]
+field-fp32 = ["akita-prover/field-fp32", "akita-types/field-fp32"]
+field-fp64 = ["akita-prover/field-fp64", "akita-types/field-fp64"]
+field-fp128 = ["akita-prover/field-fp128", "akita-types/field-fp128"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
   "akita-prover/transcript-blake2b",

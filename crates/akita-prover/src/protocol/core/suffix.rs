@@ -296,8 +296,8 @@ where
     let logical_witness = logical_w
         .map(Arc::new)
         .unwrap_or_else(|| Arc::clone(&witness));
-    let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
-    let logical_source = RecursiveFoldSource::witness(logical_witness);
+    let witness_source: RecursiveFoldSource<F> = RecursiveFoldSource::witness(Arc::clone(&witness));
+    let logical_source: RecursiveFoldSource<F> = RecursiveFoldSource::witness(logical_witness);
     let params = &scheduled;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
@@ -340,7 +340,11 @@ where
     for coordinate in &protocol_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
     }
-    let (e_folded, fold_output, extension_opening_reduction) = dispatch_for_field!(
+    let (e_folded, fold_output, extension_opening_reduction): (
+        RingVec<F>,
+        crate::protocol::fold_grind::TerminalFoldGrindOutput<F>,
+        Option<akita_types::ExtensionOpeningReductionProof<E>>,
+    ) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         params.d_a(),

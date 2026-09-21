@@ -50,6 +50,7 @@ impl<'stack, Stacks: ?Sized> ProverExecutor<'stack, Stacks> {
         <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
         <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     {
+        akita_types::validate_compiled_field::<Cfg::Field>()?;
         let (selection, claims) = opening.into_low_level_parts();
         let opening_batch = claims.opening_layout();
         let resolved = schedules.resolve_selection(selection)?;
