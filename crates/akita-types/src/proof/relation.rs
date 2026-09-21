@@ -20,6 +20,8 @@ use std::iter::repeat_n;
 
 #[path = "relation_layout.rs"]
 mod layout_types;
+#[path = "relation_sizing.rs"]
+mod sizing;
 use layout_types::RelationCompressionLayout;
 pub use layout_types::{
     RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
@@ -172,9 +174,7 @@ impl RelationRhsLayout {
             .collect())
     }
 
-    /// Semantic row families in canonical relation and quotient order.
-    pub fn row_families(&self) -> Result<Vec<RelationRowFamily>, AkitaError> {
-        self.validate()?;
+    fn checked_uncompressed_row_count(&self) -> Result<usize, AkitaError> {
         let row_count = self.groups.iter().try_fold(0usize, |rows, group| {
             rows.checked_add(1)
                 .and_then(|rows| rows.checked_add(group.n_a))
@@ -186,6 +186,13 @@ impl RelationRhsLayout {
         let row_count = row_count.checked_add(self.n_d).ok_or_else(|| {
             AkitaError::InvalidSetup("relation quotient row count overflow".into())
         })?;
+        Ok(row_count)
+    }
+
+    /// Semantic row families in canonical relation and quotient order.
+    pub fn row_families(&self) -> Result<Vec<RelationRowFamily>, AkitaError> {
+        self.validate()?;
+        let row_count = self.checked_uncompressed_row_count()?;
         let mut rows = Vec::with_capacity(row_count);
         for group in &self.groups {
             let group_index = group.group_index;
@@ -514,37 +521,6 @@ impl RelationWitnessGeometry {
             ));
         }
         Ok(geometry)
-    }
-
-    /// Common Stage-2 coefficient block derived from row polynomial moduli.
-    pub fn relation_coefficient_block_len(&self) -> Result<usize, AkitaError> {
-        let row_geometries = self
-            .rhs_layout()
-            .row_families()?
-            .into_iter()
-            .filter(|row| {
-                !matches!(
-                    row,
-                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
-                )
-            })
-            .map(RelationRowFamily::geometry)
-            .collect::<Vec<_>>();
-        let coefficient_block = row_geometries
-            .iter()
-            .map(|geometry| geometry.polynomial_modulus_dimension())
-            .min()
-            .ok_or_else(|| AkitaError::InvalidSetup("relation rows are empty".into()))?;
-        if row_geometries.iter().any(|geometry| {
-            !geometry
-                .physical_coefficient_width()
-                .is_multiple_of(coefficient_block)
-        }) {
-            return Err(AkitaError::InvalidSetup(
-                "relation row width is not aligned to its common modulus block".into(),
-            ));
-        }
-        Ok(coefficient_block)
     }
 }
 
