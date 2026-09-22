@@ -39,30 +39,36 @@ pub fn native_terminal_response_max_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
 ) -> Result<usize, AkitaError> {
-    let field_bytes = field_bytes(field_bits);
-    let (field_count, framed_z_bytes) = shape.layout.groups.iter().try_fold(
-        (0usize, 0usize),
-        |(field_count, framed_z_bytes), group| {
-            let field_count = field_count
+    checked_native_terminal_response_bytes(field_bits, shape, shape.layout.z_payload_bytes())
+}
+
+fn checked_native_terminal_response_bytes(
+    field_bits: u32,
+    shape: &TerminalResponseShape,
+    z_payload_bytes: usize,
+) -> Result<usize, AkitaError> {
+    let field_count = shape
+        .layout
+        .groups
+        .iter()
+        .try_fold(0usize, |count, group| {
+            count
                 .checked_add(group.e_field_elems)
                 .and_then(|value| value.checked_add(group.t_field_elems))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("native terminal field-count overflow".into())
-                })?;
-            let framed_z_bytes = framed_z_bytes
-                .checked_add(4)
-                .and_then(|value| value.checked_add(group.z_payload_bytes))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("native terminal z-size overflow".into())
-                })?;
-            Ok::<_, AkitaError>((field_count, framed_z_bytes))
-        },
-    )?;
+                })
+        })?;
     let field_payload_bytes = field_count
-        .checked_mul(field_bytes)
+        .checked_mul(field_bytes(field_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("native terminal field-size overflow".into()))?;
+    let framing_bytes =
+        shape.layout.groups.len().checked_mul(4).ok_or_else(|| {
+            AkitaError::InvalidSetup("native terminal framing-size overflow".into())
+        })?;
     field_payload_bytes
-        .checked_add(framed_z_bytes)
+        .checked_add(z_payload_bytes)
+        .and_then(|value| value.checked_add(framing_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("native terminal response size overflow".into()))
 }
 
@@ -72,28 +78,28 @@ pub fn native_terminal_response_max_bytes(
 /// route, candidate selection may price the tighter deterministic payload bound
 /// implied by the certified energy. Unsupported shapes conservatively use the
 /// scheduled byte budget.
-pub fn terminal_response_planner_bytes(
+pub fn native_terminal_response_planner_bytes(
     field_bits: u32,
     shape: &TerminalResponseShape,
     response_l2_sq_cap: Option<u128>,
-) -> usize {
-    let scheduled = terminal_response_bytes(field_bits, shape);
+) -> Result<usize, AkitaError> {
+    let scheduled_z_bytes = shape.layout.z_payload_bytes();
     let Some(l2_sq_cap) = response_l2_sq_cap else {
-        return scheduled;
+        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
     let [group] = shape.layout.groups.as_slice() else {
-        return scheduled;
+        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
     let Some(z_payload_bytes) = crate::golomb_rice::golomb_rice_l2_planner_payload_bytes(
         group.z_coords,
         l2_sq_cap,
         group.z_rice_low_bits,
     ) else {
-        return scheduled;
+        return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
-    crate::proof::terminal_response_upper_bound_bytes(
+    checked_native_terminal_response_bytes(
         field_bits,
-        &shape.layout,
+        shape,
         z_payload_bytes.min(group.z_payload_bytes),
     )
 }
@@ -389,16 +395,19 @@ mod tests {
     fn terminal_l2_planner_estimate_does_not_change_the_wire_cap() {
         let shape = sample_terminal_shape();
         let original = shape.clone();
-        let scheduled = terminal_response_bytes(64, &shape);
-        let estimated = terminal_response_planner_bytes(64, &shape, Some(1 << 20));
+        let native = native_terminal_response_max_bytes(64, &shape).unwrap();
+        let estimated = native_terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap();
 
-        assert!(estimated < scheduled);
+        assert!(estimated < native);
         assert_eq!(
             shape, original,
             "planning must not mutate scheduled geometry"
         );
         assert_eq!(shape.layout.groups[0].z_payload_bytes, 4_096);
-        assert_eq!(terminal_response_planner_bytes(64, &shape, None), scheduled);
+        assert_eq!(
+            native_terminal_response_planner_bytes(64, &shape, None).unwrap(),
+            native
+        );
     }
 
     #[test]
@@ -415,8 +424,8 @@ mod tests {
         shape.layout.groups.push(shape.layout.groups[0]);
         shape.layout.logical_num_elems *= 2;
         assert_eq!(
-            terminal_response_planner_bytes(64, &shape, Some(1 << 20)),
-            terminal_response_bytes(64, &shape)
+            native_terminal_response_planner_bytes(64, &shape, Some(1 << 20)).unwrap(),
+            native_terminal_response_max_bytes(64, &shape).unwrap()
         );
     }
 }

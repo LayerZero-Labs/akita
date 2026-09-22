@@ -1305,6 +1305,22 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("stored in a 32 bit field", report)
         self.assertIn("12 bit fold response", report)
 
+        legacy_baseline_plan = dict(plan)
+        legacy_baseline_plan.pop("native_nonce_max_bytes")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                [],
+                summary["proof_levels"],
+                None,
+                None,
+                baseline_proof,
+                None,
+                plan,
+                legacy_baseline_plan,
+            )
+        self.assertIn("Additive per-message LEB128 maxima", output.getvalue())
+
     def test_merge_base_nonce_stream_name_maps_to_packed_estimate(self) -> None:
         from scripts.profile_bench_report import extract_summary
 

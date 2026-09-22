@@ -109,11 +109,12 @@ fn print_native_wire_contexts(label: &str) {
 
 pub(crate) fn emit_native_proof_tail_report(label: &str, schedule: &FoldSchedule, field_bits: u32) {
     let response = &schedule.terminal.response_shape;
-    let planned_bytes = akita_types::terminal_response_planner_bytes(
+    let planned_bytes = akita_types::native_terminal_response_planner_bytes(
         field_bits,
         response,
         schedule.terminal.response_l2_sq_cap(),
-    );
+    )
+    .expect("validated native terminal response plan");
     tracing::info!(
         label,
         planned_terminal_response_bytes = planned_bytes,

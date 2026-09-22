@@ -191,11 +191,11 @@ pub(super) fn terminal(
         .unwrap_or(certified_linf_cap);
     let response_shape =
         akita_types::TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
-    let terminal_bytes = akita_types::terminal_response_planner_bytes(
+    let terminal_bytes = akita_types::native_terminal_response_planner_bytes(
         ctx.policy.decomposition.field_bits(),
         &response_shape,
         terminal_params.response_l2_sq_cap(),
-    );
+    )?;
     let payload_bytes = opening_reduction_bytes
         .checked_add(terminal_bytes)
         .ok_or_else(|| {

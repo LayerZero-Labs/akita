@@ -6,7 +6,7 @@ use std::{
 
 use akita_error::AkitaError;
 use akita_types::{
-    active_setup_field_len, terminal_response_planner_bytes, AkitaScheduleLookupKey,
+    active_setup_field_len, native_terminal_response_planner_bytes, AkitaScheduleLookupKey,
     CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
     TerminalResponseShape,
 };

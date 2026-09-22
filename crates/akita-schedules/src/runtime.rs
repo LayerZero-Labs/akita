@@ -722,11 +722,11 @@ fn expanded_schedule_proof_components(
         policy.claim_ext_degree,
         PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
-    let terminal_planner_bytes = akita_types::terminal_response_planner_bytes(
+    let terminal_planner_bytes = akita_types::native_terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
-    );
+    )?;
     let terminal_max_bytes = akita_types::native_terminal_response_max_bytes(
         field_bits,
         &schedule.terminal.response_shape,

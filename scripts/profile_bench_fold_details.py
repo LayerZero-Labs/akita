@@ -750,8 +750,11 @@ def render_grinding_plan_details(
     current_native_max = int(grinding_plan["native_nonce_max_bytes"])
     if baseline_grinding_plan is not None:
         baseline_packed_estimate = int(baseline_grinding_plan["packed_nonce_estimate_bytes"])
-        baseline_native_max: int | None = int(
-            baseline_grinding_plan["native_nonce_max_bytes"]
+        baseline_native_max_value = baseline_grinding_plan.get("native_nonce_max_bytes")
+        baseline_native_max: int | None = (
+            int(baseline_native_max_value)
+            if baseline_native_max_value is not None
+            else None
         )
         baseline_total_bits: int | None = int(baseline_grinding_plan["total_nonce_bits"])
     else:

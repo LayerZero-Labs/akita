@@ -334,7 +334,7 @@ fn native_proof_budget_is_derived_from_the_selected_schedule() {
     .expect("native planner estimate");
     assert!(
         bound >= planner_estimate,
-        "native parser bound must cover the packed selection estimate"
+        "native parser bound {bound} must cover the native selection estimate {planner_estimate}"
     );
 
     let mut encoded_oversize = Vec::new();

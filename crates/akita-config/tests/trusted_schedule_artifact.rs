@@ -143,6 +143,28 @@ fn mutate_first_json_digit(bytes: &mut [u8], key: &[u8]) {
     };
 }
 
+fn mutate_first_json_number_without_changing_width(bytes: &mut [u8], key: &[u8]) {
+    let value_start = json_value_start(bytes, key, 0);
+    let number_start = bytes[value_start..]
+        .iter()
+        .position(u8::is_ascii_digit)
+        .map(|relative| value_start + relative)
+        .expect("numeric artifact value");
+    let number_end = bytes[number_start..]
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .map(|relative| number_start + relative)
+        .unwrap_or(bytes.len());
+    let last_digit = bytes
+        .get_mut(number_end - 1)
+        .expect("nonempty numeric artifact value");
+    *last_digit = if *last_digit == b'0' {
+        b'1'
+    } else {
+        *last_digit - 1
+    };
+}
+
 fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
     let rows_start = json_value_start(bytes, b"\"rows\"", 0);
     assert_eq!(bytes.get(rows_start), Some(&b'['));
@@ -502,7 +524,7 @@ fn decoder_rejects_format_policy_and_duplicate_row_tampering() {
     assert!(format!("{error}").contains("protocol epoch"));
 
     let mut wrong_policy = bytes.clone();
-    mutate_first_json_digit(&mut wrong_policy, b"\"policy_digest\"");
+    mutate_first_json_number_without_changing_width(&mut wrong_policy, b"\"policy_digest\"");
     let error = TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(&wrong_policy)
         .expect_err("wrong policy digest must reject");
     assert!(format!("{error}").contains("policy"));
