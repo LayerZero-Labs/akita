@@ -1,7 +1,7 @@
 //! Canonical grinding-plan derivation from public schedule geometry.
 
 use crate::narrowing::{usize_to_u32, usize_to_u64};
-use crate::transcript_grinding::GrindingPlanAccumulator;
+use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
 use crate::{
     multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
@@ -74,9 +74,8 @@ pub fn transcript_grinding_cost_for_planner_edge(
 ) -> Result<TranscriptGrindingCost, AkitaError> {
     let capacity = challenge_capacity_bits(layout, modulus_bits, extension_degree)?;
     let mut accumulator = GrindingPlanAccumulator::new(capacity)?;
-    let mut push = |run| accumulator.push(run);
     let rounds = append_nonterminal(
-        &mut push,
+        &mut accumulator,
         capacity,
         extension_degree,
         level,
@@ -87,7 +86,7 @@ pub fn transcript_grinding_cost_for_planner_edge(
     )?;
     if let FoldSuccessor::Terminal(terminal) = successor {
         append_terminal(
-            &mut push,
+            &mut accumulator,
             capacity,
             extension_degree,
             level.checked_add(1).ok_or_else(|| {
@@ -187,7 +186,7 @@ fn derive_transcript_grinding_plan(
 
 #[allow(clippy::too_many_arguments)]
 fn append_nonterminal(
-    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
+    push: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -202,14 +201,14 @@ fn append_nonterminal(
     }
 
     if layout.requires_row_batch_challenge() {
-        push(GrindingRun::proof_of_work(
+        push.push(GrindingRun::proof_of_work(
             GrindingSite::EvaluationBatch { level },
             1,
             capacity,
         )?)?;
     }
 
-    push(GrindingRun::fold_response(level))?;
+    push.push(GrindingRun::fold_response(level))?;
     append_fold_queries(push, level, params, layout)?;
 
     let alpha_loss = (0..layout.num_groups()).try_fold(1u64, |largest, group_index| {
@@ -219,7 +218,7 @@ fn append_nonterminal(
             group.inner_commit_matrix_params().ring_dimension(),
         )?))
     })?;
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::RingSwitchAlpha { level },
         alpha_loss,
         capacity,
@@ -232,12 +231,12 @@ fn append_nonterminal(
             "grinding Stage 2 point exceeds successor opening width".into(),
         ));
     }
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::Tau0Point { level },
         multilinear_point_loss_factor(tau0_width)?,
         capacity,
     )?)?;
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::Tau1Point { level },
         multilinear_point_loss_factor(params.relation_row_index_num_vars(layout)?)?,
         capacity,
@@ -255,19 +254,16 @@ fn append_nonterminal(
             stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
                 AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
             })?;
-        for round in 0..stage_shape.sumcheck_proof.0 {
-            append_sumcheck(
-                push,
-                capacity,
-                SumcheckProtocol::Stage1,
-                level,
-                stage,
-                round,
-                full_round_degree,
-            )?;
-        }
+        push.sumcheck_rounds(SumcheckRoundBatch {
+            capacity,
+            protocol: SumcheckProtocol::Stage1,
+            level,
+            stage,
+            rounds: stage_shape.sumcheck_proof.0,
+            degree: full_round_degree,
+        })?;
         if stage_shape.child_claims > 0 {
-            push(GrindingRun::proof_of_work(
+            push.push(GrindingRun::proof_of_work(
                 GrindingSite::Stage1InterstageBatch { level, stage },
                 powers_batch_loss_factor(stage_shape.child_claims)?,
                 capacity,
@@ -276,61 +272,68 @@ fn append_nonterminal(
     }
     if let Some(norm) = shape.norm {
         if norm.subclaims > 0 {
-            push(GrindingRun::proof_of_work(
+            push.push(GrindingRun::proof_of_work(
                 GrindingSite::L2SubclaimBatch { level },
                 powers_batch_loss_factor(norm.subclaims)?,
                 capacity,
             )?)?;
         }
-        push(GrindingRun::proof_of_work(
+        push.push(GrindingRun::proof_of_work(
             GrindingSite::L2NormMerge { level },
             1,
             capacity,
         )?)?;
-        for round in 0..norm.rounds {
-            append_sumcheck(
-                push,
-                capacity,
-                SumcheckProtocol::PhysicalL2,
-                level,
-                0,
-                round,
-                norm.degree,
-            )?;
-        }
-        push(GrindingRun::proof_of_work(
+        push.sumcheck_rounds(SumcheckRoundBatch {
+            capacity,
+            protocol: SumcheckProtocol::PhysicalL2,
+            level,
+            stage: 0,
+            rounds: norm.rounds,
+            degree: norm.degree,
+        })?;
+        push.push(GrindingRun::proof_of_work(
             GrindingSite::L2VirtualBatch { level },
             polynomial_identity_loss_factor(norm.virtual_evaluations)?,
             capacity,
         )?)?;
     }
     if params.payload_mode.is_compressed() {
-        push(GrindingRun::proof_of_work(
+        push.push(GrindingRun::proof_of_work(
             GrindingSite::CompressionBinary { level },
             1,
             capacity,
         )?)?;
     }
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::Stage2Batch { level },
         1,
         capacity,
     )?)?;
-    for round in 0..rounds {
-        append_sumcheck(push, capacity, SumcheckProtocol::Stage2, level, 0, round, 3)?;
-    }
+    push.sumcheck_rounds(SumcheckRoundBatch {
+        capacity,
+        protocol: SumcheckProtocol::Stage2,
+        level,
+        stage: 0,
+        rounds,
+        degree: 3,
+    })?;
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
-            for round in 0..prefix.profile.group.num_vars() {
-                append_sumcheck(push, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
-            }
+            push.sumcheck_rounds(SumcheckRoundBatch {
+                capacity,
+                protocol: SumcheckProtocol::Stage3,
+                level,
+                stage: 0,
+                rounds: prefix.profile.group.num_vars(),
+                degree: 2,
+            })?;
         }
     }
     Ok(rounds)
 }
 
 fn append_terminal(
-    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
+    push: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -341,8 +344,8 @@ fn append_terminal(
     if extension_degree > 1 {
         append_eor(push, capacity, extension_degree, level, &layout)?;
     }
-    push(GrindingRun::fold_response(level))?;
-    push(GrindingRun::fold_challenge_group(
+    push.push(GrindingRun::fold_response(level))?;
+    push.push(GrindingRun::fold_challenge_group(
         level,
         0,
         usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
@@ -351,7 +354,7 @@ fn append_terminal(
 }
 
 fn append_fold_queries(
-    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
+    push: &mut impl GrindingPlanSink,
     level: u32,
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
@@ -363,7 +366,7 @@ fn append_fold_queries(
             .num_polynomials()
             .checked_mul(params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        push(GrindingRun::fold_challenge_group(
+        push.push(GrindingRun::fold_challenge_group(
             level,
             group,
             usize_to_u64(multiplicity, "fold coordinate count")?,
@@ -373,7 +376,7 @@ fn append_fold_queries(
 }
 
 fn append_eor(
-    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
+    push: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -385,34 +388,32 @@ fn append_eor(
             "extension-opening split exceeds opening arity".into(),
         ));
     }
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::ExtensionOpeningPoint { level },
         multilinear_point_loss_factor(split_bits)?,
         capacity,
     )?)?;
     if layout.requires_row_batch_challenge() {
-        push(GrindingRun::proof_of_work(
+        push.push(GrindingRun::proof_of_work(
             GrindingSite::ExtensionOpeningClaimBatch { level },
             1,
             capacity,
         )?)?;
     }
-    for round in 0..layout.max_num_vars() - split_bits {
-        append_sumcheck(
-            push,
-            capacity,
-            SumcheckProtocol::ExtensionOpeningReduction,
-            level,
-            0,
-            round,
-            2,
-        )?;
-    }
+    push.sumcheck_rounds(SumcheckRoundBatch {
+        capacity,
+        protocol: SumcheckProtocol::ExtensionOpeningReduction,
+        level,
+        stage: 0,
+        rounds: layout.max_num_vars() - split_bits,
+        degree: 2,
+    })?;
     Ok(())
 }
 
+#[cfg(test)]
 fn append_sumcheck(
-    push: &mut impl FnMut(GrindingRun) -> Result<(), AkitaError>,
+    push: &mut impl GrindingPlanSink,
     capacity: u32,
     protocol: SumcheckProtocol,
     level: u32,
@@ -420,7 +421,7 @@ fn append_sumcheck(
     round: usize,
     degree: usize,
 ) -> Result<(), AkitaError> {
-    push(GrindingRun::proof_of_work(
+    push.push(GrindingRun::proof_of_work(
         GrindingSite::SumcheckRound {
             protocol,
             level,
@@ -602,6 +603,27 @@ mod tests {
                             FoldSuccessor::Recursive(&successor),
                         )
                         .unwrap();
+                        let mut priced = GrindingPlanAccumulator::new(capacity).unwrap();
+                        append_nonterminal(
+                            &mut priced,
+                            capacity,
+                            1,
+                            2,
+                            &current,
+                            rounds,
+                            &layout,
+                            FoldSuccessor::Recursive(&successor),
+                        )
+                        .unwrap();
+                        let materialized = GrindingPlan::new(actual.clone(), capacity).unwrap();
+                        assert_eq!(
+                            priced.cost().total_nonce_bits,
+                            materialized.total_nonce_bits()
+                        );
+                        assert_eq!(
+                            priced.cost().expanded_query_count,
+                            materialized.expanded_query_count()
+                        );
                         actual.retain(|run| {
                             matches!(
                                 run.site(),
@@ -638,7 +660,7 @@ mod tests {
                                 .unwrap();
                             }
                             if shape.child_claims > 0 {
-                                push(
+                                push.push(
                                     GrindingRun::proof_of_work(
                                         GrindingSite::Stage1InterstageBatch {
                                             level: 2,
@@ -654,7 +676,7 @@ mod tests {
                         }
                         if let Some(norm) = norm {
                             if norm.subclaims > 0 {
-                                push(
+                                push.push(
                                     GrindingRun::proof_of_work(
                                         GrindingSite::L2SubclaimBatch { level: 2 },
                                         powers_batch_loss_factor(norm.subclaims).unwrap(),
@@ -664,7 +686,7 @@ mod tests {
                                 )
                                 .unwrap();
                             }
-                            push(
+                            push.push(
                                 GrindingRun::proof_of_work(
                                     GrindingSite::L2NormMerge { level: 2 },
                                     1,
@@ -685,7 +707,7 @@ mod tests {
                                 )
                                 .unwrap();
                             }
-                            push(
+                            push.push(
                                 GrindingRun::proof_of_work(
                                     GrindingSite::L2VirtualBatch { level: 2 },
                                     polynomial_identity_loss_factor(norm.virtual_evaluations)
@@ -711,6 +733,39 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn batched_cost_matches_materialized_extension_and_terminal_queries() {
+        let terminal = crate::TerminalFoldParams::from_expanded_group(params(64));
+        let layout = OpeningClaimsLayout::new(12, 3).unwrap();
+        for extension_degree in [1, 2, 4] {
+            let capacity = nominal_challenge_capacity_bits(128, extension_degree).unwrap();
+            let mut runs = Vec::new();
+            let mut materialize = |run| {
+                runs.push(run);
+                Ok(())
+            };
+            let mut cost = GrindingPlanAccumulator::new(capacity).unwrap();
+            append_eor(&mut materialize, capacity, extension_degree, 0, &layout).unwrap();
+            append_eor(&mut cost, capacity, extension_degree, 0, &layout).unwrap();
+            append_terminal(
+                &mut materialize,
+                capacity,
+                extension_degree,
+                1,
+                7,
+                &terminal,
+            )
+            .unwrap();
+            append_terminal(&mut cost, capacity, extension_degree, 1, 7, &terminal).unwrap();
+            let plan = GrindingPlan::new(runs, capacity).unwrap();
+            assert_eq!(cost.cost().total_nonce_bits, plan.total_nonce_bits());
+            assert_eq!(
+                cost.cost().expanded_query_count,
+                plan.expanded_query_count()
+            );
         }
     }
 }
