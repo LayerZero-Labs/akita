@@ -21,6 +21,7 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "keccak 0.1.6",
+ "num-bigint 0.5.1",
  "serde",
  "smallvec",
  "tracing",
@@ -332,6 +333,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -391,7 +402,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45391a9c842ff37f9a6164957c6b8ec40268ff10f9607b35e4d6192ed1ab4045"
 dependencies = [
  "itertools",
- "num-bigint",
+ "num-bigint 0.4.8",
  "p3-maybe-rayon",
  "p3-util",
  "paste",
@@ -457,7 +468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d1aa65b2f49d58dd097a99dbd3ebcb0600bbac45d86339a382839933780689"
 dependencies = [
  "itertools",
- "num-bigint",
+ "num-bigint 0.4.8",
  "p3-dft",
  "p3-field",
  "p3-matrix",

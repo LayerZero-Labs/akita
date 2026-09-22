@@ -17,6 +17,7 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 keccak = { version = "0.1.6", features = ["asm"] }
+num-bigint = "0.5.1"
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 tracing = "0.1"
 

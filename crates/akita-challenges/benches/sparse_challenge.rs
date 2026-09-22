@@ -16,8 +16,8 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    sample_sparse_challenges, Challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
-    D64_PRODUCTION_PM2_COUNT,
+    sample_sparse_challenges, BinaryChallengeProfile, BinaryChallengeSampler, BinaryScalarRing,
+    Challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
 };
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -75,6 +75,83 @@ fn bench_batch(c: &mut Criterion) {
                 });
             });
         }
+    }
+    group.finish();
+}
+
+fn bench_binary_batch(c: &mut Criterion) {
+    let mut samplers = [
+        (
+            "d162_fixed_w47",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic243, 47)
+                    .expect("degree-162 fixed-weight profile"),
+            ),
+        ),
+        (
+            "d162_bounded_w46",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 46)
+                    .expect("degree-162 bounded-weight profile"),
+            ),
+        ),
+        (
+            "d162_bounded_w47",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 47)
+                    .expect("degree-162 bounded-weight equal-cap profile"),
+            ),
+        ),
+        (
+            "d486_fixed_w25",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic729, 25)
+                    .expect("degree-486 fixed-weight profile"),
+            ),
+        ),
+        (
+            "d486_bounded_w25",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic729, 25)
+                    .expect("degree-486 bounded-weight profile"),
+            ),
+        ),
+    ];
+    let mut group = c.benchmark_group("labinius_binary_challenge_batch");
+    for n in [1usize, 1 << 6, 1 << 12] {
+        group.throughput(Throughput::Elements(n as u64));
+        for (name, sampler) in &mut samplers {
+            group.bench_with_input(BenchmarkId::new(*name, n), &n, |b, &n| {
+                b.iter(|| {
+                    let mut transcript = fresh_transcript();
+                    black_box(
+                        sampler
+                            .sample_challenges::<F, _>(&mut transcript, b"bench/binary-batch", n)
+                            .expect("binary challenge batch"),
+                    )
+                });
+            });
+        }
+        group.bench_with_input(
+            BenchmarkId::new("existing_signed_sparse_d64", n),
+            &n,
+            |b, &n| {
+                b.iter(|| {
+                    let mut transcript = fresh_transcript();
+                    black_box(
+                        sample_sparse_challenges::<F, _>(
+                            &mut transcript,
+                            b"bench/existing-baseline",
+                            D,
+                            n,
+                            &cfg_signed_sparse_production(),
+                            0,
+                        )
+                        .expect("existing sparse challenge batch"),
+                    )
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -218,6 +295,7 @@ fn bench_sparse_evaluation(c: &mut Criterion) {
 criterion_group!(
     sparse_challenge,
     bench_batch,
+    bench_binary_batch,
     bench_sparse_ladder,
     bench_sparse_evaluation
 );
