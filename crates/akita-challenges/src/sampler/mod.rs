@@ -11,9 +11,11 @@ mod position_sample;
 mod signed_sparse;
 mod xof;
 
-pub(crate) use position_sample::MAX_STACK_RING_DIM;
+pub(crate) use position_sample::{
+    sample_distinct_positions_into, DistinctPositionScratch, MAX_STACK_RING_DIM,
+};
 pub(crate) use signed_sparse::SignedSparseScratch;
-pub(crate) use xof::{IndexedXofPrefix, XofCursor};
+pub(crate) use xof::{shake256, IndexedXofPrefix, XofCursor};
 
 use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
