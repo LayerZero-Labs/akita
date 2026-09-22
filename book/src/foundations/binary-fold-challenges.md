@@ -69,6 +69,10 @@ fold width is invalid. A request beyond the residue capacity returns
 The cumulative binomial tables and public cardinalities use `BigUint`. This is
 necessary for degree 486: for example, `binom(486, 243)` has a 482-bit binary
 representation. The same type keeps the API exact at both supported degrees.
+Counts above 256 bits are combinatorial facts, not a claim that the current
+32-byte transcript root supplies more than 256 bits of challenge entropy. The
+current target is a 128-bit fold budget, and this branch wires no profile into
+a protocol path.
 
 ## Profile identity and deterministic signs
 
