@@ -90,7 +90,9 @@ impl WitnessLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 
-        let successor_a_alignment = relation_geometry.relation_coefficient_block_len()?;
+        let successor_a_alignment = relation_geometry
+            .rhs_layout()
+            .relation_coefficient_block_len()?;
         super::tail::measure(
             lp,
             relation_geometry,
@@ -300,7 +302,10 @@ mod tests {
             assert_eq!(opening_geometry.coordinate_plane_count(), 2);
             assert_eq!(opening_geometry.physical_coefficient_width(), 128);
             assert_eq!(
-                relation_geometry.relation_coefficient_block_len().unwrap(),
+                relation_geometry
+                    .rhs_layout()
+                    .relation_coefficient_block_len()
+                    .unwrap(),
                 64
             );
             assert_eq!(params.role_dims().common_relation_coeff_count(), 128);
