@@ -42,6 +42,7 @@ jobs:
         run: |
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
+          grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
       - name: Run architecture-specific arithmetic tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
