@@ -43,7 +43,8 @@ pub use ring::{
     terminal_residue_kernel, unpack_scalar_components, CenteredMontLut, CrtNttConvertibleField,
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, Ifma52NttMatrix,
     Ifma52Params, MinusTrinomial, PlusTrinomial, ResidueKernelPoint, TrinomialError,
-    TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
+    TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace,
+    TrinomialRing,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};

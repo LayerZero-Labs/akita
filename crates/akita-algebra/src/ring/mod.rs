@@ -25,6 +25,6 @@ pub use residue::{
 };
 pub use trinomial::{
     embed_scalar, pack_scalar_components, unpack_scalar_components, MinusTrinomial, PlusTrinomial,
-    TrinomialError, TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace,
-    TrinomialRing,
+    TrinomialError, TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,
+    TrinomialNttWorkspace, TrinomialRing,
 };

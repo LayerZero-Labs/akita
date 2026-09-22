@@ -35,6 +35,10 @@ harness = false
 name = "trinomial_ntt"
 harness = false
 
+[[bench]]
+name = "ntt_comparison"
+harness = false
+
 [features]
 default = []
 parallel = ["dep:rayon", "jolt-field/parallel"]

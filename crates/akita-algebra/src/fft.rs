@@ -397,16 +397,17 @@ impl<F: Field> FftWorkspace<F> {
                         // covers radices we don't have a tuned kernel
                         // for. Skipped entirely when j == 0 (tw = 1).
                         let tw = *tw_entry;
-                        let tw2 = tw * tw;
                         match r {
                             2 => {
                                 x[1] *= tw;
                             }
                             3 => {
+                                let tw2 = tw * tw;
                                 x[1] *= tw;
                                 x[2] *= tw2;
                             }
                             5 => {
+                                let tw2 = tw * tw;
                                 let tw3 = tw2 * tw;
                                 let tw4 = tw2 * tw2;
                                 x[1] *= tw;
@@ -415,6 +416,7 @@ impl<F: Field> FftWorkspace<F> {
                                 x[4] *= tw4;
                             }
                             7 => {
+                                let tw2 = tw * tw;
                                 let tw3 = tw2 * tw;
                                 let tw4 = tw2 * tw2;
                                 let tw5 = tw4 * tw;
@@ -443,13 +445,14 @@ impl<F: Field> FftWorkspace<F> {
                             self.buf_a[base + block] = x[0] - x[1];
                         }
                         3 => {
-                            // 2-mul DFT_3 from 1 + ω + ω² = 0:
+                            // 1-mul DFT_3 from 1 + ω + ω² = 0:
                             //   S = x₁ + x₂, T = ω·x₁ + ω²·x₂
                             //   y₀ = x₀ + S, y₁ = x₀ + T, y₂ = x₀ − S − T
                             let w1 = omega_r_pow[1];
-                            let w2 = omega_r_pow[2];
                             let s = x[1] + x[2];
-                            let t = x[1] * w1 + x[2] * w2;
+                            // Since `1 + w1 + w1^2 = 0`, this is exactly
+                            // `x1*w1 + x2*w1^2` with one field multiplication.
+                            let t = (x[1] - x[2]).mul_add(w1, -x[2]);
                             self.buf_a[base] = x[0] + s;
                             self.buf_a[base + block] = x[0] + t;
                             self.buf_a[base + 2 * block] = x[0] - s - t;

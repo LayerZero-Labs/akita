@@ -9,7 +9,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::{Field, Packed, WithPacking};
 
 use crate::fft::{field_pow, primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
@@ -89,6 +89,18 @@ pub enum TrinomialError {
         /// Number of scalar components supplied or requested.
         components: usize,
     },
+    /// A balanced signed-digit basis must fit in an `i8`.
+    InvalidDigitBasis {
+        /// Rejected base-2 logarithm.
+        log_basis: u32,
+    },
+    /// A signed digit lies outside the prepared balanced range.
+    DigitOutOfRange {
+        /// Rejected digit.
+        digit: i8,
+        /// Prepared base-2 logarithm.
+        log_basis: u32,
+    },
 }
 
 impl fmt::Display for TrinomialError {
@@ -122,6 +134,14 @@ impl fmt::Display for TrinomialError {
             } => write!(
                 formatter,
                 "{components} scalar components of degree {scalar_degree} do not pack into trinomial degree {target_degree}"
+            ),
+            Self::InvalidDigitBasis { log_basis } => write!(
+                formatter,
+                "balanced signed-digit basis log {log_basis} is outside 1..=8"
+            ),
+            Self::DigitOutOfRange { digit, log_basis } => write!(
+                formatter,
+                "signed digit {digit} is outside the balanced log-basis-{log_basis} range"
             ),
         }
     }
@@ -374,8 +394,84 @@ impl<F: Field, const D: usize, M: TrinomialModulus> TrinomialNtt<F, D, M> {
     /// Accumulate a pointwise product without another transform.
     pub fn add_assign_pointwise_mul(&mut self, lhs: &Self, rhs: &Self) {
         for ((accumulator, &lhs), &rhs) in self.slots.iter_mut().zip(&lhs.slots).zip(&rhs.slots) {
-            *accumulator += lhs * rhs;
+            *accumulator = lhs.mul_add(rhs, *accumulator);
         }
+    }
+
+    /// Accumulate a pointwise product with the field's selected packed backend.
+    ///
+    /// This is useful when [`WithPacking::Packing`] provides vectorized field
+    /// multiplication. Callers should benchmark it against
+    /// [`Self::add_assign_pointwise_mul`], because some packed backends only
+    /// vectorize addition while the scalar field provides a fused `mul_add`.
+    pub fn add_assign_pointwise_mul_packed(&mut self, lhs: &Self, rhs: &Self)
+    where
+        F: WithPacking,
+    {
+        let width = F::Packing::WIDTH;
+        let packed_len = D - D % width;
+        for base in (0..packed_len).step_by(width) {
+            let accumulator = F::Packing::from_fn(|lane| self.slots[base + lane]);
+            let lhs = F::Packing::from_fn(|lane| lhs.slots[base + lane]);
+            let rhs = F::Packing::from_fn(|lane| rhs.slots[base + lane]);
+            let result = accumulator + lhs * rhs;
+            for lane in 0..width {
+                self.slots[base + lane] = result.extract(lane);
+            }
+        }
+        for index in packed_len..D {
+            self.slots[index] = lhs.slots[index].mul_add(rhs.slots[index], self.slots[index]);
+        }
+    }
+}
+
+/// Position-aware conversion table for repeated balanced signed-digit FFTs.
+///
+/// The table covers exactly the active range
+/// `[-2^(log_basis - 1), 2^(log_basis - 1))`. It stores each digit already
+/// multiplied by both coset shifts at every coefficient position, so a hot
+/// conversion performs table loads and additions before the two half-size
+/// FFTs. Building the table is setup work intended to be amortized across
+/// repeated transforms. Its payload is
+/// `2 * D * 2^log_basis * size_of::<F>()` bytes.
+#[derive(Clone, Debug)]
+pub struct TrinomialI8Lut<F, const D: usize, M: TrinomialModulus> {
+    positive: Vec<F>,
+    negative: Vec<F>,
+    log_basis: u32,
+    digit_count: usize,
+    offset: i16,
+    modulus: PhantomData<M>,
+}
+
+impl<F, const D: usize, M: TrinomialModulus> TrinomialI8Lut<F, D, M> {
+    /// Base-2 logarithm of the covered balanced digit range.
+    pub fn log_basis(&self) -> u32 {
+        self.log_basis
+    }
+
+    /// Bytes occupied by the field-element table payload.
+    pub fn table_bytes(&self) -> usize {
+        self.positive
+            .len()
+            .saturating_add(self.negative.len())
+            .saturating_mul(core::mem::size_of::<F>())
+    }
+
+    fn index(&self, position: usize, digit: i8) -> Option<usize> {
+        let digit_index = i16::from(digit).checked_add(self.offset)?;
+        if digit_index < 0 || digit_index as usize >= self.digit_count {
+            return None;
+        }
+        position
+            .checked_mul(self.digit_count)?
+            .checked_add(digit_index as usize)
+    }
+
+    #[inline(always)]
+    fn validated_index(&self, position: usize, digit: i8) -> usize {
+        debug_assert!(self.index(position, digit).is_some());
+        position * self.digit_count + (i16::from(digit) + self.offset) as usize
     }
 }
 
@@ -469,6 +565,58 @@ where
         }
     }
 
+    /// Prepare a position-aware table for balanced signed `i8` transforms.
+    ///
+    /// `log_basis` must lie in `1..=8`. The table covers
+    /// `[-2^(log_basis - 1), 2^(log_basis - 1))`; using only the active range
+    /// avoids paying full-byte table memory for common small bases.
+    pub fn prepare_i8_lut(
+        &self,
+        log_basis: u32,
+    ) -> Result<TrinomialI8Lut<F, D, M>, TrinomialError> {
+        if !(1..=8).contains(&log_basis) {
+            return Err(TrinomialError::InvalidDigitBasis { log_basis });
+        }
+        let digit_count = 1usize << log_basis;
+        let offset = (digit_count / 2) as i16;
+        let table_len = D
+            .checked_mul(digit_count)
+            .ok_or(TrinomialError::InvalidDegree { degree: D })?;
+        let mut positive = Vec::with_capacity(table_len);
+        let mut negative = Vec::with_capacity(table_len);
+        let half = D / 2;
+        for position in 0..D {
+            let (positive_scale, negative_scale) = if position < half {
+                (
+                    self.positive_twists[position],
+                    self.negative_twists[position],
+                )
+            } else {
+                let twist_index = position - half;
+                (
+                    self.positive_coset_value * self.positive_twists[twist_index],
+                    self.negative_coset_value * self.negative_twists[twist_index],
+                )
+            };
+            let mut positive_value = F::from_i64(-i64::from(offset)) * positive_scale;
+            let mut negative_value = F::from_i64(-i64::from(offset)) * negative_scale;
+            for _ in 0..digit_count {
+                positive.push(positive_value);
+                negative.push(negative_value);
+                positive_value += positive_scale;
+                negative_value += negative_scale;
+            }
+        }
+        Ok(TrinomialI8Lut {
+            positive,
+            negative,
+            log_basis,
+            digit_count,
+            offset,
+            modulus: PhantomData,
+        })
+    }
+
     /// Transform coefficients into the canonical two-coset slot order.
     ///
     /// This convenience method allocates scratch storage. Repeated operations
@@ -483,6 +631,21 @@ where
         value: &TrinomialRing<F, D, M>,
         workspace: &mut TrinomialNttWorkspace<F, D, M>,
     ) -> TrinomialNtt<F, D, M> {
+        let mut transformed = self.zero_ntt();
+        self.forward_into_with_workspace(value, &mut transformed, workspace);
+        transformed
+    }
+
+    /// Transform coefficients into caller-owned NTT storage.
+    ///
+    /// Reusing both `output` and `workspace` avoids allocating or initializing
+    /// a fresh transform result in repeated matrix operations.
+    pub fn forward_into_with_workspace(
+        &self,
+        value: &TrinomialRing<F, D, M>,
+        output: &mut TrinomialNtt<F, D, M>,
+        workspace: &mut TrinomialNttWorkspace<F, D, M>,
+    ) {
         let half = D / 2;
         for index in 0..half {
             let low = value.coefficients[index];
@@ -492,21 +655,81 @@ where
             workspace.negative[index] =
                 (low + self.negative_coset_value * high) * self.negative_twists[index];
         }
-        let mut transformed = TrinomialNtt {
-            slots: [F::zero(); D],
-            modulus: PhantomData,
-        };
         self.half_domain.forward_into(
             &workspace.positive,
-            &mut transformed.slots[..half],
+            &mut output.slots[..half],
             &mut workspace.fft,
         );
         self.half_domain.forward_into(
             &workspace.negative,
-            &mut transformed.slots[half..],
+            &mut output.slots[half..],
             &mut workspace.fft,
         );
-        transformed
+    }
+
+    /// Construct the additive identity in canonical slot order.
+    pub fn zero_ntt(&self) -> TrinomialNtt<F, D, M> {
+        TrinomialNtt {
+            slots: [F::zero(); D],
+            modulus: PhantomData,
+        }
+    }
+
+    /// Transform balanced signed digits with a prepared position-aware table.
+    ///
+    /// The input is validated against the table's active range before any
+    /// lookup. Caller-owned workspace keeps repeated hot transforms
+    /// allocation-free; the returned fixed-size NTT value is the result.
+    pub fn forward_i8_with_lut_workspace(
+        &self,
+        digits: &[i8; D],
+        lut: &TrinomialI8Lut<F, D, M>,
+        workspace: &mut TrinomialNttWorkspace<F, D, M>,
+    ) -> Result<TrinomialNtt<F, D, M>, TrinomialError> {
+        let mut transformed = self.zero_ntt();
+        self.forward_i8_with_lut_into_workspace(digits, lut, &mut transformed, workspace)?;
+        Ok(transformed)
+    }
+
+    /// Transform balanced signed digits into caller-owned NTT storage.
+    ///
+    /// This is the allocation-free hot path for a cached matrix multiplied by
+    /// repeated bounded vectors. The complete input range is checked before
+    /// `output` is modified.
+    pub fn forward_i8_with_lut_into_workspace(
+        &self,
+        digits: &[i8; D],
+        lut: &TrinomialI8Lut<F, D, M>,
+        output: &mut TrinomialNtt<F, D, M>,
+        workspace: &mut TrinomialNttWorkspace<F, D, M>,
+    ) -> Result<(), TrinomialError> {
+        for (position, &digit) in digits.iter().enumerate() {
+            if lut.index(position, digit).is_none() {
+                return Err(TrinomialError::DigitOutOfRange {
+                    digit,
+                    log_basis: lut.log_basis,
+                });
+            }
+        }
+
+        let half = D / 2;
+        for index in 0..half {
+            let low = lut.validated_index(index, digits[index]);
+            let high = lut.validated_index(index + half, digits[index + half]);
+            workspace.positive[index] = lut.positive[low] + lut.positive[high];
+            workspace.negative[index] = lut.negative[low] + lut.negative[high];
+        }
+        self.half_domain.forward_into(
+            &workspace.positive,
+            &mut output.slots[..half],
+            &mut workspace.fft,
+        );
+        self.half_domain.forward_into(
+            &workspace.negative,
+            &mut output.slots[half..],
+            &mut workspace.fft,
+        );
+        Ok(())
     }
 
     /// Recover coefficients from the canonical two-coset slot order.

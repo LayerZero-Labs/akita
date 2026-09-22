@@ -33,6 +33,55 @@ where
     );
 }
 
+fn assert_i8_lut_matches_field_transform<F, const D: usize, M>(log_basis: u32)
+where
+    F: SmoothFftField + fmt::Debug,
+    M: TrinomialModulus,
+{
+    let domain = TrinomialNttDomain::<F, D, M>::new().expect("test shape must fully split");
+    let digit_count = 1usize << log_basis;
+    let offset = digit_count / 2;
+    let digits: [i8; D] =
+        std::array::from_fn(|index| ((index * 29 + 7) % digit_count) as i16 - offset as i16)
+            .map(|digit| digit as i8);
+    let coefficients = digits.map(|digit| F::from_i64(i64::from(digit)));
+    let ring = TrinomialRing::from_coefficients(coefficients).unwrap();
+    let expected = domain.forward(&ring);
+    let lut = domain.prepare_i8_lut(log_basis).unwrap();
+    assert_eq!(
+        lut.table_bytes(),
+        2 * D * digit_count * core::mem::size_of::<F>()
+    );
+
+    let mut workspace = domain.workspace();
+    let mut actual = domain.forward(&sample_ring::<F, D, M>(73));
+    domain
+        .forward_i8_with_lut_into_workspace(&digits, &lut, &mut actual, &mut workspace)
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        domain
+            .forward_i8_with_lut_workspace(&digits, &lut, &mut workspace)
+            .unwrap(),
+        expected
+    );
+}
+
+fn assert_packed_accumulation_matches_scalar<F, const D: usize, M>()
+where
+    F: SmoothFftField + jolt_field::WithPacking + fmt::Debug,
+    M: TrinomialModulus,
+{
+    let domain = TrinomialNttDomain::<F, D, M>::new().expect("test shape must fully split");
+    let lhs = domain.forward(&sample_ring::<F, D, M>(79));
+    let rhs = domain.forward(&sample_ring::<F, D, M>(83));
+    let mut scalar = domain.forward(&sample_ring::<F, D, M>(89));
+    let mut packed = scalar.clone();
+    scalar.add_assign_pointwise_mul(&lhs, &rhs);
+    packed.add_assign_pointwise_mul_packed(&lhs, &rhs);
+    assert_eq!(packed, scalar);
+}
+
 fn assert_transform_slots_are_direct_evaluations<F, const D: usize, M>()
 where
     F: SmoothFftField + fmt::Debug,
@@ -105,6 +154,48 @@ fn p128_initial_tower_matches_schoolbook() {
 #[test]
 fn p128_degree_486_scalar_profile_is_generic() {
     assert_roundtrip_and_product::<Prime128OffsetA7F7, 486, PlusTrinomial>();
+}
+
+#[test]
+fn prepared_i8_transforms_match_field_conversion_at_small_and_full_ranges() {
+    assert_i8_lut_matches_field_transform::<Prime64Offset23703, 162, PlusTrinomial>(4);
+    assert_i8_lut_matches_field_transform::<Prime64Offset23703, 648, MinusTrinomial>(8);
+    assert_i8_lut_matches_field_transform::<Prime128OffsetA7F7, 324, MinusTrinomial>(7);
+}
+
+#[test]
+fn prepared_i8_transform_rejects_invalid_basis_and_digits_before_output_mutation() {
+    type F = Prime64Offset23703;
+    let domain = TrinomialNttDomain::<F, 162, PlusTrinomial>::new().unwrap();
+    assert!(matches!(
+        domain.prepare_i8_lut(0),
+        Err(TrinomialError::InvalidDigitBasis { log_basis: 0 })
+    ));
+    assert!(matches!(
+        domain.prepare_i8_lut(9),
+        Err(TrinomialError::InvalidDigitBasis { log_basis: 9 })
+    ));
+
+    let lut = domain.prepare_i8_lut(4).unwrap();
+    let mut digits = [0i8; 162];
+    digits[81] = 8;
+    let mut output = domain.forward(&sample_ring::<F, 162, PlusTrinomial>(97));
+    let original = output.clone();
+    let mut workspace = domain.workspace();
+    assert!(matches!(
+        domain.forward_i8_with_lut_into_workspace(&digits, &lut, &mut output, &mut workspace),
+        Err(TrinomialError::DigitOutOfRange {
+            digit: 8,
+            log_basis: 4
+        })
+    ));
+    assert_eq!(output, original);
+}
+
+#[test]
+fn packed_pointwise_accumulation_matches_fused_scalar_kernel() {
+    assert_packed_accumulation_matches_scalar::<Prime64Offset23703, 162, PlusTrinomial>();
+    assert_packed_accumulation_matches_scalar::<Prime128OffsetA7F7, 162, PlusTrinomial>();
 }
 
 #[test]
