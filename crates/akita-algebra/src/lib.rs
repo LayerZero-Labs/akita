@@ -12,6 +12,7 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+pub mod binary;
 pub mod eq_poly;
 pub mod fft;
 pub mod module;
