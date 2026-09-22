@@ -60,7 +60,13 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use jolt_field::{CanonicalEncoding, Field, PseudoMersenne};
+
+mod fields;
+
+pub use fields::{
+    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, PRIME64_OFFSET_23703_MODULUS,
+};
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///
@@ -72,16 +78,6 @@ pub trait SmoothFftField: Field + CanonicalEncoding + PseudoMersenne {
 
     /// Canonical representation of its primitive root.
     const SMOOTH_OMEGA: u128;
-}
-
-impl SmoothFftField for Prime128OffsetA7F7 {
-    const SMOOTH_SUBGROUP_ORDER: usize = 17_496;
-    /// `g ^ ((p − 1) / 17_496)` where `g` is the smallest primitive root
-    /// found by `find_primitive_nth_root` (note: `g = 2` is a quadratic
-    /// residue mod `p` and therefore *not* a primitive root, so the
-    /// scanner falls through to the next candidate). Verified by
-    /// `prime_a7f7_tests::smooth_omega_matches_search` below.
-    const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
 }
 
 /// Compute `base^exp` by repeated squaring.
@@ -322,14 +318,14 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
 /// on return. `buf_b` is a scratch slot callers can pre-fill (see
 /// `execute_from_b`); reused across the inverse and forward passes
 /// inside `rs_extend_batch`.
-struct FftWorkspace<F> {
+pub(crate) struct FftWorkspace<F> {
     n: usize,
     buf_a: Vec<F>,
     buf_b: Vec<F>,
 }
 
 impl<F: Field> FftWorkspace<F> {
-    fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         Self {
             n,
             buf_a: vec![F::zero(); n],
@@ -635,6 +631,35 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
         result
     }
 
+    /// Allocation-free forward transform for crate-internal composite plans.
+    pub(crate) fn forward_into(
+        &self,
+        input: &[F],
+        output: &mut [F],
+        workspace: &mut FftWorkspace<F>,
+    ) {
+        assert_eq!(input.len(), self.n);
+        assert_eq!(output.len(), self.n);
+        assert_eq!(workspace.n, self.n);
+        output.copy_from_slice(workspace.execute(input, &self.fwd_stages, &self.digit_rev));
+    }
+
+    /// Allocation-free inverse transform for crate-internal composite plans.
+    pub(crate) fn inverse_into(
+        &self,
+        input: &[F],
+        output: &mut [F],
+        workspace: &mut FftWorkspace<F>,
+    ) {
+        assert_eq!(input.len(), self.n);
+        assert_eq!(output.len(), self.n);
+        assert_eq!(workspace.n, self.n);
+        output.copy_from_slice(workspace.execute(input, &self.inv_stages, &self.digit_rev));
+        for value in output {
+            *value *= self.n_inv;
+        }
+    }
+
     /// Evaluate a polynomial at the shifted coset
     /// `{shift · ω^i | i = 0, …, n−1}`.
     ///
@@ -916,6 +941,7 @@ mod prime_a7f7_tests {
     //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
     use super::test_support::*;
     use super::*;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 
