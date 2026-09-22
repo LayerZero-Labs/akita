@@ -160,7 +160,7 @@ fn reduce_karatsuba(d0: u128, d1: u128, d2: u128, m01: u128, m02: u128, m12: u12
 }
 
 #[inline]
-fn portable_clmul(a: u64, b: u64) -> u128 {
+pub(super) fn portable_clmul(a: u64, b: u64) -> u128 {
     let mut product = 0u128;
     for i in 0..64 {
         product ^= (u128::from(a) << i) & 0u128.wrapping_sub(u128::from((b >> i) & 1));

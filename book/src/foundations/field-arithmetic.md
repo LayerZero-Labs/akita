@@ -302,3 +302,93 @@ uses the existing accelerated `BinaryField162::dot_product` API with deferred
 reduction. Prepacked all-round timings exclude the initial copy; conversion-plus-
 all-round timings include refilling both buffers. These compare computation
 kernels, not complete binary proof generation.
+
+### Switch host evaluation claims to F162
+
+A binary consumer can keep its own witness and challenge fields while reducing
+an evaluation claim to F162 arithmetic. The field-switch module supports two
+specific coordinate contracts:
+
+| Source words | Host challenge field | Host basis | Live / padded rows |
+|---|---|---|---|
+| 128-bit polynomial coordinates | `BinaryField128` | `1,x,...,x^127` | 128 / 128 |
+| 64-bit polynomial coordinates | `BinaryField192` | `x^b y^t`, index `64*t+b` | 192 / 256 |
+
+`BinaryField128` uses `x^128+x^7+x^2+x+1`. The second profile uses the base
+field `K = F2[x]/(x^64+x^4+x^3+x+1)` and the cubic extension
+`K[y]/(y^3+y+1)`. Its three words hold the coefficients of `1,y,y^2`.
+In both profiles, bit zero means the constant coefficient. The F128 polynomial
+matches the GHASH polynomial, but these coordinates are not a reflected GHASH
+network encoding. An adapter must convert its actual source representation.
+The host arithmetic is currently portable; F162 keeps its accelerated kernels.
+
+To see why switching is possible, write each host equality weight in its binary
+basis. Each basis coordinate is either zero or one, so it selects a subset of
+source words. XOR those words to form one **partial evaluation** per host basis
+coordinate. For example, a row with bits `[1,0,1,0]` has partial `w0 + w2`.
+For host point `r`, source index `j`, and host basis element `beta_k`, this is
+
+```text
+eq_host(r,j) = sum_k beta_k M[k,j], with M[k,j] in F2
+p_k = XOR of w_j for which M[k,j] = 1
+host evaluation = sum_k beta_k * embed_source_in_host(p_k).
+```
+
+The source map `phi` into F162 simply copies the source's 64 or 128 bits into
+low polynomial coordinates. This preserves XOR and is injective. It does not
+preserve field multiplication, and the construction needs no F192-to-F162
+field embedding. After the partials are fixed, seven or eight F162 batching
+coordinates define row weights `lambda_k`. Binary linearity gives
+
+```text
+sum_k lambda_k phi(p_k) = sum_j phi(w_j) c_j
+c_j = sum_k lambda_k M[k,j].
+```
+
+This is an F162 inner product suitable for the packed product-sumcheck kernels.
+F192's final 64 rows are fixed zeros; they are not additional prover choices.
+The partials are indexed by **host challenge-field coordinates**, rather than
+source-bit coordinates. Reversing that orientation changes their meaning even
+when both dimensions happen to be 128.
+
+The final coefficient evaluation need not scan the source. Keep a vector of
+128 or 192 F162 coefficients representing an element of the tensor algebra
+`host tensor_F2 F162`. Start with one and, for each corresponding host/source
+point coordinate `r_i,z_i`, multiply by `r_i tensor 1 + 1 tensor (1+z_i)`.
+This identity follows by expanding the two Boolean equality factors in
+characteristic two. Contract the resulting coefficients with `lambda` to obtain
+`c(z)`. Host multiplication acts by a binary matrix, so its application needs
+XORs; only scaling by `1+z_i` needs F162 products. Scratch is independent of the
+source table length, and work grows with the number of point coordinates.
+No division or tensor-field assumption is needed, including when `c(z)=0`.
+
+The arithmetic path in `binary::field_switch` is:
+
+1. `partial_evaluations` checks the exact source size and fills reusable host
+   equality scratch while constructing `SwitchPartials`.
+2. `SwitchPartials::reconstruct` gives the host evaluation to compare with the
+   authenticated host claim. `try_from_values` checks row count and zero padding
+   for partials supplied by a caller.
+3. `SwitchPartials::batch` gives the F162 claim. `batched_weights` transforms
+   equality scratch for that same host point into F162 coefficients, using a
+   small lookup table and reusable output storage.
+4. `PackedBinary162` computes the round messages and folds. At the terminal
+   point, `transparent_weight` independently evaluates the public coefficient
+   factor without enumerating the source table.
+
+Point coordinate zero controls the least-significant table-index bit. The
+source must already contain exactly `2^point.len()` entries; callers own logical
+lengths and explicit source padding. These functions do not serialize a proof,
+run a transcript, authenticate a commitment, or admit a production profile.
+The eventual adapter must bind source ownership/layout before host challenges,
+partials before batching, and each message before its folding challenge. It
+must check the terminal product and open its source factor against the original
+commitment. The relaxed-source extraction and combined error accounting remain
+protocol obligations.
+
+The independent tests check polynomial arithmetic, dense partial matrices,
+host reconstruction, batching, structured coefficient evaluation and complete
+packed folds for both profiles. The `binary_field_switch` Criterion groups in
+the existing `binary162` target separate partial generation, coefficient
+batching, prepared rounds, the combined arithmetic path, host reconstruction
+and structured verifier work. They do not measure complete PCS proofs.

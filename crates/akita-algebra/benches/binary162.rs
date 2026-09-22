@@ -3,6 +3,9 @@ use std::hint::black_box;
 use akita_algebra::binary::BinaryField162 as F;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
+#[path = "binary162/field_switch.rs"]
+mod field_switch;
+
 #[path = "binary162/packed.rs"]
 mod packed;
 
@@ -61,5 +64,5 @@ fn binary162(c: &mut Criterion) {
     dot.finish();
 }
 
-criterion_group!(benches, binary162, packed::bench);
+criterion_group!(benches, binary162, packed::bench, field_switch::bench);
 criterion_main!(benches);
