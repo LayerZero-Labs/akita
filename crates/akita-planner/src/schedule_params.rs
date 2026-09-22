@@ -13,9 +13,8 @@ use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams,
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
 };
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
@@ -65,13 +64,14 @@ pub(crate) use suffix_dp::{
 };
 
 pub(crate) fn root_inner_basis_source(
-    honest_fold_policy: HonestFoldPolicySpec,
-    log_bound: u32,
+    source: akita_types::sis::CommittedSourceContract,
 ) -> InnerBasisSource {
-    match honest_fold_policy {
-        HonestFoldPolicySpec::UnitOneHot(_) => InnerBasisSource::UnitOneHot,
-        HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-            InnerBasisSource::RawCoefficients { log_bound }
+    match source.class() {
+        akita_types::sis::CommittedSourceClass::UnitOneHot { .. } => InnerBasisSource::UnitOneHot,
+        akita_types::sis::CommittedSourceClass::BalancedSignedDigit => {
+            InnerBasisSource::RawCoefficients {
+                log_bound: source.decomposition().log_commit_bound,
+            }
         }
     }
 }

@@ -5,7 +5,10 @@ use akita_types::{
 };
 
 use crate::{
-    planner::{precommitted_group_equivalence_classes, root_level_candidates_for_basis},
+    planner::{
+        precommitted_group_equivalence_classes, root_level_candidates_for_prepared_producers,
+        PreparedRootProducers,
+    },
     PlannerPolicy,
 };
 
@@ -96,12 +99,12 @@ pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     key: &AkitaScheduleLookupKey,
-    precommitted_honest_fold_policies: &[akita_types::sis::HonestFoldPolicySpec],
+    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
     max_products: Option<usize>,
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
-    if key.precommitteds.len() != precommitted_honest_fold_policies.len() {
+    if key.precommitteds.len() != precommitted_source_contracts.len() {
         return Err(AkitaError::InvalidSetup(
-            "root precommit opening products require one policy per profile".into(),
+            "root precommit opening products require one source contract per profile".into(),
         ));
     }
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
@@ -110,10 +113,8 @@ pub(crate) fn packing_precommit_opening_products(
     ) {
         return Ok(Vec::new());
     }
-    let equivalence_classes = precommitted_group_equivalence_classes(
-        &key.precommitteds,
-        precommitted_honest_fold_policies,
-    )?;
+    let equivalence_classes =
+        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
 
     let mut products = vec![vec![None; key.precommitteds.len()]];
     for indices in equivalence_classes {
@@ -314,7 +315,7 @@ fn opening_work_domain(
                         policy,
                         dimensions,
                         root_key,
-                        ctx.precommitted_honest_fold_policies,
+                        ctx.precommitted_source_contracts,
                         root_main_constraint.map(|_| crate::planner::MAX_ADAPTED_PRECOMMIT_WIDTH),
                     )?;
                     Ok(products)
@@ -588,12 +589,9 @@ impl<'a> CandidateDomain<'a> {
         };
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         let inner_source = if ctx.level_zero_is_root && state.level == 0 {
-            crate::schedule_params::root_inner_basis_source(
-                ctx.root_honest_fold_policy.ok_or_else(|| {
-                    AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
-                })?,
-                policy.decomposition.log_commit_bound,
-            )
+            crate::schedule_params::root_inner_basis_source(ctx.root_source_contract.ok_or_else(
+                || AkitaError::InvalidSetup("root batch is missing its source contract".into()),
+            )?)
         } else {
             crate::InnerBasisSource::BalancedDigits {
                 log_basis: state.current_lb,
@@ -676,7 +674,7 @@ impl<'a> CandidateDomain<'a> {
         })
     }
 
-    pub(super) fn generate_for_opening_basis(
+    pub(super) fn generate_recursive_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
         state: SuffixState,
@@ -689,62 +687,6 @@ impl<'a> CandidateDomain<'a> {
         let mut folds = Vec::new();
 
         for inner_lb in self.inner_basis_range.clone() {
-            if let Some(root_key) = self.root_level_key {
-                for work in &self.opening_work {
-                    let mut dimension_candidates = root_level_candidates_for_basis(
-                        root_key,
-                        ctx.root_honest_fold_policy.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "root batch is missing its honest fold policy".into(),
-                            )
-                        })?,
-                        ctx.precommitted_honest_fold_policies,
-                        policy,
-                        work.dimensions,
-                        work.opening,
-                        &work.precommitted_openings,
-                        inner_lb,
-                        open_lb,
-                        self.root_main_constraint.map(candidate_layout_guide),
-                    )?;
-                    if let Some(constraint) = self.root_main_constraint {
-                        dimension_candidates.retain(|(params, _)| {
-                            root_candidate_matches_constraint(params, constraint)
-                        });
-                    }
-                    let relation_domain = state
-                        .topology
-                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
-                        .filtered(ctx.relation_mode_filter)?;
-                    let relation_transition = relation_domain.only_transition()?;
-                    for (params, next_witness_len) in dimension_candidates {
-                        if params.ring_relation_mode != relation_transition {
-                            return Err(AkitaError::InvalidSetup(
-                                "materialized mode disagrees with relation domain".into(),
-                            ));
-                        }
-                        if (!self.adaptation_guided || self.guide_terminal.is_some())
-                            && work.purpose.allows_terminal()
-                        {
-                            terminal.push(RawTerminalCandidate {
-                                params: params.clone(),
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            });
-                        }
-                        if (!self.adaptation_guided || self.guide_fold.is_some())
-                            && work.purpose.allows_fold()
-                        {
-                            folds.push(RawFoldCandidate {
-                                params,
-                                next_witness_len,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            });
-                        }
-                    }
-                }
-                continue;
-            }
-
             for work in &self.opening_work {
                 for &payload_mode in state
                     .topology
@@ -887,19 +829,35 @@ impl<'a> CandidateDomain<'a> {
         let root_key = self.root_level_key.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
         })?;
-        let final_policy = ctx.root_honest_fold_policy.ok_or_else(|| {
-            AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
+        let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
+            AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
-        for inner_lb in self.inner_basis_range.clone() {
-            for work in &self.opening_work {
-                let mut dimension_candidates = root_level_candidates_for_basis(
+        for work in &self.opening_work {
+            let Some(preparation) = PreparedRootProducers::prepare(
+                root_key,
+                ctx.precommitted_source_contracts,
+                ctx.policy,
+                work.dimensions,
+                work.opening,
+                &work.precommitted_openings,
+                open_lb,
+            )?
+            else {
+                continue;
+            };
+            let relation_transition = state
+                .topology
+                .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
+                .filtered(ctx.relation_mode_filter)?
+                .only_transition()?;
+            for inner_lb in self.inner_basis_range.clone() {
+                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
                     root_key,
-                    final_policy,
-                    ctx.precommitted_honest_fold_policies,
+                    final_source_contract,
                     ctx.policy,
                     work.dimensions,
                     work.opening,
-                    &work.precommitted_openings,
+                    &preparation,
                     inner_lb,
                     open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
@@ -909,11 +867,6 @@ impl<'a> CandidateDomain<'a> {
                         root_candidate_matches_constraint(params, constraint)
                     });
                 }
-                let relation_transition = state
-                    .topology
-                    .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
-                    .filtered(ctx.relation_mode_filter)?
-                    .only_transition()?;
                 let mut terminal = Vec::new();
                 let mut folds = Vec::new();
                 for (params, next_witness_len) in dimension_candidates {
