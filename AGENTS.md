@@ -112,3 +112,12 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
 | Direct generated-schedule SIS report | `cargo run --release -p akita-planner --features catalog-security --example catalog_security -- --check` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |
+
+## LaBinius integration work
+
+For LaBinius work, follow the integration/review workflow and intake ledger in
+[tracking issue #45](https://github.com/LayerZero-Labs/akita/issues/45).
+`feat/labinius` is the shared assembled branch; its umbrella PR stays draft and
+reference-only. Focused topic PRs own implementation and repairs. Incorporate
+their published heads with normal merges, preserve the shared branch history,
+and distinguish integration inclusion from review approval or production admission.
