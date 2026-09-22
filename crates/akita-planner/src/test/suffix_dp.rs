@@ -417,7 +417,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let mut memo = super::ScheduleMemo::new();
     let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
     let generated = domain
-        .generate_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
         .unwrap();
     let candidates =
         super::attach_source_moments(&ctx, state, false, &domain.opening_layout, generated.folds)

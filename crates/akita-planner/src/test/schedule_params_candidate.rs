@@ -524,7 +524,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .unwrap()
             .unwrap();
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
-    let candidates = crate::planner::root_level_candidates_for_basis(
+    let candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &key,
         Dense::committed_source_contract().unwrap(),
         &[],
@@ -654,7 +654,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let next_inner_basis = Dense::inner_basis_range().0 + 1;
     assert_eq!(
         candidates_from_prepared(next_inner_basis).expect("reused root preparation"),
-        crate::planner::root_level_candidates_for_basis(
+        crate::planner::root_level_candidates_with_fresh_preparation(
             &grouped_key,
             source_contract,
             &source_contracts,
@@ -699,20 +699,22 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
         SparseChallengeConfig::production_for_ring_dim(dimensions.d_a()).unwrap(),
     );
-    assert!(crate::planner::root_level_candidates_for_basis(
-        &grouped_key,
-        Dense::committed_source_contract().unwrap(),
-        &[Dense::committed_source_contract().unwrap()],
-        &policy,
-        dimensions,
-        opening,
-        &[trace_precommit],
-        Dense::inner_basis_range().0,
-        Dense::opening_basis_range().0,
-        None,
-    )
-    .unwrap()
-    .is_empty());
+    assert!(
+        crate::planner::root_level_candidates_with_fresh_preparation(
+            &grouped_key,
+            Dense::committed_source_contract().unwrap(),
+            &[Dense::committed_source_contract().unwrap()],
+            &policy,
+            dimensions,
+            opening,
+            &[trace_precommit],
+            Dense::inner_basis_range().0,
+            Dense::opening_basis_range().0,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
 
     let product_key = AkitaScheduleLookupKey {
         final_group: grouped_key.final_group,
@@ -753,7 +755,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         products
             .iter()
             .flat_map(|product| {
-                crate::planner::root_level_candidates_for_basis(
+                crate::planner::root_level_candidates_with_fresh_preparation(
                     &product_key,
                     Dense::committed_source_contract().unwrap(),
                     &[Dense::committed_source_contract().unwrap(); 2],
@@ -839,7 +841,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid final packing opening")
             .expect("final packing geometry");
     let scalar_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(24, 2));
-    let scalar = crate::planner::root_level_candidates_for_basis(
+    let scalar = crate::planner::root_level_candidates_with_fresh_preparation(
         &scalar_key,
         Dense::committed_source_contract().unwrap(),
         &[],
@@ -865,7 +867,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
             .expect("valid precommit packing opening")
             .expect("precommit packing geometry");
     let derive = |guide| {
-        crate::planner::root_level_candidates_for_basis(
+        crate::planner::root_level_candidates_with_fresh_preparation(
             &grouped_key,
             Dense::committed_source_contract().unwrap(),
             &[Dense::committed_source_contract().unwrap()],
@@ -934,7 +936,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     );
     let pre_group = PolynomialGroupLayout::new(14, 1);
     let pre_key = AkitaScheduleLookupKey::single(pre_group);
-    let pre_candidates = crate::planner::root_level_candidates_for_basis(
+    let pre_candidates = crate::planner::root_level_candidates_with_fresh_preparation(
         &pre_key,
         Dense::committed_source_contract().unwrap(),
         &[],
