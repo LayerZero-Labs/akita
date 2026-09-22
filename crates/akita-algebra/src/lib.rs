@@ -25,7 +25,10 @@ pub mod uni_poly;
 
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
-pub use fft::SmoothFftField;
+pub use fft::{
+    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, SmoothFftField,
+    PRIME64_OFFSET_23703_MODULUS,
+};
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
@@ -36,10 +39,13 @@ pub use ntt::{
     CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,
 };
 pub use ring::{
-    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring,
-    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
-    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
+    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring, embed_scalar,
+    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, pack_scalar_components, residue_kernel,
+    terminal_residue_kernel, unpack_scalar_components, CenteredMontLut, CrtNttConvertibleField,
+    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, Ifma52NttMatrix,
+    Ifma52Params, MinusTrinomial, PlusTrinomial, ResidueKernelPoint, TrinomialError,
+    TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace,
+    TrinomialRing,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};
