@@ -28,6 +28,7 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+mod relation_bridge;
 mod ring_relation_mode;
 pub mod schedule;
 pub mod schedule_selection;
@@ -164,6 +165,10 @@ pub use proof::{
     DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
+pub use relation_bridge::{
+    RelationCoefficientLayout, RelationCoefficientRole, RelationPolynomial, RelationPolynomialKind,
+    TrinomialSign,
+};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
@@ -177,8 +182,8 @@ pub use schedule::{
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
-    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupProjectionGeometry,
+    PreparedRelationAddress, PreparedTrinomialASetupWeights, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupProjectionGeometry, TrinomialASetupView, TrinomialResponseLayout,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,

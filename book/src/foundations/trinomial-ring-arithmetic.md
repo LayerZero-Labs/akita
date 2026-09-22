@@ -124,11 +124,52 @@ valid `Prime64Offset23703Ext2` profile instead uses `u^2 = 5`. Tests check that
 and Frobenius behavior. This extension profile is available for arithmetic
 experiments; it is not registered as a protocol field.
 
+## Relation and setup bridge
+
+`RelationPolynomial` names a checked polynomial identity for relation construction.
+It records the natural degree and distinguishes `X^D + 1` from the signed
+trinomial `X^D +/- X^(D/2) + 1`. It evaluates this polynomial either directly
+or from cached powers `[1, alpha, ..., alpha^(D-1)]`. The existing
+power-of-two relation geometry remains negacyclic-only.
+
+`RelationCoefficientLayout` keeps a natural element or quotient length
+separate from its power-of-two storage length. Padded coefficient tails must
+be zero. The trinomial setup view uses tight row-major matrix addresses
+`offset + ((i * m + j) * D + a)`. Its response view records the independent
+response offset, padded coefficient stride, polynomial stride, and digit
+depth, so padding never changes the polynomial identity.
+
+Preparation contracts the response opening into column weights and describes
+the resulting setup weights with `EqPairTensorFamily`. The same tensor
+families drive dense prover materialization and direct verifier evaluation of
+the setup-weight multilinear polynomial. The verifier evaluation does not
+scan the setup matrix. The factor `Phi(alpha)` remains attached to the
+relation polynomial and is applied by the relation equation, rather than
+being folded into setup addresses.
+
+`TrinomialRelationQuotientBuilder` constructs the coefficient witness for
+`sum A_j v_j - sum Y_t c_t = Phi_D Q`. It uses a length-`2D` smooth transform
+when the field supports it, or length `3D` otherwise, to retain the unreduced
+product. It accumulates both product sums before a single
+inverse transform, and rejects a nonzero remainder after monic division.
+The plan caches the response and challenge transforms once and reuses them,
+along with transform scratch, across all matrix rows. The quotient has
+exactly `D - 1` coefficients and must be committed before sampling `alpha`.
+The relation multiplies by `Phi_D(alpha)`; it never divides by that value.
+
+These APIs prepare the relation bridge. They do not yet add a binary opening
+method, change the proof transcript, or register a mixed-root protocol profile.
+
 **Code:** `crates/akita-algebra/src/ring/trinomial.rs` and
-`crates/akita-algebra/src/fft/fields.rs`.
+`crates/akita-algebra/src/fft/fields.rs`; the protocol-neutral bridge is in
+`crates/akita-types/src/relation_bridge.rs` and
+`crates/akita-types/src/setup_contribution/trinomial.rs`; quotient construction
+is in `crates/akita-prover/src/kernels/trinomial_relation.rs`.
 
 **Tests:** `crates/akita-algebra/src/ring/trinomial/tests.rs` and
-`crates/akita-algebra/src/fft/fields/tests.rs`.
+`crates/akita-algebra/src/fft/fields/tests.rs`. The bridge modules include
+layout and setup-weight oracle tests; independent coefficient recomposition
+is checked in `crates/akita-prover/src/kernels/trinomial_relation/tests.rs`.
 
 **Benchmarks:** `crates/akita-algebra/benches/trinomial_ntt.rs` compares the
 workspace-based transforms and multiplication against schoolbook
@@ -136,3 +177,8 @@ multiplication. `crates/akita-algebra/benches/ntt_comparison.rs` compares
 conversion, prepared pointwise work, and a checked bounded matrix-vector
 workload with the existing CRT NTT backends. Setup time and prepared storage
 are reported separately from the hot matrix-vector operation.
+`crates/akita-prover/benches/trinomial_relation.rs` measures quotient plan
+and common-operand preparation separately from one-row and eight-row assembly.
+`crates/akita-types/benches/trinomial_setup.rs` compares compact setup-weight
+evaluation with dense MLE evaluation, with preparation and materialization
+reported separately.
