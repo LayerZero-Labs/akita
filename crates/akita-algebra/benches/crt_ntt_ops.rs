@@ -1,5 +1,6 @@
 use std::hint::black_box;
 
+use akita_algebra::binary::BinaryField162;
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
 use akita_algebra::ntt::NttTwiddles;
 use akita_algebra::tables::{
@@ -128,6 +129,18 @@ fn bench_i16_tail<const D: usize>(c: &mut Criterion) {
 }
 
 fn benches(c: &mut Criterion) {
+    let lhs = BinaryField162::from_words([0x1234_5678_abcd_ef01, u64::MAX, 0x1234_5678]).unwrap();
+    let rhs = BinaryField162::from_words([u64::MAX, 0x9876_5432_10fe_dcba, 0x3_ffff_ffff]).unwrap();
+    let mut binary = c.benchmark_group("binary162");
+    binary.bench_function("mul", |b| {
+        b.iter(|| black_box(black_box(lhs) * black_box(rhs)))
+    });
+    binary.bench_function("square", |b| b.iter(|| black_box(black_box(lhs).square())));
+    binary.bench_function("inverse", |b| {
+        b.iter(|| black_box(black_box(lhs).inverse()))
+    });
+    binary.finish();
+
     bench_profile::<Q32_NUM_PRIMES, 64>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 128>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 256>(c, "q32", Q32_PRIMES);

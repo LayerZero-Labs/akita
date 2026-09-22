@@ -228,3 +228,28 @@ A field change must preserve canonical encoding, exact sampling, centered
 conversion, extension-coordinate order, and the bounds assumed by every
 deferred accumulator. Differential tests compare specialized arithmetic with
 the ordinary field operations.
+
+## Binary scalar arithmetic
+
+`akita_algebra::binary::BinaryField162` provides arithmetic over
+`F_2[X]/(X^162 + X^81 + 1)`. An element has 162 bit coefficients; addition is
+XOR, and multiplication reduces the polynomial product using
+`X^162 = X^81 + 1`. The modulus is irreducible because 2 has multiplicative
+order 162 modulo 243.
+
+This type is an arithmetic foundation only. It is separate from the prime-field
+extensions used by current commitment configurations and does not enable a
+binary opening protocol or a new schedule.
+
+The canonical encoding contains 21 little-endian bytes, with the top six bits
+zero. Decoding rejects other lengths and nonzero unused bits. Multiplication
+uses six carryless word products and two reduction folds. Runtime dispatch
+selects PMULL on supported ARM CPUs or PCLMUL on supported x86-64 CPUs; a
+portable kernel remains available on other CPUs. Squaring interleaves zero
+bits, and inversion uses an addition chain with nine multiplications and
+returns `None` for zero.
+
+The implementation and its independent bit-convolution tests live in
+`crates/akita-algebra/src/binary.rs` and `crates/akita-algebra/src/binary/`.
+The existing `crt_ntt_ops` Criterion target includes `binary162` multiplication,
+squaring and inversion benchmarks.
