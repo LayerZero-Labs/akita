@@ -12,6 +12,21 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
+#[inline]
+pub(crate) fn response_model_diagnostics_enabled() -> bool {
+    #[cfg(feature = "response-model-diagnostics")]
+    {
+        tracing::enabled!(
+            target: "akita_prover::protocol::fold_response_model",
+            tracing::Level::INFO
+        )
+    }
+    #[cfg(not(feature = "response-model-diagnostics"))]
+    {
+        false
+    }
+}
+
 /// CPU reference state retained behind an accepted fold handle.
 pub struct CpuAcceptedFold<F: Field> {
     global: DecomposeFoldWitness,
@@ -68,16 +83,17 @@ where
         } else if centered.iter().any(|value| i16::try_from(*value).is_err()) {
             return Ok(None);
         }
-        let observed_l2_sq = if plan.l2_sq_cap().is_some() {
-            let Some(value) = akita_types::sis::checked_centered_l2_sq(centered) else {
+        let observed_l2_sq = if plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled() {
+            let value = akita_types::sis::checked_centered_l2_sq(centered);
+            if plan.l2_sq_cap().is_some() && value.is_none() {
                 return Err(AkitaError::InvalidInput(
                     "terminal fold response L2 overflow".into(),
                 ));
-            };
-            if plan.l2_sq_cap().is_some_and(|cap| value > cap) {
+            }
+            if value.is_some_and(|value| plan.l2_sq_cap().is_some_and(|cap| value > cap)) {
                 return Ok(None);
             }
-            Some(value)
+            value
         } else {
             None
         };
@@ -390,34 +406,41 @@ fn admit_fold_response(
 ) -> Result<bool, AkitaError> {
     let acceptance = plan.acceptance();
     let (min, max) = witness.centered_signed_extrema();
-    if u128::from(min.unsigned_abs()) > acceptance.digit_negative_abs_bound()
-        || u128::from(max.unsigned_abs()) > acceptance.digit_positive_bound()
+    if (min < 0 && u128::from(min.unsigned_abs()) > acceptance.digit_negative_abs_bound())
+        || (max > 0 && u128::from(max.unsigned_abs()) > acceptance.digit_positive_bound())
     {
         return Ok(false);
     }
-    if acceptance.response_l2_sq_cap().is_none() {
+    let response_l2_sq_cap = acceptance.response_l2_sq_cap();
+    if response_l2_sq_cap.is_none() && !response_model_diagnostics_enabled() {
         return Ok(true);
     }
-    let chunk_l2 = witness
-        .centered_coeffs_flat()
-        .iter()
-        .try_fold(0u128, |sum, coefficient| {
-            let magnitude = u128::from(coefficient.unsigned_abs());
-            magnitude
-                .checked_mul(magnitude)
-                .and_then(|square| sum.checked_add(square))
-                .ok_or_else(|| AkitaError::InvalidInput("fold response L2 norm overflow".into()))
-        })?;
-    let total = observed_l2_sq
-        .unwrap_or(0)
-        .checked_add(chunk_l2)
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("fold response L2 norm accumulation overflow".into())
-        })?;
+    // `None` after measurement starts means diagnostics overflowed without a
+    // security cap. That must not change admission behavior.
+    let Some(previous_l2) = *observed_l2_sq else {
+        return Ok(response_l2_sq_cap.is_none());
+    };
+    let Some(chunk_l2) = akita_types::sis::checked_centered_l2_sq(witness.centered_coeffs_flat())
+    else {
+        if response_l2_sq_cap.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "fold response L2 norm overflow".into(),
+            ));
+        }
+        *observed_l2_sq = None;
+        return Ok(true);
+    };
+    let Some(total) = previous_l2.checked_add(chunk_l2) else {
+        if response_l2_sq_cap.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "fold response L2 norm accumulation overflow".into(),
+            ));
+        }
+        *observed_l2_sq = None;
+        return Ok(true);
+    };
     *observed_l2_sq = Some(total);
-    Ok(acceptance
-        .response_l2_sq_cap()
-        .is_none_or(|cap| total <= cap))
+    Ok(response_l2_sq_cap.is_none_or(|cap| total <= cap))
 }
 
 pub(crate) fn aggregate_decompose_fold_witnesses<const D: usize>(
@@ -695,12 +718,15 @@ where
             "terminal fold backend returned chunk responses".into(),
         ));
     }
-    let Some((fold, _observed_l2_sq)) =
+    let Some((fold, observed_l2_sq)) =
         CpuAcceptedTerminalFold::admit::<B, D>(backend, prepared, responses.global, plan)?
     else {
         return Ok(FoldProbeOutcome::Rejected);
     };
-    Ok(FoldProbeOutcome::Accepted { fold_handle: fold })
+    Ok(FoldProbeOutcome::Accepted {
+        fold_handle: fold,
+        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
+    })
 }
 
 pub(crate) fn cpu_fold_probe<S, F, B, const D: usize>(
@@ -731,7 +757,9 @@ where
         }
     };
     let responses = backend.decompose_fold_batch(prepared, source, batch_plan)?;
-    let mut observed_l2_sq = None;
+    let mut observed_l2_sq = (plan.acceptance().response_l2_sq_cap().is_some()
+        || response_model_diagnostics_enabled())
+    .then_some(0);
     let chunks = match responses.chunks {
         None => {
             if !admit_fold_response(&responses.global, plan, &mut observed_l2_sq)? {
@@ -758,6 +786,7 @@ where
             chunks,
             plan,
         )?,
+        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
     })
 }
 

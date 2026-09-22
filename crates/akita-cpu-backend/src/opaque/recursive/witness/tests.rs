@@ -117,6 +117,9 @@ fn eor_session_rejects_round_and_challenge_misuse() {
     session.bind_challenge(0, F::from_u64(7)).unwrap();
     assert!(session.bind_challenge(0, F::one()).is_err());
 
+    assert!(session.round_polynomial(1, F::zero()).is_err());
+    assert!(session.finish().is_ok());
+
     assert!(two_value_eor_session().finish().is_err());
 }
 
@@ -138,6 +141,7 @@ fn two_round_relation_session() -> ConsumerStage2Session<F> {
     .unwrap();
     ConsumerStage2Session {
         binding: crate::opaque::OperationBinding::legacy_unscoped(),
+        lease: None,
         claim: akita_sumcheck::SumcheckInstanceProver::input_claim(&prover),
         prover,
         next_round: 0,
@@ -161,6 +165,68 @@ fn relation_session_rejects_round_and_challenge_misuse() {
     session.bind_challenge(0, F::from_u64(7)).unwrap();
     assert!(session.bind_challenge(0, F::one()).is_err());
     assert!(session.finish().is_err());
+
+    let mut completed = two_round_relation_session();
+    for round in 0..completed.num_rounds() {
+        let claim = completed.input_claim();
+        completed.round_polynomial(round, claim).unwrap();
+        completed
+            .bind_challenge(round, F::from_u64(round as u64 + 7))
+            .unwrap();
+    }
+    let final_claim = completed.input_claim();
+    assert!(completed
+        .round_polynomial(completed.num_rounds(), final_claim)
+        .is_err());
+    assert!(completed.finish().is_ok());
+}
+
+#[test]
+fn public_stage2_dispatch_rejects_exhausted_round_and_preserves_finish() {
+    use crate::opaque::{OpaqueStage2Kernel, ProofContext, ProofScope};
+
+    let backend = CpuBackend::for_arithmetic_tests();
+    let scope_id = backend.owner().begin_test_scope(vec![1]).unwrap();
+    let scope = ProofScope::admitted(
+        &backend,
+        crate::opaque::lifecycle::CpuProofSessionHandle::new(
+            std::sync::Arc::clone(backend.owner()),
+            scope_id,
+        ),
+    );
+    let context = ProofContext::new(
+        backend.owner_id(),
+        backend.owner().setup_digest(),
+        scope.session().scope_id(),
+        0,
+    );
+    let mut session = two_round_relation_session();
+    let binding = backend.binding(&context).unwrap();
+    session.set_operation_binding(binding, backend.binding_lease(&binding).unwrap());
+    let rounds = OpaqueStage2Kernel::<F, F>::stage2_num_rounds(&backend, &session).unwrap();
+    let mut claim = OpaqueStage2Kernel::<F, F>::stage2_input_claim(&backend, &session).unwrap();
+    for round in 0..rounds {
+        let polynomial = OpaqueStage2Kernel::<F, F>::stage2_round_polynomial(
+            &backend,
+            &mut session,
+            round,
+            claim,
+        )
+        .unwrap();
+        let challenge = F::from_u64(round as u64 + 7);
+        claim = polynomial.evaluate(&challenge);
+        OpaqueStage2Kernel::<F, F>::bind_stage2_challenge(&backend, &mut session, round, challenge)
+            .unwrap();
+    }
+    assert!(OpaqueStage2Kernel::<F, F>::stage2_round_polynomial(
+        &backend,
+        &mut session,
+        rounds,
+        claim,
+    )
+    .is_err());
+    assert!(OpaqueStage2Kernel::<F, F>::finish_stage2(&backend, session).is_ok());
+    scope.finish().unwrap();
 }
 
 #[test]
@@ -392,8 +458,9 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         0,
     );
     let binding = backend.binding(&context).unwrap();
+    let lease = backend.binding_lease(&binding).unwrap();
     let mut stage2 = two_round_relation_session();
-    stage2.set_operation_binding(binding);
+    stage2.set_operation_binding(binding, lease.clone());
     let claim = OpaqueStage2Kernel::<F, F>::stage2_input_claim(&backend, &stage2).unwrap();
     assert_eq!(
         OpaqueStage2Kernel::<F, F>::stage2_num_rounds(&backend, &stage2).unwrap(),
@@ -430,15 +497,16 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         0,
     );
     let second_binding = backend.binding(&second_context).unwrap();
+    let second_lease = backend.binding_lease(&second_binding).unwrap();
     let mut independent = two_round_relation_session();
-    independent.set_operation_binding(second_binding);
+    independent.set_operation_binding(second_binding, second_lease);
     let invalid_bindings = [
         foreign.binding(&foreign_context).unwrap(),
         binding.for_level_operation(99, binding.operation_id()),
         binding.with_group(Some(1)),
     ];
     for invalid in invalid_bindings {
-        stage2.set_operation_binding(invalid);
+        stage2.set_operation_binding(invalid, lease.clone());
         assert!(OpaqueStage2Kernel::<F, F>::stage2_input_claim(&backend, &stage2).is_err());
         assert!(OpaqueStage2Kernel::<F, F>::stage2_num_rounds(&backend, &stage2).is_err());
         assert!(OpaqueStage2Kernel::<F, F>::stage2_round_polynomial(
@@ -450,10 +518,11 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         .is_err());
         assert!(stage2.pending.is_none());
     }
-    stage2.set_operation_binding(binding);
+    stage2.set_operation_binding(binding, lease.clone());
     OpaqueStage2Kernel::<F, F>::stage2_round_polynomial(&backend, &mut stage2, 0, claim).unwrap();
     let mut stage1 = CpuStage1SessionHandle {
         binding,
+        lease,
         session_state: stage1_session(),
     };
     OpaqueStage1Kernel::<F, F>::stage1_round_polynomial(

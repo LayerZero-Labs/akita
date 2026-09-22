@@ -39,6 +39,8 @@ pub struct CpuPreparedOpeningHandle<F: Field, E: Field> {
     scalar_openings: Vec<E>,
     terminal_native: bool,
     retained_source: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    #[cfg(feature = "response-model-diagnostics")]
+    source_l2_sq: Option<u128>,
 }
 
 impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
@@ -52,6 +54,14 @@ impl<F: Field, E: Field> CpuPreparedOpeningHandle<F, E> {
 
     pub(crate) fn retain_source<S: Send + Sync + 'static>(&mut self, source: S) {
         self.retained_source = Some(std::sync::Arc::new(source));
+    }
+    #[cfg(feature = "response-model-diagnostics")]
+    pub(crate) fn set_source_l2_sq(&mut self, source_l2_sq: Option<u128>) {
+        self.source_l2_sq = source_l2_sq;
+    }
+    #[cfg(feature = "response-model-diagnostics")]
+    pub(crate) const fn source_l2_sq(&self) -> Option<u128> {
+        self.source_l2_sq
     }
     pub(crate) fn source<S: Send + Sync + 'static>(&self) -> Result<&S, AkitaError> {
         self.retained_source.as_ref().and_then(|source| source.downcast_ref()).ok_or_else(|| AkitaError::InvalidInput("opening has no matching retained source".into()))
@@ -179,6 +189,8 @@ macro_rules! impl_prepared_group_opening_kernel {
                         scalar_openings,
                         terminal_native: false,
                         retained_source: None,
+                        #[cfg(feature = "response-model-diagnostics")]
+                        source_l2_sq: None,
                         kind: OpaquePreparedGroupOpeningKind::EvaluationTrace {
                             point,
                             folded_by_claim,
@@ -210,6 +222,8 @@ macro_rules! impl_prepared_group_opening_kernel {
                         scalar_openings,
                         terminal_native: false,
                         retained_source: None,
+                        #[cfg(feature = "response-model-diagnostics")]
+                        source_l2_sq: None,
                         kind: OpaquePreparedGroupOpeningKind::CoefficientPacking {
                             point,
                             partials_by_claim,
@@ -307,6 +321,7 @@ pub struct CpuRelationHandle {
 
 pub struct CpuStage2SessionHandle<E: Field> {
     binding: crate::opaque::OperationBinding,
+    lease: Option<crate::opaque::ScopeLease>,
     prover: super::relation_range_image::RelationRangeImageProver<E>,
     claim: E,
     next_round: usize,
@@ -315,6 +330,7 @@ pub struct CpuStage2SessionHandle<E: Field> {
 
 pub struct CpuStage1SessionHandle<E: Field> {
     pub(crate) binding: crate::opaque::OperationBinding,
+    pub(crate) lease: crate::opaque::ScopeLease,
     pub(crate) session_state: super::digit_range::DigitRangeSession<E>,
 }
 
@@ -356,8 +372,31 @@ impl<E: Field> CpuStage1SessionHandle<E> {
     ) -> crate::opaque::OperationBinding {
         self.binding
     }
+
+    pub(crate) const fn scope_lease(&self) -> &crate::opaque::ScopeLease {
+        &self.lease
+    }
 }
-impl_bound_handle!(CpuStage2SessionHandle<E>);
+impl<E: Field> CpuStage2SessionHandle<E> {
+    pub(crate) const fn operation_binding(&self) -> crate::opaque::OperationBinding {
+        self.binding
+    }
+
+    pub(crate) fn set_operation_binding(
+        &mut self,
+        binding: crate::opaque::OperationBinding,
+        lease: crate::opaque::ScopeLease,
+    ) {
+        self.binding = binding;
+        self.lease = Some(lease);
+    }
+
+    pub(crate) fn scope_lease(&self) -> Result<&crate::opaque::ScopeLease, AkitaError> {
+        self.lease.as_ref().ok_or_else(|| {
+            AkitaError::InvalidInput("Stage 2 session has no proof-scope lease".into())
+        })
+    }
+}
 
 #[cfg(test)]
 pub(crate) fn cpu_extension_opening_session<E>(
@@ -484,7 +523,11 @@ where
         round: usize,
         previous_claim: E,
     ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
-        if round != self.next_round || self.pending.is_some() || previous_claim != self.claim {
+        if round != self.next_round
+            || round >= self.num_rounds()
+            || self.pending.is_some()
+            || previous_claim != self.claim
+        {
             return Err(AkitaError::InvalidInput(
                 "extension-opening session round order or claim mismatch".into(),
             ));
@@ -506,7 +549,7 @@ where
     }
 
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        if round != self.next_round {
+        if round != self.next_round || round >= self.num_rounds() {
             return Err(AkitaError::InvalidInput(
                 "extension-opening session challenge order mismatch".into(),
             ));
@@ -554,7 +597,11 @@ where
         round: usize,
         previous_claim: E,
     ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
-        if round != self.next_round || self.pending.is_some() || previous_claim != self.claim {
+        if round != self.next_round
+            || round >= self.num_rounds()
+            || self.pending.is_some()
+            || previous_claim != self.claim
+        {
             return Err(AkitaError::InvalidInput(
                 "relation session round order or claim mismatch".into(),
             ));
@@ -576,7 +623,7 @@ where
     }
 
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
-        if round != self.next_round {
+        if round != self.next_round || round >= self.num_rounds() {
             return Err(AkitaError::InvalidInput(
                 "relation session challenge order mismatch".into(),
             ));
@@ -722,6 +769,7 @@ where
         let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
         Ok(ConsumerStage2Session {
             binding: witness.binding.for_operation(0),
+            lease: None,
             prover,
             claim,
             next_round: 0,

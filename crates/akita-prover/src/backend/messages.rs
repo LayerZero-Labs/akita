@@ -7,6 +7,40 @@ type RecursiveWitnessBuildParts<F, E, BuildHandle> = (
     BuildHandle,
 );
 
+/// Aggregate fold diagnostics that cross the backend boundary without exposing
+/// private response coefficients.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FoldProbeDiagnostics {
+    observed_l2_sq: Option<u128>,
+    #[cfg(feature = "response-model-diagnostics")]
+    source_l2_sq: Option<u128>,
+}
+
+impl FoldProbeDiagnostics {
+    pub const fn new(observed_l2_sq: Option<u128>) -> Self {
+        Self {
+            observed_l2_sq,
+            #[cfg(feature = "response-model-diagnostics")]
+            source_l2_sq: None,
+        }
+    }
+
+    pub const fn observed_l2_sq(self) -> Option<u128> {
+        self.observed_l2_sq
+    }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    pub const fn with_source_l2_sq(mut self, source_l2_sq: Option<u128>) -> Self {
+        self.source_l2_sq = source_l2_sq;
+        self
+    }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    pub const fn source_l2_sq(self) -> Option<u128> {
+        self.source_l2_sq
+    }
+}
+
 /// Result of probing a private fold response.
 pub enum FoldProbeOutcome<FoldHandle> {
     /// Candidate response failed its public admission bounds.
@@ -15,6 +49,8 @@ pub enum FoldProbeOutcome<FoldHandle> {
     Accepted {
         /// Linear handle for the accepted private response.
         fold_handle: FoldHandle,
+        /// Coefficient-free aggregates used by response-model calibration.
+        diagnostics: FoldProbeDiagnostics,
     },
 }
 

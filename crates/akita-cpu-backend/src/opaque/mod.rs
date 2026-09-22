@@ -66,7 +66,7 @@ pub(crate) use fold_kernels::{
 };
 pub(crate) use handles::{CpuWitnessBuildHandle, OperationBinding};
 use jolt_field::{CanonicalEncoding, Field};
-pub(crate) use lifecycle::BackendIdentity;
+pub(crate) use lifecycle::{BackendIdentity, ScopeLease};
 pub(crate) use operation_plans::CommitInnerPlan;
 pub(crate) use operation_plans::{
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan, RingSwitchRelationPlan,
@@ -438,8 +438,11 @@ where
                 F,
                 E,
             >::begin_stage1(self, Some(self.prepared::<F>()?), relation_handle, plan)?;
+        let binding = self.next_binding(parent)?;
+        let lease = self.binding_lease(&binding)?;
         Ok(crate::opaque::CpuStage1SessionHandle {
-            binding: self.next_binding(parent)?,
+            binding,
+            lease,
             session_state,
         })
     }
@@ -451,7 +454,10 @@ where
         round: usize,
         previous_claim: E,
     ) -> Result<crate::opaque::Stage1RoundPolynomial<E>, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease(),
+        )?;
         crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
             crate::opaque::CpuRelationHandle,
             F,
@@ -472,7 +478,10 @@ where
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease(),
+        )?;
         crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
             crate::opaque::CpuRelationHandle,
             F,
@@ -491,7 +500,10 @@ where
         session_handle: &mut Self::Stage1SessionHandle,
         step: crate::opaque::Stage1Step,
     ) -> Result<crate::opaque::Stage1PublicTransition<E>, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease(),
+        )?;
         crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
             crate::opaque::CpuRelationHandle,
             F,
@@ -505,7 +517,10 @@ where
         transition: crate::opaque::Stage1Transition,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease(),
+        )?;
         crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
             crate::opaque::CpuRelationHandle,
             F,
@@ -522,7 +537,10 @@ where
         &self,
         session_handle: Self::Stage1SessionHandle,
     ) -> Result<crate::opaque::Stage1FinalClaims<E>, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease(),
+        )?;
         crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
             crate::opaque::CpuRelationHandle,
             F,
@@ -594,7 +612,9 @@ where
             relation_handle,
             plan,
         )?;
-        session_handle.set_operation_binding(self.next_binding(parent)?);
+        let binding = self.next_binding(parent)?;
+        let lease = self.binding_lease(&binding)?;
+        session_handle.set_operation_binding(binding, lease);
         Ok(session_handle)
     }
 
@@ -602,7 +622,10 @@ where
         &self,
         session_handle: &Self::Stage2SessionHandle,
     ) -> Result<E, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease()?,
+        )?;
         Ok(crate::opaque::consumer_kernels::RelationWitnessSession::input_claim(session_handle))
     }
 
@@ -610,7 +633,10 @@ where
         &self,
         session_handle: &Self::Stage2SessionHandle,
     ) -> Result<usize, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease()?,
+        )?;
         Ok(crate::opaque::consumer_kernels::RelationWitnessSession::num_rounds(session_handle))
     }
 
@@ -620,7 +646,10 @@ where
         round: usize,
         previous_claim: E,
     ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease()?,
+        )?;
         crate::opaque::consumer_kernels::RelationWitnessSession::round_polynomial(
             session_handle,
             round,
@@ -634,7 +663,10 @@ where
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease()?,
+        )?;
         crate::opaque::consumer_kernels::RelationWitnessSession::bind_challenge(
             session_handle,
             round,
@@ -646,7 +678,10 @@ where
         &self,
         session_handle: Self::Stage2SessionHandle,
     ) -> Result<crate::opaque::RelationWitnessFinalClaims<E>, AkitaError> {
-        self.validate_binding(&session_handle.operation_binding())?;
+        self.validate_leased_binding(
+            &session_handle.operation_binding(),
+            session_handle.scope_lease()?,
+        )?;
         crate::opaque::consumer_kernels::RelationWitnessSession::finish(session_handle)
     }
 }
@@ -819,9 +854,21 @@ where
                     crate::opaque::FoldProbeOutcome::Rejected => {
                         crate::opaque::FoldProbeOutcome::Rejected
                     }
-                    crate::opaque::FoldProbeOutcome::Accepted { mut fold_handle } => {
+                    crate::opaque::FoldProbeOutcome::Accepted {
+                        mut fold_handle,
+                        diagnostics,
+                    } => {
                         fold_handle.bind(self.next_binding(binding)?);
-                        crate::opaque::FoldProbeOutcome::Accepted { fold_handle }
+                        #[cfg(feature = "response-model-diagnostics")]
+                        let diagnostics = diagnostics.with_source_l2_sq(
+                            crate::opaque::fold::response_model_diagnostics_enabled()
+                                .then(|| witness_handle.source_l2_sq::<F>())
+                                .flatten(),
+                        );
+                        crate::opaque::FoldProbeOutcome::Accepted {
+                            fold_handle,
+                            diagnostics,
+                        }
                     }
                 })
             }

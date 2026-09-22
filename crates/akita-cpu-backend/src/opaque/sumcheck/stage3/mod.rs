@@ -30,6 +30,7 @@ use std::sync::Arc;
 /// Linear setup-product state. Its setup allocation survives cache trimming.
 pub struct CpuStage3Session<F: Field, E: Field> {
     binding: OperationBinding,
+    lease: crate::opaque::ScopeLease,
     setup: RectangularSetupProductTerm<F, E>,
     round: usize,
     pending: Option<UniPoly<E>>,
@@ -62,6 +63,7 @@ where
             request.level,
         );
         let binding = self.binding(&context)?;
+        let lease = self.binding_lease(&binding)?;
         let (schedule, _) = self.owner().proof_plan(scope)?;
         let parameters = if request.level == 0 {
             &schedule.root.params
@@ -106,6 +108,7 @@ where
             claim,
             CpuStage3Session {
                 binding,
+                lease,
                 setup,
                 round: 0,
                 pending: None,
@@ -120,7 +123,7 @@ where
         round: usize,
         claim: E,
     ) -> Result<UniPoly<E>, AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round
             || round >= session.setup.num_rounds()
             || session.pending.is_some()
@@ -141,7 +144,7 @@ where
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round || round >= session.setup.num_rounds() {
             return Err(AkitaError::InvalidInput(
                 "invalid Stage 3 challenge progression".into(),
@@ -157,7 +160,7 @@ where
     }
 
     fn finish_stage3(&self, session: Self::Stage3SessionHandle) -> Result<E, AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if session.round != session.setup.num_rounds() || session.pending.is_some() {
             return Err(AkitaError::InvalidInput(
                 "incomplete Stage 3 session".into(),

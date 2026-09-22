@@ -61,7 +61,7 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-types/logging-transcript",
 ]
-response-model-diagnostics = []
+response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
 parallel = [
   "akita-prover/parallel",

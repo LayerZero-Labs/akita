@@ -24,24 +24,98 @@ impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend {
     ) -> Result<CpuFoldResponses, AkitaError> {
         BATCH_CALLS.fetch_add(1, Ordering::Relaxed);
         SOURCE_TRAVERSALS.fetch_add(1, Ordering::Relaxed);
-        let DecomposeFoldBatchPlan::SparseChunked { chunk_ranges, .. } = plan else {
-            return Err(AkitaError::InvalidInput(
-                "expected chunked recording plan".into(),
-            ));
-        };
-        CpuFoldResponses::chunked::<D>(
-            chunk_ranges
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    DecomposeFoldWitness::from_centered_rows::<D>(vec![source
-                        .centered
-                        .get(index)
-                        .copied()
-                        .unwrap_or([0; D])])
-                })
-                .collect(),
-        )
+        match plan {
+            DecomposeFoldBatchPlan::Sparse { .. } => {
+                let centered = source.centered.first().copied().unwrap_or([0; D]);
+                Ok(CpuFoldResponses::sparse(
+                    DecomposeFoldWitness::from_centered_rows::<D>(vec![centered]),
+                ))
+            }
+            DecomposeFoldBatchPlan::SparseChunked { chunk_ranges, .. } => {
+                CpuFoldResponses::chunked::<D>(
+                    chunk_ranges
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| {
+                            DecomposeFoldWitness::from_centered_rows::<D>(vec![source
+                                .centered
+                                .get(index)
+                                .copied()
+                                .unwrap_or([0; D])])
+                        })
+                        .collect(),
+                )
+            }
+        }
+    }
+}
+
+fn fold_endpoint_probe(
+    centered: Vec<[i32; D]>,
+    chunked: bool,
+) -> FoldProbeOutcome<CpuAcceptedFold<F>> {
+    let blocks = if chunked { 2 } else { 1 };
+    let challenges = Challenges::from_sparse(
+        vec![
+            SparseChallenge {
+                positions: Vec::new().into(),
+                coeffs: Vec::new().into(),
+            };
+            blocks
+        ],
+        blocks,
+        1,
+    )
+    .unwrap();
+    let ranges = akita_types::dyadic_block_ranges(blocks, blocks).unwrap();
+    let geometry = if chunked {
+        FoldProbeGeometry::SparseChunked {
+            chunk_ranges: &ranges,
+        }
+    } else {
+        FoldProbeGeometry::Sparse
+    };
+    let plan = ValidatedFoldProbePlan::new::<D>(
+        &challenges,
+        1,
+        blocks,
+        geometry,
+        1,
+        1,
+        1,
+        akita_types::OpeningMethod::EvaluationTrace,
+        ValidatedFoldAcceptancePlan::new(128, 127, None),
+    )
+    .unwrap();
+    FoldResponseKernel::probe(
+        &CpuBackend::for_arithmetic_tests(),
+        None,
+        RecordingBatch { centered },
+        &plan,
+    )
+    .unwrap()
+}
+
+fn assert_fold_endpoint_acceptance(centered: Vec<[i32; D]>, chunked: bool, accepted: bool) {
+    assert_eq!(
+        matches!(
+            fold_endpoint_probe(centered, chunked),
+            FoldProbeOutcome::Accepted { .. }
+        ),
+        accepted
+    );
+}
+
+#[test]
+fn sparse_and_chunked_admission_use_sign_aware_digit_endpoints() {
+    let _guard = RECORDING_LOCK.lock().unwrap();
+    for chunked in [false, true] {
+        let repeat = if chunked { 2 } else { 1 };
+        assert_fold_endpoint_acceptance(vec![[-128; D]; repeat], chunked, true);
+        assert_fold_endpoint_acceptance(vec![[127; D]; repeat], chunked, true);
+        assert_fold_endpoint_acceptance(vec![[-128, 127, -1, 0]; repeat], chunked, true);
+        assert_fold_endpoint_acceptance(vec![[-129, 0, 0, 0]; repeat], chunked, false);
+        assert_fold_endpoint_acceptance(vec![[128, 0, 0, 0]; repeat], chunked, false);
     }
 }
 
@@ -236,7 +310,10 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
         &plan,
     )
     .unwrap();
-    let FoldProbeOutcome::Accepted { mut fold_handle } = accepted else {
+    let FoldProbeOutcome::Accepted {
+        mut fold_handle, ..
+    } = accepted
+    else {
         panic!("expected accepted fold")
     };
     fold_handle.bind(first_opening);

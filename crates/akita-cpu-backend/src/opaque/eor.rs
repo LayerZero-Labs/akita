@@ -34,6 +34,7 @@ pub struct CpuEorPreparation<F: Field + CanonicalEncoding, E: Field> {
 }
 pub struct CpuEorSession<E: Field> {
     binding: OperationBinding,
+    lease: crate::opaque::ScopeLease,
     groups: Vec<Box<dyn ExtensionOpeningSession<E>>>,
     coefficients: Vec<E>,
     /// Per-group tail points retained for the final transparent-factor
@@ -281,10 +282,12 @@ where
             claims.push(claim);
         }
         let claim = claims.iter().copied().fold(E::zero(), |sum, c| sum + c);
+        let lease = self.binding_lease(&preparation.binding)?;
         Ok((
             claim,
             CpuEorSession {
                 binding: preparation.binding,
+                lease,
                 groups: sessions,
                 coefficients: coefficients.to_vec(),
                 expected_tails: tails,
@@ -305,7 +308,7 @@ where
         round: usize,
         claim: E,
     ) -> Result<UniPoly<E>, AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round
             || round >= session.num_rounds
             || claim != session.claim
@@ -337,7 +340,7 @@ where
         round: usize,
         challenge: E,
     ) -> Result<(), AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round || round >= session.num_rounds {
             return Err(AkitaError::InvalidProof);
         }
@@ -358,7 +361,7 @@ where
         Ok(())
     }
     fn finish_eor(&self, session: Self::EorSessionHandle) -> Result<Vec<E>, AkitaError> {
-        self.validate_binding(&session.binding)?;
+        self.validate_leased_binding(&session.binding, &session.lease)?;
         if session.round != session.num_rounds || session.pending.is_some() {
             return Err(AkitaError::InvalidProof);
         }

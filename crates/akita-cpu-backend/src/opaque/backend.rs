@@ -245,21 +245,31 @@ impl CpuBackend {
         .with_group(context.group_index()))
     }
     pub(crate) fn validate_binding(&self, binding: &OperationBinding) -> Result<(), AkitaError> {
+        self.binding_lease(binding).map(drop)
+    }
+    pub(crate) fn binding_lease(
+        &self,
+        binding: &OperationBinding,
+    ) -> Result<crate::opaque::ScopeLease, AkitaError> {
+        let lease = self.identity.scope_lease(binding.scope_id())?;
+        self.validate_leased_binding(binding, &lease)?;
+        Ok(lease)
+    }
+    pub(crate) fn validate_leased_binding(
+        &self,
+        binding: &OperationBinding,
+        lease: &crate::opaque::ScopeLease,
+    ) -> Result<(), AkitaError> {
         binding.validate_owner(
             self.owner_id(),
             self.identity.setup_digest(),
             binding.fold_level(),
         )?;
-        let mut context = ProofContext::new(
-            self.owner_id(),
-            self.identity.setup_digest(),
+        lease.validate(
             binding.scope_id(),
             binding.fold_level(),
-        );
-        if let Some(group) = binding.group_index() {
-            context = context.for_group(group);
-        }
-        self.identity.validate_context(&context)
+            binding.group_index(),
+        )
     }
     pub(crate) fn next_binding(
         &self,

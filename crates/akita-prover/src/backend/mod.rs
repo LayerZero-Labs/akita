@@ -20,9 +20,9 @@ pub use handles::{
 };
 pub use identity::ProofContext;
 pub use messages::{
-    FoldProbeOutcome, NextWitnessBindingMessage, PreparedGroupOpening, PreparedRelationHandle,
-    RecursiveWitnessBuildStart, RecursiveWitnessFoldInput, RecursiveWitnessPublicInputs,
-    TerminalTFieldsMessage, WitnessCommitmentOutput,
+    FoldProbeDiagnostics, FoldProbeOutcome, NextWitnessBindingMessage, PreparedGroupOpening,
+    PreparedRelationHandle, RecursiveWitnessBuildStart, RecursiveWitnessFoldInput,
+    RecursiveWitnessPublicInputs, TerminalTFieldsMessage, WitnessCommitmentOutput,
 };
 pub use metadata::{
     AcceptedFoldMetadata, CommitmentMaterialMetadata, CommitmentRelationMaterial,

@@ -113,6 +113,14 @@ where
         };
         let (messages, mut opening) = opening.into_parts();
         opening.set_operation_binding(binding);
+        #[cfg(feature = "response-model-diagnostics")]
+        if crate::opaque::fold::response_model_diagnostics_enabled() {
+            let source_l2_sq = match &source {
+                RetainedOpeningSource::Commitment(source) => source.source.source_l2_sq(),
+                RetainedOpeningSource::Witness(witness) => witness.source_l2_sq::<F>(),
+            };
+            opening.set_source_l2_sq(source_l2_sq);
+        }
         opening.retain_source(source);
         Ok(PreparedGroupOpening::new(messages, opening))
     }
@@ -177,11 +185,19 @@ where
         };
         Ok(match outcome {
             FoldProbeOutcome::Rejected => FoldProbeOutcome::Rejected,
-            FoldProbeOutcome::Accepted { mut fold_handle } => {
+            FoldProbeOutcome::Accepted {
+                mut fold_handle,
+                diagnostics,
+            } => {
                 // Retain the opening's operation ID: dimension and group agreement
                 // alone would permit combining different openings of one source.
                 fold_handle.bind(binding);
-                FoldProbeOutcome::Accepted { fold_handle }
+                #[cfg(feature = "response-model-diagnostics")]
+                let diagnostics = diagnostics.with_source_l2_sq(opening.source_l2_sq());
+                FoldProbeOutcome::Accepted {
+                    fold_handle,
+                    diagnostics,
+                }
             }
         })
     }

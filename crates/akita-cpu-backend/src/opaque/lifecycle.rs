@@ -55,11 +55,43 @@ impl core::fmt::Debug for CpuProofSessionHandle {
 
 /// Only the owning proof scope can invalidate this operation lease.
 #[derive(Clone)]
-pub(crate) struct ScopeLease(Arc<AtomicBool>);
+pub(crate) struct ScopeLease {
+    scope: ProofScopeId,
+    state: Arc<ScopeState>,
+}
+
+struct ScopeState {
+    active: AtomicBool,
+    group_counts: Arc<[usize]>,
+}
 
 impl ScopeLease {
     pub(crate) fn is_active(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.state.active.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn validate(
+        &self,
+        scope: ProofScopeId,
+        fold_level: u32,
+        group_index: Option<usize>,
+    ) -> Result<(), AkitaError> {
+        if scope != self.scope || !self.is_active() {
+            return Err(AkitaError::InvalidInput("inactive proof scope".into()));
+        }
+        let group_count = self
+            .state
+            .group_counts
+            .get(fold_level as usize)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("fold level is outside the admitted proof".into())
+            })?;
+        if group_index.is_some_and(|group| group >= *group_count) {
+            return Err(AkitaError::InvalidInput(
+                "group is outside the admitted fold".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -72,8 +104,7 @@ pub(crate) struct BackendIdentity {
 }
 
 struct ActiveProof {
-    lease: Arc<AtomicBool>,
-    group_counts: Vec<usize>,
+    lease: Arc<ScopeState>,
     commitments: HashMap<(u32, usize), u128>,
     plan: Option<(
         Arc<akita_types::FoldSchedule>,
@@ -141,14 +172,17 @@ impl BackendIdentity {
             .map_err(|_| AkitaError::InvalidInput("proof scope identity exhausted".into()))?;
         let scope =
             ProofScopeId::from_raw((u128::from(self.backend_id) << 64) | u128::from(sequence));
+        let lease = Arc::new(ScopeState {
+            active: AtomicBool::new(true),
+            group_counts: group_counts.into(),
+        });
         self.active
             .lock()
             .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
             .insert(
                 scope,
                 ActiveProof {
-                    lease: Arc::new(AtomicBool::new(true)),
-                    group_counts,
+                    lease,
                     commitments: HashMap::new(),
                     plan,
                 },
@@ -165,14 +199,14 @@ impl BackendIdentity {
             .lock()
             .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
             .get(&scope)
-            .map(|proof| ScopeLease(proof.lease.clone()))
+            .map(|proof| ScopeLease {
+                scope,
+                state: proof.lease.clone(),
+            })
             .ok_or_else(|| AkitaError::InvalidInput("inactive proof scope".into()))
     }
     pub(crate) fn validate_scope(&self, scope: ProofScopeId) -> Result<(), AkitaError> {
-        if !self.scope_lease(scope)?.is_active() {
-            return Err(AkitaError::InvalidInput("inactive proof scope".into()));
-        }
-        Ok(())
+        self.scope_lease(scope)?.validate(scope, 0, None)
     }
     pub(crate) fn admit_commitment(
         &self,
@@ -244,26 +278,11 @@ impl BackendIdentity {
                 "operation belongs to another backend or setup".into(),
             ));
         }
-        self.validate_scope(context.scope_id())?;
-        let active = self
-            .active
-            .lock()
-            .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?;
-        let proof = active
-            .get(&context.scope_id())
-            .ok_or_else(|| AkitaError::InvalidInput("inactive proof scope".into()))?;
-        let count = proof
-            .group_counts
-            .get(context.fold_level() as usize)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("fold level is outside the admitted proof".into())
-            })?;
-        if context.group_index().is_some_and(|group| group >= *count) {
-            return Err(AkitaError::InvalidInput(
-                "group is outside the admitted fold".into(),
-            ));
-        }
-        Ok(())
+        self.scope_lease(context.scope_id())?.validate(
+            context.scope_id(),
+            context.fold_level(),
+            context.group_index(),
+        )
     }
     pub(crate) fn finish_scope(&self, scope: ProofScopeId) -> Result<(), AkitaError> {
         if scope.raw() >> 64 != u128::from(self.backend_id) {
@@ -279,7 +298,7 @@ impl BackendIdentity {
             .ok_or_else(|| {
                 AkitaError::InvalidInput("proof scope is unknown or already finished".into())
             })?;
-        lease.lease.store(false, Ordering::Release);
+        lease.lease.active.store(false, Ordering::Release);
         Ok(())
     }
     pub(crate) fn abort_scope(&self, scope: ProofScopeId) {
@@ -288,7 +307,7 @@ impl BackendIdentity {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         if let Some(proof) = active.remove(&scope) {
-            proof.lease.store(false, Ordering::Release);
+            proof.lease.active.store(false, Ordering::Release);
         }
     }
     pub(crate) fn next_operation_id(&self) -> Result<u128, AkitaError> {
@@ -306,7 +325,7 @@ impl Drop for BackendIdentity {
             .get_mut()
             .unwrap_or_else(|poison| poison.into_inner());
         for proof in active.values() {
-            proof.lease.store(false, Ordering::Release);
+            proof.lease.active.store(false, Ordering::Release);
         }
     }
 }

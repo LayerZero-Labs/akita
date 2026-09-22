@@ -18,15 +18,17 @@ fn session(backend: &CpuBackend, scope: crate::opaque::ProofScopeId) -> CpuStage
         vec![F::one(); 2],
     )
     .unwrap();
+    let binding = backend
+        .binding(&ProofContext::new(
+            backend.owner_id(),
+            backend.owner().setup_digest(),
+            scope,
+            0,
+        ))
+        .unwrap();
     CpuStage3Session {
-        binding: backend
-            .binding(&ProofContext::new(
-                backend.owner_id(),
-                backend.owner().setup_digest(),
-                scope,
-                0,
-            ))
-            .unwrap(),
+        binding,
+        lease: backend.binding_lease(&binding).unwrap(),
         claim: setup.input_claim(),
         setup,
         round: 0,
@@ -128,15 +130,17 @@ fn stage3_retains_setup_across_cache_eviction() {
         vec![Base::one(); 2],
     )
     .unwrap();
+    let binding = backend
+        .binding(&ProofContext::new(
+            backend.owner_id(),
+            backend.owner().setup_digest(),
+            scope.session().scope_id(),
+            0,
+        ))
+        .unwrap();
     let mut state = CpuStage3Session {
-        binding: backend
-            .binding(&ProofContext::new(
-                backend.owner_id(),
-                backend.owner().setup_digest(),
-                scope.session().scope_id(),
-                0,
-            ))
-            .unwrap(),
+        binding,
+        lease: backend.binding_lease(&binding).unwrap(),
         claim: product.input_claim(),
         setup: product,
         round: 0,

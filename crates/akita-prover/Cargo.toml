@@ -52,6 +52,7 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-types/logging-transcript",
 ]
+response-model-diagnostics = []
 parallel = [
   "akita-challenges/parallel",
   "jolt-field/parallel",
