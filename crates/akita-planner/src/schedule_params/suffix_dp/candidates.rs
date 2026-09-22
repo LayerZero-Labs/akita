@@ -5,7 +5,10 @@ use akita_types::{
 };
 
 use crate::{
-    planner::{precommitted_group_equivalence_classes, root_level_candidates_for_basis},
+    planner::{
+        precommitted_group_equivalence_classes, root_level_candidates_for_prepared_producers,
+        PreparedRootProducers,
+    },
     PlannerPolicy,
 };
 
@@ -671,7 +674,7 @@ impl<'a> CandidateDomain<'a> {
         })
     }
 
-    pub(super) fn generate_for_opening_basis(
+    pub(super) fn generate_recursive_for_opening_basis(
         &self,
         ctx: &SuffixCtx<'_>,
         state: SuffixState,
@@ -684,62 +687,6 @@ impl<'a> CandidateDomain<'a> {
         let mut folds = Vec::new();
 
         for inner_lb in self.inner_basis_range.clone() {
-            if let Some(root_key) = self.root_level_key {
-                for work in &self.opening_work {
-                    let mut dimension_candidates = root_level_candidates_for_basis(
-                        root_key,
-                        ctx.root_source_contract.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "root batch is missing its source contract".into(),
-                            )
-                        })?,
-                        ctx.precommitted_source_contracts,
-                        policy,
-                        work.dimensions,
-                        work.opening,
-                        &work.precommitted_openings,
-                        inner_lb,
-                        open_lb,
-                        self.root_main_constraint.map(candidate_layout_guide),
-                    )?;
-                    if let Some(constraint) = self.root_main_constraint {
-                        dimension_candidates.retain(|(params, _)| {
-                            root_candidate_matches_constraint(params, constraint)
-                        });
-                    }
-                    let relation_domain = state
-                        .topology
-                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
-                        .filtered(ctx.relation_mode_filter)?;
-                    let relation_transition = relation_domain.only_transition()?;
-                    for (params, next_witness_len) in dimension_candidates {
-                        if params.ring_relation_mode != relation_transition {
-                            return Err(AkitaError::InvalidSetup(
-                                "materialized mode disagrees with relation domain".into(),
-                            ));
-                        }
-                        if (!self.adaptation_guided || self.guide_terminal.is_some())
-                            && work.purpose.allows_terminal()
-                        {
-                            terminal.push(RawTerminalCandidate {
-                                params: params.clone(),
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            });
-                        }
-                        if (!self.adaptation_guided || self.guide_fold.is_some())
-                            && work.purpose.allows_fold()
-                        {
-                            folds.push(RawFoldCandidate {
-                                params,
-                                next_witness_len,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            });
-                        }
-                    }
-                }
-                continue;
-            }
-
             for work in &self.opening_work {
                 for &payload_mode in state
                     .topology
@@ -882,19 +829,35 @@ impl<'a> CandidateDomain<'a> {
         let root_key = self.root_level_key.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
         })?;
-        let final_policy = ctx.root_source_contract.ok_or_else(|| {
+        let final_source_contract = ctx.root_source_contract.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
-        for inner_lb in self.inner_basis_range.clone() {
-            for work in &self.opening_work {
-                let mut dimension_candidates = root_level_candidates_for_basis(
+        for work in &self.opening_work {
+            let Some(preparation) = PreparedRootProducers::prepare(
+                root_key,
+                ctx.precommitted_source_contracts,
+                ctx.policy,
+                work.dimensions,
+                work.opening,
+                &work.precommitted_openings,
+                open_lb,
+            )?
+            else {
+                continue;
+            };
+            let relation_transition = state
+                .topology
+                .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
+                .filtered(ctx.relation_mode_filter)?
+                .only_transition()?;
+            for inner_lb in self.inner_basis_range.clone() {
+                let mut dimension_candidates = root_level_candidates_for_prepared_producers(
                     root_key,
-                    final_policy,
-                    ctx.precommitted_source_contracts,
+                    final_source_contract,
                     ctx.policy,
                     work.dimensions,
                     work.opening,
-                    &work.precommitted_openings,
+                    &preparation,
                     inner_lb,
                     open_lb,
                     self.root_main_constraint.map(candidate_layout_guide),
@@ -904,11 +867,6 @@ impl<'a> CandidateDomain<'a> {
                         root_candidate_matches_constraint(params, constraint)
                     });
                 }
-                let relation_transition = state
-                    .topology
-                    .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
-                    .filtered(ctx.relation_mode_filter)?
-                    .only_transition()?;
                 let mut terminal = Vec::new();
                 let mut folds = Vec::new();
                 for (params, next_witness_len) in dimension_candidates {

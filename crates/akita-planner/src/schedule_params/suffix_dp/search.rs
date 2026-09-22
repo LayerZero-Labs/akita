@@ -416,7 +416,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                 )
             })?;
         } else {
-            let generated = candidate_domain.generate_for_opening_basis(
+            let generated = candidate_domain.generate_recursive_for_opening_basis(
                 ctx,
                 state,
                 open_log_basis,

@@ -1,5 +1,45 @@
 use super::*;
 
+/// Prepare one root work item and materialize its candidates for tests that do
+/// not exercise producer-preparation reuse directly.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn root_level_candidates_with_fresh_preparation(
+    key: &AkitaScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    dimensions: CommitmentRingDims,
+    opening: PlannerOpeningCandidate,
+    precommitted_openings: &[PlannerOpeningCandidate],
+    candidate_log_basis_inner: u32,
+    candidate_log_basis_open: u32,
+    guide: Option<crate::schedule_params::CandidateLayoutGuide>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let Some(prepared_producers) = PreparedRootProducers::prepare(
+        key,
+        precommitted_source_contracts,
+        policy,
+        dimensions,
+        opening,
+        precommitted_openings,
+        candidate_log_basis_open,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    root_level_candidates_for_prepared_producers(
+        key,
+        final_source_contract,
+        policy,
+        dimensions,
+        opening,
+        &prepared_producers,
+        candidate_log_basis_inner,
+        candidate_log_basis_open,
+        guide,
+    )
+}
+
 /// Enumerate every root split and slice for the single-group oracle fixture.
 /// Candidate materialization stays canonical, while this reference domain is
 /// independent of production split bounds and local slice pruning.

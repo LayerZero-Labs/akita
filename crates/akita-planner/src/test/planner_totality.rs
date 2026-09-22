@@ -32,18 +32,20 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
         )? {
             for inner_basis in Cfg::inner_basis_range().0..=Cfg::inner_basis_range().1 {
                 for opening_basis in Cfg::opening_basis_range().0..=Cfg::opening_basis_range().1 {
-                    for (params, output_witness_len) in root_level_candidates_for_basis(
-                        &key,
-                        Cfg::committed_source_contract().unwrap(),
-                        &[],
-                        &policy,
-                        dimensions,
-                        opening,
-                        &[],
-                        inner_basis,
-                        opening_basis,
-                        None,
-                    )? {
+                    for (params, output_witness_len) in
+                        root_level_candidates_with_fresh_preparation(
+                            &key,
+                            Cfg::committed_source_contract().unwrap(),
+                            &[],
+                            &policy,
+                            dimensions,
+                            opening,
+                            &[],
+                            inner_basis,
+                            opening_basis,
+                            None,
+                        )?
+                    {
                         let contracts = output_witness_len
                             * (params.open().digits.log_basis as usize)
                             < input_bits;
@@ -181,7 +183,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     )
     .expect("valid D64 producer opening request")
     .expect("D64 producer opening");
-    let producer = root_level_candidates_for_basis(
+    let producer = root_level_candidates_with_fresh_preparation(
         &producer_key,
         Dense::committed_source_contract().unwrap(),
         &[],

@@ -32,7 +32,9 @@ mod adapted_schedule_tests;
 #[path = "test/root_candidates.rs"]
 mod root_candidates;
 #[cfg(all(test, feature = "catalog-gen"))]
-pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
+pub(crate) use root_candidates::{
+    exhaustive_root_candidates_for_reference, root_level_candidates_with_fresh_preparation,
+};
 
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, CommittedSourceContract);
 
@@ -297,15 +299,79 @@ pub(crate) fn root_batch_next_w_len(
         .map(Some)
 }
 
+pub(crate) struct PreparedRootProducers {
+    groups: Vec<GroupOpenPhaseParams>,
+    d_width: usize,
+}
+
+impl PreparedRootProducers {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare(
+        key: &AkitaScheduleLookupKey,
+        precommitted_source_contracts: &[CommittedSourceContract],
+        policy: &PlannerPolicy,
+        dimensions: CommitmentRingDims,
+        opening: PlannerOpeningCandidate,
+        precommitted_openings: &[PlannerOpeningCandidate],
+        candidate_log_basis_open: u32,
+    ) -> Result<Option<Self>, AkitaError> {
+        dimensions.validate_role_projection()?;
+        opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
+        let alpha = dimensions.d_a().trailing_zeros() as usize;
+        if key.final_group.num_vars().saturating_sub(alpha) == 0 {
+            return Ok(None);
+        }
+        let equivalence_classes = precommitted_group_equivalence_classes(
+            &key.precommitteds,
+            precommitted_source_contracts,
+        )?;
+        if precommitted_openings.len() != key.precommitteds.len() {
+            return Err(AkitaError::InvalidSetup(
+                "root precommit opening candidate count mismatch".into(),
+            ));
+        }
+        if precommitted_openings
+            .iter()
+            .any(|candidate| candidate.is_coefficient_packing() != opening.is_coefficient_packing())
+        {
+            return Ok(None);
+        }
+        let shared_opening_ring_dimension = dimensions.d_d();
+        if !crate::schedule_params::precommitted_groups_support_opening_dimension(
+            key.precommitteds.iter(),
+            shared_opening_ring_dimension,
+        ) {
+            return Ok(None);
+        }
+        let seeds = key
+            .precommitteds
+            .iter()
+            .copied()
+            .zip(precommitted_source_contracts.iter().copied())
+            .collect::<Vec<PrecommittedGroupSeed>>();
+        let Some((groups, d_width)) = precommitted_groups_for_open_basis(
+            &seeds,
+            precommitted_openings,
+            &equivalence_classes,
+            policy,
+            shared_opening_ring_dimension,
+            candidate_log_basis_open,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self { groups, d_width }))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn root_level_candidates_for_basis(
+pub(crate) fn root_level_candidates_for_prepared_producers(
     key: &AkitaScheduleLookupKey,
     final_source_contract: CommittedSourceContract,
-    precommitted_source_contracts: &[CommittedSourceContract],
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
-    precommitted_openings: &[PlannerOpeningCandidate],
+    prepared_producers: &PreparedRootProducers,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
@@ -318,26 +384,6 @@ pub(crate) fn root_level_candidates_for_basis(
     if reduced_vars == 0 {
         return Ok(Vec::new());
     }
-
-    let equivalence_classes =
-        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
-    if precommitted_openings.len() != key.precommitteds.len() {
-        return Err(AkitaError::InvalidSetup(
-            "root precommit opening candidate count mismatch".into(),
-        ));
-    }
-    if precommitted_openings
-        .iter()
-        .any(|candidate| candidate.is_coefficient_packing() != opening.is_coefficient_packing())
-    {
-        return Ok(Vec::new());
-    }
-    let precommitted_groups = key
-        .precommitteds
-        .iter()
-        .copied()
-        .zip(precommitted_source_contracts.iter().copied())
-        .collect::<Vec<PrecommittedGroupSeed>>();
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         dimensions,
@@ -383,25 +429,6 @@ pub(crate) fn root_level_candidates_for_basis(
     split_domain.dedup();
 
     let mut candidates = Vec::new();
-    let shared_opening_ring_dimension = dimensions.d_d();
-    if !crate::schedule_params::precommitted_groups_support_opening_dimension(
-        key.precommitteds.iter(),
-        shared_opening_ring_dimension,
-    ) {
-        return Ok(Vec::new());
-    }
-    let Some((candidate_precommitted_groups, candidate_precommitted_d_width)) =
-        precommitted_groups_for_open_basis(
-            &precommitted_groups,
-            precommitted_openings,
-            &equivalence_classes,
-            policy,
-            shared_opening_ring_dimension,
-            candidate_log_basis_open,
-        )?
-    else {
-        return Ok(Vec::new());
-    };
     for block_index_bits in split_domain {
         let position_index_bits = reduced_vars - block_index_bits;
         let num_live_blocks = 1usize << block_index_bits;
@@ -428,8 +455,8 @@ pub(crate) fn root_level_candidates_for_basis(
                     position_index_bits,
                     block_index_bits,
                     outer_slice_count,
-                    precommitted_groups: &candidate_precommitted_groups,
-                    precommitted_d_width: candidate_precommitted_d_width,
+                    precommitted_groups: &prepared_producers.groups,
+                    precommitted_d_width: prepared_producers.d_width,
                 },
             )?
             else {
