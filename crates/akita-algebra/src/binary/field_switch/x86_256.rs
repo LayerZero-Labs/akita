@@ -7,9 +7,8 @@ use std::arch::x86_64::{
     _mm256_slli_epi64, _mm256_srli_epi64, _mm256_storeu_si256, _mm256_xor_si256,
 };
 
-use super::x86_common::{
-    coefficient_matrix, transpose8, LIMB_BYTES, MAX_HOST_BYTES, MAX_SOURCE_BYTES, TILE,
-};
+use super::bit_matrix::transpose8;
+use super::x86_common::{coefficient_matrix, LIMB_BYTES, MAX_HOST_BYTES, MAX_SOURCE_BYTES, TILE};
 use super::{SwitchField, F};
 
 const HALF_TILE: usize = 32;

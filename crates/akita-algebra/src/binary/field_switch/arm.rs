@@ -1,7 +1,9 @@
 //! AArch64 NEON bit-matrix kernels for the binary field switch.
 
 use std::arch::aarch64::{
-    vandq_u8, vdupq_n_u8, veorq_u8, vld1q_u8, vqtbl1q_u8, vshrq_n_u8, vst1q_u8,
+    uint64x2_t, uint8x16_t, vandq_u8, vdupq_n_u8, veorq_u8, vld1q_u8, vqtbl1q_u8,
+    vreinterpretq_u16_u8, vreinterpretq_u32_u16, vreinterpretq_u64_u32, vshrq_n_u8, vst1q_u64,
+    vzip1q_u16, vzip1q_u32, vzip1q_u8, vzip2q_u16, vzip2q_u32, vzip2q_u8,
 };
 
 use super::{SwitchField, F};
@@ -11,6 +13,68 @@ const LANES: usize = 16;
 const MAX_HOST_BYTES: usize = 192 / 8;
 const OUTPUT_BYTES: usize = 21;
 const LIMB_BYTES: [usize; 3] = [8, 8, 5];
+
+/// Transpose eight 16-byte planes into sixteen contiguous little-endian words.
+/// Each zip stage doubles the number of adjacent bytes from one output word.
+#[inline]
+#[target_feature(enable = "neon")]
+fn transpose_output_bytes(planes: [uint8x16_t; 8]) -> [uint64x2_t; 8] {
+    let pairs = [
+        vzip1q_u8(planes[0], planes[1]),
+        vzip2q_u8(planes[0], planes[1]),
+        vzip1q_u8(planes[2], planes[3]),
+        vzip2q_u8(planes[2], planes[3]),
+        vzip1q_u8(planes[4], planes[5]),
+        vzip2q_u8(planes[4], planes[5]),
+        vzip1q_u8(planes[6], planes[7]),
+        vzip2q_u8(planes[6], planes[7]),
+    ];
+    let quads = [
+        vzip1q_u16(
+            vreinterpretq_u16_u8(pairs[0]),
+            vreinterpretq_u16_u8(pairs[2]),
+        ),
+        vzip2q_u16(
+            vreinterpretq_u16_u8(pairs[0]),
+            vreinterpretq_u16_u8(pairs[2]),
+        ),
+        vzip1q_u16(
+            vreinterpretq_u16_u8(pairs[1]),
+            vreinterpretq_u16_u8(pairs[3]),
+        ),
+        vzip2q_u16(
+            vreinterpretq_u16_u8(pairs[1]),
+            vreinterpretq_u16_u8(pairs[3]),
+        ),
+        vzip1q_u16(
+            vreinterpretq_u16_u8(pairs[4]),
+            vreinterpretq_u16_u8(pairs[6]),
+        ),
+        vzip2q_u16(
+            vreinterpretq_u16_u8(pairs[4]),
+            vreinterpretq_u16_u8(pairs[6]),
+        ),
+        vzip1q_u16(
+            vreinterpretq_u16_u8(pairs[5]),
+            vreinterpretq_u16_u8(pairs[7]),
+        ),
+        vzip2q_u16(
+            vreinterpretq_u16_u8(pairs[5]),
+            vreinterpretq_u16_u8(pairs[7]),
+        ),
+    ];
+    let quad = |index| vreinterpretq_u32_u16(quads[index]);
+    [
+        vreinterpretq_u64_u32(vzip1q_u32(quad(0), quad(4))),
+        vreinterpretq_u64_u32(vzip2q_u32(quad(0), quad(4))),
+        vreinterpretq_u64_u32(vzip1q_u32(quad(1), quad(5))),
+        vreinterpretq_u64_u32(vzip2q_u32(quad(1), quad(5))),
+        vreinterpretq_u64_u32(vzip1q_u32(quad(2), quad(6))),
+        vreinterpretq_u64_u32(vzip2q_u32(quad(2), quad(6))),
+        vreinterpretq_u64_u32(vzip1q_u32(quad(3), quad(7))),
+        vreinterpretq_u64_u32(vzip2q_u32(quad(3), quad(7))),
+    ]
+}
 
 /// Map host equality weights through F162 row weights into three SoA limbs.
 ///
@@ -35,7 +99,8 @@ pub(super) unsafe fn coefficients<H: SwitchField>(
 
     // The table is independent of domain size and reused across all tiles.
     // `tables[host_byte][output_byte][nibble][selection]` is the image byte.
-    let mut tables = [[[[0u8; 16]; 2]; OUTPUT_BYTES]; MAX_HOST_BYTES];
+    let zero = vdupq_n_u8(0);
+    let mut tables = [[[zero; 2]; OUTPUT_BYTES]; MAX_HOST_BYTES];
     for (host_byte, byte_tables) in tables[..host_bytes].iter_mut().enumerate() {
         for (output_byte, nibble_tables) in byte_tables.iter_mut().enumerate() {
             let mut basis = [0u8; 8];
@@ -44,10 +109,14 @@ pub(super) unsafe fn coefficients<H: SwitchField>(
                 *basis_byte = (words[output_byte / 8] >> (8 * (output_byte % 8))) as u8;
             }
             for (nibble, table) in nibble_tables.iter_mut().enumerate() {
+                let mut entries = [0u8; 16];
                 for selection in 1usize..16 {
                     let bit = selection.trailing_zeros() as usize;
-                    table[selection] = table[selection & (selection - 1)] ^ basis[4 * nibble + bit];
+                    entries[selection] =
+                        entries[selection & (selection - 1)] ^ basis[4 * nibble + bit];
                 }
+                // SAFETY: `entries` contains exactly one full table vector.
+                *table = unsafe { vld1q_u8(entries.as_ptr()) };
             }
         }
     }
@@ -66,40 +135,34 @@ pub(super) unsafe fn coefficients<H: SwitchField>(
                 }
             }
 
-            let mut mapped_bytes = [[0u8; LANES]; OUTPUT_BYTES];
-            for (output_byte, result) in mapped_bytes.iter_mut().enumerate() {
-                let mut mapped = vdupq_n_u8(0);
-                for (host_byte, plane) in host_planes[..host_bytes].iter().enumerate() {
-                    // SAFETY: every plane and nibble table contains 16 bytes.
-                    let input = unsafe { vld1q_u8(plane.as_ptr()) };
-                    let lo = vandq_u8(input, vdupq_n_u8(15));
-                    let hi = vshrq_n_u8::<4>(input);
-                    let tables = &tables[host_byte][output_byte];
-                    let lo_table = unsafe { vld1q_u8(tables[0].as_ptr()) };
-                    let hi_table = unsafe { vld1q_u8(tables[1].as_ptr()) };
-                    mapped = veorq_u8(mapped, vqtbl1q_u8(lo_table, lo));
-                    mapped = veorq_u8(mapped, vqtbl1q_u8(hi_table, hi));
-                }
-                // SAFETY: the result has exactly 16 bytes.
-                unsafe { vst1q_u8(result.as_mut_ptr(), mapped) };
+            let mut low_nibbles = [zero; MAX_HOST_BYTES];
+            let mut high_nibbles = [zero; MAX_HOST_BYTES];
+            for (host_byte, plane) in host_planes[..host_bytes].iter().enumerate() {
+                // SAFETY: each input plane contains exactly 16 bytes.
+                let input = unsafe { vld1q_u8(plane.as_ptr()) };
+                low_nibbles[host_byte] = vandq_u8(input, vdupq_n_u8(15));
+                high_nibbles[host_byte] = vshrq_n_u8::<4>(input);
             }
 
-            let range = tile + block..tile + block + LANES;
-            for (lane, ((lo, hi), top_word)) in low[range.clone()]
-                .iter_mut()
-                .zip(high[range.clone()].iter_mut())
-                .zip(top[range].iter_mut())
-                .enumerate()
-            {
-                let mut limbs = [0u64; 3];
-                for limb in 0..3 {
-                    for byte in 0..LIMB_BYTES[limb] {
-                        limbs[limb] |= u64::from(mapped_bytes[8 * limb + byte][lane]) << (8 * byte);
+            for (limb, words) in [&mut *low, &mut *high, &mut *top].into_iter().enumerate() {
+                let mut mapped_bytes = [zero; 8];
+                for host_byte in 0..host_bytes {
+                    let low_nibble = low_nibbles[host_byte];
+                    let high_nibble = high_nibbles[host_byte];
+                    for (byte, mapped) in mapped_bytes[..LIMB_BYTES[limb]].iter_mut().enumerate() {
+                        let output_byte = 8 * limb + byte;
+                        let [lo_table, hi_table] = tables[host_byte][output_byte];
+                        *mapped = veorq_u8(*mapped, vqtbl1q_u8(lo_table, low_nibble));
+                        *mapped = veorq_u8(*mapped, vqtbl1q_u8(hi_table, high_nibble));
                     }
                 }
-                *lo = limbs[0];
-                *hi = limbs[1];
-                *top_word = limbs[2];
+                // The last three top-limb planes remain zero, so every word
+                // has canonical F162 padding without a separate mask/store.
+                let packed = transpose_output_bytes(mapped_bytes);
+                for (group, &pair) in packed.iter().enumerate() {
+                    // SAFETY: one vector stores two complete output values.
+                    unsafe { vst1q_u64(words.as_mut_ptr().add(tile + block + 2 * group), pair) };
+                }
             }
         }
     }

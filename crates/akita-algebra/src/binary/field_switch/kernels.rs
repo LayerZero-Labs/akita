@@ -15,6 +15,8 @@ enum PartialBackend {
     Gfni512,
     #[cfg(target_arch = "x86_64")]
     Gfni256,
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    Neon,
 }
 
 #[derive(Clone, Copy)]
@@ -24,7 +26,7 @@ enum CoefficientBackend {
     Gfni512,
     #[cfg(target_arch = "x86_64")]
     Gfni256,
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
     Neon,
 }
 
@@ -58,10 +60,10 @@ fn selected() -> &'static StageBackends {
                 coefficients: CoefficientBackend::Gfni256,
             };
         }
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
         if std::arch::is_aarch64_feature_detected!("neon") {
             return StageBackends {
-                partials: PartialBackend::Portable,
+                partials: PartialBackend::Neon,
                 coefficients: CoefficientBackend::Neon,
             };
         }
@@ -92,6 +94,12 @@ pub(super) fn partials<H: SwitchField>(
                 // SAFETY: the same whole-tile shape and detected AVX2/GFNI
                 // features establish this backend's preconditions.
                 Some(unsafe { super::x86_256::partials::<H>(source, weights) })
+            }
+            #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+            PartialBackend::Neon => {
+                // SAFETY: both slices contain complete tiles and runtime
+                // detection established NEON support.
+                Some(unsafe { super::arm_partials::partials::<H>(source, weights) })
             }
         };
         if let Some(bits) = bits {
@@ -141,7 +149,7 @@ pub(super) fn coefficients<H: SwitchField>(
                 unsafe { super::x86_256::coefficients::<H>(weights, rows, output) };
                 return;
             }
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
             CoefficientBackend::Neon => {
                 // SAFETY: the caller validated row weights, all output limbs
                 // match the input length, and NEON was detected at runtime.

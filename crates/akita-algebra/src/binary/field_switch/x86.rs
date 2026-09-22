@@ -7,9 +7,8 @@ use std::arch::x86_64::{
     _mm512_srli_epi64, _mm512_storeu_si512, _mm512_xor_si512,
 };
 
-use super::x86_common::{
-    coefficient_matrix, transpose8, LIMB_BYTES, MAX_HOST_BYTES, MAX_SOURCE_BYTES, TILE,
-};
+use super::bit_matrix::transpose8;
+use super::x86_common::{coefficient_matrix, LIMB_BYTES, MAX_HOST_BYTES, MAX_SOURCE_BYTES, TILE};
 use super::{SwitchField, F};
 
 const fn transpose_indices(stage: usize, output_vector_bit: usize) -> [u8; 64] {
