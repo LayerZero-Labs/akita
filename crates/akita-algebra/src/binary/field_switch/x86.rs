@@ -2,9 +2,9 @@
 
 use std::arch::x86_64::{
     __m512i, _mm512_and_si512, _mm512_gf2p8affine_epi64_epi8, _mm512_i64gather_epi64,
-    _mm512_loadu_si512, _mm512_permutex2var_epi8, _mm512_set1_epi64, _mm512_setzero_si512,
-    _mm512_shuffle_epi8, _mm512_slli_epi64, _mm512_srli_epi64, _mm512_storeu_si512,
-    _mm512_xor_si512,
+    _mm512_loadu_si512, _mm512_permutex2var_epi64, _mm512_permutex2var_epi8, _mm512_set1_epi64,
+    _mm512_setr_epi64, _mm512_setzero_si512, _mm512_shuffle_epi8, _mm512_slli_epi64,
+    _mm512_srli_epi64, _mm512_storeu_si512, _mm512_xor_si512,
 };
 
 use super::{SwitchField, F};
@@ -112,15 +112,34 @@ unsafe fn qword_vectors(mut planes: [__m512i; 8]) -> [__m512i; 8] {
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,avx512vbmi,gfni")]
-unsafe fn gather_limb(base: *const i64, words_per_value: usize, limb: usize) -> [__m512i; 8] {
+unsafe fn load_limb_planes(base: *const i64, words_per_value: usize, limb: usize) -> [__m512i; 8] {
     let values = std::array::from_fn(|group| {
-        let offsets: [i64; 8] =
-            std::array::from_fn(|index| ((8 * group + index) * words_per_value + limb) as i64);
-        // SAFETY: the caller provides 64 complete values of the specified
-        // width, and every generated offset addresses the selected limb.
-        unsafe {
-            let offsets = _mm512_loadu_si512(offsets.as_ptr().cast());
-            _mm512_i64gather_epi64::<8>(offsets, base)
+        if words_per_value == 1 {
+            // SAFETY: the caller provides 64 complete one-word values.
+            unsafe { _mm512_loadu_si512(base.add(8 * group).cast()) }
+        } else if words_per_value == 2 {
+            let indices = if limb == 0 {
+                _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14)
+            } else {
+                _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15)
+            };
+            // SAFETY: two contiguous loads cover eight complete two-word
+            // values. The permute extracts the requested limb from each.
+            unsafe {
+                let start = base.add(16 * group);
+                let first = _mm512_loadu_si512(start.cast());
+                let second = _mm512_loadu_si512(start.add(8).cast());
+                _mm512_permutex2var_epi64(first, indices, second)
+            }
+        } else {
+            let offsets: [i64; 8] =
+                std::array::from_fn(|index| ((8 * group + index) * words_per_value + limb) as i64);
+            // SAFETY: every generated offset addresses a limb of one of 64
+            // complete values supplied by the caller.
+            unsafe {
+                let offsets = _mm512_loadu_si512(offsets.as_ptr().cast());
+                _mm512_i64gather_epi64::<8>(offsets, base)
+            }
         }
     });
     // SAFETY: inherited target features.
@@ -167,7 +186,7 @@ pub(super) unsafe fn partials<H: SwitchField>(source: &[H::Source], weights: &[H
         let mut source_columns = [zero; MAX_SOURCE_BYTES];
         for limb in 0..source_bytes / 8 {
             // SAFETY: this tile contains 64 complete source values.
-            let planes = unsafe { gather_limb(source_base, source_bytes / 8, limb) };
+            let planes = unsafe { load_limb_planes(source_base, source_bytes / 8, limb) };
             for (byte, &plane) in planes.iter().enumerate() {
                 source_columns[8 * limb + byte] = transpose8x8(plane);
             }
@@ -179,7 +198,7 @@ pub(super) unsafe fn partials<H: SwitchField>(source: &[H::Source], weights: &[H
         for limb in 0..host_words {
             // SAFETY: the sealed host types are transparent arrays of two or
             // three u64 limbs, and this tile contains 64 complete values.
-            let planes = unsafe { gather_limb(host_base, host_words, limb) };
+            let planes = unsafe { load_limb_planes(host_base, host_words, limb) };
             for (byte, &plane) in planes.iter().enumerate() {
                 // Transpose values into selector rows, then transpose once
                 // more to reverse their byte order for GFNI's row convention.
@@ -277,7 +296,7 @@ pub(super) unsafe fn coefficients<H: SwitchField>(
         for limb in 0..host_words {
             // SAFETY: the sealed host types are transparent arrays of two or
             // three u64 limbs, and this tile contains 64 complete values.
-            let planes = unsafe { gather_limb(host_base, host_words, limb) };
+            let planes = unsafe { load_limb_planes(host_base, host_words, limb) };
             host_planes[8 * limb..8 * limb + 8].copy_from_slice(&planes);
         }
 

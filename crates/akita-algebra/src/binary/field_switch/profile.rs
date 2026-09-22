@@ -29,10 +29,8 @@ pub trait SwitchField:
     fn coordinates(self) -> [u64; 3];
     /// Embed the source field into the host field.
     fn embed_source(value: Self::Source) -> Self;
-    /// Expand equality weights into an exactly sized caller-provided table.
-    ///
-    /// Returns false for an invalid size without modifying the output.
-    fn equality_weights(point: &[Self], output: &mut [Self]) -> bool;
+    /// Expand equality weights into a caller-provided table of size 2^point.len().
+    fn equality_weights(point: &[Self], output: &mut [Self]);
     /// Products with the ordered host basis; unused entries are zero.
     ///
     /// The fixed array bounds verifier scratch independently of source size.
@@ -55,12 +53,8 @@ impl SwitchField for BinaryField128 {
         Self::from_words([value as u64, (value >> 64) as u64])
     }
 
-    fn equality_weights(point: &[Self], output: &mut [Self]) -> bool {
-        if akita_error::checked::pow2(point.len()) != Some(output.len()) {
-            return false;
-        }
+    fn equality_weights(point: &[Self], output: &mut [Self]) {
         Self::equality_weights(point, output);
-        true
     }
 
     fn basis_products(self) -> [Self; 192] {
@@ -89,12 +83,8 @@ impl SwitchField for BinaryField192 {
         Self::from_words([value, 0, 0])
     }
 
-    fn equality_weights(point: &[Self], output: &mut [Self]) -> bool {
-        if akita_error::checked::pow2(point.len()) != Some(output.len()) {
-            return false;
-        }
+    fn equality_weights(point: &[Self], output: &mut [Self]) {
         Self::equality_weights(point, output);
-        true
     }
 
     fn basis_products(self) -> [Self; 192] {
