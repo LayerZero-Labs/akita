@@ -1,10 +1,15 @@
 use akita_config::CommitmentConfig;
 use akita_types::{FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
 
-pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
+pub(super) struct ProofSizeBudgets {
+    planner_estimate: usize,
+    native_bound: usize,
+}
+
+pub(super) fn proof_size_budgets<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     final_group: PolynomialGroupLayout,
-) -> usize {
+) -> ProofSizeBudgets {
     let key = akita_types::AkitaScheduleLookupKey {
         final_group,
         precommitteds: schedule
@@ -15,12 +20,17 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .map(|group| group.profile)
             .collect(),
     };
-    akita_schedules::expanded_schedule_proof_payload_bytes(
-        &key,
-        schedule,
-        &akita_config::policy_of::<Cfg>(),
-    )
-    .expect("expanded schedule estimate")
+    let policy = akita_config::policy_of::<Cfg>();
+    let planner_estimate =
+        akita_schedules::expanded_schedule_packed_proof_estimate_bytes(&key, schedule, &policy)
+            .expect("expanded schedule estimate");
+    let native_bound =
+        akita_schedules::expanded_schedule_native_proof_bound(&key, schedule, &policy)
+            .expect("native proof bound");
+    ProofSizeBudgets {
+        planner_estimate,
+        native_bound,
+    }
 }
 
 pub(super) fn assert_observed_proof_size(label: &str, proof: &[u8]) {
@@ -30,39 +40,53 @@ pub(super) fn assert_observed_proof_size(label: &str, proof: &[u8]) {
     );
 }
 
-/// The planner models the native Spongefish argument stream directly. A small
-/// overcount remains possible because some stage-2 rounds realize degree two
-/// although the static schedule prices the degree-three upper bound.
-const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
-
 pub(super) fn report_proof_size_against_planner(
     label: &str,
     proof: &[u8],
-    planned_bytes: usize,
+    budgets: ProofSizeBudgets,
     source: &str,
     mode: SetupContributionMode,
-    _schedule: &FoldSchedule,
 ) {
     let actual_bytes = proof.len();
     assert!(
-        actual_bytes <= planned_bytes,
-        "[{label}] native proof bytes {actual_bytes} exceed the {source} estimate {planned_bytes}"
+        actual_bytes <= budgets.native_bound,
+        "[{label}] native proof bytes {actual_bytes} exceed the schedule-derived native bound {}",
+        budgets.native_bound,
     );
-    let overcount = planned_bytes - actual_bytes;
-    assert!(
-        overcount <= ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES,
-        "[{label}] {source} estimate overcounts the native proof by {overcount} bytes"
-    );
+    let planner_delta = i128::try_from(actual_bytes).expect("proof size fits i128")
+        - i128::try_from(budgets.planner_estimate).expect("planner estimate fits i128");
     tracing::info!(
         label,
         actual_bytes,
-        planned_bytes,
-        overcount,
+        planner_estimate = budgets.planner_estimate,
+        native_bound = budgets.native_bound,
+        planner_delta,
         ?mode,
         "native proof-size comparison"
     );
     eprintln!(
-        "[{label}] proof_size: native={actual_bytes} bytes, planned={planned_bytes} bytes, \
-         overcount={overcount} bytes, setup_contribution_mode={mode:?}"
+        "[{label}] proof_size: native={actual_bytes} bytes, planner_estimate={} bytes, \
+         native_bound={} bytes, actual_minus_planner={planner_delta} bytes, \
+         source={source}, setup_contribution_mode={mode:?}",
+        budgets.planner_estimate, budgets.native_bound,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planner_underestimate_is_diagnostic_when_native_bound_holds() {
+        report_proof_size_against_planner(
+            "fixture",
+            &[0; 2],
+            ProofSizeBudgets {
+                planner_estimate: 1,
+                native_bound: 2,
+            },
+            "fixture",
+            SetupContributionMode::Direct,
+        );
+    }
 }

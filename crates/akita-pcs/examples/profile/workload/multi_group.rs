@@ -1,6 +1,6 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, random_claim_point,
+    onehot_lagrange_opening, proof_size_budgets, random_claim_point,
     report_proof_size_against_planner, run_verifier_timings,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
@@ -378,10 +378,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     report_proof_size_against_planner(
         label,
         &proof,
-        planned_payload_bytes::<ProofCfg>(&schedule, final_group),
+        proof_size_budgets::<ProofCfg>(&schedule, final_group),
         "planned",
         setup_contribution_mode,
-        &schedule,
     );
     emit_runtime_schedule_summary(
         label,

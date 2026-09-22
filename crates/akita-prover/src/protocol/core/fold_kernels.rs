@@ -326,15 +326,9 @@ mod tests {
     fn reduction(
         final_claims: Vec<TestF>,
         final_factors: Vec<TestF>,
-    ) -> ExtensionOpeningReduction<TestF> {
-        ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: Vec::new(),
-                sumcheck: SumcheckProof {
-                    round_polys: Vec::new(),
-                },
-                final_claims,
-            },
+    ) -> NativeExtensionOpeningReduction<TestF> {
+        NativeExtensionOpeningReduction {
+            final_claims,
             final_factors,
         }
     }

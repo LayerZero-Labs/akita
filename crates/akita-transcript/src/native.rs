@@ -1095,6 +1095,15 @@ mod tests {
         Ring,
     };
 
+    #[test]
+    fn public_absorption_never_extends_the_argument_string() {
+        let mut prover = new_native_prover(b"public-size", b"fixture").unwrap();
+        prover.prover_message(&[7u8; 3]);
+        let before = prover.narg_string().to_vec();
+        prover.public_message(b"public fold payload");
+        assert_eq!(prover.narg_string(), before);
+    }
+
     #[cfg(feature = "transcript-blake2b")]
     #[test]
     fn blake2b_transcript_has_a_cross_width_known_answer() {

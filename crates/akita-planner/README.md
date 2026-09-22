@@ -199,14 +199,14 @@ recursion. Runtime verification never invokes this search.
 
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
-- `level_proof_bytes` for a fold level.
+- `native_nonterminal_level_layout` for a fold level's fixed native messages.
 - `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
 - the canonical grinding plan for the one proof-level packed nonce stream.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
 
-`level_proof_bytes` is also schedule-shaped: it prices an outer commitment on
+`native_nonterminal_level_layout` is also schedule-shaped: it prices an outer commitment on
 ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
 stream byte count is rounded once across the complete plan. Terminal proof

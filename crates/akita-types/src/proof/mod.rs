@@ -27,11 +27,13 @@ pub mod terminal_witness;
 
 mod containers;
 mod hints;
+#[cfg(test)]
 mod levels;
 mod shapes;
 mod tail_segments;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
 mod wire;
 mod witness_emission;
 
@@ -70,6 +72,7 @@ pub use compression_relation_weights::{
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 pub use hints::AkitaCommitmentHint;
+#[cfg(test)]
 pub use levels::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
     FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
@@ -141,11 +144,14 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
+#[cfg(test)]
 use akita_sumcheck::EqFactoredSumcheckProof;
-use akita_sumcheck::{
-    uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
-};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+#[cfg(test)]
+use akita_sumcheck::SumcheckProof;
+use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
+use jolt_field::Field;
+#[cfg(test)]
+use jolt_field::{CanonicalEncoding, ExtField};
 use std::io::{Read, Write};
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;

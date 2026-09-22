@@ -1,7 +1,9 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::proof::PhysicalL2NormProofWireShape;
-use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
+#[cfg(test)]
+use crate::AkitaStage1Proof;
+use crate::{AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
 
@@ -314,6 +316,7 @@ impl DigitRangePlan {
     ///
     /// Returns an error if the number of substages, rounds, polynomial degree,
     /// or child claims differs from this plan.
+    #[cfg(test)]
     pub fn validate_proof_shape<E: Field>(
         self,
         proof: &AkitaStage1Proof<E>,

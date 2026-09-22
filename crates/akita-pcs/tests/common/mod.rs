@@ -19,7 +19,6 @@ use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
     DenseType, PolynomialType, PortableStatePolicy,
 };
-use akita_serialization::{AkitaSerialize, Compress};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
@@ -71,30 +70,6 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
-}
-
-/// Canonical Stage 1 payload bytes in fold-wire order.
-pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
-where
-    FF: Field + AkitaSerialize,
-{
-    let mut bytes = Vec::new();
-    for stage in &proof.stages {
-        stage
-            .sumcheck_proof
-            .serialize_with_mode(&mut bytes, Compress::Yes)
-            .expect("serialize Stage 1 sumcheck");
-        for claim in &stage.child_claims {
-            claim
-                .serialize_with_mode(&mut bytes, Compress::Yes)
-                .expect("serialize Stage 1 child claim");
-        }
-    }
-    proof
-        .range_image_evaluation
-        .serialize_with_mode(&mut bytes, Compress::Yes)
-        .expect("serialize Stage 1 range-image claim");
-    bytes
 }
 
 /// Stable digest used by versioned protocol epochs.

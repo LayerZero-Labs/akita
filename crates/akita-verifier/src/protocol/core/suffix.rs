@@ -290,17 +290,8 @@ where
             step.output_witness_len,
             next,
             &schedule.terminal,
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "native suffix level {level} preparation failed: {error:?}"
-            ))
-        })?;
-        let output = verify_fold_native(setup, grinding, prepared).map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "native suffix level {level} replay failed: {error:?}"
-            ))
-        })?;
+        )?;
+        let output = verify_fold_native(setup, grinding, prepared)?;
         current_state = NativeSuffixVerifierState {
             opening_point: output.challenges,
             opening: output.opening,
@@ -317,7 +308,6 @@ where
         &current_state,
         &schedule.terminal,
     )
-    .map_err(|error| AkitaError::InvalidInput(format!("native terminal replay failed: {error:?}")))
 }
 
 fn verify_terminal_suffix_native<F, E>(

@@ -538,13 +538,14 @@ fn direct_edge_lower_bound(
         1,
         output_witness_len,
     )?;
-    let proof_bytes = akita_types::level_proof_bytes(
+    let proof_bytes = akita_types::native_nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits()?,
         params,
         relation_geometry,
         None,
-    )?;
+    )?
+    .encoded_len()?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),

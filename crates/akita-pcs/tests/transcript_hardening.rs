@@ -102,10 +102,34 @@ fn native_stream_binds_session_statement_basis_and_eof() {
                 "native proof ranges must cover the proof"
             );
 
-            let mut family_ranges = std::collections::BTreeMap::new();
+            let coordinate = |site: &[u8; 32], index: usize| {
+                u32::from_le_bytes(site[index..index + 4].try_into().unwrap())
+            };
+            // Choose the latest complete coordinate for each semantic role. This
+            // deliberately reaches later levels/invocations/rounds rather than
+            // treating the first message in a broad family as representative.
+            let mut role_ranges = std::collections::BTreeMap::new();
             for range in prover_ranges.iter().filter(|range| range.len != 0) {
-                let family = u32::from_le_bytes(range.context.site_id[..4].try_into().unwrap());
-                family_ranges.entry(family).or_insert(range);
+                let site = &range.context.site_id;
+                let key = (
+                    coordinate(site, 0),
+                    coordinate(site, 12),
+                    coordinate(site, 28),
+                    range.context.kind,
+                );
+                let rank = (
+                    coordinate(site, 8),
+                    coordinate(site, 4),
+                    coordinate(site, 16),
+                    coordinate(site, 20),
+                    coordinate(site, 24),
+                );
+                let replace = role_ranges
+                    .get(&key)
+                    .is_none_or(|(selected_rank, _)| rank > *selected_rank);
+                if replace {
+                    role_ranges.insert(key, (rank, range));
+                }
             }
             for family in [
                 akita_transcript::SITE_FAMILY_SUMCHECK,
@@ -116,18 +140,24 @@ fn native_stream_binds_session_statement_basis_and_eof() {
                 akita_transcript::SITE_FAMILY_TERMINAL,
             ] {
                 assert!(
-                    family_ranges.contains_key(&family),
+                    role_ranges.keys().any(|key| key.0 == family),
                     "workload must exercise native proof-message family {family}"
                 );
             }
-            for (family, range) in family_ranges {
+            assert!(
+                role_ranges.iter().any(|(key, (rank, _))| {
+                    key.0 == akita_transcript::SITE_FAMILY_SUMCHECK && rank.2 > 0
+                }),
+                "workload must exercise and mutate a later sumcheck round"
+            );
+            for ((family, stage, role, kind), (_, range)) in role_ranges {
                 let end = range.start.checked_add(range.len).expect("range end");
                 assert!(end <= proof.len(), "recorded proof range must be in bounds");
                 let mut mutated = proof.clone();
                 mutated[range.start] ^= 1;
                 assert!(
                     verify(&mutated, LABEL, opening, BasisMode::Lagrange).is_err(),
-                    "fixed-shape mutation in native family {family} must reject",
+                    "fixed-shape mutation in native family={family}, stage={stage}, role={role}, kind={kind} must reject",
                 );
             }
         }

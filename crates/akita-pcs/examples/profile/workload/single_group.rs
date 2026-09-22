@@ -1,7 +1,7 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
     degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,
-    opening_from_poly, planned_payload_bytes, profile_setup_contribution_mode, prover_claims,
+    opening_from_poly, profile_setup_contribution_mode, proof_size_budgets, prover_claims,
     random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
@@ -164,10 +164,9 @@ fn run_prove<
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(plan, group_layout),
+                proof_size_budgets::<Cfg>(plan, group_layout),
                 "planned",
                 setup_contribution_mode,
-                plan,
             );
         }
         emit_runtime_schedule_summary(
@@ -185,10 +184,9 @@ fn run_prove<
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(schedule, group_layout),
+                proof_size_budgets::<Cfg>(schedule, group_layout),
                 "runtime schedule",
                 setup_contribution_mode,
-                schedule,
             );
         }
         emit_runtime_schedule_summary(

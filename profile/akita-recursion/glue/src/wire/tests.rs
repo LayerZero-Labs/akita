@@ -326,7 +326,7 @@ fn native_proof_budget_is_derived_from_the_selected_schedule() {
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };
-    let planner_estimate = akita_schedules::expanded_schedule_proof_payload_bytes(
+    let planner_estimate = akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
         &key,
         row.schedule(),
         &akita_config::policy_of::<TestCfg>(),

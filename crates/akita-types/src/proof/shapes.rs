@@ -13,7 +13,7 @@ pub struct AkitaStage1StageShape {
     pub child_claims: usize,
 }
 
-/// Headerless shape for [`ExtensionOpeningReductionProof`].
+/// Public shape of the native extension-opening-reduction messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionOpeningReductionShape {
     /// Number of partial evaluations serialized before the sumcheck.
@@ -24,7 +24,7 @@ pub struct ExtensionOpeningReductionShape {
     pub sumcheck: SumcheckProofShape,
 }
 
-/// Headerless shape for [`SetupSumcheckProof`].
+/// Public shape of the native setup-product sumcheck messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupProductSumcheckShape {
     /// Product-sumcheck shape: one compact coefficient count per round.
@@ -110,8 +110,7 @@ impl Valid for ExtensionOpeningReductionShape {
     }
 }
 
-/// Shape descriptor for deserializing a [`TerminalLevelProof`] without
-/// headers.
+/// Public layout of a terminal level's native messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
@@ -132,7 +131,7 @@ pub enum NextWitnessBindingShape {
     TerminalInnerState,
 }
 
-/// Shape descriptor for deserializing a [`FoldLevelProof`] without headers.
+/// Public layout of one fold level's native messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
@@ -151,7 +150,7 @@ pub struct LevelProofShape {
     pub next_witness_binding: NextWitnessBindingShape,
 }
 
-/// Headerless wire shape of [`PhysicalL2NormProof`].
+/// Public layout of the native physical-L2 messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhysicalL2NormProofWireShape {
     /// Number of blockwise limb claims; zero for direct mode.
@@ -162,6 +161,7 @@ pub struct PhysicalL2NormProofWireShape {
     pub sumcheck: SumcheckProofShape,
 }
 
+#[cfg(test)]
 pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     sc.round_polys
         .iter()
@@ -169,6 +169,7 @@ pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofSh
         .collect()
 }
 
+#[cfg(test)]
 fn eq_factored_sumcheck_shape<F: Field>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
@@ -179,6 +180,7 @@ fn eq_factored_sumcheck_shape<F: Field>(
     (sc.round_polys.len(), degree)
 }
 
+#[cfg(test)]
 pub(super) fn level_proof_shape<F: Field, E: Field>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     opening_payload: &RingVec<F>,

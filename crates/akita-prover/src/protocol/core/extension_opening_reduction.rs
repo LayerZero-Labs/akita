@@ -3,10 +3,7 @@ use crate::compute::{
     ComputeBackendSetup, RootTensorSource, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 
-pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<
-    E: Field,
-    R = ExtensionOpeningReduction<E>,
-> {
+pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: Field, R> {
     pub(in crate::protocol::core) reduction: R,
     pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
 }

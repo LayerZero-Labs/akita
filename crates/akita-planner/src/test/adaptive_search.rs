@@ -255,7 +255,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        akita_schedules::expanded_schedule_proof_payload_bytes(
+        akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
             &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
             &selected.schedule,
             &policy,

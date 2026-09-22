@@ -24,7 +24,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
+    extension_opening_reduction_level_bytes, native_nonterminal_level_layout, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
     CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
@@ -802,7 +802,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         let opening_layout =
             OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
-                level_proof_bytes(
+                native_nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -815,6 +815,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
+                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -943,7 +944,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
             stage3_sumcheck_proof: None,
         };
         assert_eq!(
-                level_proof_bytes(
+                native_nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -956,6 +957,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
+                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"

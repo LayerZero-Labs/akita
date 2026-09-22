@@ -234,55 +234,36 @@ struct Stage2RoundReplay<E: Field> {
     witness_eval: E,
 }
 
-trait Stage2VerifierStream<F, E>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-{
-    fn replay(
-        &mut self,
-        input_claim: E,
-        num_rounds: usize,
-        degree_bound: usize,
-    ) -> Result<Stage2RoundReplay<E>, AkitaError>;
-}
-struct NativeStage2VerifierStream<'a, 'proof, 'plan> {
-    grinding: &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+fn replay_stage2_native<F, E>(
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
-}
-
-impl<F, E> Stage2VerifierStream<F, E> for NativeStage2VerifierStream<'_, '_, '_>
+    input_claim: E,
+    num_rounds: usize,
+    degree_bound: usize,
+) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
-    fn replay(
-        &mut self,
-        input_claim: E,
-        num_rounds: usize,
-        degree_bound: usize,
-    ) -> Result<Stage2RoundReplay<E>, AkitaError> {
-        let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
-            self.grinding,
-            akita_types::SumcheckProtocol::Stage2,
-            self.level,
-            0,
-        );
-        let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
-            &mut channel,
-            0,
-            input_claim,
-            num_rounds,
-            degree_bound,
-        )?;
-        let witness_eval =
-            akita_types::native_stage2_verifier_w_eval::<F, E>(self.grinding, self.level)?;
-        Ok(Stage2RoundReplay {
-            output_claim: replay.output_claim,
-            challenges: replay.challenges,
-            witness_eval,
-        })
-    }
+    let mut channel = akita_types::NativeGrindingSumcheckVerifier::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::Stage2,
+        level,
+        0,
+    );
+    let replay = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+        &mut channel,
+        0,
+        input_claim,
+        num_rounds,
+        degree_bound,
+    )?;
+    let witness_eval = akita_types::native_stage2_verifier_w_eval::<F, E>(grinding, level)?;
+    Ok(Stage2RoundReplay {
+        output_claim: replay.output_claim,
+        challenges: replay.challenges,
+        witness_eval,
+    })
 }
 #[allow(clippy::too_many_arguments)]
 fn validate_stage2_replay<F, E>(
@@ -372,22 +353,15 @@ where
     if prefix.prepared_points.len() != num_groups {
         return Err(AkitaError::InvalidProof);
     }
-    grinding
-        .read_fold_response(akita_types::GrindingSite::FoldResponse {
-            level: prepared.level,
-        })
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("native fold nonce receipt failed: {error:?}"))
-        })?;
+    grinding.read_fold_response(akita_types::GrindingSite::FoldResponse {
+        level: prepared.level,
+    })?;
     let group_challenges = derive_multi_group_stage1_challenges_native::<F, E>(
         grinding,
         prepared.level,
         &opening_shape,
         prepared.lp,
-    )
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("native fold challenge replay failed: {error:?}"))
-    })?;
+    )?;
     let (gamma, row_coefficient_rings) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -454,8 +428,7 @@ where
             prepared.opening_payload.clone()
         },
         role_dims,
-    )
-    .map_err(|error| AkitaError::InvalidInput(format!("relation instance failed: {error:?}")))?;
+    )?;
     if !prepared.lp.payload_mode.is_compressed() {
         relation_instance.check_v_shape_for_level(prepared.lp)?;
     }
@@ -486,16 +459,14 @@ where
         }
     }
     .map(RingVec::from_coeffs)
-    .map_err(|_| AkitaError::InvalidInput("native next-witness receipt failed".into()))?;
+    .map_err(|_| AkitaError::InvalidProof)?;
     if prepared.next_witness_ring_dim == 0
         || matches!(
             prepared.next_witness,
             NativeNextWitnessPlan::TerminalT { .. }
         ) && !next_witness.can_decode_vec(prepared.next_witness_ring_dim)
     {
-        return Err(AkitaError::InvalidInput(
-            "native next-witness shape failed".into(),
-        ));
+        return Err(AkitaError::InvalidProof);
     }
     let ring_switch_replay = RingSwitchReplay {
         setup: setup.expanded(),
@@ -510,10 +481,7 @@ where
         prepared.w_len,
         grinding,
         prepared.level,
-    )
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("native ring-switch replay failed: {error:?}"))
-    })?;
+    )?;
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         relation_rhs_layout,
         &rs.tau1,
@@ -563,10 +531,7 @@ where
         &relation_range_image_plan,
         grinding,
         prepared.level,
-    )
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("native stage-1 replay failed: {error:?}"))
-    })?;
+    )?;
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();
     if trace_domain.live_len() != prepared.w_len {
         return Err(AkitaError::InvalidSize {
@@ -649,14 +614,8 @@ where
         + opening_semantics.opening_claim()
         + stage1_replay.physical_l2_claim;
     let num_rounds = stage1_replay.stage1_point.len();
-    let stage2_replay = NativeStage2VerifierStream {
-        grinding,
-        level: prepared.level,
-    }
-    .replay(input_claim, num_rounds, 3)
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("native stage-2 stream failed: {error:?}"))
-    })?;
+    let stage2_replay =
+        replay_stage2_native::<F, E>(grinding, prepared.level, input_claim, num_rounds, 3)?;
     let (setup_claim, setup_prefix_opening) = if let Some(next_params) = prepared.stage3 {
         let setup_coefficient_bits = rs
             .relation_address_geometry
@@ -670,11 +629,8 @@ where
             setup_x_challenges,
             rs.alpha,
         )?;
-        let replay = verifier
-            .verify_stage3_native::<F>(setup, next_params, grinding, prepared.level)
-            .map_err(|error| {
-                AkitaError::InvalidInput(format!("native stage-3 replay failed: {error:?}"))
-            })?;
+        let replay =
+            verifier.verify_stage3_native::<F>(setup, next_params, grinding, prepared.level)?;
         (
             Some(replay.claim),
             Some((replay.challenges, replay.setup_prefix_eval)),
@@ -691,10 +647,7 @@ where
         setup_claim,
         opening_semantics,
         stage2_replay,
-    )
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("native stage-2 equation failed: {error:?}"))
-    })?;
+    )?;
     drop(stage2_span);
     Ok(NativeFoldVerifyOutput {
         challenges,

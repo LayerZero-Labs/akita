@@ -2,6 +2,7 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
@@ -245,27 +246,59 @@ where
 
     let mut trailing = proof.clone();
     trailing.push(0);
-    verify(&trailing, opening, label).expect_err("trailing bytes must reject");
-    verify(&proof[..proof.len() - 1], opening, label).expect_err("truncation must reject");
+    assert!(matches!(
+        verify(&trailing, opening, label),
+        Err(AkitaError::InvalidProof)
+    ));
+    assert!(matches!(
+        verify(&proof[..proof.len() - 1], opening, label),
+        Err(AkitaError::InvalidProof)
+    ));
 
     #[cfg(feature = "logging-transcript")]
     let mutation_offsets = {
-        let mut by_family = std::collections::BTreeMap::new();
+        let coordinate = |site: &[u8; 32], index: usize| {
+            u32::from_le_bytes(site[index..index + 4].try_into().unwrap())
+        };
+        let mut by_role = std::collections::BTreeMap::new();
         for range in proof_ranges.into_iter().filter(|range| range.len != 0) {
-            let family = u32::from_le_bytes(range.context.site_id[..4].try_into().unwrap());
-            by_family.entry(family).or_insert(range.start);
+            let site = &range.context.site_id;
+            let key = (
+                coordinate(site, 0),
+                coordinate(site, 12),
+                coordinate(site, 28),
+                range.context.kind,
+            );
+            let rank = (
+                coordinate(site, 8),
+                coordinate(site, 4),
+                coordinate(site, 16),
+                coordinate(site, 20),
+                coordinate(site, 24),
+            );
+            let replace = by_role
+                .get(&key)
+                .is_none_or(|(selected_rank, _)| rank > *selected_rank);
+            if replace {
+                by_role.insert(key, (rank, range.start));
+            }
         }
         assert!(
-            !by_family.is_empty(),
-            "native proof must expose fixed-shape family ranges"
+            !by_role.is_empty(),
+            "native proof must expose fixed-shape semantic-role ranges"
         );
         if Cfg::ExtField::DEGREE > 1 {
             assert!(
-                by_family.contains_key(&akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
+                by_role
+                    .keys()
+                    .any(|key| key.0 == akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
                 "extension-field workload must exercise native EOR messages"
             );
         }
-        by_family.into_values().collect::<Vec<_>>()
+        by_role
+            .into_values()
+            .map(|(_, offset)| offset)
+            .collect::<Vec<_>>()
     };
     #[cfg(not(feature = "logging-transcript"))]
     let mutation_offsets = vec![
@@ -282,8 +315,8 @@ where
             verify(&malformed, opening, label)
         }));
         assert!(
-            matches!(outcome, Ok(Err(_))),
-            "mutated native proof must reject without panicking"
+            matches!(outcome, Ok(Err(AkitaError::InvalidProof))),
+            "mutated native proof at offset {offset} must be classified as InvalidProof: {outcome:?}"
         );
     }
 }

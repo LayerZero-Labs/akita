@@ -586,13 +586,13 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
-                let adapted_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let adapted_bytes = akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
                     &key,
                     &adapted.schedule,
                     &policy,
                 )
                 .expect("adapted payload bytes");
-                let full_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let full_bytes = akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
                     &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");

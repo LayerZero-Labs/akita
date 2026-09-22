@@ -19,7 +19,6 @@ use akita_algebra::CyclotomicRing;
 use akita_config::{transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::SumcheckProof;
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
@@ -29,23 +28,14 @@ use akita_types::{
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaExpandedSetup,
-    BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec,
-    SetupContributionMode, SetupPrefixProverRegistry, TerminalFoldParams, TerminalLevelProof,
+    BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs, FoldParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    RingVec, SetupContributionMode, SetupPrefixProverRegistry, TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
 
 use std::sync::Arc;
-
-pub(in crate::protocol) struct ExtensionOpeningReduction<E: Field> {
-    pub(in crate::protocol) proof: ExtensionOpeningReductionProof<E>,
-    /// One transparent factor evaluation per opening group. The application
-    /// batches the proof's terminal claims only after the complete opening
-    /// payload is fixed.
-    pub(in crate::protocol) final_factors: Vec<E>,
-}
 
 #[derive(Clone, Copy)]
 pub(in crate::protocol) struct ExtensionOpeningReductionBinding<'a, E: Field> {
@@ -53,12 +43,12 @@ pub(in crate::protocol) struct ExtensionOpeningReductionBinding<'a, E: Field> {
     pub(in crate::protocol) final_factors: &'a [E],
 }
 
-impl<'a, E: Field> From<&'a ExtensionOpeningReduction<E>>
+impl<'a, E: Field> From<&'a NativeExtensionOpeningReduction<E>>
     for ExtensionOpeningReductionBinding<'a, E>
 {
-    fn from(reduction: &'a ExtensionOpeningReduction<E>) -> Self {
+    fn from(reduction: &'a NativeExtensionOpeningReduction<E>) -> Self {
         Self {
-            final_claims: &reduction.proof.final_claims,
+            final_claims: &reduction.final_claims,
             final_factors: &reduction.final_factors,
         }
     }
@@ -96,27 +86,8 @@ pub(crate) use root_group::{
 };
 pub use suffix::SuffixProverState;
 
-/// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: Field, E: Field, S> {
-    /// Fold proof produced at this level.
-    pub level_proof: FoldLevelProof<F, E>,
-    /// Suffix prover state for the next level.
-    pub next_state: SuffixProverState<F, E, S>,
-}
-
 pub struct NativeProveLevelOutput<F: Field, E: Field, S> {
     pub next_state: SuffixProverState<F, E, S>,
-}
-
-/// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
-    /// Non-terminal recursive folds following the root.
-    pub recursive_folds: Vec<FoldLevelProof<F, E>>,
-    /// Required terminal fold.
-    pub terminal: TerminalLevelProof<F, E>,
-    /// Total fold-level count reached, including the root level and the
-    /// terminal level.
-    pub num_levels: usize,
 }
 
 pub struct NativeRecursiveSuffixOutcome {

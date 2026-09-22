@@ -628,13 +628,14 @@ pub fn nonterminal_level_payload_bytes(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let direct = akita_types::level_proof_bytes(
+    let direct = akita_types::native_nonterminal_level_layout(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
         relation_geometry,
         next_outer_payload,
-    )?;
+    )?
+    .encoded_len()?;
     let eor = if matches!(
         params.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
@@ -756,7 +757,7 @@ fn expanded_schedule_proof_components(
 /// This intentionally retains main's aggregate packed nonce objective and may
 /// use a tighter planner-only terminal estimate. It is not a native parser
 /// bound.
-pub fn expanded_schedule_proof_payload_bytes(
+pub fn expanded_schedule_packed_proof_estimate_bytes(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,

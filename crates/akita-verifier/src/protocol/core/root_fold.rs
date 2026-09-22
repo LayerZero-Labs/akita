@@ -157,5 +157,4 @@ where
             evaluation_trace_basis: basis,
         },
     )
-    .map_err(|error| AkitaError::InvalidInput(format!("native root fold failed: {error:?}")))
 }

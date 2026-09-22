@@ -1,6 +1,6 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
+    onehot_lagrange_opening, proof_size_budgets, prover_claims, random_claim_point,
     report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
@@ -168,10 +168,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(plan, group_layout),
+            proof_size_budgets::<Cfg>(plan, group_layout),
             "planned",
             setup_contribution_mode,
-            plan,
         );
         emit_runtime_schedule_summary(
             label,
@@ -186,10 +185,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(&schedule, group_layout),
+            proof_size_budgets::<Cfg>(&schedule, group_layout),
             "runtime schedule",
             setup_contribution_mode,
-            &schedule,
         );
         emit_runtime_schedule_summary(
             label,

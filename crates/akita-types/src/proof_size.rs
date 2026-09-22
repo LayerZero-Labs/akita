@@ -2,7 +2,7 @@
 //! offline planner DP, the schedule selector, and profiling tooling.
 //!
 //! This is the single source of truth for direct-mode per-level proof-byte accounting:
-//! [`level_proof_bytes`] scores one fold level. It is not on the
+//! [`native_nonterminal_level_layout`] describes one fold level. It is not on the
 //! prover/verifier replay path. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
@@ -49,7 +49,31 @@ fn stage1_proof_bytes(
     Ok(stages_bytes + elem_bytes + norm_bytes)
 }
 
-/// Header-stripped byte size of one non-terminal folded proof level.
+/// Immutable byte layout of one non-terminal native proof level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeNonterminalLevelLayout {
+    opening_payload_bytes: usize,
+    stage1_bytes: usize,
+    stage2_bytes: usize,
+    next_witness_bytes: usize,
+    next_witness_evaluation_bytes: usize,
+}
+
+impl NativeNonterminalLevelLayout {
+    /// Maximum fixed-width bytes emitted by this level.
+    pub fn encoded_len(self) -> Result<usize, AkitaError> {
+        akita_error::checked::sum([
+            self.opening_payload_bytes,
+            self.stage1_bytes,
+            self.stage2_bytes,
+            self.next_witness_bytes,
+            self.next_witness_evaluation_bytes,
+        ])
+        .ok_or_else(|| AkitaError::InvalidSetup("native level byte size overflow".into()))
+    }
+}
+
+/// Derive the fixed-width native message layout of one non-terminal fold level.
 ///
 /// Compressed D and B images serialize as fixed-size base-field payloads.
 /// Sumcheck objects and scalar evaluations serialize over the challenge field,
@@ -74,15 +98,22 @@ fn stage1_proof_bytes(
 ///
 /// # Errors
 ///
+/// The layout is derived from the same commitment geometry, digit-range stage
+/// shapes, physical-L2 route, and public sumcheck degree used by native
+/// emission and receipt. Variable-width nonce and terminal-response messages
+/// are deliberately owned by their separate native layouts.
+///
+/// # Errors
+///
 /// Returns an error when a commitment payload or digit-range shape is invalid,
 /// overflows, or disagrees with the selected base-field profile.
-pub fn level_proof_bytes(
+pub fn native_nonterminal_level_layout(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &CommittedGroupParams,
     relation_geometry: RelationAddressGeometry,
     next_outer_payload: Option<&CommittedGroupParams>,
-) -> Result<usize, AkitaError> {
+) -> Result<NativeNonterminalLevelLayout, AkitaError> {
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = relation_geometry.relation_point_variable_count();
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
@@ -107,7 +138,13 @@ pub fn level_proof_bytes(
         challenge_elem_bytes,
         lp.inner().matrix.security_route(),
     )?;
-    Ok(v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes)
+    Ok(NativeNonterminalLevelLayout {
+        opening_payload_bytes: v_bytes,
+        stage1_bytes,
+        stage2_bytes: sumcheck,
+        next_witness_bytes: next_commit_bytes,
+        next_witness_evaluation_bytes: next_eval_bytes,
+    })
 }
 
 fn payload_bytes(
@@ -131,7 +168,7 @@ fn payload_bytes(
 /// sumcheck payload (`SetupSumcheckProof`) for one non-terminal fold level.
 ///
 /// This is the proof-size overhead that `SetupContributionMode::Recursive`
-/// adds on top of the direct-mode payload priced by [`level_proof_bytes`]. It
+/// adds on top of the direct-mode payload priced by [`native_nonterminal_level_layout`]. It
 /// is added to the direct fold payload before the planner compares direct and
 /// offloaded successor edges.
 ///
@@ -160,7 +197,7 @@ pub fn stage3_setup_product_bytes(
 mod tests {
     //! End-to-end byte-formula tests: build a synthetic proof body via the
     //! runtime serializer and compare its size against the
-    //! [`level_proof_bytes`] formula at every supported log_basis.
+    //! native fixed-message layout at every supported log_basis.
 
     use super::*;
 
@@ -223,13 +260,14 @@ mod tests {
             successor_ring_dimension,
             output_witness_len,
         )?;
-        level_proof_bytes(
+        native_nonterminal_level_layout(
             base_field_bits,
             challenge_field_bits,
             lp,
             relation_geometry,
             next_outer_payload,
         )
+        .and_then(NativeNonterminalLevelLayout::encoded_len)
     }
 
     fn terminal_response_fixture(
@@ -566,7 +604,7 @@ mod tests {
         assert!(successor_padded_terminal_eor > stale_terminal_eor);
 
         assert_eq!(
-            level_proof_bytes(
+            native_nonterminal_level_layout(
                 128,
                 128,
                 &current,
@@ -580,6 +618,7 @@ mod tests {
                     .unwrap(),
                 Some(&successor),
             )
+            .and_then(NativeNonterminalLevelLayout::encoded_len)
             .unwrap(),
             exact_level_proof_bytes::<F, F>(
                 &current,
@@ -872,7 +911,7 @@ mod tests {
     fn stage3_payload_is_additive_over_direct_level_bytes() {
         // The recursive stage-3 setup-product proof is pure overhead layered on
         // top of the direct-mode payload: a level proof carrying it must
-        // serialize to exactly the direct `level_proof_bytes` plus
+        // serialize to exactly the direct native level layout plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);

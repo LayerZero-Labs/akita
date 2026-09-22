@@ -32,7 +32,7 @@ struct NativeStage1ProveOutput<E: Field> {
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
 }
 
-struct Stage2ProveOutput<E: Field, P = SumcheckProof<E>> {
+struct Stage2ProveOutput<E: Field, P> {
     proof: P,
     challenges: Vec<E>,
     prover: RelationRangeImageProver<E>,
@@ -46,8 +46,6 @@ pub(in crate::protocol::core) use single_field::prepare_single_field_fold_native
 pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
-    pub(in crate::protocol::core) extension_opening_reduction:
-        Option<ExtensionOpeningReductionProof<E>>,
     pub(in crate::protocol::core) evaluation_trace_claim: E,
     pub(in crate::protocol::core) relation_groups:
         Vec<crate::protocol::ring_relation::PreparedRelationGroup<F, E>>,
@@ -206,7 +204,6 @@ where
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
     })?;
-    let extension_opening_reduction = None;
     let evaluation_trace_claim_coefficients = trace_claim.claim_coefficients;
     let clear_recursive_trace = bind_protocol_points && !level_params.has_preceding_groups();
     let row_coefficients = if clear_recursive_trace {
@@ -217,7 +214,6 @@ where
     Ok(PreparedFold {
         instance,
         witness,
-        extension_opening_reduction,
         evaluation_trace_claim: trace_claim.claimed_evaluation,
         relation_groups,
         evaluation_trace_claim_coefficients,
@@ -586,16 +582,12 @@ where
     let PreparedFold {
         instance,
         witness,
-        extension_opening_reduction,
         evaluation_trace_claim,
         relation_groups,
         evaluation_trace_claim_coefficients,
         evaluation_trace_basis,
         row_coefficients,
     } = prepared_fold;
-    if extension_opening_reduction.is_some() {
-        return Err(AkitaError::InvalidProof);
-    }
     let level_u32 = u32::try_from(level)
         .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
