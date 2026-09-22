@@ -56,14 +56,20 @@ impl BinaryField162 {
         std::array::from_fn(|i| (self.0[i / 8] >> (8 * (i % 8))) as u8)
     }
 
-    /// Square by interleaving zero bits, without a multiplication kernel.
+    /// Square this element.
+    ///
+    /// Hardware backends use three carryless products because cross terms
+    /// vanish in characteristic two. Other targets use portable bit spreading.
     pub fn square(self) -> Self {
-        let mut product = [0; 6];
-        for (i, word) in self.0.into_iter().enumerate() {
-            product[2 * i] = spread(word as u32);
-            product[2 * i + 1] = spread((word >> 32) as u32);
-        }
-        Self::reduce(product)
+        product::kernels().square(self)
+    }
+
+    /// Return the sum of pairwise products, or `None` when the lengths differ.
+    ///
+    /// The implementation accumulates unreduced products and performs one
+    /// final reduction. Runtime feature detection occurs before the inner loop.
+    pub fn dot_product(lhs: &[Self], rhs: &[Self]) -> Option<Self> {
+        (lhs.len() == rhs.len()).then(|| product::kernels().dot_product(lhs, rhs))
     }
 
     /// Multiplicative inverse, or `None` for zero.
@@ -74,54 +80,16 @@ impl BinaryField162 {
         if self == Self::ZERO {
             return None;
         }
-        let mut power = self;
-        let mut power32 = self;
-        for width in [1, 2, 4, 8, 16, 32, 64] {
-            power = power.square_n(width) * power;
-            if width == 16 {
-                power32 = power;
-            }
-        }
-        power = power.square_n(32) * power32;
-        power = power.square() * self;
-        Some(power.square())
+        Some(product::kernels().inverse(self))
     }
 
+    #[cfg(test)]
     fn square_n(mut self, count: usize) -> Self {
         for _ in 0..count {
             self = self.square();
         }
         self
     }
-
-    fn reduce(p: [u64; 6]) -> Self {
-        // Write P=L+X^162 H, then use X^162=X^81+1 twice.
-        // H has degree <=160, so the second high part has degree <=79.
-        let h = [
-            (p[2] >> 34) | (p[3] << 30),
-            (p[3] >> 34) | (p[4] << 30),
-            (p[4] >> 34) | (p[5] << 30),
-        ];
-        let j = [
-            h[0] ^ (h[1] >> 17) ^ (h[2] << 47),
-            h[1] ^ (h[2] >> 17),
-            h[2],
-        ];
-        Self([
-            p[0] ^ j[0],
-            p[1] ^ j[1] ^ (j[0] << 17),
-            (p[2] ^ j[2] ^ (j[0] >> 47) ^ (j[1] << 17)) & Self::TOP_MASK,
-        ])
-    }
-}
-
-fn spread(value: u32) -> u64 {
-    let mut x = u64::from(value);
-    x = (x | (x << 16)) & 0x0000_ffff_0000_ffff;
-    x = (x | (x << 8)) & 0x00ff_00ff_00ff_00ff;
-    x = (x | (x << 4)) & 0x0f0f_0f0f_0f0f_0f0f;
-    x = (x | (x << 2)) & 0x3333_3333_3333_3333;
-    (x | (x << 1)) & 0x5555_5555_5555_5555
 }
 
 impl Add for BinaryField162 {
@@ -146,7 +114,7 @@ impl Mul for BinaryField162 {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self {
-        Self::reduce(product::multiply(self.0, rhs.0))
+        product::kernels().multiply(self, rhs)
     }
 }
 

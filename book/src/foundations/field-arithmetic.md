@@ -245,11 +245,18 @@ The canonical encoding contains 21 little-endian bytes, with the top six bits
 zero. Decoding rejects other lengths and nonzero unused bits. Multiplication
 uses six carryless word products and two reduction folds. Runtime dispatch
 selects PMULL on supported ARM CPUs or PCLMUL on supported x86-64 CPUs; a
-portable kernel remains available on other CPUs. Squaring interleaves zero
-bits, and inversion uses an addition chain with nine multiplications and
-returns `None` for zero.
+portable kernel remains available on other CPUs. Hardware multiplication fuses
+the polynomial product and reduction so the six-word intermediate does not
+cross a function boundary. Hardware squaring needs three carryless products;
+the portable kernel interleaves zero bits instead. Inversion uses an addition
+chain with nine multiplications and returns `None` for zero.
+
+`BinaryField162::dot_product` XOR-accumulates unreduced pairwise products and
+reduces once. It returns `None` when the input lengths differ. The x86-64
+backend processes two pairs per VPCLMUL instruction when AVX2 and VPCLMULQDQ
+are available; all backends produce the same canonical field element.
 
 The implementation and its independent bit-convolution tests live in
 `crates/akita-algebra/src/binary.rs` and `crates/akita-algebra/src/binary/`.
-The existing `crt_ntt_ops` Criterion target includes `binary162` multiplication,
-squaring and inversion benchmarks.
+The `binary162` Criterion target covers scalar multiplication, squaring,
+inversion, deferred-reduction dot products, and multiply-then-sum comparisons.

@@ -53,9 +53,73 @@ fn products_match_independent_polynomial_oracle() {
         for b in &values {
             let expected = oracle(*a, *b);
             assert_eq!(*a * *b, expected);
-            assert_eq!(F::reduce(product::portable_product(a.0, b.0)), expected);
+            assert_eq!(product::portable_multiply(*a, *b), expected);
+        }
+        assert_eq!(product::portable_square(*a), oracle(*a, *a));
+    }
+}
+
+#[test]
+fn dot_products_match_independent_sum_of_products() {
+    let mut lhs = Vec::new();
+    let mut rhs = Vec::new();
+    let mut state = 0x1234_5678_9abc_def0u64;
+    for i in 0..33 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        lhs.push(F::from_words([state, state.rotate_left(23), state & F::TOP_MASK]).unwrap());
+        rhs.push(
+            F::from_words([
+                state.rotate_right(9) ^ i,
+                state.wrapping_mul(0x9e37_79b9_7f4a_7c15),
+                state.rotate_left(7) & F::TOP_MASK,
+            ])
+            .unwrap(),
+        );
+    }
+
+    for len in [0, 1, 2, 3, 8, 9, 32, 33] {
+        let expected = lhs[..len]
+            .iter()
+            .zip(&rhs[..len])
+            .fold(F::ZERO, |sum, (&a, &b)| sum + oracle(a, b));
+        assert_eq!(F::dot_product(&lhs[..len], &rhs[..len]), Some(expected));
+        assert_eq!(
+            product::portable_dot_product(&lhs[..len], &rhs[..len]),
+            expected
+        );
+
+        #[cfg(target_arch = "aarch64")]
+        if std::arch::is_aarch64_feature_detected!("aes") {
+            // SAFETY: the feature check establishes PMULL support.
+            assert_eq!(
+                unsafe { product::arm_dot_product(&lhs[..len], &rhs[..len]) },
+                expected
+            );
+        }
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("pclmulqdq") {
+            // SAFETY: the feature check establishes PCLMUL support.
+            assert_eq!(
+                unsafe { product::x86_dot_product(&lhs[..len], &rhs[..len]) },
+                expected
+            );
+        }
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("pclmulqdq")
+            && std::arch::is_x86_feature_detected!("avx2")
+            && std::arch::is_x86_feature_detected!("vpclmulqdq")
+        {
+            // SAFETY: the feature checks establish every vector-kernel requirement.
+            assert_eq!(
+                unsafe { product::x86_dot_product_vec2(&lhs[..len], &rhs[..len]) },
+                expected
+            );
         }
     }
+
+    assert_eq!(F::dot_product(&lhs[..2], &rhs[..3]), None);
 }
 
 #[test]
