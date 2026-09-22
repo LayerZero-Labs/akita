@@ -13,6 +13,7 @@ pub mod cost;
 pub mod error;
 pub mod euclidean;
 pub mod euclidean_width_table;
+pub mod labinius_width_table;
 pub mod lattice;
 pub mod math;
 pub mod numeric;
@@ -37,7 +38,8 @@ pub use cost::{CostValue, EstimateTag, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};
 pub use numeric::{GoldenTrust, NumericBackend, NumericConfig, Probability};
 pub use params::{
-    akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameterUpdate, SisParameters,
+    akita_q128, akita_q32, akita_q64, labinius_q64, Bound, SisNorm, SisParameterUpdate,
+    SisParameters,
 };
 pub use schedule_security::{
     estimate_schedule_security, ScheduleSecurityEstimate, ScheduleSisBound,

@@ -14,6 +14,12 @@ pub enum AkitaModulusProfileId {
     Q32Offset99,
     /// `2^64 - 59`.
     Q64Offset59,
+    /// LaBinius coefficient prime `2^64 - 23703`.
+    ///
+    /// This profile is available to the offline estimator. It is deliberately
+    /// absent from Akita's native power-of-two runtime dispatch: the binary
+    /// protocol uses non-native cyclotomic degrees and has no live schedule yet.
+    Q64Offset23703,
     /// `2^128 - (2^32 - 22537)`.
     Q128OffsetA7F7,
 }
@@ -28,6 +34,7 @@ impl AkitaModulusProfileId {
         match label {
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
+            "q64-labinius" | "Q64Offset23703" => Ok(Self::Q64Offset23703),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             _ => Err(EstimatorError::InvalidParameter {
                 field: "modulus_profile",
@@ -42,6 +49,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => akita_q32(),
             Self::Q64Offset59 => akita_q64(),
+            Self::Q64Offset23703 => crate::params::labinius_q64(),
             Self::Q128OffsetA7F7 => akita_q128(),
         }
     }
@@ -52,6 +60,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => "q32",
             Self::Q64Offset59 => "q64",
+            Self::Q64Offset23703 => "q64-labinius",
             Self::Q128OffsetA7F7 => "q128",
         }
     }

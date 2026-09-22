@@ -124,6 +124,104 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
+### Staged LaBinius binary-source cells
+
+Akita also carries an offline audit artifact for the binary rings proposed by
+LaBinius. This artifact prepares exact SIS arithmetic and estimator cells; it
+does not add a binary proving protocol, a planner route, a schedule, a native
+power-of-two ring profile, or verifier admission. A missing staged cell is
+reported as missing. It is never synthesized or admitted by the live runtime.
+
+The staged coefficient primes are
+
+```text
+p64-23703 = 2^64 - 23703
+p128-a7f7 = 2^128 - (2^32 - 22537).
+```
+
+The binary ring degrees are 162, 324, and 648 over a degree-162 scalar
+component, and 486, 972, and 1944 over a degree-486 scalar component. Packing
+does not change estimator scalarization: for module rank `r` and ring width
+`w`, the estimator uses `n = r * D` and `m = w * D` for the actual ring degree
+`D`.
+
+Source comparisons use one identity consisting of the coefficient prime, the
+actual binary ring degree, and a versioned digest of the matrix view and
+coefficient addressing. For an occurrence `u`, let `B_u` bound its numerator
+coefficients and let `K_u` bound coefficient-infinity-norm multiplication by
+its extracted slack. Comparing occurrences `u` and `v` uses the exact checked
+integer bound
+
+```text
+eta(u, v) = K_v * B_u + K_u * B_v.
+```
+
+The source-class bound is the maximum over every pair, including each diagonal
+pair. A binary extraction with accepted response interval diameter `Delta` and
+independently certified challenge multiplication bound `Gamma` has
+`B = Delta` and `K = 2 * Gamma`; its diagonal is therefore
+`eta = 4 * Gamma * Delta`. A canonical known source with coefficient bound
+`B_0` has `K = 1`, so its comparison with that extraction is
+`Delta + 2 * Gamma * B_0`. Zero bounds remain valid inputs. All arithmetic is
+checked, and a comparison is valid only when the exact integer result satisfies
+the strict no-wrap condition `eta < P`. Thus `eta = P - 1` is valid and
+`eta = P` is rejected.
+
+The checked-in staged artifact uses the same
+`Quantum128BitADPS16` policy and `akita-infinity-width-v4` boundary evaluator as
+the production infinity table. It contains fixed-weight and bounded-weight
+source labels for the degree-162 family with 16-bit and 32-bit response
+diameters, and fixed-weight labels for the degree-486 family with both
+diameters. The exact collision bounds are:
+
+| Source label | `Gamma` | `Delta` | `eta = 4 * Gamma * Delta` |
+| --- | ---: | ---: | ---: |
+| `phi243-bounded-w46-delta16` | 92 | `2^16 - 1` | 24,116,880 |
+| `phi243-fixed-w47-delta16` | 94 | `2^16 - 1` | 24,641,160 |
+| `phi243-bounded-w46-delta32` | 92 | `2^32 - 1` | 1,580,547,964,560 |
+| `phi243-fixed-w47-delta32` | 94 | `2^32 - 1` | 1,614,907,702,920 |
+| `phi729-fixed-w25-delta16` | 50 | `2^16 - 1` | 13,107,000 |
+| `phi729-fixed-w25-delta32` | 50 | `2^32 - 1` | 858,993,459,000 |
+
+Challenge families, exact cardinalities, entropy checks, sign rules, and
+sampling remain the responsibility of `akita-challenges`; the SIS foundation
+accepts the certified multiplication bound and does not duplicate those
+rules.
+
+Every published row has a positive exact cutoff, an accepted boundary
+certificate, and a certificate rejecting the immediate successor. A cost such
+as `above-target:128.26` is a certified lower bound from the pruned search, not
+an asserted exact attack cost. Zero-width candidates and candidates that remain
+secure through the search cap are omitted because they do not establish both
+sides of an exact boundary. The default narrow coverage therefore omits the
+cap-limited p128 degree-1944 cells and two low-bound, high-degree cells. An
+explicit command-line selection still evaluates those origins and reports only
+the exact rows it can certify.
+
+Regenerate the staged artifact with bounded parallelism:
+
+```bash
+RAYON_NUM_THREADS=2 cargo run --release -p akita-sis-estimator \
+  --features parallel --example labinius_infinity_width_table
+```
+
+The result is
+`crates/akita-sis-estimator/data/labinius_infinity_width.csv`. Its offline
+lookup validates the evaluator identity, policy row values, exact boundary
+certificates, and rejected successors before returning a cell. The generator
+accepts `--profiles`, `--dims`, `--source-profiles`, `--max-rank`, and
+`--search-cap` for focused audits. These flags do not enable a live schedule.
+
+**Implementation map**
+
+- Source identities and no-wrap accounting:
+  `crates/akita-types/src/sis/labinius.rs` and `norm_bound.rs`.
+- Offline generation and artifact lookup:
+  `crates/akita-sis-estimator/examples/labinius_infinity_width_table.rs` and
+  `src/labinius_width_table.rs`.
+- Certified staged rows:
+  `crates/akita-sis-estimator/data/labinius_infinity_width.csv`.
+
 ### Quantum policy
 
 The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
