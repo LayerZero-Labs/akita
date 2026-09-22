@@ -47,7 +47,9 @@ pub(super) fn kernels() -> &'static Kernels {
 
 fn detect() -> Kernels {
     #[cfg(target_arch = "aarch64")]
-    if std::arch::is_aarch64_feature_detected!("aes") {
+    if std::arch::is_aarch64_feature_detected!("aes")
+        && std::arch::is_aarch64_feature_detected!("pmull")
+    {
         return Kernels {
             multiply: |a, b| {
                 // SAFETY: this closure is installed only after detecting PMULL.

@@ -91,8 +91,10 @@ fn dot_products_match_independent_sum_of_products() {
         );
 
         #[cfg(target_arch = "aarch64")]
-        if std::arch::is_aarch64_feature_detected!("aes") {
-            // SAFETY: the feature check establishes PMULL support.
+        if std::arch::is_aarch64_feature_detected!("aes")
+            && std::arch::is_aarch64_feature_detected!("pmull")
+        {
+            // SAFETY: the feature checks establish every kernel requirement.
             assert_eq!(
                 unsafe { product::arm_dot_product(&lhs[..len], &rhs[..len]) },
                 expected
