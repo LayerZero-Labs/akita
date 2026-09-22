@@ -96,6 +96,13 @@ fn bench_binary_batch(c: &mut Criterion) {
             ),
         ),
         (
+            "d162_bounded_w47",
+            BinaryChallengeSampler::new(
+                BinaryChallengeProfile::bounded_weight(BinaryScalarRing::Cyclotomic243, 47)
+                    .expect("degree-162 bounded-weight equal-cap profile"),
+            ),
+        ),
+        (
             "d486_fixed_w25",
             BinaryChallengeSampler::new(
                 BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic729, 25)

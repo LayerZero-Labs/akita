@@ -1,103 +1,69 @@
 use num_bigint::BigUint;
 
-/// Exact cumulative binomial table `A(n, t) = sum_{j <= t} binom(n, j)`.
+/// Exact cumulative row `A(t) = sum_{j <= t} binom(degree, j)`.
 #[derive(Debug)]
-pub(super) struct CumulativeBinomialTable {
-    degree: usize,
-    entries: Vec<BigUint>,
+pub(super) struct BinomialCdfRow {
+    cumulative: Vec<BigUint>,
 }
 
-impl CumulativeBinomialTable {
+impl BinomialCdfRow {
     pub(super) fn new(degree: usize) -> Self {
-        let entry_count = (degree + 1) * (degree + 2) / 2;
-        let mut table = Self {
-            degree,
-            entries: vec![BigUint::from(0u8); entry_count],
-        };
-        table.entries[0] = BigUint::from(1u8);
-        for n in 1..=degree {
-            let zero = table.index(n, 0);
-            table.entries[zero] = BigUint::from(1u8);
-            for cap in 1..n {
-                let value = table.ball(n - 1, cap) + table.ball(n - 1, cap - 1);
-                let index = table.index(n, cap);
-                table.entries[index] = value;
-            }
-            let full = table.index(n, n);
-            table.entries[full] = BigUint::from(1u8) << n;
+        let mut cumulative = Vec::with_capacity(degree + 1);
+        let mut shell = BigUint::from(1u8);
+        let mut total = shell.clone();
+        cumulative.push(total.clone());
+        for weight in 1..=degree {
+            shell *= degree - weight + 1;
+            shell /= weight;
+            total += &shell;
+            cumulative.push(total.clone());
         }
-        table
+        Self { cumulative }
     }
 
-    fn index(&self, n: usize, cap: usize) -> usize {
-        n * (n + 1) / 2 + cap
+    pub(super) fn ball(&self, cap: usize) -> &BigUint {
+        &self.cumulative[cap.min(self.cumulative.len() - 1)]
     }
 
-    pub(super) fn ball(&self, n: usize, cap: usize) -> &BigUint {
-        let capped = cap.min(n);
-        &self.entries[self.index(n, capped)]
+    pub(super) fn binomial(&self, weight: usize) -> BigUint {
+        match weight {
+            0 => BigUint::from(1u8),
+            weight if weight < self.cumulative.len() => self.ball(weight) - self.ball(weight - 1),
+            _ => BigUint::from(0u8),
+        }
     }
 
-    pub(super) fn binomial(&self, n: usize, weight: usize) -> BigUint {
-        if weight > n {
-            return BigUint::from(0u8);
-        }
-        if weight == 0 {
-            return BigUint::from(1u8);
-        }
-        self.ball(n, weight) - self.ball(n, weight - 1)
-    }
-
-    pub(super) fn unrank_ball_into(
-        &self,
-        rank: &mut BigUint,
-        mut cap: usize,
-        support: &mut Vec<u16>,
-    ) {
-        debug_assert!(*rank < *self.ball(self.degree, cap));
-        support.clear();
-        for position in 0..self.degree {
-            if cap == 0 {
-                break;
-            }
-            let remaining_after = self.degree - position - 1;
-            let omitted = self.ball(remaining_after, cap);
-            if *rank >= *omitted {
-                *rank -= omitted;
-                support.push(position as u16);
-                cap -= 1;
-            }
-        }
-        debug_assert_eq!(*rank, BigUint::from(0u8));
+    /// Select the unique shell containing `rank` in the ball through `cap`.
+    pub(super) fn weight_for_ball_rank(&self, rank: &BigUint, cap: usize) -> usize {
+        debug_assert!(rank < self.ball(cap));
+        self.cumulative[..=cap].partition_point(|boundary| boundary <= rank)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
 
     #[test]
-    fn tiny_ball_unranking_is_a_bijection_onto_the_whole_ball() {
+    fn tiny_cdf_and_shell_partition_match_exhaustive_subsets() {
         for degree in 1usize..=8 {
-            let table = CumulativeBinomialTable::new(degree);
+            let row = BinomialCdfRow::new(degree);
             for cap in 0..=degree {
-                let cardinality = table.ball(degree, cap).clone();
-                let count = cardinality.to_u64_digits().first().copied().unwrap_or(0);
-                let mut actual = BTreeSet::new();
-                let mut support = Vec::new();
-                for rank in 0..count {
-                    let mut rank = BigUint::from(rank);
-                    table.unrank_ball_into(&mut rank, cap, &mut support);
-                    let mask = support
-                        .iter()
-                        .fold(0u16, |mask, &position| mask | (1 << position));
-                    assert!(actual.insert(mask));
+                let mut expected_shells = vec![0u64; cap + 1];
+                for mask in 0u16..(1u16 << degree) {
+                    let weight = mask.count_ones() as usize;
+                    if weight <= cap {
+                        expected_shells[weight] += 1;
+                    }
                 }
-                let expected = (0u16..(1u16 << degree))
-                    .filter(|mask| mask.count_ones() as usize <= cap)
-                    .collect::<BTreeSet<_>>();
-                assert_eq!(actual, expected, "degree={degree}, cap={cap}");
+                let expected_total = expected_shells.iter().sum::<u64>();
+                assert_eq!(row.ball(cap), &BigUint::from(expected_total));
+
+                let mut actual_shells = vec![0u64; cap + 1];
+                for rank in 0..expected_total {
+                    actual_shells[row.weight_for_ball_rank(&BigUint::from(rank), cap)] += 1;
+                }
+                assert_eq!(actual_shells, expected_shells, "degree={degree}, cap={cap}");
             }
         }
     }

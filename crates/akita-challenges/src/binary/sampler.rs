@@ -10,12 +10,12 @@ use crate::sampler::{
 
 use super::{BinaryChallenge, BinaryChallengeFamily, BinaryChallengeProfile, INLINE_BINARY_WEIGHT};
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"akita/labinius/binary-challenge/v1";
+const TRANSCRIPT_DOMAIN: &[u8] = b"akita/labinius/binary-challenge/v2";
 
 /// Reusable exact sampler for one binary challenge profile.
 pub struct BinaryChallengeSampler {
     profile: BinaryChallengeProfile,
-    uniform_rank_bits: usize,
+    bounded_rank_bits: usize,
     scratch: BinarySamplingScratch,
 }
 
@@ -24,14 +24,20 @@ impl BinaryChallengeSampler {
     #[inline]
     #[must_use]
     pub fn new(profile: BinaryChallengeProfile) -> Self {
-        let uniform_rank_bits = if profile.cardinality() == &BigUint::from(1u8) {
-            0
-        } else {
-            (profile.cardinality() - BigUint::from(1u8)).bits() as usize
+        let bounded_rank_bits = match profile.family() {
+            BinaryChallengeFamily::FixedWeight => 0,
+            BinaryChallengeFamily::BoundedWeight
+                if profile.cardinality() == &BigUint::from(1u8) =>
+            {
+                0
+            }
+            BinaryChallengeFamily::BoundedWeight => {
+                (profile.cardinality() - BigUint::from(1u8)).bits() as usize
+            }
         };
         Self {
             profile,
-            uniform_rank_bits,
+            bounded_rank_bits,
             scratch: BinarySamplingScratch::new(),
         }
     }
@@ -105,7 +111,7 @@ impl BinaryChallengeSampler {
                 .cursor
                 .reset_indexed_prefix(&prefix, coordinate);
             self.scratch
-                .sample_support(&self.profile, self.uniform_rank_bits)?;
+                .sample_support(&self.profile, self.bounded_rank_bits)?;
             challenges.push(BinaryChallenge::from_support(
                 &self.profile,
                 &self.scratch.support,
@@ -147,44 +153,43 @@ impl BinarySamplingScratch {
     fn sample_support(
         &mut self,
         profile: &BinaryChallengeProfile,
-        uniform_rank_bits: usize,
+        bounded_rank_bits: usize,
     ) -> Result<(), AkitaError> {
         match profile.family() {
-            BinaryChallengeFamily::FixedWeight => self.sample_fixed(profile),
+            BinaryChallengeFamily::FixedWeight => {
+                self.sample_weight(profile.scalar_ring().degree(), profile.weight_cap())
+            }
             BinaryChallengeFamily::BoundedWeight => {
                 uniform_biguint_below(
                     &mut self.cursor,
                     profile.cardinality(),
-                    uniform_rank_bits,
+                    bounded_rank_bits,
                     &mut self.rank_bytes,
                     &mut self.rank_digits,
                     &mut self.rank,
                 );
-                profile.scalar_ring().counts().unrank_ball_into(
-                    &mut self.rank,
-                    profile.weight_cap(),
-                    &mut self.support,
-                );
-                Ok(())
+                let weight = profile
+                    .scalar_ring()
+                    .counts()
+                    .weight_for_ball_rank(&self.rank, profile.weight_cap());
+                self.sample_weight(profile.scalar_ring().degree(), weight)
             }
         }
     }
 
-    fn sample_fixed(&mut self, profile: &BinaryChallengeProfile) -> Result<(), AkitaError> {
-        self.fixed_positions.resize(profile.weight_cap(), 0);
+    fn sample_weight(&mut self, degree: usize, weight: usize) -> Result<(), AkitaError> {
+        self.fixed_positions.resize(weight, 0);
         sample_distinct_positions_into(
             &mut self.cursor,
-            profile.scalar_ring().degree(),
+            degree,
             &mut self.fixed_positions,
             &mut self.distinct_positions,
         )?;
         self.fixed_positions.sort_unstable();
         self.support.clear();
-        self.support
-            .try_reserve(profile.weight_cap())
-            .map_err(|_| {
-                AkitaError::InvalidInput("binary challenge support allocation failed".into())
-            })?;
+        self.support.try_reserve(weight).map_err(|_| {
+            AkitaError::InvalidInput("binary challenge support allocation failed".into())
+        })?;
         for &position in &self.fixed_positions {
             self.support.push(u16::try_from(position).map_err(|_| {
                 AkitaError::InvalidInput("binary challenge position exceeds u16".into())
@@ -275,6 +280,12 @@ mod tests {
             };
             saw_rejection |= attempts > 1;
             assert_eq!(actual, BigUint::from(expected));
+
+            let mut actual_suffix = [0u8; 16];
+            let mut expected_suffix = [0u8; 16];
+            production.fill_bytes(&mut actual_suffix);
+            reader.read(&mut expected_suffix);
+            assert_eq!(actual_suffix, expected_suffix);
         }
         assert!(saw_rejection);
     }

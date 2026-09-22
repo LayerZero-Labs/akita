@@ -30,8 +30,9 @@ For a small example, a four-coordinate support ball with cap one contains
 
 Its cardinality is five, including the empty support. Choosing a weight
 uniformly from zero and one would give the empty support probability `1/2`,
-which is not uniform over the five supports. The sampler must choose one rank
-uniformly from `0..5` and map each rank to one support.
+which is not uniform over the five supports. The sampler instead gives the
+weight-zero shell probability `1/5` and the weight-one shell probability `4/5`,
+then samples uniformly inside the selected shell.
 
 ## Supported scalar rings and families
 
@@ -66,9 +67,10 @@ largest. Bounded-weight search can reach the full ball of size `2^d`. A zero
 fold width is invalid. A request beyond the residue capacity returns
 `UnsupportedSchedule` before constructing an oversized shifted integer.
 
-The cumulative binomial tables and public cardinalities use `BigUint`. This is
-necessary for degree 486: for example, `binom(486, 243)` has a 482-bit binary
-representation. The same type keeps the API exact at both supported degrees.
+The cached cumulative binomial rows and public cardinalities use `BigUint`.
+This is necessary for degree 486: for example, `binom(486, 243)` has a 482-bit
+binary representation. The same type keeps the API exact at both supported
+degrees.
 Counts above 256 bits are combinatorial facts, not a claim that the current
 32-byte transcript root supplies more than 256 bits of challenge entropy. The
 current target is a 128-bit fold budget, and this branch wires no profile into
@@ -104,7 +106,8 @@ range, strict ordering, coefficients in `{-1, 1}`, and exact sign replay.
 `BinaryChallengeSampler` owns reusable scratch for its profile. A transcript
 draw absorbs the binary sampler domain, a length-prefixed caller label, the
 challenge count, and the complete profile identity. It then squeezes one
-32-byte root through the existing Akita transcript interface.
+32-byte root through the existing Akita transcript interface. The current
+support-mapping domain is `akita/labinius/binary-challenge/v2`.
 
 Challenge coordinate `i` expands the existing indexed SHAKE256 stream
 
@@ -116,26 +119,34 @@ The two families map that stream differently:
 
 - Fixed weight uses the existing unbiased partial Fisher--Yates sampler, then
   sorts the chosen positions into canonical order.
-- Bounded weight masks enough XOF bits to cover the exact cardinality, rejects
-  integers outside the cardinality interval, and un-ranks the accepted integer.
+- Bounded weight masks enough XOF bits to cover the exact ball cardinality and
+  rejects integers outside that interval. It locates the accepted integer's
+  weight shell in the cached cumulative row, discards the within-shell offset,
+  and samples a support of that weight with the same Fisher--Yates primitive.
 
-At a bounded un-ranking step, let `n` coordinates remain and let `t` be the
-remaining cap. The lower branch contains
+For cap `w`, write
 
 ```text
-A(n - 1, t) = sum_(j=0)^min(t,n-1) binom(n - 1, j)
+A_j = sum_(t=0)^j binom(d, t),   N = A_w.
 ```
 
-supports that omit the next coordinate. A rank below this value takes the
-lower branch. Any other rank includes the coordinate, subtracts the lower
-branch size, and decrements the cap. This gives one rank to every support in
-the ball. Rank zero maps to the empty support, so the zero challenge is present
-when the cardinality counts it.
+An accepted integer `U` selects the unique weight `j` satisfying
+`A_(j-1) <= U < A_j`. Therefore the shell probability is
+`binom(d, j) / N`. Conditional on that shell, Fisher--Yates gives every
+`j`-support probability `1 / binom(d, j)`. Every support in the ball therefore
+has probability exactly `1 / N`. Weight zero selects the empty support.
+
+The Fisher--Yates draw consumes previously unused bytes from the same indexed
+XOF stream. In the XOF model, this suffix remains independent of the accepted
+prefix even when integer rejection consumes a variable number of attempts.
+Masked high bits and rejected candidates are discarded rather than reused.
 
 Integer rejection has no attempt cap and therefore adds no sampler-failure
-probability. Its expected attempt count is below two. The sampler reuses its
-XOF cursor, partial-permutation state, rank limbs, support storage, and sign
-buffers across calls. Returned challenges own their terms.
+probability. Its expected attempt count is below two. Selecting a shell uses a
+binary search over one cached cumulative row instead of a degree-long sequence
+of big-integer comparisons. The sampler reuses its XOF cursor,
+partial-permutation state, rank limbs, support storage, and sign buffers across
+calls. Returned challenges own their terms.
 
 ## Coefficient and multiplication bounds
 
@@ -161,18 +172,11 @@ challenge-family table.
 ## Initialization and hot-path cost
 
 The first profile for a scalar ring initializes one process-wide cumulative
-binomial table through `LazyLock`. Later profiles and samplers reuse it. On an
-Apple M4 Max development host, isolated debug-test processes measured the
-following approximate cold costs relative to an empty focused test:
-
-| Table | Cold elapsed signal | Additional maximum resident memory |
-| --- | ---: | ---: |
-| degree 162 | about 7.3 million additional cycles | about 0.9 MiB |
-| degree 486 | about 84.5 million additional cycles | about 8.3 MiB |
-
-These figures include test-process overhead and are upper-bound engineering
-measurements, not protocol parameters. Do not include table construction in a
-hot sampling benchmark.
+binomial row through `LazyLock`. Later profiles and samplers reuse it. The cold
+path now performs `d` exact binomial-recurrence steps and retains `d + 1`
+`BigUint` values: 163 entries for degree 162 or 487 for degree 486. It does not
+construct the former quadratic Pascal triangle. Keep this one-time
+initialization outside hot sampling benchmarks.
 
 The `sparse_challenge` Criterion benchmark constructs profiles before timing
 and compares fixed and bounded samplers with the existing ordinary sparse
@@ -181,11 +185,12 @@ batch size 4096 as follows:
 
 | Sampler | Batch time | Throughput |
 | --- | ---: | ---: |
-| degree 162 fixed weight 47 | 3.775--3.868 ms | about 1.07 million/s |
-| degree 162 bounded cap 46 | 5.223--5.326 ms | about 0.78 million/s |
-| degree 486 fixed weight 25 | 2.622--2.677 ms | about 1.55 million/s |
-| degree 486 bounded cap 25 | 6.488--6.562 ms | about 0.63 million/s |
-| existing ordinary signed-sparse D64 | 1.560--1.575 ms | about 2.61 million/s |
+| degree 162 fixed weight 47 | 3.956--3.985 ms | about 1.03 million/s |
+| degree 162 bounded cap 46 | 4.600--4.967 ms | about 0.86 million/s |
+| degree 162 bounded cap 47 | 5.125--6.032 ms | about 0.74 million/s |
+| degree 486 fixed weight 25 | 3.385--3.524 ms | about 1.18 million/s |
+| degree 486 bounded cap 25 | 3.764--4.073 ms | about 1.04 million/s |
+| existing ordinary signed-sparse D64 | 1.606--1.734 ms | about 2.47 million/s |
 
 The ordinary D64 line is a runtime baseline, not an equal-security-family
 comparison. Reproduce these measurements with
@@ -206,7 +211,7 @@ This implementation is a challenge foundation only. It does not:
 - replace Akita's ordinary sparse challenge families.
 
 The public API is exported from `crates/akita-challenges/src/lib.rs`. Exact
-counts and un-ranking live in
+counts and shell selection live in
 `crates/akita-challenges/src/binary/combinatorics.rs`; profile identities and
 bounds live in `crates/akita-challenges/src/binary/profile.rs`; sampling lives
 in `crates/akita-challenges/src/binary/sampler.rs`; and the deterministic sign

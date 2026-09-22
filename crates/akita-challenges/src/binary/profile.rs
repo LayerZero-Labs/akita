@@ -3,12 +3,12 @@ use std::sync::LazyLock;
 use akita_error::AkitaError;
 use num_bigint::BigUint;
 
-use super::combinatorics::CumulativeBinomialTable;
+use super::combinatorics::BinomialCdfRow;
 
-static CYCLOTOMIC_243_COUNTS: LazyLock<CumulativeBinomialTable> =
-    LazyLock::new(|| CumulativeBinomialTable::new(BinaryScalarRing::Cyclotomic243.degree()));
-static CYCLOTOMIC_729_COUNTS: LazyLock<CumulativeBinomialTable> =
-    LazyLock::new(|| CumulativeBinomialTable::new(BinaryScalarRing::Cyclotomic729.degree()));
+static CYCLOTOMIC_243_COUNTS: LazyLock<BinomialCdfRow> =
+    LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic243.degree()));
+static CYCLOTOMIC_729_COUNTS: LazyLock<BinomialCdfRow> =
+    LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic729.degree()));
 
 /// Supported inert binary scalar rings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,7 +37,7 @@ impl BinaryScalarRing {
         }
     }
 
-    pub(super) fn counts(self) -> &'static CumulativeBinomialTable {
+    pub(super) fn counts(self) -> &'static BinomialCdfRow {
         match self {
             Self::Cyclotomic243 => &CYCLOTOMIC_243_COUNTS,
             Self::Cyclotomic729 => &CYCLOTOMIC_729_COUNTS,
@@ -113,10 +113,8 @@ impl BinaryChallengeProfile {
         }
         let counts = scalar_ring.counts();
         let cardinality = match family {
-            BinaryChallengeFamily::FixedWeight => counts.binomial(scalar_ring.degree(), weight_cap),
-            BinaryChallengeFamily::BoundedWeight => {
-                counts.ball(scalar_ring.degree(), weight_cap).clone()
-            }
+            BinaryChallengeFamily::FixedWeight => counts.binomial(weight_cap),
+            BinaryChallengeFamily::BoundedWeight => counts.ball(weight_cap).clone(),
         };
         let sign_rule = BinarySignRule::Shake256V1;
         let identity = encode_identity(scalar_ring, family, weight_cap, sign_rule, &cardinality);
@@ -159,8 +157,8 @@ impl BinaryChallengeProfile {
         let counts = scalar_ring.counts();
         let selected = (0..=maximum_weight).find(|&weight| {
             let cardinality = match family {
-                BinaryChallengeFamily::FixedWeight => counts.binomial(degree, weight),
-                BinaryChallengeFamily::BoundedWeight => counts.ball(degree, weight).clone(),
+                BinaryChallengeFamily::FixedWeight => counts.binomial(weight),
+                BinaryChallengeFamily::BoundedWeight => counts.ball(weight).clone(),
             };
             cardinality >= required
         });
