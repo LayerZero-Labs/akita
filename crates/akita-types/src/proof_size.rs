@@ -39,9 +39,9 @@ fn stage1_proof_bytes(
                 + stage.child_claims * elem_bytes
         })
         .sum::<usize>();
-    let norm_bytes = shape.norm.map_or(0, |shape| {
-        16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
-            + shape.rounds * shape.degree * elem_bytes
+    let norm_bytes = shape.norm.map_or(0, |norm| {
+        16 + (norm.subclaims + norm.virtual_evaluations) * elem_bytes
+            + norm.rounds * norm.degree * elem_bytes
     });
     // The ordinary final range evaluation remains outside the optional norm
     // payload. The fused standard leaf shape accounts for the one additional

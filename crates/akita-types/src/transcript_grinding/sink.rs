@@ -17,28 +17,53 @@ pub(crate) struct SumcheckRoundBatch {
 }
 
 impl SumcheckRoundBatch {
-    fn run(self, round: usize) -> Result<GrindingRun, AkitaError> {
+    fn representative(self) -> Result<Option<GrindingRun>, AkitaError> {
+        let Some(last_round) = self.rounds.checked_sub(1) else {
+            return Ok(None);
+        };
         GrindingRun::proof_of_work(
             GrindingSite::SumcheckRound {
                 protocol: self.protocol,
                 level: self.level,
                 stage: self.stage,
-                round: crate::narrowing::usize_to_u32(round, "sumcheck grinding round")?,
+                round: crate::narrowing::usize_to_u32(last_round, "sumcheck grinding round")?,
             },
             polynomial_identity_loss_factor(self.degree)?,
             self.capacity,
         )
+        .map(Some)
+    }
+
+    fn run_at(
+        self,
+        mut representative: GrindingRun,
+        round: usize,
+    ) -> Result<GrindingRun, AkitaError> {
+        representative.site = GrindingSite::SumcheckRound {
+            protocol: self.protocol,
+            level: self.level,
+            stage: self.stage,
+            round: crate::narrowing::usize_to_u32(round, "sumcheck grinding round")?,
+        };
+        Ok(representative)
     }
 }
 
 /// Both replay materialization and planner pricing consume this query order.
-/// The default expands exact sites; pricing can aggregate identical round costs.
+/// Every nonempty batch has identical loss, nonce bits, and multiplicity; only
+/// the round index differs. Checking the highest index establishes that all
+/// earlier indices fit; the accumulator or completed plan validates the site.
+/// An empty batch emits no query and deliberately validates no metadata.
+/// Closures use the default exact-site expansion; pricing may aggregate.
 pub(crate) trait GrindingPlanSink {
     fn push(&mut self, run: GrindingRun) -> Result<(), AkitaError>;
 
     fn sumcheck_rounds(&mut self, batch: SumcheckRoundBatch) -> Result<(), AkitaError> {
+        let Some(representative) = batch.representative()? else {
+            return Ok(());
+        };
         for round in 0..batch.rounds {
-            self.push(batch.run(round)?)?;
+            self.push(batch.run_at(representative, round)?)?;
         }
         Ok(())
     }
@@ -56,17 +81,12 @@ impl GrindingPlanSink for GrindingPlanAccumulator {
     }
 
     fn sumcheck_rounds(&mut self, batch: SumcheckRoundBatch) -> Result<(), AkitaError> {
-        let Some(last_round) = batch.rounds.checked_sub(1) else {
-            // Match an empty canonical loop: even invalid degree/capacity/site
-            // metadata has no query to validate.
+        let Some(run) = batch.representative()? else {
             return Ok(());
         };
-        let run = batch.run(last_round)?;
         let repetitions = u32::try_from(batch.rounds)
             .map_err(|_| AkitaError::InvalidSetup("grinding plan run count exceeds u32".into()))?;
-        // The canonical run validator checks the last round's reserved sentinel
-        // and the shared level/stage. Every preceding index is then valid.
-        // Sumcheck runs have multiplicity one; this counts distinct wire runs.
+        // `push_repeated` validates the representative's reserved site fields.
         self.push_repeated(run, repetitions)
     }
 }

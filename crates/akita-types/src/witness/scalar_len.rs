@@ -11,8 +11,9 @@ impl WitnessLayout {
     /// its address ranges.
     ///
     /// This is the candidate-aware counterpart of [`Self::new`] for planner
-    /// hot paths. It constructs and validates the canonical relation geometry
-    /// once; all malformed geometry is an error.
+    /// hot paths. The caller supplies the extension degree, not a prebuilt
+    /// geometry: this function owns its one construction and validation of
+    /// the candidate's relation layout.
     pub fn scalar_live_coeff_len(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,

@@ -32,6 +32,92 @@ fn materialized_first_direct_setup_capacity(
     .expect("materialized first direct setup capacity")
 }
 
+#[cfg(feature = "catalog-gen")]
+fn assert_selected_grinding_edge_parity(
+    planned: &PlannedFoldSchedule,
+    key: &akita_types::AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+) {
+    use akita_types::{FoldSuccessor, TranscriptGrindingCost};
+
+    let schedule = &planned.schedule;
+    let root_layout = key.opening_layout().expect("selected root opening layout");
+    let modulus_bits = policy.decomposition.field_bits();
+    let extension_degree = policy.claim_ext_degree;
+    let full_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        &root_layout,
+        modulus_bits,
+        extension_degree,
+    )
+    .expect("selected schedule has a public grinding plan");
+    let candidate = akita_types::transcript_grinding_cost_for_planner_candidate(
+        schedule,
+        &root_layout,
+        modulus_bits,
+        extension_degree,
+    )
+    .expect("selected candidate grinding cost");
+
+    let folds = std::iter::once(&schedule.root)
+        .chain(&schedule.recursive_folds)
+        .collect::<Vec<_>>();
+    let mut previous_rounds = 0;
+    let mut edge_sum = TranscriptGrindingCost {
+        total_nonce_bits: 0,
+        expanded_query_count: 0,
+    };
+    for (index, fold) in folds.iter().enumerate() {
+        let layout = if index == 0 {
+            root_layout.clone()
+        } else {
+            fold.params
+                .opening_layout_for_final_group(PolynomialGroupLayout::singleton(previous_rounds))
+                .expect("selected recursive opening layout")
+        };
+        let successor = folds
+            .get(index + 1)
+            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |next| {
+                FoldSuccessor::Recursive(&next.params)
+            });
+        let geometry = fold
+            .params
+            .relation_address_geometry(
+                &layout,
+                extension_degree,
+                successor.ring_dimension(),
+                fold.output_witness_len,
+            )
+            .expect("selected relation geometry");
+        let edge = akita_types::transcript_grinding_cost_for_planner_edge(
+            &fold.params,
+            geometry,
+            &layout,
+            successor,
+            modulus_bits,
+            extension_degree,
+            u32::try_from(index).expect("selected fold level fits u32"),
+        )
+        .expect("selected edge grinding cost");
+        edge_sum.total_nonce_bits = edge_sum
+            .total_nonce_bits
+            .checked_add(edge.total_nonce_bits)
+            .expect("selected nonce-bit sum");
+        edge_sum.expanded_query_count = edge_sum
+            .expanded_query_count
+            .checked_add(edge.expanded_query_count)
+            .expect("selected query sum");
+        previous_rounds = geometry.relation_point_variable_count();
+    }
+    assert!(edge_sum.expanded_query_count > 0);
+    assert_eq!(edge_sum, candidate);
+    assert_eq!(edge_sum.total_nonce_bits, full_plan.total_nonce_bits());
+    assert_eq!(
+        edge_sum.expanded_query_count,
+        full_plan.expanded_query_count()
+    );
+}
+
 #[cfg(test)]
 fn find_schedule(
     key: PolynomialGroupLayout,
@@ -209,6 +295,8 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1));
+    assert_selected_grinding_edge_parity(&selected, &lookup_key, &policy);
     assert!(
         selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
         "bounded oracle must cover the production winner's recursion depth",
@@ -263,7 +351,6 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
         .unwrap(),
     );
 
-    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1));
     let query_count = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &selected.schedule,
         &lookup_key.opening_layout().unwrap(),
@@ -874,6 +961,8 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    let lookup_key = akita_types::AkitaScheduleLookupKey::single(onehot_group(16, 1));
+    assert_selected_grinding_edge_parity(&schedule, &lookup_key, &policy);
     assert!(!schedule.schedule.recursive_folds.is_empty());
     assert_eq!(schedule.schedule.root.params.witness_chunk.num_chunks, 8);
     assert_eq!(

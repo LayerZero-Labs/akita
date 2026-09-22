@@ -1,4 +1,4 @@
-//! Canonical grinding-plan derivation from public schedule geometry.
+//! Schedule-owned grinding-plan derivation from public geometry.
 
 use crate::narrowing::{usize_to_u32, usize_to_u64};
 use crate::transcript_grinding::{GrindingPlanAccumulator, GrindingPlanSink, SumcheckRoundBatch};
@@ -107,7 +107,7 @@ fn derive_transcript_grinding_plan(
 ) -> Result<GrindingPlan, AkitaError> {
     let capacity = challenge_capacity_bits(root_layout, modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
-    let mut push = |run| {
+    let mut sink = |run| {
         runs.push(run);
         Ok(())
     };
@@ -129,7 +129,7 @@ fn derive_transcript_grinding_plan(
         )?
         .relation_point_variable_count();
     let mut predecessor_rounds = append_nonterminal(
-        &mut push,
+        &mut sink,
         capacity,
         extension_degree,
         0,
@@ -159,7 +159,7 @@ fn derive_transcript_grinding_plan(
             )?
             .relation_point_variable_count();
         predecessor_rounds = append_nonterminal(
-            &mut push,
+            &mut sink,
             capacity,
             extension_degree,
             usize_to_u32(index + 1, "grinding level")?,
@@ -171,7 +171,7 @@ fn derive_transcript_grinding_plan(
     }
 
     append_terminal(
-        &mut push,
+        &mut sink,
         capacity,
         extension_degree,
         usize_to_u32(
@@ -186,7 +186,7 @@ fn derive_transcript_grinding_plan(
 
 #[allow(clippy::too_many_arguments)]
 fn append_nonterminal(
-    push: &mut impl GrindingPlanSink,
+    sink: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -197,19 +197,19 @@ fn append_nonterminal(
 ) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
-        append_eor(push, capacity, extension_degree, level, layout)?;
+        append_eor(sink, capacity, extension_degree, level, layout)?;
     }
 
     if layout.requires_row_batch_challenge() {
-        push.push(GrindingRun::proof_of_work(
+        sink.push(GrindingRun::proof_of_work(
             GrindingSite::EvaluationBatch { level },
             1,
             capacity,
         )?)?;
     }
 
-    push.push(GrindingRun::fold_response(level))?;
-    append_fold_queries(push, level, params, layout)?;
+    sink.push(GrindingRun::fold_response(level))?;
+    append_fold_queries(sink, level, params, layout)?;
 
     let alpha_loss = (0..layout.num_groups()).try_fold(1u64, |largest, group_index| {
         let group = params.group_params(layout, group_index)?;
@@ -218,7 +218,7 @@ fn append_nonterminal(
             group.inner_commit_matrix_params().ring_dimension(),
         )?))
     })?;
-    push.push(GrindingRun::proof_of_work(
+    sink.push(GrindingRun::proof_of_work(
         GrindingSite::RingSwitchAlpha { level },
         alpha_loss,
         capacity,
@@ -231,12 +231,12 @@ fn append_nonterminal(
             "grinding Stage 2 point exceeds successor opening width".into(),
         ));
     }
-    push.push(GrindingRun::proof_of_work(
+    sink.push(GrindingRun::proof_of_work(
         GrindingSite::Tau0Point { level },
         multilinear_point_loss_factor(tau0_width)?,
         capacity,
     )?)?;
-    push.push(GrindingRun::proof_of_work(
+    sink.push(GrindingRun::proof_of_work(
         GrindingSite::Tau1Point { level },
         multilinear_point_loss_factor(params.relation_row_index_num_vars(layout)?)?,
         capacity,
@@ -254,7 +254,7 @@ fn append_nonterminal(
             stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
                 AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
             })?;
-        push.sumcheck_rounds(SumcheckRoundBatch {
+        sink.sumcheck_rounds(SumcheckRoundBatch {
             capacity,
             protocol: SumcheckProtocol::Stage1,
             level,
@@ -263,7 +263,7 @@ fn append_nonterminal(
             degree: full_round_degree,
         })?;
         if stage_shape.child_claims > 0 {
-            push.push(GrindingRun::proof_of_work(
+            sink.push(GrindingRun::proof_of_work(
                 GrindingSite::Stage1InterstageBatch { level, stage },
                 powers_batch_loss_factor(stage_shape.child_claims)?,
                 capacity,
@@ -272,18 +272,18 @@ fn append_nonterminal(
     }
     if let Some(norm) = shape.norm {
         if norm.subclaims > 0 {
-            push.push(GrindingRun::proof_of_work(
+            sink.push(GrindingRun::proof_of_work(
                 GrindingSite::L2SubclaimBatch { level },
                 powers_batch_loss_factor(norm.subclaims)?,
                 capacity,
             )?)?;
         }
-        push.push(GrindingRun::proof_of_work(
+        sink.push(GrindingRun::proof_of_work(
             GrindingSite::L2NormMerge { level },
             1,
             capacity,
         )?)?;
-        push.sumcheck_rounds(SumcheckRoundBatch {
+        sink.sumcheck_rounds(SumcheckRoundBatch {
             capacity,
             protocol: SumcheckProtocol::PhysicalL2,
             level,
@@ -291,25 +291,25 @@ fn append_nonterminal(
             rounds: norm.rounds,
             degree: norm.degree,
         })?;
-        push.push(GrindingRun::proof_of_work(
+        sink.push(GrindingRun::proof_of_work(
             GrindingSite::L2VirtualBatch { level },
             polynomial_identity_loss_factor(norm.virtual_evaluations)?,
             capacity,
         )?)?;
     }
     if params.payload_mode.is_compressed() {
-        push.push(GrindingRun::proof_of_work(
+        sink.push(GrindingRun::proof_of_work(
             GrindingSite::CompressionBinary { level },
             1,
             capacity,
         )?)?;
     }
-    push.push(GrindingRun::proof_of_work(
+    sink.push(GrindingRun::proof_of_work(
         GrindingSite::Stage2Batch { level },
         1,
         capacity,
     )?)?;
-    push.sumcheck_rounds(SumcheckRoundBatch {
+    sink.sumcheck_rounds(SumcheckRoundBatch {
         capacity,
         protocol: SumcheckProtocol::Stage2,
         level,
@@ -319,7 +319,7 @@ fn append_nonterminal(
     })?;
     if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
-            push.sumcheck_rounds(SumcheckRoundBatch {
+            sink.sumcheck_rounds(SumcheckRoundBatch {
                 capacity,
                 protocol: SumcheckProtocol::Stage3,
                 level,
@@ -333,7 +333,7 @@ fn append_nonterminal(
 }
 
 fn append_terminal(
-    push: &mut impl GrindingPlanSink,
+    sink: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -342,10 +342,10 @@ fn append_terminal(
 ) -> Result<(), AkitaError> {
     let layout = OpeningClaimsLayout::new(predecessor_rounds, 1)?;
     if extension_degree > 1 {
-        append_eor(push, capacity, extension_degree, level, &layout)?;
+        append_eor(sink, capacity, extension_degree, level, &layout)?;
     }
-    push.push(GrindingRun::fold_response(level))?;
-    push.push(GrindingRun::fold_challenge_group(
+    sink.push(GrindingRun::fold_response(level))?;
+    sink.push(GrindingRun::fold_challenge_group(
         level,
         0,
         usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
@@ -354,7 +354,7 @@ fn append_terminal(
 }
 
 fn append_fold_queries(
-    push: &mut impl GrindingPlanSink,
+    sink: &mut impl GrindingPlanSink,
     level: u32,
     params: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
@@ -366,7 +366,7 @@ fn append_fold_queries(
             .num_polynomials()
             .checked_mul(params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        push.push(GrindingRun::fold_challenge_group(
+        sink.push(GrindingRun::fold_challenge_group(
             level,
             group,
             usize_to_u64(multiplicity, "fold coordinate count")?,
@@ -376,7 +376,7 @@ fn append_fold_queries(
 }
 
 fn append_eor(
-    push: &mut impl GrindingPlanSink,
+    sink: &mut impl GrindingPlanSink,
     capacity: u32,
     extension_degree: usize,
     level: u32,
@@ -388,19 +388,19 @@ fn append_eor(
             "extension-opening split exceeds opening arity".into(),
         ));
     }
-    push.push(GrindingRun::proof_of_work(
+    sink.push(GrindingRun::proof_of_work(
         GrindingSite::ExtensionOpeningPoint { level },
         multilinear_point_loss_factor(split_bits)?,
         capacity,
     )?)?;
     if layout.requires_row_batch_challenge() {
-        push.push(GrindingRun::proof_of_work(
+        sink.push(GrindingRun::proof_of_work(
             GrindingSite::ExtensionOpeningClaimBatch { level },
             1,
             capacity,
         )?)?;
     }
-    push.sumcheck_rounds(SumcheckRoundBatch {
+    sink.sumcheck_rounds(SumcheckRoundBatch {
         capacity,
         protocol: SumcheckProtocol::ExtensionOpeningReduction,
         level,
@@ -412,33 +412,33 @@ fn append_eor(
 }
 
 #[cfg(test)]
-fn append_sumcheck(
-    push: &mut impl GrindingPlanSink,
-    capacity: u32,
-    protocol: SumcheckProtocol,
-    level: u32,
-    stage: u32,
-    round: usize,
-    degree: usize,
-) -> Result<(), AkitaError> {
-    push.push(GrindingRun::proof_of_work(
-        GrindingSite::SumcheckRound {
-            protocol,
-            level,
-            stage,
-            round: usize_to_u32(round, "sumcheck grinding round")?,
-        },
-        polynomial_identity_loss_factor(degree)?,
-        capacity,
-    )?)?;
-    Ok(())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
     use akita_challenges::SparseChallengeConfig;
+
+    // Pre-PR 56 per-round construction retained as an independent parity oracle.
+    fn append_sumcheck(
+        sink: &mut impl GrindingPlanSink,
+        capacity: u32,
+        protocol: SumcheckProtocol,
+        level: u32,
+        stage: u32,
+        round: usize,
+        degree: usize,
+    ) -> Result<(), AkitaError> {
+        sink.push(GrindingRun::proof_of_work(
+            GrindingSite::SumcheckRound {
+                protocol,
+                level,
+                stage,
+                round: usize_to_u32(round, "sumcheck grinding round")?,
+            },
+            polynomial_identity_loss_factor(degree)?,
+            capacity,
+        )?)?;
+        Ok(())
+    }
 
     fn params(ring_dimension: usize) -> CommittedGroupParams {
         CommittedGroupParams::params_only(

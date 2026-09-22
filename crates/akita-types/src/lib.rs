@@ -38,6 +38,7 @@ pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
 mod transcript_grinding;
+#[path = "transcript_grinding/plan.rs"]
 mod transcript_grinding_plan;
 pub mod witness;
 
