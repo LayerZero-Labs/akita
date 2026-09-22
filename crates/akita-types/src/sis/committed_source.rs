@@ -27,6 +27,7 @@ use super::decomposition_digits::checked_balanced_digit_representable_bounds;
 use super::honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
 };
+use super::{onehot_source::canonical_source_classes, FoldWitnessNorms};
 use crate::DecompositionParams;
 use akita_error::AkitaError;
 
@@ -100,6 +101,17 @@ pub struct CommittedSourceContract {
     decomposition: DecompositionParams,
 }
 
+/// Unrounded norms of a source under its selected inner decomposition.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceNorms {
+    /// Worst digit-plane ring norms used by honest fold sizing.
+    pub fold_witness: FoldWitnessNorms,
+    /// Upper bound on squared coefficient energy across all source digit planes.
+    pub l2_sq: u128,
+    /// Maximum squared coefficient in any source digit plane.
+    pub coefficient_sq_max: u128,
+}
+
 impl CommittedSourceContract {
     /// Build the contract a config declares, rejecting one it cannot honour.
     ///
@@ -124,6 +136,121 @@ impl CommittedSourceContract {
             class,
             decomposition,
         })
+    }
+
+    /// Derive both fold-plane norms and aggregate energy from one source contract.
+    ///
+    /// Balanced planes use the remaining declared bits, with a unit carry
+    /// allowance past the bound. Fold sizing maximizes over planes; energy sums
+    /// their squares. The selected basis must fit the admitted i8/i16 inner
+    /// kernels. No planner bucketing or probability scaling occurs here.
+    ///
+    /// # Errors
+    /// Returns an error for unsupported inner digit geometry, invalid one-hot
+    /// length/alignment, or arithmetic overflow.
+    pub fn source_norms(
+        self,
+        log_basis: u32,
+        digit_count: usize,
+        ring_dimension: usize,
+        logical_len: usize,
+    ) -> Result<SourceNorms, AkitaError> {
+        if log_basis == 0
+            || log_basis > crate::MAX_I16_LOG_BASIS
+            || digit_count == 0
+            || digit_count > self.decomposition.field_bits() as usize + 1
+            || ring_dimension == 0
+            || logical_len == 0
+        {
+            return Err(AkitaError::InvalidSetup(
+                "invalid committed-source norm geometry".into(),
+            ));
+        }
+        match self.class {
+            CommittedSourceClass::BalancedSignedDigit => {
+                let mut energy = 0u128;
+                let mut maximum = 0u128;
+                for plane in 0..digit_count {
+                    let consumed = u32::try_from(plane)
+                        .ok()
+                        .and_then(|plane| plane.checked_mul(log_basis))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("digit-plane width overflow".into())
+                        })?;
+                    let bits = self
+                        .decomposition
+                        .log_commit_bound
+                        .saturating_sub(consumed)
+                        .min(log_basis)
+                        .max(1);
+                    let reach = 1u128 << (bits - 1);
+                    energy = energy.checked_add(reach * reach).ok_or_else(|| {
+                        AkitaError::InvalidSetup("source digit energy overflow".into())
+                    })?;
+                    maximum = maximum.max(reach);
+                }
+                Ok(SourceNorms {
+                    fold_witness: FoldWitnessNorms::new(
+                        maximum,
+                        maximum.checked_mul(ring_dimension as u128).ok_or_else(|| {
+                            AkitaError::InvalidSetup("source ring norm overflow".into())
+                        })?,
+                    ),
+                    l2_sq: energy
+                        .checked_mul(logical_len as u128)
+                        .ok_or_else(|| AkitaError::InvalidSetup("source energy overflow".into()))?,
+                    coefficient_sq_max: maximum * maximum,
+                })
+            }
+            CommittedSourceClass::UnitOneHot { source_chunk_size } => {
+                if digit_count != 1 {
+                    return Err(AkitaError::InvalidSetup(
+                        "one-hot sources require one digit plane".into(),
+                    ));
+                }
+                let classes = canonical_source_classes(ring_dimension, source_chunk_size)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("unsupported one-hot source geometry".into())
+                    })?;
+                let infinity = classes
+                    .iter()
+                    .map(|class| class.infinity_norm())
+                    .max()
+                    .unwrap_or(1);
+                let l1 = classes
+                    .iter()
+                    .filter_map(|class| class.l1_norm())
+                    .max()
+                    .unwrap_or(infinity);
+                if !logical_len.is_multiple_of(source_chunk_size)
+                    || !logical_len.is_multiple_of(ring_dimension)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "unsupported one-hot source length".into(),
+                    ));
+                }
+                // Distinct source chunks occupy distinct canonical coefficients;
+                // maximize over every permitted hot position within one group.
+                let per_group_energy = classes
+                    .iter()
+                    .map(|class| class.nonzero_count as u128)
+                    .max()
+                    .unwrap_or(0);
+                let group_count = logical_len / source_chunk_size.max(ring_dimension);
+                let l2_sq = per_group_energy
+                    .checked_mul(group_count as u128)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("one-hot source energy overflow".into())
+                    })?;
+                let coefficient_sq_max =
+                    u128::from(classes.iter().any(|class| class.nonzero_count > 0));
+                Ok(SourceNorms {
+                    fold_witness: FoldWitnessNorms::new(infinity, l1),
+                    l2_sq,
+                    coefficient_sq_max,
+                })
+            }
+        }
     }
 
     /// Declared source class.
@@ -285,7 +412,7 @@ mod tests {
 
     /// Only the one-hot class imposes a structural requirement.
     #[test]
-    fn structural_requirement_is_one_hot_only() {
+    fn source_classes_determine_structure_and_decomposed_norms() {
         assert_eq!(
             one_hot(1).class.required_onehot_chunk_size(),
             Some(DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE)
@@ -294,6 +421,18 @@ mod tests {
         // is below what the balanced-digit model charges, so pricing stays
         // conservative.
         assert_eq!(balanced(65).class.required_onehot_chunk_size(), None);
+        let small = balanced(2).source_norms(3, 1, 128, 128).unwrap();
+        assert_eq!(
+            (
+                small.fold_witness.infinity_norm(),
+                small.fold_witness.l1_norm()
+            ),
+            (2, 256)
+        );
+        assert_eq!((small.l2_sq, small.coefficient_sq_max), (512, 4));
+        let signed64 = balanced(64).source_norms(5, 13, 128, 1).unwrap();
+        assert_eq!(signed64.fold_witness.infinity_norm(), 16);
+        assert_eq!(signed64.l2_sq, 12 * 256 + 64);
     }
 
     /// The declared interval constrains only a bounded balanced-digit source.
