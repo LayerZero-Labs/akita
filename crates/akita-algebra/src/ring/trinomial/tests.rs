@@ -206,6 +206,30 @@ fn scalar_embedding_commutes_with_multiplication() {
 }
 
 #[test]
+fn rank_one_plus_packing_is_the_identity_ring_map() {
+    type F = Prime64Offset23703;
+    let lhs = sample_ring::<F, 162, PlusTrinomial>(31);
+    let rhs = sample_ring::<F, 162, PlusTrinomial>(47);
+
+    let packed = pack_scalar_components::<F, 162, 162, PlusTrinomial>(&[lhs]).unwrap();
+    let embedded_lhs = embed_scalar::<F, 162, 162, PlusTrinomial>(&lhs).unwrap();
+    let embedded_rhs = embed_scalar::<F, 162, 162, PlusTrinomial>(&rhs).unwrap();
+    assert_eq!(packed, lhs);
+    assert_eq!(embedded_lhs, lhs);
+    assert_eq!(embedded_rhs, rhs);
+    assert_eq!(
+        unpack_scalar_components::<F, 162, 162, PlusTrinomial>(&packed).unwrap(),
+        vec![lhs]
+    );
+
+    let scalar_product = lhs.schoolbook_mul(&rhs).unwrap();
+    assert_eq!(
+        embedded_lhs.schoolbook_mul(&embedded_rhs).unwrap(),
+        embed_scalar::<F, 162, 162, PlusTrinomial>(&scalar_product).unwrap()
+    );
+}
+
+#[test]
 fn packed_scalar_action_is_componentwise() {
     type F = Prime64Offset23703;
     let challenge = sample_ring::<F, 162, PlusTrinomial>(13);

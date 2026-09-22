@@ -614,7 +614,7 @@ where
     let mut packed = [F::zero(); D];
     for (component_index, component) in components.iter().enumerate() {
         for (scalar_index, &coefficient) in component.coefficients.iter().enumerate() {
-            let coefficient = if scalar_index % 2 == 0 {
+            let coefficient = if rank == 1 || scalar_index % 2 == 0 {
                 coefficient
             } else {
                 -coefficient
@@ -643,7 +643,7 @@ where
     let rank = validate_packing::<SCALAR_D, D, M>(D / SCALAR_D)?;
     let mut embedded = [F::zero(); D];
     for (scalar_index, &coefficient) in scalar.coefficients.iter().enumerate() {
-        embedded[scalar_index * rank] = if scalar_index % 2 == 0 {
+        embedded[scalar_index * rank] = if rank == 1 || scalar_index % 2 == 0 {
             coefficient
         } else {
             -coefficient
@@ -672,7 +672,7 @@ where
     for component_index in 0..rank {
         let coefficients = std::array::from_fn(|scalar_index| {
             let coefficient = packed.coefficients[scalar_index * rank + component_index];
-            if scalar_index % 2 == 0 {
+            if rank == 1 || scalar_index % 2 == 0 {
                 coefficient
             } else {
                 -coefficient
