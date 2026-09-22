@@ -19,7 +19,7 @@ orchestration lives in `akita-pcs`.
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
 | `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
-| `akita-challenges` | Challenge sampling helpers |
+| `akita-challenges` | Ordinary and binary challenge sampling with exact family counts |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
 | `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and artifact certification |
@@ -142,6 +142,10 @@ graph TD
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
+- `akita-challenges` owns transcript-derived challenge distributions. Its
+  binary profiles use external `num-bigint` for exact combinatorial counts that
+  exceed 256 bits; protocol crates should consume those counts and norm bounds
+  instead of reimplementing the policy.
 - `akita-planner` is the offline schedule search and artifact emission engine.
   Normal planner search is `Cfg`-free and depends on `akita-types`,
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional

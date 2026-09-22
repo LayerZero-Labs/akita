@@ -181,7 +181,7 @@ impl BinarySamplingScratch {
         self.fixed_positions.sort_unstable();
         self.support.clear();
         self.support
-            .try_reserve(profile.weight_cap().saturating_sub(self.support.capacity()))
+            .try_reserve(profile.weight_cap())
             .map_err(|_| {
                 AkitaError::InvalidInput("binary challenge support allocation failed".into())
             })?;
