@@ -67,6 +67,22 @@ scratch for convenience. Repeated operations should allocate one typed
 modulus shape in its type and reuses both coset buffers and the underlying
 mixed-radix FFT scratch.
 
+For a cached matrix multiplied by repeated balanced signed-digit vectors,
+`prepare_i8_lut(log_basis)` prepares the active range
+`[-2^(log_basis - 1), 2^(log_basis - 1))`. The table stores each digit already
+scaled for both root cosets at every coefficient position. Its payload is
+`2 * D * 2^log_basis * size_of::<F>()` bytes, so callers should prepare only
+the basis they use and amortize setup across many transforms. The checked
+transform rejects an out-of-range digit before changing its destination.
+`forward_i8_with_lut_into_workspace` reuses both that destination and the
+typed transform workspace; it performs no hot-path allocation.
+
+Cached matrix entries remain in `TrinomialNtt` form. Pointwise accumulation
+uses the field's fused `mul_add` when available. An explicit packed variant
+uses the SIMD backend selected by `jolt-field`; the faster choice depends on
+the field and target architecture, so benchmarked callers select it rather
+than changing arithmetic semantics through runtime dispatch.
+
 ## Packing scalar components
 
 Let `d` be the scalar-ring degree and `r = D / d` the packing rank. For a
@@ -116,4 +132,7 @@ experiments; it is not registered as a protocol field.
 
 **Benchmarks:** `crates/akita-algebra/benches/trinomial_ntt.rs` compares the
 workspace-based transforms and multiplication against schoolbook
-multiplication.
+multiplication. `crates/akita-algebra/benches/ntt_comparison.rs` compares
+conversion, prepared pointwise work, and a checked bounded matrix-vector
+workload with the existing CRT NTT backends. Setup time and prepared storage
+are reported separately from the hot matrix-vector operation.

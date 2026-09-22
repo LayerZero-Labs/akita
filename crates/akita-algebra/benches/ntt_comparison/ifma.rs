@@ -2,9 +2,7 @@
 
 pub(super) fn bench(criterion: &mut criterion::Criterion) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx512f")
-        && std::arch::is_x86_feature_detected!("avx512ifma")
-    {
+    if akita_algebra::ntt::ifma52::ifma52_enabled() {
         use akita_algebra::ntt::ifma52::IFMA52_PRIMES;
         bench_profile::<super::Prime64Offset23703, 2>(
             criterion,

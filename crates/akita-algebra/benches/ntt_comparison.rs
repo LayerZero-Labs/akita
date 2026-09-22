@@ -126,6 +126,7 @@ fn bench_crt<F, const K: usize, const D: usize>(
     F: CrtNttConvertibleField + Debug,
 {
     let params = CrtNttParamSet::new(primes);
+    assert!(params.crt_capacity().supports::<F, D>(1, 64));
     eprintln!("{field} D={D} CRT kernel plan: {:?}", params.kernel_plan());
     let lhs = CyclotomicRing::<F, D>::from_coefficients(full_field_coefficients(17));
     let rhs_digits: [i8; D] = std::array::from_fn(|index| ((93 + index * 29) % 127) as i8 - 63);
@@ -636,8 +637,8 @@ fn benches(criterion: &mut Criterion) {
     bench_trinomial::<Prime64Offset23703, 648, MinusTrinomial>(criterion, "p64_23703", "minus");
 
     let q128 = q128_primes();
-    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 128>(criterion, "q128", q128);
-    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 256>(criterion, "q128", q128);
+    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 128>(criterion, "p128_a7f7", q128);
+    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 256>(criterion, "p128_a7f7", q128);
     bench_trinomial::<Prime128OffsetA7F7, 162, PlusTrinomial>(criterion, "p128_a7f7", "plus");
     bench_trinomial::<Prime128OffsetA7F7, 324, MinusTrinomial>(criterion, "p128_a7f7", "minus");
     bench_trinomial::<Prime128OffsetA7F7, 648, MinusTrinomial>(criterion, "p128_a7f7", "minus");
