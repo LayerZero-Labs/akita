@@ -3,6 +3,9 @@ use std::hint::black_box;
 use akita_algebra::binary::BinaryField162 as F;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
+#[path = "binary162/packed.rs"]
+mod packed;
+
 fn inputs(len: usize) -> (Vec<F>, Vec<F>) {
     let mut state = 0x1234_5678_9abc_def0u64;
     (0..len)
@@ -58,5 +61,5 @@ fn binary162(c: &mut Criterion) {
     dot.finish();
 }
 
-criterion_group!(benches, binary162);
+criterion_group!(benches, binary162, packed::bench);
 criterion_main!(benches);

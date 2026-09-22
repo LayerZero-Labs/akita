@@ -5,7 +5,10 @@
 //! Multiplication selects carryless CPU instructions when available; every
 //! platform also has a portable implementation. No protocol traits are added.
 
+mod packed;
 mod product;
+
+pub use packed::PackedBinary162;
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 

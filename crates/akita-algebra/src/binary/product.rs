@@ -110,7 +110,7 @@ fn detect() -> Kernels {
 
 /// Reduce a polynomial of degree at most 322 modulo `X^162 + X^81 + 1`.
 #[inline(always)]
-fn reduce(p: [u64; 6]) -> F {
+pub(super) fn reduce(p: [u64; 6]) -> F {
     // Write P=L+X^162 H, then use X^162=X^81+1 twice.
     // H has degree <=160, so the second high part has degree <=79.
     let h = [
@@ -132,7 +132,14 @@ fn reduce(p: [u64; 6]) -> F {
 
 /// Recombine the six three-term Karatsuba products into polynomial words.
 #[inline(always)]
-fn karatsuba_product(d0: u128, d1: u128, d2: u128, m01: u128, m02: u128, m12: u128) -> [u64; 6] {
+pub(super) fn karatsuba_product(
+    d0: u128,
+    d1: u128,
+    d2: u128,
+    m01: u128,
+    m02: u128,
+    m12: u128,
+) -> [u64; 6] {
     let c01 = m01 ^ d0 ^ d1;
     let c02 = m02 ^ d0 ^ d2;
     let c12 = m12 ^ d1 ^ d2;
@@ -334,7 +341,7 @@ pub(super) unsafe fn arm_dot_product(a: &[F], b: &[F]) -> F {
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "pclmulqdq")]
-unsafe fn x86_clmul(a: u64, b: u64) -> u128 {
+pub(super) unsafe fn x86_clmul(a: u64, b: u64) -> u128 {
     use std::arch::x86_64::{__m128i, _mm_clmulepi64_si128, _mm_cvtsi64_si128};
     // SAFETY: the function's target feature guarantees PCLMUL support, and the
     // transmute preserves all 128 product bits.

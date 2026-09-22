@@ -260,3 +260,45 @@ The implementation and its independent bit-convolution tests live in
 `crates/akita-algebra/src/binary.rs` and `crates/akita-algebra/src/binary/`.
 The `binary162` Criterion target covers scalar multiplication, squaring,
 inversion, deferred-reduction dot products, and multiply-then-sum comparisons.
+
+### Keep binary tables packed across rounds
+
+A product sum-check repeatedly computes a polynomial from two tables, then
+folds each table at a challenge. Converting every table before every operation
+can consume much of the arithmetic speedup. `PackedBinary162` instead stores
+matching words from many field elements together in three arrays. The same
+storage survives all rounds, and `refill` reuses its capacity for another input.
+This layout changes computation storage only; it does not change the scalar
+field or its canonical 21-byte encoding.
+
+The kernel pairs adjacent entries. For a pair `(a0, a1)`, define
+`da = a0 + a1`, where addition is XOR. The folded value at challenge `r` is
+`a0 + r * da`. For paired tables `a` and `b`, the round polynomial is
+
+```text
+g(X) = sum_pairs (a0 + X * da) * (b0 + X * db).
+```
+
+`round_product` takes the current claim `h = g(0) + g(1)` and returns the constant,
+linear, and quadratic coefficients. In characteristic two, `h = c1 + c2`,
+so only `c0` and `c2` require table products; `c1 = h + c2`. The claim is a trusted
+prover hint, not a value authenticated by this kernel. This avoids a redundant
+product per pair, division by two, and integer-point interpolation.
+The caller samples the challenge after
+binding the message, then calls `fold_in_place` on both tables. These arithmetic
+kernels themselves do not run a transcript or establish a valid opening.
+
+The first eliminated variable is the least-significant bit of the table index.
+An unmatched final entry is paired with zero. Folding reduces the live length
+to its ceiling half without allocating; empty and singleton tables are unchanged.
+A round message requires equal lengths of at least two, otherwise it returns
+`None`. The caller is responsible for binding logical lengths and padding to
+the statement. Retained capacity is private scratch, not extra live elements.
+
+The `binary162_packed` benchmark group measures messages and full fold sequences,
+including conversion into reused storage and allocation as separate cases.
+Its array-of-structures (AoS) baseline gathers pairs into reused scratch and
+uses the existing accelerated `BinaryField162::dot_product` API with deferred
+reduction. Prepacked all-round timings exclude the initial copy; conversion-plus-
+all-round timings include refilling both buffers. These compare computation
+kernels, not complete binary proof generation.
