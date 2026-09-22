@@ -98,9 +98,9 @@ q=2^{64}-23703.
 
 Its configured element `15113553820101191969` has exact order 1,944, or
 `2^3 * 3^5`, which supplies the roots needed through the degree-648
-minus ring. Tests establish primality with deterministic 64-bit Miller--Rabin
-arithmetic and check the root order independently with `u128` modular
-arithmetic.
+minus ring. Tests replay a recursive Lucas primality certificate with exact `u128`
+arithmetic. They also check the declared root and every supported derived root
+independently with `u128` modular arithmetic.
 
 The default quadratic relation `u^2 = 2` is reducible over this prime. The
 valid `Prime64Offset23703Ext2` profile instead uses `u^2 = 5`. Tests check that

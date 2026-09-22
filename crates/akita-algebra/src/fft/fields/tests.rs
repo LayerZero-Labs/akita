@@ -1,5 +1,5 @@
 use super::*;
-use crate::fft::{distinct_prime_factors, field_pow, primitive_nth_root};
+use crate::fft::{distinct_prime_factors, primitive_nth_root};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, One, Zero};
 
 type F = Prime64Offset23703;
@@ -20,50 +20,64 @@ fn pow_mod(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
     result
 }
 
-// Deterministic Miller-Rabin for the entire u64 range. These seven bases
-// are independent of the field implementation under test.
-fn is_prime_u64(candidate: u64) -> bool {
-    if candidate < 2 {
-        return false;
+// Recursive Lucas primality certificate: each tuple is a prime factor q of
+// n - 1, its multiplicity, and a Fermat/order witness. This fixed fixture is
+// replayed entirely with exact u128 arithmetic, independently of jolt-field.
+fn verify_lucas_certificate(candidate: u64) {
+    if candidate == 2 {
+        return;
     }
-    for prime in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37] {
-        if candidate == prime {
-            return true;
+    let factors: &[(u64, u32, u64)] = match candidate {
+        3 => &[(2, 1, 2)],
+        5 => &[(2, 2, 2)],
+        7 => &[(2, 1, 3), (3, 1, 2)],
+        11 => &[(2, 1, 2), (5, 1, 2)],
+        13 => &[(2, 2, 2), (3, 1, 2)],
+        23 => &[(2, 1, 5), (11, 1, 2)],
+        29 => &[(2, 2, 2), (7, 1, 2)],
+        53 => &[(2, 2, 2), (13, 1, 2)],
+        59 => &[(2, 1, 2), (29, 1, 2)],
+        181 => &[(2, 2, 2), (3, 2, 2), (5, 1, 2)],
+        827 => &[(2, 1, 2), (7, 1, 2), (59, 1, 2)],
+        967 => &[(2, 1, 3), (3, 1, 2), (7, 1, 2), (23, 1, 2)],
+        2897 => &[(2, 4, 3), (181, 1, 2)],
+        7618704421 => &[
+            (2, 2, 2),
+            (3, 1, 2),
+            (5, 1, 2),
+            (53, 1, 2),
+            (827, 1, 2),
+            (2897, 1, 2),
+        ],
+        1355580840219689 => &[(2, 3, 3), (23, 1, 2), (967, 1, 2), (7618704421, 1, 2)],
+        18446744073709527913 => &[(2, 3, 5), (3, 5, 2), (7, 1, 2), (1355580840219689, 1, 2)],
+        _ => panic!("missing Lucas certificate for {candidate}"),
+    };
+    let mut factor_product = 1u128;
+    for &(prime, exponent, witness) in factors {
+        verify_lucas_certificate(prime);
+        factor_product = factor_product
+            .checked_mul(u128::from(prime).checked_pow(exponent).unwrap())
+            .unwrap();
+        assert_eq!(pow_mod(witness, candidate - 1, candidate), 1);
+        let residue = pow_mod(witness, (candidate - 1) / prime, candidate);
+        let mut a = if residue == 0 {
+            candidate - 1
+        } else {
+            residue - 1
+        };
+        let mut b = candidate;
+        while b != 0 {
+            (a, b) = (b, a % b);
         }
-        if candidate.is_multiple_of(prime) {
-            return false;
-        }
+        assert_eq!(a, 1, "Lucas order witness for factor {prime}");
     }
-
-    let trailing = (candidate - 1).trailing_zeros();
-    let odd_part = (candidate - 1) >> trailing;
-    for witness in [2u64, 325, 9_375, 28_178, 450_775, 9_780_504, 1_795_265_022] {
-        let witness = witness % candidate;
-        if witness == 0 {
-            continue;
-        }
-        let mut power = pow_mod(witness, odd_part, candidate);
-        if power == 1 || power == candidate - 1 {
-            continue;
-        }
-        let mut composite = true;
-        for _ in 1..trailing {
-            power = mul_mod(power, power, candidate);
-            if power == candidate - 1 {
-                composite = false;
-                break;
-            }
-        }
-        if composite {
-            return false;
-        }
-    }
-    true
+    assert_eq!(factor_product, u128::from(candidate - 1));
 }
 
 #[test]
 fn modulus_is_prime() {
-    assert!(is_prime_u64(PRIME64_OFFSET_23703_MODULUS));
+    verify_lucas_certificate(PRIME64_OFFSET_23703_MODULUS);
 }
 
 #[test]
@@ -145,9 +159,18 @@ fn nr5_extension_has_expected_basis_norm_and_inverses() {
 fn transform_root_orders_cover_the_initial_tower() {
     for n in [81usize, 162, 243, 324, 648, 972, 1_944] {
         let root = primitive_nth_root::<F>(n);
-        assert_eq!(field_pow(root, n as u64), F::one());
+        let expected = pow_mod(
+            F::SMOOTH_OMEGA as u64,
+            F::SMOOTH_SUBGROUP_ORDER as u64 / n as u64,
+            PRIME64_OFFSET_23703_MODULUS,
+        );
+        assert_eq!(root.to_u128_checked(), Some(u128::from(expected)));
+        assert_eq!(pow_mod(expected, n as u64, PRIME64_OFFSET_23703_MODULUS), 1);
         for factor in distinct_prime_factors(n) {
-            assert_ne!(field_pow(root, (n / factor) as u64), F::one());
+            assert_ne!(
+                pow_mod(expected, (n / factor) as u64, PRIME64_OFFSET_23703_MODULUS),
+                1,
+            );
         }
     }
 }
