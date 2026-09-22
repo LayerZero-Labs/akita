@@ -15,6 +15,7 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"akita/labinius/binary-challenge/v1";
 /// Reusable exact sampler for one binary challenge profile.
 pub struct BinaryChallengeSampler {
     profile: BinaryChallengeProfile,
+    uniform_rank_bits: usize,
     scratch: BinarySamplingScratch,
 }
 
@@ -23,8 +24,14 @@ impl BinaryChallengeSampler {
     #[inline]
     #[must_use]
     pub fn new(profile: BinaryChallengeProfile) -> Self {
+        let uniform_rank_bits = if profile.cardinality() == &BigUint::from(1u8) {
+            0
+        } else {
+            (profile.cardinality() - BigUint::from(1u8)).bits() as usize
+        };
         Self {
             profile,
+            uniform_rank_bits,
             scratch: BinarySamplingScratch::new(),
         }
     }
@@ -97,7 +104,8 @@ impl BinaryChallengeSampler {
             self.scratch
                 .cursor
                 .reset_indexed_prefix(&prefix, coordinate);
-            self.scratch.sample_support(&self.profile)?;
+            self.scratch
+                .sample_support(&self.profile, self.uniform_rank_bits)?;
             challenges.push(BinaryChallenge::from_support(
                 &self.profile,
                 &self.scratch.support,
@@ -136,13 +144,18 @@ impl BinarySamplingScratch {
         }
     }
 
-    fn sample_support(&mut self, profile: &BinaryChallengeProfile) -> Result<(), AkitaError> {
+    fn sample_support(
+        &mut self,
+        profile: &BinaryChallengeProfile,
+        uniform_rank_bits: usize,
+    ) -> Result<(), AkitaError> {
         match profile.family() {
             BinaryChallengeFamily::FixedWeight => self.sample_fixed(profile),
             BinaryChallengeFamily::BoundedWeight => {
                 uniform_biguint_below(
                     &mut self.cursor,
                     profile.cardinality(),
+                    uniform_rank_bits,
                     &mut self.rank_bytes,
                     &mut self.rank_digits,
                     &mut self.rank,
@@ -184,13 +197,12 @@ impl BinarySamplingScratch {
 fn uniform_biguint_below(
     cursor: &mut XofCursor,
     upper: &BigUint,
+    bits: usize,
     bytes: &mut Vec<u8>,
     digits: &mut Vec<u32>,
     rank: &mut BigUint,
 ) {
     debug_assert!(*upper > BigUint::from(0u8));
-    let maximum = upper - BigUint::from(1u8);
-    let bits = maximum.bits() as usize;
     if bits == 0 {
         rank.assign_from_slice(&[]);
         return;
@@ -241,6 +253,7 @@ mod tests {
             uniform_biguint_below(
                 &mut production,
                 &upper,
+                3,
                 &mut rank_bytes,
                 &mut rank_digits,
                 &mut actual,
