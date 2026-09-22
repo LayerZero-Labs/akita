@@ -5,9 +5,13 @@
 //! Multiplication selects carryless CPU instructions when available; every
 //! platform also has a portable implementation. No protocol traits are added.
 
+mod host;
 mod packed;
+
+pub mod field_switch;
 mod product;
 
+pub use host::{BinaryField128, BinaryField192};
 pub use packed::PackedBinary162;
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
