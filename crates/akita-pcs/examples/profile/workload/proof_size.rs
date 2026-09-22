@@ -22,7 +22,7 @@ pub(super) fn proof_size_budgets<Cfg: CommitmentConfig>(
     };
     let policy = akita_config::policy_of::<Cfg>();
     let planner_estimate =
-        akita_schedules::expanded_schedule_packed_proof_estimate_bytes(&key, schedule, &policy)
+        akita_schedules::expanded_schedule_native_proof_estimate_bytes(&key, schedule, &policy)
             .expect("expanded schedule estimate");
     let native_bound =
         akita_schedules::expanded_schedule_native_proof_bound(&key, schedule, &policy)

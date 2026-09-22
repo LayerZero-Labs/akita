@@ -73,10 +73,7 @@ fn candidate_dominates(left: &FrontierCandidate, right: &FrontierCandidate) -> b
     }
     left.schedule.setup_field_elements <= right.schedule.setup_field_elements
         && left.schedule.cost.expanded_query_count() <= right.schedule.cost.expanded_query_count()
-        && left
-            .schedule
-            .cost
-            .strictly_better_for_every_parent(right.schedule.cost)
+        && left.schedule.cost.strictly_better(right.schedule.cost)
 }
 
 pub(super) fn retain(
@@ -146,7 +143,7 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
             Ok(ScheduleCandidate {
                 first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
                 first_direct_output_witness_len: 0,
-                cost: PackedProofCost::new(payload_bytes, 0, expanded_query_count)?,
+                cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count)?,
                 setup_field_elements: 1,
                 folds: CandidateFoldChain::default(),
                 terminal: std::sync::Arc::new(CandidateTerminalResponse {

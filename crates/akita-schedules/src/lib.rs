@@ -20,7 +20,7 @@ pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{
     default_sis_security_policy, expanded_schedule_native_proof_bound,
-    expanded_schedule_packed_proof_estimate_bytes, validate_policy, PlannerCostModelId,
+    expanded_schedule_native_proof_estimate_bytes, validate_policy, PlannerCostModelId,
     PlannerPolicy, RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy,
     RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId,
     SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,

@@ -309,7 +309,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let candidate = |queries| super::ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
         first_direct_output_witness_len: 512,
-        cost: super::PackedProofCost::new(1, 0, queries).expect("candidate cost"),
+        cost: super::NativeProofCost::new(1, 0, queries).expect("candidate cost"),
         setup_field_elements: 1,
         folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
             params: std::sync::Arc::new(params.clone()),

@@ -209,7 +209,7 @@ pub(super) fn terminal(
             )?,
         ),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, 0, 0)?,
+        cost: NativeProofCost::new(payload_bytes, 0, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
@@ -266,6 +266,7 @@ pub(super) fn prepend_fold(
     )?;
     let cost = child.cost.checked_prepend(
         direct_bytes,
+        edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
     )?;
@@ -333,6 +334,7 @@ pub(super) fn prepend_root(
     )?;
     let cost = suffix.cost.checked_prepend(
         root_bytes,
+        root_grinding_cost.native_nonce_max_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
     )?;
@@ -362,6 +364,7 @@ pub(super) fn prepend_root(
     )?;
     let edge_wise_cost = candidate.cost.grinding_cost();
     if edge_wise_cost.total_nonce_bits != canonical_cost.total_nonce_bits
+        || edge_wise_cost.native_nonce_max_bytes != canonical_cost.native_nonce_max_bytes
         || edge_wise_cost.expanded_query_count != canonical_cost.expanded_query_count
     {
         return Err(AkitaError::InvalidSetup(

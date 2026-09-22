@@ -7,7 +7,7 @@ use super::{
     SetupScore,
 };
 use crate::schedule_params::{
-    objective::CompleteObjectiveBound, CandidateMetrics, PackedProofCost, SetupPrefixCapacity,
+    objective::CompleteObjectiveBound, CandidateMetrics, NativeProofCost, SetupPrefixCapacity,
 };
 
 const SETUP_FIRST: crate::SelectionPolicyId =
@@ -46,13 +46,13 @@ fn order<'a, Score>(
 fn setup_score(
     capacity: SetupPrefixCapacity,
     payload_bytes: usize,
-    nonce_bits: usize,
+    nonce_bytes: usize,
     setup_field_elements: usize,
 ) -> SetupScore {
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap(),
+        cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0).unwrap(),
         setup_field_elements,
     }
 }
@@ -66,30 +66,30 @@ fn setup_score_with_queries(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, 0, expanded_query_count).unwrap(),
+        cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count).unwrap(),
         setup_field_elements,
     }
 }
 
 fn payload_score(
     payload_bytes: usize,
-    nonce_bits: usize,
+    nonce_bytes: usize,
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
-        cost: PackedProofCost::new(payload_bytes, nonce_bits, 0).unwrap(),
+        cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0).unwrap(),
         setup_field_elements,
     }
 }
 
 fn payload_score_with_queries(
     payload_bytes: usize,
-    nonce_bits: usize,
+    nonce_bytes: usize,
     expanded_query_count: u64,
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
-        cost: PackedProofCost::new(payload_bytes, nonce_bits, expanded_query_count).unwrap(),
+        cost: NativeProofCost::new(payload_bytes, nonce_bytes, expanded_query_count).unwrap(),
         setup_field_elements,
     }
 }
@@ -244,18 +244,18 @@ fn envelope_first_projection_preserves_maskable_setup_tradeoffs() {
 }
 
 #[test]
-fn payload_projection_prices_every_nonce_alignment() {
+fn payload_projection_adds_native_nonce_bytes_directly() {
     let admission = admission(2, 8);
     let context = context(2, 7);
     let smaller_payload = order(payload_score(100, 8, 64), &[1], &context, admission);
     let smaller_nonce = order(payload_score(101, 0, 64), &[2], &context, admission);
 
-    assert!(payload_projection_dominates(
+    assert!(!payload_projection_dominates(
         SETUP_FIRST,
         smaller_payload,
         smaller_nonce
     ));
-    assert!(!payload_projection_dominates(
+    assert!(payload_projection_dominates(
         SETUP_FIRST,
         smaller_nonce,
         smaller_payload,
@@ -445,7 +445,7 @@ fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
     CandidateMetrics {
         first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(proof_bytes, 0, 0).unwrap(),
+        cost: NativeProofCost::new(proof_bytes, 0, 0).unwrap(),
         setup_field_elements: 0,
     }
 }

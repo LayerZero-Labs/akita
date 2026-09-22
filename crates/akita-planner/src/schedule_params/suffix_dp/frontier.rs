@@ -143,13 +143,13 @@ fn first_parent_visible_cost(
 struct SetupScore {
     first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
     first_direct_output_witness_len: usize,
-    cost: crate::schedule_params::PackedProofCost,
+    cost: crate::schedule_params::NativeProofCost,
     setup_field_elements: usize,
 }
 
 #[derive(Clone, Copy)]
 struct PayloadScore {
-    cost: crate::schedule_params::PackedProofCost,
+    cost: crate::schedule_params::NativeProofCost,
     setup_field_elements: usize,
 }
 
@@ -643,20 +643,14 @@ fn setup_primary_strictly_dominates(
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
                 || (left_score.first_direct_setup_capacity
                     == right_score.first_direct_setup_capacity
-                    && (left_score
-                        .cost
-                        .strictly_better_for_every_parent(right_score.cost)
-                        || (left_score
-                            .cost
-                            .never_worse_for_every_parent(right_score.cost)
+                    && (left_score.cost.strictly_better(right_score.cost)
+                        || (left_score.cost.never_worse(right_score.cost)
                             && left_score.first_direct_output_witness_len
                                 < right_score.first_direct_output_witness_len))));
     }
     left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
         || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
-            && left_score
-                .cost
-                .strictly_better_for_every_parent(right_score.cost))
+            && left_score.cost.strictly_better(right_score.cost))
 }
 
 #[derive(Clone, Copy)]
@@ -675,10 +669,7 @@ fn setup_projection_dominates(
     if !left.admission.admits_every_parent_of(right.admission) {
         return false;
     }
-    let cost_never_worse = left
-        .score
-        .cost
-        .never_worse_for_every_parent(right.score.cost);
+    let cost_never_worse = left.score.cost.never_worse(right.score.cost);
     let equal_output_is_canonical = cost_never_worse
         && left.score.first_direct_output_witness_len
             == right.score.first_direct_output_witness_len
@@ -694,10 +685,7 @@ fn setup_projection_dominates(
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
                 || (left.score.first_direct_setup_capacity
                     == right.score.first_direct_setup_capacity
-                    && (left
-                        .score
-                        .cost
-                        .strictly_better_for_every_parent(right.score.cost)
+                    && (left.score.cost.strictly_better(right.score.cost)
                         || (cost_never_worse
                             && left.score.first_direct_output_witness_len
                                 < right.score.first_direct_output_witness_len)
@@ -705,10 +693,7 @@ fn setup_projection_dominates(
     }
     left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
         || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
-            && (left
-                .score
-                .cost
-                .strictly_better_for_every_parent(right.score.cost)
+            && (left.score.cost.strictly_better(right.score.cost)
                 || (equal_later_coordinates_are_canonical
                     && left.score.setup_field_elements <= right.score.setup_field_elements)))
 }
@@ -745,9 +730,7 @@ fn payload_primary_strictly_dominates(
     right_admission: ParentAdmissionClass,
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
-        && left_score
-            .cost
-            .strictly_better_for_every_parent(right_score.cost)
+        && left_score.cost.strictly_better(right_score.cost)
         && (selection_policy
             != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
             || left_score.setup_field_elements <= right_score.setup_field_elements)
@@ -762,14 +745,8 @@ fn payload_projection_dominates(
         && (selection_policy
             != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
             || left.score.setup_field_elements <= right.score.setup_field_elements)
-        && (left
-            .score
-            .cost
-            .strictly_better_for_every_parent(right.score.cost)
-            || (left
-                .score
-                .cost
-                .never_worse_for_every_parent(right.score.cost)
+        && (left.score.cost.strictly_better(right.score.cost)
+            || (left.score.cost.never_worse(right.score.cost)
                 && left.score.setup_field_elements <= right.score.setup_field_elements
                 && left.context == right.context
                 && left.descriptor <= right.descriptor))

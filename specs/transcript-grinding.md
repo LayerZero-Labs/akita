@@ -174,13 +174,14 @@ LEB128 length of its accepted nonce. Context records are diagnostic only;
 public values are absorbed with `public_message`. Neither contributes proof
 bytes.
 
-Schedule selection deliberately retains main's packed objective,
-`ceil(sum(semantic_nonce_widths) / 8)`, throughout `PackedProofCost`, suffix
-search, dominance, runtime materialization, and generated artifacts. This is
-not an exact estimate of the native LEB128 wire and is accepted migration debt.
-It MUST NOT be used as a parser bound, nonce range, or security bound. A fresh
-generation MUST reproduce main's schedule artifacts; generated files MUST NOT
-be copied or hand-edited to manufacture parity.
+Schedule selection prices every present nonce at its canonical native LEB128
+maximum, `ceil(semantic_nonce_width / 7)`, and adds those per-message maxima.
+This is a deterministic native-format objective, not an estimate of the
+winning nonces' realized wire lengths. It MUST NOT be used as a nonce range or
+security bound. The full native parser bound is derived separately because it
+also includes every non-nonce message and terminal framing. Schedule artifacts
+MUST be regenerated from this objective; generated files MUST NOT be copied or
+hand-edited to manufacture a desired result.
 
 Native nonce decoding MUST reject unterminated, overflowing, and redundant
 unsigned LEB128 encodings without advancing the input cursor. The verifier
@@ -200,7 +201,7 @@ allocate from a proof-controlled length.
 | `akita-prover` | Fold-response candidate computation and honest bounded search |
 | `akita-verifier` | Nonce ranges, predicates, response equations, plan completion |
 | `akita-challenges` | Indexed sparse expansion and distribution checks |
-| `akita-planner` | Query accounting and the frozen packed-bit schedule objective |
+| `akita-planner` | Query accounting and native-maximum schedule objective |
 
 There is one production proof path. A separate packed nonce codec, nonce prefix,
 structured proof replay, or alternate verifier is prohibited.

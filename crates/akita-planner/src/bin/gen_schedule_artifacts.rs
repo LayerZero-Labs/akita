@@ -357,7 +357,7 @@ fn catalog_row_metrics(
     schedule: &FoldSchedule,
 ) -> Result<CatalogRowMetrics, String> {
     let proof_bytes =
-        akita_schedules::expanded_schedule_packed_proof_estimate_bytes(key, schedule, &spec.policy)
+        akita_schedules::expanded_schedule_native_proof_estimate_bytes(key, schedule, &spec.policy)
             .map_err(|error| format!("estimate proof payload: {error}"))?;
     let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
         .map_err(|error| format!("estimate setup capacity: {error}"))?

@@ -180,6 +180,7 @@ fn planner_accumulator_prices_an_oversized_edge_without_plan_validation() {
         accumulator.cost(),
         TranscriptGrindingCost {
             total_nonce_bits: 0,
+            native_nonce_max_bytes: 0,
             expanded_query_count: TRANSCRIPT_GRINDING_QUERY_LIMIT,
         }
     );

@@ -367,28 +367,30 @@ impl CandidateFoldChain {
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: NativeProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PackedProofCost {
+pub(crate) struct NativeProofCost {
     payload_bytes: usize,
+    native_nonce_bytes: usize,
     nonce_bits: usize,
     expanded_query_count: u64,
 }
 
-impl PackedProofCost {
+impl NativeProofCost {
     pub(crate) fn new(
         payload_bytes: usize,
-        nonce_bits: usize,
+        native_nonce_bytes: usize,
         expanded_query_count: u64,
     ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
-            nonce_bits,
+            native_nonce_bytes,
+            nonce_bits: 0,
             expanded_query_count,
         };
         cost.checked_proof_bytes()
@@ -398,12 +400,13 @@ impl PackedProofCost {
 
     pub(crate) fn proof_bytes(self) -> usize {
         self.checked_proof_bytes()
-            .expect("validated packed proof cost")
+            .expect("validated native proof cost")
     }
 
     pub(crate) fn checked_prepend(
         self,
         payload_bytes: usize,
+        native_nonce_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
     ) -> Result<Self, AkitaError> {
@@ -414,16 +417,29 @@ impl PackedProofCost {
         let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
         })?;
+        let native_nonce_bytes = self
+            .native_nonce_bytes
+            .checked_add(native_nonce_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("native nonce byte length overflow".into()))?;
         let expanded_query_count = self
             .expanded_query_count
             .checked_add(expanded_query_count)
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        Self::new(payload_bytes, nonce_bits, expanded_query_count)
+        let cost = Self {
+            payload_bytes,
+            native_nonce_bytes,
+            nonce_bits,
+            expanded_query_count,
+        };
+        cost.checked_proof_bytes()
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+        Ok(cost)
     }
 
     pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.nonce_bits,
+            native_nonce_max_bytes: self.native_nonce_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -436,51 +452,16 @@ impl PackedProofCost {
         self.expanded_query_count < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
-    pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right || (left == right && left_jump >= right_jump)
+    pub(crate) fn never_worse(self, other: Self) -> bool {
+        self.proof_bytes() <= other.proof_bytes()
     }
 
-    pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right
-            && (left.checked_add(1).is_some_and(|next| next < right) || left_jump >= right_jump)
-    }
-
-    /// Proof bytes at parent remainder zero and the first remainder at which
-    /// this suffix gains another nonce byte. These two values completely
-    /// describe all eight parent alignments, avoiding an eight-way checked
-    /// division in every frontier comparison.
-    fn parent_alignment_order(self) -> Option<(usize, usize)> {
-        self.checked_proof_bytes_with_parent_remainder(7)?;
-        let proof_bytes = self.checked_proof_bytes()?;
-        let remainder = self.nonce_bits % 8;
-        let jump = match remainder {
-            0 => 1,
-            1 => 8,
-            _ => 9 - remainder,
-        };
-        Some((proof_bytes, jump))
+    pub(crate) fn strictly_better(self, other: Self) -> bool {
+        self.proof_bytes() < other.proof_bytes()
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
-        self.checked_proof_bytes_with_parent_remainder(0)
-    }
-
-    fn checked_proof_bytes_with_parent_remainder(self, parent_remainder: usize) -> Option<usize> {
-        let nonce_bytes =
-            akita_error::checked::div_ceil(self.nonce_bits.checked_add(parent_remainder)?, 8)?;
-        self.payload_bytes.checked_add(nonce_bytes)
+        self.payload_bytes.checked_add(self.native_nonce_bytes)
     }
 }
 
@@ -503,7 +484,7 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: NativeProofCost,
     pub(crate) setup_field_elements: usize,
 }
 

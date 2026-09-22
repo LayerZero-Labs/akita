@@ -255,7 +255,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
+        akita_schedules::expanded_schedule_native_proof_estimate_bytes(
             &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
             &selected.schedule,
             &policy,
@@ -768,7 +768,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
         selected_root.role_dims(),
-        "exact packed grinding cost keeps the D256 A-role through the first packing fold"
+        "native grinding cost keeps the D256 A-role through the first packing fold"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected

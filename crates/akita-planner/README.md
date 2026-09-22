@@ -202,7 +202,7 @@ The planner uses the same byte formulas that runtime schedule expansion uses:
 - `native_nonterminal_level_layout` for a fold level's fixed native messages.
 - `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
-- the canonical grinding plan for the one proof-level packed nonce stream.
+- the canonical grinding plan for additive per-message native nonce maxima.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
 

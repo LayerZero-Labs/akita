@@ -155,7 +155,7 @@ mod tests {
         const INNER_WIDTH: usize = 6_400_000_000_001;
         const RING_DIMENSION: usize = 64;
         let policy = PlannerPolicy {
-            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
@@ -209,7 +209,7 @@ mod tests {
         const RING_DIMENSION: usize = 128;
         const RESPONSE_CAP: u128 = 1 << 20;
         let policy = PlannerPolicy {
-            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,

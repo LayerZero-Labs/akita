@@ -256,10 +256,10 @@ leaves the transcript unchanged at that site.
 
 The additional seven nonce bits provide room for honest search beyond the
 expected $2^g$ attempts. Storage is self-delimiting and canonical; the semantic
-width is still checked from the public plan. Schedule selection retains main's
-packed estimate, `ceil(sum(semantic_nonce_widths) / 8)`, so canonical schedule
-regeneration remains stable. This estimate is selection-only accounting debt;
-it is not the native LEB128 wire size or a verifier safety bound.
+width is still checked from the public plan. Schedule selection adds the
+per-message native maxima, `ceil(semantic_nonce_width / 7)`. This deterministic
+cost is not the realized LEB128 wire size. The verifier safety bound is derived
+separately from the complete native grammar.
 
 ### Fold-response search
 

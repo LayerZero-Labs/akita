@@ -747,31 +747,34 @@ def render_grinding_plan_details(
     displayed_baseline_runs = aggregate_grinding_runs(baseline_runs)
     baseline_by_key = {grinding_run_key(run): run for run in displayed_baseline_runs}
     current_packed_estimate = int(grinding_plan["packed_nonce_estimate_bytes"])
+    current_native_max = int(grinding_plan["native_nonce_max_bytes"])
     if baseline_grinding_plan is not None:
         baseline_packed_estimate = int(baseline_grinding_plan["packed_nonce_estimate_bytes"])
+        baseline_native_max: int | None = int(
+            baseline_grinding_plan["native_nonce_max_bytes"]
+        )
         baseline_total_bits: int | None = int(baseline_grinding_plan["total_nonce_bits"])
-        baseline_padding_bits: int | None = int(baseline_grinding_plan["padding_bits"])
     else:
+        baseline_native_max = None
         legacy_storage = legacy_grinding_storage(baseline_proof_levels)
         if legacy_storage is None:
             baseline_total_bits = None
             baseline_packed_estimate = None
-            baseline_padding_bits = None
         else:
-            baseline_total_bits, baseline_packed_estimate, baseline_padding_bits = legacy_storage
+            baseline_total_bits, baseline_packed_estimate, _ = legacy_storage
 
     print()
     print("#### Transcript grinding bits")
     print()
-    print("| Planner model | Meaningful bits | Packed estimate bytes | Padding bits | Plan queries |")
+    print("| Planner model | Meaningful bits | Native maximum bytes | Legacy packed bytes | Plan queries |")
     print("| --- | ---: | ---: | ---: | ---: |")
     print(
-        "| Legacy aggregate packed objective (not native wire encoding) | "
+        "| Additive per-message LEB128 maxima | "
         + grinding_int_choice(grinding_plan["total_nonce_bits"], baseline_total_bits)
         + " | "
-        + grinding_int_choice(current_packed_estimate, baseline_packed_estimate)
+        + grinding_int_choice(current_native_max, baseline_native_max)
         + " | "
-        + grinding_int_choice(grinding_plan["padding_bits"], baseline_padding_bits)
+        + grinding_int_choice(current_packed_estimate, baseline_packed_estimate)
         + " | "
         + grinding_int_choice(
             grinding_plan["expanded_query_count"],
@@ -786,9 +789,9 @@ def render_grinding_plan_details(
     print()
     print(
         "The public plan prices challenges against a nominal capacity of "
-        f"{int(grinding_plan['nominal_capacity_bits']):,} bits. This row preserves the "
-        "main-compatible schedule-selection objective; native nonce maxima and realized "
-        "LEB128 bytes are reported separately."
+        f"{int(grinding_plan['nominal_capacity_bits']):,} bits. Schedule selection uses "
+        "the native maximum; the aggregate packed value is retained only as a legacy "
+        "comparison, and realized LEB128 bytes are reported separately."
     )
     print()
     print("| Fold | Component | Query | Loss factor | Required zero bits | Stored bits/query | Count | Packed bits |")
@@ -866,8 +869,8 @@ def render_grinding_plan_details(
         print()
     print(
         "Consecutive queries with identical parameters are grouped, and sumcheck rounds are "
-        "shown as ranges. Counts and packed bit totals remain exact. The proof rounds the "
-        "stream to bytes once, not per row or fold. Required zero bits are per proof of work "
+        "shown as ranges. Counts and packed bit totals remain exact, but the native proof "
+        "encodes each present nonce independently. Required zero bits are per proof of work "
         "query. The 12 bit fold response is bounded search, not proof of work. For a legacy "
         "merge base, unused bits measure each 12 bit response stored in a 32 bit field."
     )

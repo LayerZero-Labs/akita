@@ -6,8 +6,8 @@
 //! prover/verifier replay path. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
-//! The proof-level packed nonce stream is priced once from the canonical
-//! grinding plan and is not attributed to individual levels.
+//! Native nonce messages are priced independently by the canonical grinding
+//! plan and are not attributed to this fixed-width level layout.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes};
 use crate::{
@@ -1021,7 +1021,7 @@ mod tests {
             let serialized_without_witness =
                 terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
-            // The proof-level packed nonce stream is accounted separately.
+            // Native nonce messages are accounted separately.
             assert_eq!(
                 0, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

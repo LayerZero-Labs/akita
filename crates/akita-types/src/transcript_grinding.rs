@@ -565,6 +565,8 @@ pub struct GrindingPlan {
 pub struct TranscriptGrindingCost {
     /// Semantic nonce widths used for range checks and security accounting.
     pub total_nonce_bits: usize,
+    /// Maximum canonical native bytes emitted by the independently encoded nonces.
+    pub native_nonce_max_bytes: usize,
     /// Number of logical transcript queries after expanding compact runs.
     pub expanded_query_count: u64,
 }
@@ -638,6 +640,7 @@ impl GrindingPlanAccumulator {
     pub(crate) const fn cost(&self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.total_nonce_bits,
+            native_nonce_max_bytes: self.native_nonce_max_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }

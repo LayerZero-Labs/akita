@@ -13,8 +13,8 @@ use std::sync::Arc;
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlannerCostModelId {
-    /// Exact protocol payload plus setup-envelope accounting.
-    ExactPayloadAndSetupEnvelope,
+    /// Native message payload, additive nonce maxima, and setup-envelope accounting.
+    NativeNoncePayloadAndSetupEnvelopeV2,
 }
 
 /// Offline response-energy model used to admit selective L2 candidates.
@@ -49,14 +49,14 @@ impl PlannerCostModelId {
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => 1,
+            Self::NativeNoncePayloadAndSetupEnvelopeV2 => 2,
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => "ExactPayloadAndSetupEnvelope",
+            Self::NativeNoncePayloadAndSetupEnvelopeV2 => "NativeNoncePayloadAndSetupEnvelopeV2",
         }
     }
 }
@@ -663,7 +663,6 @@ struct ExpandedScheduleProofComponents {
     fixed_bytes: usize,
     terminal_planner_bytes: usize,
     terminal_max_bytes: usize,
-    packed_nonce_bytes: usize,
     native_nonce_max_bytes: usize,
 }
 
@@ -738,8 +737,6 @@ fn expanded_schedule_proof_components(
         field_bits,
         policy.claim_ext_degree,
     )?;
-    let packed_nonce_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     let fixed_bytes = total
         .checked_add(terminal_eor)
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
@@ -747,17 +744,15 @@ fn expanded_schedule_proof_components(
         fixed_bytes,
         terminal_planner_bytes,
         terminal_max_bytes,
-        packed_nonce_bytes,
         native_nonce_max_bytes: grinding_plan.native_nonce_max_bytes(),
     })
 }
 
-/// Recompute the packed schedule-selection estimate for one expanded schedule.
+/// Recompute the native schedule-selection estimate for one expanded schedule.
 ///
-/// This intentionally retains main's aggregate packed nonce objective and may
-/// use a tighter planner-only terminal estimate. It is not a native parser
-/// bound.
-pub fn expanded_schedule_packed_proof_estimate_bytes(
+/// The objective uses additive per-message canonical nonce maxima and the
+/// planner's terminal-response estimate. It is not a native parser bound.
+pub fn expanded_schedule_native_proof_estimate_bytes(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
@@ -766,7 +761,7 @@ pub fn expanded_schedule_packed_proof_estimate_bytes(
     components
         .fixed_bytes
         .checked_add(components.terminal_planner_bytes)
-        .and_then(|value| value.checked_add(components.packed_nonce_bytes))
+        .and_then(|value| value.checked_add(components.native_nonce_max_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
 }
 
@@ -810,7 +805,7 @@ pub fn materialize_candidate_schedule(
         )
     })?;
     let mut estimate = FoldScheduleEstimate {
-        packed_nonce_estimate_bytes: 0,
+        native_nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: recursive_folds
@@ -837,19 +832,20 @@ pub fn materialize_candidate_schedule(
         policy.claim_ext_degree,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
+        || grinding_plan.native_nonce_max_bytes() != cached_grinding_cost.native_nonce_max_bytes
         || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
     {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached grinding cost ({} nonce bits, {} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            "cached grinding cost ({} nonce bits, {} native bytes, {} queries) disagrees with materialized plan ({} nonce bits, {} native bytes, {} queries)",
             cached_grinding_cost.total_nonce_bits,
+            cached_grinding_cost.native_nonce_max_bytes,
             cached_grinding_cost.expanded_query_count,
             grinding_plan.total_nonce_bits(),
+            grinding_plan.native_nonce_max_bytes(),
             grinding_plan.expanded_query_count(),
         )));
     }
-    estimate.packed_nonce_estimate_bytes =
-        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    estimate.native_nonce_max_bytes = grinding_plan.native_nonce_max_bytes();
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(
@@ -996,7 +992,7 @@ mod tests {
 
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,

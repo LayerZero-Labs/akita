@@ -902,19 +902,21 @@ combines native local framing with good honest-prover size.
 The native design is safe only if it keeps three different size concepts
 separate:
 
-1. **Packed planner objective.** Schedule selection intentionally retains
-   main's `ceil(sum(widths)/8)` objective so generated schedule tables remain
-   unchanged.
+1. **Native-maximum planner objective.** Schedule selection adds the canonical
+   per-message LEB128 maxima, `sum(ceil(width_i / 7))`. This aligns the modeled
+   nonce cost with the native format, but the complete objective is still a
+   model because terminal response pricing is not an exact wire bound.
 2. **Native parser maximum.** Recursive and ordinary input boundaries use the
    sum of per-message LEB128 maxima, along with all other native grammar and
    terminal framing bounds.
 3. **Actual honest size.** Profiling measures the concrete LEB128 lengths of
    the accepted nonces.
 
-The packed objective is not a parser bound. The actual honest size is not a
-malicious-proof bound. The native maximum must not be fed back into schedule
-selection unless Akita intentionally changes its optimization objective and
-regenerates schedules.
+The planner objective is not a parser bound because it does not price every
+component with the conservative grammar maximum. The actual honest size is not
+a malicious-proof bound. Changing from aggregate packed-bit pricing to native
+per-message maxima changes the optimization policy and therefore requires
+regenerating every schedule catalog.
 
 Encoding also does not replace verifier security checks. Acceptance still
 requires:
@@ -958,8 +960,8 @@ Current PR:
   cursor and verifier checks;
 - `crates/akita-types/src/transcript_grinding_plan.rs` — canonical plan
   derivation and the complete component catalog;
-- `crates/akita-schedules/src/runtime.rs` — packed planner estimate versus
-  native proof bound;
+- `crates/akita-schedules/src/runtime.rs` — native-maximum planner estimate
+  versus complete native proof bound;
 - `specs/transcript-grinding.md` — authoritative grinding contract;
 - `book/src/how/transcript.md` — current transcript architecture and verifier
   requirements.

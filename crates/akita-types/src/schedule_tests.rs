@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
-        packed_nonce_estimate_bytes: 0,
+        native_nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -866,7 +866,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level. The proof-level packed nonce
+        // it from the serialized terminal level. Native nonce messages
         // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;

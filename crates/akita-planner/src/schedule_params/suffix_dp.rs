@@ -17,7 +17,7 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateInnerRoute, CandidateLayoutGuide,
-    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost,
+    CandidateTerminalResponse, CompleteObjectiveBound, FoldCandidatePolicy, NativeProofCost,
     RecursiveCandidateRequest, RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter,
     RelationSearchDomain, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
     SetupPrefixCapacity, SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy,
@@ -289,7 +289,7 @@ struct ChildEdgePrice {
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
     first_direct_output_witness_len: usize,
-    cost: PackedProofCost,
+    cost: NativeProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -508,6 +508,7 @@ fn child_choice(
     };
     let cost = suffix.cost.checked_prepend(
         edge_payload_bytes,
+        edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
     )?;
@@ -737,7 +738,7 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(total, 0, 0)?,
+        cost: NativeProofCost::new(total, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),

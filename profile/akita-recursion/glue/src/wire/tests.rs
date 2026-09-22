@@ -326,12 +326,12 @@ fn native_proof_budget_is_derived_from_the_selected_schedule() {
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };
-    let planner_estimate = akita_schedules::expanded_schedule_packed_proof_estimate_bytes(
+    let planner_estimate = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
         &key,
         row.schedule(),
         &akita_config::policy_of::<TestCfg>(),
     )
-    .expect("packed planner estimate");
+    .expect("native planner estimate");
     assert!(
         bound >= planner_estimate,
         "native parser bound must cover the packed selection estimate"

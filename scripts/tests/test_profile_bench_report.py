@@ -1238,8 +1238,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=107 "
                 "accounted_bytes=107 akita_fold_bytes=100 packed_nonce_estimate_bytes=7 tail_bytes=0",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
-                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 run_count=5 "
-                "expanded_query_count=12",
+                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 "
+                "native_nonce_max_bytes=8 run_count=5 expanded_query_count=12",
                 "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
                 "component=fold_response query=response_search protocol=none stage=None "
                 "round=None group=None kind=fold_response loss_factor=0 grind_bits=0 "
@@ -1289,9 +1289,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
 
         self.assertIn("Transcript grinding bits", report)
-        self.assertIn("Legacy aggregate packed objective (not native wire encoding)", report)
+        self.assertIn("Additive per-message LEB128 maxima", report)
         self.assertIn("54<br><sub>Merge base</sub><br>12", report)
-        self.assertIn("2<br><sub>Merge base</sub><br>20", report)
         self.assertIn(
             "Stage 1 | sumcheck stage 0, rounds 2 to 4 | 4 | 3 | 14 | 3 | 42",
             report,
@@ -1302,7 +1301,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("because they require no nonce bits", report)
         self.assertIn("**L0 subtotal**", report)
         self.assertIn("rounds are shown as ranges", report)
-        self.assertIn("rounds the stream to bytes once", report)
+        self.assertIn("encodes each present nonce independently", report)
         self.assertIn("stored in a 32 bit field", report)
         self.assertIn("12 bit fold response", report)
 
