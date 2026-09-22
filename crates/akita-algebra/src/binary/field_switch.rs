@@ -7,9 +7,16 @@
 use akita_error::{checked, AkitaError};
 
 use super::{BinaryField162 as F, PackedBinary162};
+#[cfg(target_arch = "aarch64")]
+mod arm;
+mod kernels;
 mod profile;
 #[cfg(target_arch = "x86_64")]
 mod x86;
+#[cfg(target_arch = "x86_64")]
+mod x86_256;
+#[cfg(target_arch = "x86_64")]
+mod x86_common;
 pub use profile::SwitchField;
 
 /// Inject the source's polynomial bits into F162's low coordinates.
@@ -97,30 +104,9 @@ pub fn partial_evaluations<H: SwitchField>(
     }
     equality_scratch.resize(source.len(), H::ZERO);
     H::equality_weights(point, equality_scratch);
-    #[cfg(target_arch = "x86_64")]
-    if source.len() >= 64 && gfni_available() {
-        // SAFETY: public shape validation gives equal power-of-two lengths;
-        // at least 64 entries means whole tiles, and features were checked.
-        let bits = unsafe { x86::partials::<H>(source, equality_scratch) };
-        let mut values = vec![H::Source::default(); 1 << H::BATCH_BITS];
-        for (dst, bits) in values.iter_mut().zip(bits) {
-            *dst = H::Source::try_from(bits).map_err(|_| {
-                AkitaError::InvalidInput("field-switch source bits exceed profile width".into())
-            })?;
-        }
-        return Ok(SwitchPartials { values });
-    }
-    let mut values = vec![H::Source::default(); 1 << H::BATCH_BITS];
-    for (&value, &weight) in source.iter().zip(equality_scratch.iter()) {
-        for (word_index, mut word) in weight.coordinates().into_iter().enumerate() {
-            while word != 0 {
-                let row = word_index * 64 + word.trailing_zeros() as usize;
-                values[row] ^= value;
-                word &= word - 1;
-            }
-        }
-    }
-    Ok(SwitchPartials { values })
+    Ok(SwitchPartials {
+        values: kernels::partials::<H>(source, equality_scratch)?,
+    })
 }
 
 fn row_weights<H: SwitchField>(point: &[F]) -> Result<[F; 256], AkitaError> {
@@ -147,8 +133,9 @@ fn row_weights<H: SwitchField>(point: &[F]) -> Result<[F; 256], AkitaError> {
 ///
 /// `host_weights` is the scratch produced by `partial_evaluations` for the same
 /// host point. The caller owns that correspondence. Output capacity is reused;
-/// coefficients stay packed through every sumcheck round. GFNI handles full
-/// tiles where available; the portable path uses a small nibble lookup.
+/// coefficients stay packed through every sumcheck round. GFNI on x86 and
+/// NEON on AArch64 handle full tiles where available; smaller tables use the
+/// portable nibble lookup.
 pub fn batched_weights<H: SwitchField>(
     host_weights: &[H],
     batch_point: &[F],
@@ -161,30 +148,7 @@ pub fn batched_weights<H: SwitchField>(
     }
     let rows = row_weights::<H>(batch_point)?;
     let output = output.resize_words(host_weights.len());
-    #[cfg(target_arch = "x86_64")]
-    if host_weights.len() >= 64 && gfni_available() {
-        // SAFETY: validated power-of-two length is a whole number of tiles;
-        // output limbs match that length and the required features are present.
-        unsafe { x86::coefficients::<H>(host_weights, &rows, output) };
-        return Ok(());
-    }
-    let mut lookup = [[F::ZERO; 16]; 48];
-    for (chunk, table) in lookup[..H::ROWS / 4].iter_mut().enumerate() {
-        for mask in 1usize..16 {
-            let bit = mask.trailing_zeros() as usize;
-            table[mask] = table[mask & (mask - 1)] + rows[4 * chunk + bit];
-        }
-    }
-    let [low, high, top] = output;
-    for (((lo, hi), top), &host) in low.iter_mut().zip(high).zip(top).zip(host_weights) {
-        let mut value = F::ZERO;
-        for (word_index, word) in host.coordinates()[..H::ROWS / 64].iter().enumerate() {
-            for nibble in 0..16 {
-                value += lookup[word_index * 16 + nibble][((word >> (4 * nibble)) & 15) as usize];
-            }
-        }
-        [*lo, *hi, *top] = value.to_words();
-    }
+    kernels::coefficients::<H>(host_weights, &rows, output);
     Ok(())
 }
 
@@ -233,11 +197,3 @@ pub fn transparent_weight<H: SwitchField>(
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(target_arch = "x86_64")]
-fn gfni_available() -> bool {
-    std::arch::is_x86_feature_detected!("avx512f")
-        && std::arch::is_x86_feature_detected!("avx512bw")
-        && std::arch::is_x86_feature_detected!("avx512vbmi")
-        && std::arch::is_x86_feature_detected!("gfni")
-}

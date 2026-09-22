@@ -78,11 +78,14 @@ The tensor algebra need not be a field and no tensor inverses are used.
 
 Host multiplication uses runtime-selected PMULL/PCLMUL, with a portable
 fallback. Equality expansion selects once per table and uses four-lane
-AVX-512/VPCLMUL on supported x86 CPUs. AVX-512/GFNI computes partial matrices
-and maps host weights directly into packed F162 coefficient buffers. The
-64-element tile boundary is checked before entering either unsafe kernel;
-small tables use the portable coordinate/lookup path. Packed F162 messages
-and folds use four-lane VPCLMUL with narrower fallbacks for short rounds.
+AVX-512/VPCLMUL on supported x86 CPUs. The field switch selects partial-matrix
+construction and coefficient mapping independently. Complete 64-element tiles
+use AVX-512/GFNI when available, or AVX2/GFNI on x86 CPUs without the required
+AVX-512 features. On AArch64, NEON maps coefficients while partial construction
+uses the portable kernel. Small tables use the portable coordinate/lookup path.
+Every kernel produces the same ordered partial rows and three packed F162 limbs.
+Packed F162 messages and folds use four-lane VPCLMUL with narrower fallbacks
+for short rounds.
 
 `batched_weights` takes `&mut PackedBinary162`, retaining its three limb buffers.
 `refill_binary_words` converts source words directly into that representation.
