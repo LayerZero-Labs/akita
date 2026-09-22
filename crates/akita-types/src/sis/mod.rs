@@ -43,7 +43,7 @@ pub use ajtai_key::{
     OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY, SUPPORTED_SIS_SECURITY_POLICIES,
 };
-pub use committed_source::{CommittedSourceClass, CommittedSourceContract};
+pub use committed_source::{CommittedSourceClass, CommittedSourceContract, SourceNorms};
 pub use coverage::{
     inner_coeff_linf_bounds, sis_role_cell, sis_role_cells, sis_role_dimension_supported,
     SisRoleCell, GADGET_COEFF_LINF_ANCHORS, INNER_RESPONSE_DIFFERENCE_EXPONENTS,
