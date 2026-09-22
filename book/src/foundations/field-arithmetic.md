@@ -374,8 +374,9 @@ The arithmetic path in `binary::field_switch` is:
 3. `SwitchPartials::batch` gives the F162 claim. `batched_weights` transforms
    equality scratch for that same host point directly into `PackedBinary162`.
    For complete 64-element tiles, AVX-512/GFNI or AVX2/GFNI applies the binary
-   coordinate map on supported x86 CPUs. AArch64 NEON maps coefficients with
-   nibble tables. Smaller tables use the portable coordinate/lookup path.
+   coordinate map on supported x86 CPUs. Little-endian AArch64 NEON constructs partials with
+   source-subset tables and maps coefficients with nibble tables. Smaller tables
+   use the portable coordinate/lookup path.
 4. `PackedBinary162::refill_binary_words` copies source words directly into
    packed storage. AVX-512/VPCLMUL processes four adjacent pairs per message
    or fold iteration, with narrower hardware and portable fallbacks. At the terminal

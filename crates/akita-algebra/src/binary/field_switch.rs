@@ -7,8 +7,15 @@
 use akita_error::{checked, AkitaError};
 
 use super::{BinaryField162 as F, PackedBinary162};
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 mod arm;
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+mod arm_partials;
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_endian = "little")
+))]
+mod bit_matrix;
 mod kernels;
 mod profile;
 #[cfg(target_arch = "x86_64")]

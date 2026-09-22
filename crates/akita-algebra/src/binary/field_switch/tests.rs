@@ -59,7 +59,10 @@ where
     let mut packed_coefficients = PackedBinary162::new();
     batched_weights(&eq, &batch, &mut packed_coefficients).unwrap();
     let coefficients = packed_coefficients.to_scalars();
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_endian = "little")
+    ))]
     if source.len() >= 64 {
         let rows = row_weights::<H>(&batch).unwrap();
         #[cfg(target_arch = "x86_64")]
@@ -96,10 +99,11 @@ where
                 }
             }
         }
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
         if std::arch::is_aarch64_feature_detected!("neon") {
             // SAFETY: NEON and the full tile shape were checked.
             unsafe {
+                backend_partials_match::<H>(source, &eq, &partials, arm_partials::partials::<H>);
                 backend_coefficients_match::<H>(&eq, &rows, &coefficients, arm::coefficients::<H>);
             }
         }
@@ -159,7 +163,10 @@ where
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_endian = "little")
+))]
 unsafe fn backend_partials_match<H: SwitchField>(
     source: &[H::Source],
     weights: &[H],
@@ -176,7 +183,10 @@ unsafe fn backend_partials_match<H: SwitchField>(
     assert!(actual[H::ROWS..].iter().all(|&value| value == 0));
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_endian = "little")
+))]
 unsafe fn backend_coefficients_match<H: SwitchField>(
     weights: &[H],
     rows: &[F; 256],
