@@ -20,6 +20,8 @@ use std::iter::repeat_n;
 
 #[path = "relation_layout.rs"]
 mod layout_types;
+#[path = "relation_rows.rs"]
+mod rows;
 use layout_types::RelationCompressionLayout;
 pub use layout_types::{
     RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
@@ -170,82 +172,6 @@ impl RelationRhsLayout {
             .into_iter()
             .map(RelationRowFamily::geometry)
             .collect())
-    }
-
-    /// Semantic row families in canonical relation and quotient order.
-    pub fn row_families(&self) -> Result<Vec<RelationRowFamily>, AkitaError> {
-        self.validate()?;
-        let row_count = self.groups.iter().try_fold(0usize, |rows, group| {
-            rows.checked_add(1)
-                .and_then(|rows| rows.checked_add(group.n_a))
-                .and_then(|rows| rows.checked_add(group.logical_b_rows().ok()?))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("relation quotient row count overflow".into())
-                })
-        })?;
-        let row_count = row_count.checked_add(self.n_d).ok_or_else(|| {
-            AkitaError::InvalidSetup("relation quotient row count overflow".into())
-        })?;
-        let mut rows = Vec::with_capacity(row_count);
-        for group in &self.groups {
-            let group_index = group.group_index;
-            rows.push(RelationRowFamily::Consistency {
-                group_index,
-                opening_method: group.opening_method,
-                geometry: group.opening_geometry,
-            });
-            let inner_geometry = RelationRowGeometry::native(group.role_dims.d_a())?;
-            for row in 0..group.n_a {
-                rows.push(RelationRowFamily::Inner {
-                    group_index,
-                    row,
-                    geometry: inner_geometry,
-                });
-            }
-            let outer_geometry = RelationRowGeometry::native(group.role_dims.d_b())?;
-            for slice_index in 0..group.outer_slice_count.get() {
-                for physical_row in 0..group.physical_b_rows {
-                    rows.push(RelationRowFamily::Outer {
-                        group_index,
-                        slice_index,
-                        physical_row,
-                        geometry: outer_geometry,
-                    });
-                }
-            }
-        }
-        let opening_geometry = RelationRowGeometry::native(self.d_ring_dimension)?;
-        for row in 0..self.n_d {
-            rows.push(RelationRowFamily::Opening {
-                row,
-                geometry: opening_geometry,
-            });
-        }
-        if let Some(compression) = &self.compression {
-            for map_index in 0..crate::COMPRESSION_MAP_COUNT {
-                for (&group_index, plan) in compression
-                    .group_indices
-                    .iter()
-                    .zip(&compression.group_plans)
-                {
-                    let geometry =
-                        RelationRowGeometry::native(plan.maps()[map_index].ring_dimension())?;
-                    rows.push(RelationRowFamily::CompressionF {
-                        group_index,
-                        map_index,
-                        geometry,
-                    });
-                }
-                let geometry = RelationRowGeometry::native(
-                    compression.opening_plan.maps()[map_index].ring_dimension(),
-                )?;
-                rows.push(RelationRowFamily::CompressionH {
-                    map_index,
-                    geometry,
-                });
-            }
-        }
-        Ok(rows)
     }
 
     /// Canonical compression plan for one relation-ordered B group.
@@ -514,37 +440,6 @@ impl RelationWitnessGeometry {
             ));
         }
         Ok(geometry)
-    }
-
-    /// Common Stage-2 coefficient block derived from row polynomial moduli.
-    pub fn relation_coefficient_block_len(&self) -> Result<usize, AkitaError> {
-        let row_geometries = self
-            .rhs_layout()
-            .row_families()?
-            .into_iter()
-            .filter(|row| {
-                !matches!(
-                    row,
-                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
-                )
-            })
-            .map(RelationRowFamily::geometry)
-            .collect::<Vec<_>>();
-        let coefficient_block = row_geometries
-            .iter()
-            .map(|geometry| geometry.polynomial_modulus_dimension())
-            .min()
-            .ok_or_else(|| AkitaError::InvalidSetup("relation rows are empty".into()))?;
-        if row_geometries.iter().any(|geometry| {
-            !geometry
-                .physical_coefficient_width()
-                .is_multiple_of(coefficient_block)
-        }) {
-            return Err(AkitaError::InvalidSetup(
-                "relation row width is not aligned to its common modulus block".into(),
-            ));
-        }
-        Ok(coefficient_block)
     }
 }
 
