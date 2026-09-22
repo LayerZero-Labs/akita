@@ -248,9 +248,8 @@ fn append_nonterminal(
         .checked_shl(params.open().digits.log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("digit-range basis exceeds usize".into()))?;
     let range = DigitRangePlan::new(basis)?;
-    let (stages, norm) =
-        range.proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
-    for (stage_index, stage_shape) in stages.iter().enumerate() {
+    let shape = range.route_shape(rounds, params.inner().matrix.security_route())?;
+    for (stage_index, stage_shape) in shape.stages().enumerate() {
         let stage = usize_to_u32(stage_index, "Stage 1 grinding stage")?;
         let full_round_degree =
             stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
@@ -275,7 +274,7 @@ fn append_nonterminal(
             )?)?;
         }
     }
-    if let Some(norm) = norm {
+    if let Some(norm) = shape.norm {
         if norm.subclaims > 0 {
             push(GrindingRun::proof_of_work(
                 GrindingSite::L2SubclaimBatch { level },
@@ -288,7 +287,7 @@ fn append_nonterminal(
             1,
             capacity,
         )?)?;
-        for (round, &degree) in norm.sumcheck.iter().enumerate() {
+        for round in 0..norm.rounds {
             append_sumcheck(
                 push,
                 capacity,
@@ -296,7 +295,7 @@ fn append_nonterminal(
                 level,
                 0,
                 round,
-                degree,
+                norm.degree,
             )?;
         }
         push(GrindingRun::proof_of_work(
@@ -543,5 +542,175 @@ mod tests {
                 .count(),
             expected_rounds - 2
         );
+    }
+
+    #[test]
+    fn compact_stage1_grinding_matches_materialized_wire_shapes() {
+        use crate::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisL2TableDigest};
+        let key = crate::sis::sis_l2_table_key_for_collision_sq(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            1u128 << 50,
+        )
+        .unwrap();
+        let successor = params(128);
+        let layout = OpeningClaimsLayout::new(6, 1).unwrap();
+        // Base-field and quadratic-extension challenge capacities; 64 bits
+        // cannot meet this fixture's security target within the grinding cap.
+        for capacity in [128, 256] {
+            for basis in [4usize, 8, 16, 32, 64] {
+                for rounds in [0, 1, 7] {
+                    for norm_shape in [
+                        None,
+                        Some(PhysicalL2NormProofShape::Direct {
+                            physical_response_len: 512,
+                        }),
+                        Some(PhysicalL2NormProofShape::LimbGram {
+                            physical_response_len: 512,
+                            block_len: 32,
+                            limb_count: 3,
+                        }),
+                    ] {
+                        let mut current = params(64);
+                        current.own_group_mut().opening.log_basis_open = basis.trailing_zeros();
+                        current.own_group_mut().profile.outer.digits.log_basis =
+                            basis.trailing_zeros();
+                        if let Some(norm_shape) = norm_shape {
+                            current.own_group_mut().profile.inner.matrix =
+                                InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                                    key,
+                                    8,
+                                    1u128 << 30,
+                                    norm_shape,
+                                )
+                                .unwrap();
+                        }
+                        let mut actual = Vec::new();
+                        append_nonterminal(
+                            &mut |run| {
+                                actual.push(run);
+                                Ok(())
+                            },
+                            capacity,
+                            1,
+                            2,
+                            &current,
+                            rounds,
+                            &layout,
+                            FoldSuccessor::Recursive(&successor),
+                        )
+                        .unwrap();
+                        actual.retain(|run| {
+                            matches!(
+                                run.site(),
+                                GrindingSite::SumcheckRound {
+                                    protocol: SumcheckProtocol::Stage1
+                                        | SumcheckProtocol::PhysicalL2,
+                                    ..
+                                } | GrindingSite::Stage1InterstageBatch { .. }
+                                    | GrindingSite::L2SubclaimBatch { .. }
+                                    | GrindingSite::L2NormMerge { .. }
+                                    | GrindingSite::L2VirtualBatch { .. }
+                            )
+                        });
+                        let (stages, norm) = DigitRangePlan::new(basis)
+                            .unwrap()
+                            .proof_shapes_for_route(rounds, current.inner().matrix.security_route())
+                            .unwrap();
+                        let mut expected = Vec::new();
+                        let mut push = |run| {
+                            expected.push(run);
+                            Ok(())
+                        };
+                        for (stage, shape) in stages.into_iter().enumerate() {
+                            for round in 0..shape.sumcheck_proof.0 {
+                                append_sumcheck(
+                                    &mut push,
+                                    capacity,
+                                    SumcheckProtocol::Stage1,
+                                    2,
+                                    stage as u32,
+                                    round,
+                                    shape.sumcheck_proof.1 + 1,
+                                )
+                                .unwrap();
+                            }
+                            if shape.child_claims > 0 {
+                                push(
+                                    GrindingRun::proof_of_work(
+                                        GrindingSite::Stage1InterstageBatch {
+                                            level: 2,
+                                            stage: stage as u32,
+                                        },
+                                        powers_batch_loss_factor(shape.child_claims).unwrap(),
+                                        capacity,
+                                    )
+                                    .unwrap(),
+                                )
+                                .unwrap();
+                            }
+                        }
+                        if let Some(norm) = norm {
+                            if norm.subclaims > 0 {
+                                push(
+                                    GrindingRun::proof_of_work(
+                                        GrindingSite::L2SubclaimBatch { level: 2 },
+                                        powers_batch_loss_factor(norm.subclaims).unwrap(),
+                                        capacity,
+                                    )
+                                    .unwrap(),
+                                )
+                                .unwrap();
+                            }
+                            push(
+                                GrindingRun::proof_of_work(
+                                    GrindingSite::L2NormMerge { level: 2 },
+                                    1,
+                                    capacity,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap();
+                            for (round, degree) in norm.sumcheck.into_iter().enumerate() {
+                                append_sumcheck(
+                                    &mut push,
+                                    capacity,
+                                    SumcheckProtocol::PhysicalL2,
+                                    2,
+                                    0,
+                                    round,
+                                    degree,
+                                )
+                                .unwrap();
+                            }
+                            push(
+                                GrindingRun::proof_of_work(
+                                    GrindingSite::L2VirtualBatch { level: 2 },
+                                    polynomial_identity_loss_factor(norm.virtual_evaluations)
+                                        .unwrap(),
+                                    capacity,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap();
+                        }
+                        assert_eq!(
+                            actual, expected,
+                            "basis={basis} rounds={rounds} norm={norm_shape:?}"
+                        );
+                        let cost = |runs: &[GrindingRun]| {
+                            let mut accumulator = GrindingPlanAccumulator::new(capacity).unwrap();
+                            for &run in runs {
+                                accumulator.push(run).unwrap();
+                            }
+                            accumulator.cost()
+                        };
+                        assert_eq!(cost(&actual), cost(&expected));
+                    }
+                }
+            }
+        }
     }
 }

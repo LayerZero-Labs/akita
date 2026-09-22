@@ -182,6 +182,33 @@ pub struct DigitRangePlan {
     log_basis: u8,
 }
 
+/// Checked Stage 1 shape without materializing stages or repeated round degrees.
+#[derive(Clone, Copy)]
+pub(crate) struct DigitRangeRouteShape {
+    plan: DigitRangePlan,
+    rounds: usize,
+    pub(crate) norm: Option<PhysicalL2NormShape>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PhysicalL2NormShape {
+    pub(crate) subclaims: usize,
+    pub(crate) virtual_evaluations: usize,
+    pub(crate) rounds: usize,
+    pub(crate) degree: usize,
+}
+
+impl DigitRangeRouteShape {
+    pub(crate) fn stages(self) -> impl Iterator<Item = AkitaStage1StageShape> {
+        let count = if self.norm.is_some() {
+            self.plan.product_stage_arities().len()
+        } else {
+            self.plan.stage_count()
+        };
+        (0..count).filter_map(move |index| self.plan.stage_shape(self.rounds, index))
+    }
+}
+
 impl DigitRangePlan {
     /// Construct the canonical range topology for a supported concrete basis.
     ///
@@ -298,27 +325,44 @@ impl DigitRangePlan {
         ),
         AkitaError,
     > {
-        match route {
-            InnerCommitSecurityRoute::Linf(_) => Ok((self.stage_shapes(rounds), None)),
+        let shape = self.route_shape(rounds, route)?;
+        Ok((
+            shape.stages().collect(),
+            shape.norm.map(|norm| PhysicalL2NormProofWireShape {
+                subclaims: norm.subclaims,
+                virtual_evaluations: norm.virtual_evaluations,
+                sumcheck: vec![norm.degree; norm.rounds],
+            }),
+        ))
+    }
+
+    /// Resolve the route once; pricing iterates this shape without wire vectors.
+    pub(crate) fn route_shape(
+        self,
+        rounds: usize,
+        route: InnerCommitSecurityRoute,
+    ) -> Result<DigitRangeRouteShape, AkitaError> {
+        let norm = match route {
+            InnerCommitSecurityRoute::Linf(_) => None,
             InnerCommitSecurityRoute::L2 {
                 norm_proof_shape, ..
             } => {
                 norm_proof_shape.validate()?;
-                Ok((
-                    self.stage_shapes(rounds)
-                        .into_iter()
-                        .take(self.product_stage_arities().len())
-                        .collect(),
-                    Some(PhysicalL2NormProofWireShape {
-                        subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
-                            AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
-                        })?,
-                        virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
-                        sumcheck: vec![self.leaf_degree() + 1; rounds],
-                    }),
-                ))
+                Some(PhysicalL2NormShape {
+                    subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
+                    })?,
+                    virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
+                    rounds,
+                    degree: self.leaf_degree() + 1,
+                })
             }
-        }
+        };
+        Ok(DigitRangeRouteShape {
+            plan: self,
+            rounds,
+            norm,
+        })
     }
 
     /// Validate the complete in-memory range-proof shape without allocation.
@@ -600,5 +644,74 @@ mod tests {
         assert_eq!(l2_norm.subclaims, 0);
         assert_eq!(l2_norm.virtual_evaluations, 1);
         assert_eq!(l2_norm.sumcheck, vec![plan.leaf_degree() + 1; 7]);
+    }
+
+    #[test]
+    fn compact_route_shape_matches_materialized_shapes_and_rejects_bad_norms() {
+        let key = SisL2TableKey {
+            policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            table_digest: SisL2TableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            ring_dimension: 64,
+            collision_l2_sq: 1,
+        };
+        let shapes = [
+            PhysicalL2NormProofShape::Direct {
+                physical_response_len: 512,
+            },
+            PhysicalL2NormProofShape::LimbGram {
+                physical_response_len: 512,
+                block_len: 32,
+                limb_count: 3,
+            },
+        ];
+        for basis in [4, 8, 16, 32, 64] {
+            let plan = DigitRangePlan::new(basis).unwrap();
+            for rounds in [0, 1, 7, 32] {
+                for norm in shapes {
+                    let route = InnerCommitSecurityRoute::L2 {
+                        table_key: key,
+                        response_l2_sq_cap: 1,
+                        norm_proof_shape: norm,
+                    };
+                    let compact = plan.route_shape(rounds, route).unwrap();
+                    let (stages, wire_norm) = plan.proof_shapes_for_route(rounds, route).unwrap();
+                    // Reconstruct the former materialized rule independently.
+                    let expected: Vec<_> = plan
+                        .stage_shapes(rounds)
+                        .into_iter()
+                        .take(plan.product_stage_arities().len())
+                        .collect();
+                    assert_eq!(compact.stages().collect::<Vec<_>>(), expected);
+                    assert_eq!(stages, expected);
+                    let compact_norm = compact.norm.unwrap();
+                    let wire_norm = wire_norm.unwrap();
+                    assert_eq!(wire_norm.subclaims, norm.subclaim_count().unwrap());
+                    assert_eq!(
+                        wire_norm.virtual_evaluations,
+                        norm.virtual_evaluation_count()
+                    );
+                    assert_eq!(wire_norm.sumcheck, vec![plan.leaf_degree() + 1; rounds]);
+                    assert_eq!(compact_norm.subclaims, wire_norm.subclaims);
+                    assert_eq!(
+                        compact_norm.virtual_evaluations,
+                        wire_norm.virtual_evaluations
+                    );
+                    assert_eq!(
+                        vec![compact_norm.degree; compact_norm.rounds],
+                        wire_norm.sumcheck
+                    );
+                }
+            }
+            let bad = InnerCommitSecurityRoute::L2 {
+                table_key: key,
+                response_l2_sq_cap: 1,
+                norm_proof_shape: PhysicalL2NormProofShape::Direct {
+                    physical_response_len: 0,
+                },
+            };
+            assert!(plan.route_shape(7, bad).is_err());
+            assert!(plan.proof_shapes_for_route(7, bad).is_err());
+        }
     }
 }
