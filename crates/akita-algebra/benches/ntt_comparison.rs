@@ -626,6 +626,29 @@ fn bench_trinomial_matvec<F, const D: usize, M>(
             })
         },
     );
+    group.bench_with_input(
+        BenchmarkId::new("prepared_matvec_with_output_packed", &label),
+        &label,
+        |bench, _| {
+            bench.iter(|| {
+                run_trinomial_matvec_into::<F, D, M, true>(
+                    black_box(&domain),
+                    black_box(&mut accumulators),
+                    black_box(&zero),
+                    black_box(&prepared),
+                    black_box(&rhs_digits),
+                    black_box(&lut),
+                    black_box(&mut transformed_rhs),
+                    black_box(&mut workspace),
+                );
+                for accumulator in &accumulators {
+                    black_box(
+                        domain.inverse_with_workspace(accumulator, black_box(&mut workspace)),
+                    );
+                }
+            })
+        },
+    );
     group.finish();
 }
 
