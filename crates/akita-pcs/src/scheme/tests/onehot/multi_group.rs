@@ -66,11 +66,7 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let cached_backend = CpuBackend::with_resource_limits(
-        max_cached_ring_switch_elements,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-    )
-    .expect("cached backend");
+    let cached_backend = CpuBackend::with_ring_switch_cache_limit(max_cached_ring_switch_elements);
     let prepared = cached_backend
         .prepare_setup(&setup)
         .expect("prepared setup");

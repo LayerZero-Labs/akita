@@ -278,9 +278,7 @@ fn prewarm_skips_streamed_cpu_ring_switch_slots() {
 fn configured_ring_switch_limit_drives_prewarm_boundary() {
     let setup =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
-    let backend =
-        CpuBackend::with_resource_limits(5, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
-            .unwrap();
+    let backend = CpuBackend::with_ring_switch_cache_limit(5);
     let prepared = backend.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&backend, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
