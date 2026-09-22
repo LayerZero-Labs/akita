@@ -29,16 +29,16 @@ mod stack;
 #[cfg(test)]
 mod streamed_tests;
 
+pub use backend::ComputeBackendSetup;
 #[cfg(test)]
 pub(crate) use backend::CyclicRowsComputeBackend;
 pub(crate) use backend::{
-    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    DigitRowsComputeBackend, NttCacheOwnerId,
+    CompressionComputeBackend, CompressionRowsProducts, DigitRowsComputeBackend, NttCacheOwnerId,
 };
 pub(crate) use commitment_stage::{CpuInnerCommitOperation, CpuOuterCommitOperation};
 pub(crate) use compression_stage::CpuCompressionOperation;
 pub(crate) use field_reduction::tensor_pack_recursive_witness;
-pub(crate) use prepared::CpuPreparedSetup;
+pub use prepared::CpuPreparedSetup;
 pub use prepared::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub(crate) use requirements::{
     NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,

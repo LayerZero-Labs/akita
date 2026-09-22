@@ -25,7 +25,7 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// of that prefix single-flight. Diagnostic compression caches remain in a
 /// separate namespace.
 #[derive(Debug)]
-pub(crate) struct CpuPreparedSetup<F: Field> {
+pub struct CpuPreparedSetup<F: Field> {
     pub(crate) expanded: Arc<AkitaExpandedSetup<F>>,
     pub(super) shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
     pub(super) compression_ntt: CompressionNttCache,
@@ -93,6 +93,11 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
 }
 
 impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
+    /// Expanded setup backing source-specific CPU commitment kernels.
+    pub fn expanded(&self) -> &AkitaExpandedSetup<F> {
+        &self.expanded
+    }
+
     pub(crate) fn new(expanded: Arc<AkitaExpandedSetup<F>>) -> Self {
         Self {
             expanded,

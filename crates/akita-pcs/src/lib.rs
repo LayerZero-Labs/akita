@@ -50,6 +50,8 @@ pub use akita_algebra::fft::SmoothFftField;
 pub use akita_algebra::Module;
 pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
+#[doc(hidden)]
+pub use akita_cpu_backend::custom_source;
 pub use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
     OneHotPoly, SourceHandle,

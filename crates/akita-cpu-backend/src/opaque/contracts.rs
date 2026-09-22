@@ -69,7 +69,7 @@ pub(crate) struct RecursiveWitnessAssemblyFinish<F: Field, W> {
 }
 
 /// Coefficient-packing projection over a borrowed same-shape source batch.
-pub(crate) trait SubringCoefficientPackingBatchKernel<S, F, E, const D: usize>:
+pub trait SubringCoefficientPackingBatchKernel<S, F, E, const D: usize>:
     ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,

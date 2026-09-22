@@ -505,22 +505,26 @@ fn aggregate_chunk_responses<const D: usize>(
 }
 
 /// Private CPU responses produced by one batch-fold dispatch.
-pub(crate) struct CpuFoldResponses {
+#[derive(Debug, PartialEq, Eq)]
+pub struct CpuFoldResponses {
     pub(crate) global: DecomposeFoldWitness,
     pub(crate) chunks: Option<Vec<DecomposeFoldWitness>>,
 }
 
 impl CpuFoldResponses {
-    pub(crate) fn sparse(global: DecomposeFoldWitness) -> Self {
+    /// Number of independently retained chunk responses.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.as_ref().map_or(1, Vec::len)
+    }
+
+    pub fn sparse(global: DecomposeFoldWitness) -> Self {
         Self {
             global,
             chunks: None,
         }
     }
 
-    pub(crate) fn chunked<const D: usize>(
-        chunks: Vec<DecomposeFoldWitness>,
-    ) -> Result<Self, AkitaError> {
+    pub fn chunked<const D: usize>(chunks: Vec<DecomposeFoldWitness>) -> Result<Self, AkitaError> {
         let global = aggregate_chunk_responses::<D>(&chunks)?;
         Ok(Self {
             global,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// Process-local identity of one physical backend cache owner.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct NttCacheOwnerId(usize);
+pub struct NttCacheOwnerId(usize);
 
 impl NttCacheOwnerId {
     /// Derive an opaque process-local identity from a stable resource owner.
@@ -27,7 +27,7 @@ impl NttCacheOwnerId {
 /// `PreparedSetup` is keyed by exact [`NttCacheKey`] prefixes at runtime.
 /// Preparation leaves derived caches empty; matrix-consuming kernels acquire
 /// only the exact transform prefixes they need.
-pub(crate) trait ComputeBackendSetup<F>: Send + Sync
+pub trait ComputeBackendSetup<F>: Send + Sync
 where
     F: Field + CanonicalEncoding,
 {

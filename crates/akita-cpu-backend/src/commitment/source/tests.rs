@@ -385,7 +385,7 @@ impl ExternalInnerCommitmentOperation<F> for ExternalOperation {
         _plan: &CommitInnerPlan,
         _sources: &[ExternalInnerCommitmentInput<'_>],
         _context: &dyn std::any::Any,
-    ) -> Result<crate::commitment::BackendStateRef<crate::commitment::InnerImage>, AkitaError> {
+    ) -> Result<Vec<akita_types::RingVec<F>>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "source-selection test operation is not executable".into(),
         ))

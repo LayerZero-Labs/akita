@@ -10,7 +10,7 @@ use compiler::checked_logical_len;
 
 /// Admission class of a commitment source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CommitSourceClass {
+pub enum CommitSourceClass {
     /// General field coefficients represented by balanced signed digits.
     Dense,
     /// Bounded signed coefficients in Akita's packed representation.
@@ -28,7 +28,7 @@ mod bounds_tests;
 
 /// O(1) structural metadata used before representation materialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CommitSourceDescriptor {
+pub struct CommitSourceDescriptor {
     num_vars: usize,
     total_coefficient_len: usize,
     live_coefficient_len: usize,
@@ -38,7 +38,7 @@ pub(crate) struct CommitSourceDescriptor {
 
 impl CommitSourceDescriptor {
     /// Construct a descriptor after checking its extents.
-    pub(crate) fn new(
+    pub fn new(
         num_vars: usize,
         total_coefficient_len: usize,
         live_coefficient_len: usize,
@@ -183,7 +183,7 @@ pub(crate) enum PolynomialType {
 
 /// Side-effect-free representation offerings for one source and plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AvailablePolynomialTypes {
+pub struct AvailablePolynomialTypes {
     entries: Vec<PolynomialType>,
 }
 
@@ -205,6 +205,13 @@ impl AvailablePolynomialTypes {
         Ok(Self { entries })
     }
 
+    /// Declare that a source is available only through its external kernel.
+    pub fn external_only() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
     /// Offered representations in source preference order.
     pub(crate) fn as_slice(&self) -> &[PolynomialType] {
         &self.entries
@@ -222,7 +229,7 @@ impl AvailablePolynomialTypes {
 
 /// Opaque representation choice issued after capability intersection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct PolynomialTypeSelection {
+pub struct PolynomialTypeSelection {
     selected: PolynomialType,
 }
 
@@ -438,7 +445,8 @@ pub(crate) struct OneHotRepresentation<'a> {
 }
 
 /// Materialized representation selected by request compilation.
-pub(crate) enum PolynomialRepresentation<'a, F: Field> {
+#[allow(private_interfaces)]
+pub enum PolynomialRepresentation<'a, F: Field> {
     /// Dense coefficients or predecomposed digit planes.
     Dense(DenseRepresentation<'a, F>),
     /// Packed bounded signed coefficients.
@@ -476,7 +484,7 @@ impl<F: Field> PolynomialRepresentation<'_, F> {
 }
 
 /// Ring-dimension-free source contract for commitment execution.
-pub(crate) trait CommitmentSource<F: Field>: Send + Sync {
+pub trait CommitmentSource<F: Field>: Send + Sync {
     /// Return O(1) source metadata without materializing a representation.
     fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError>;
 

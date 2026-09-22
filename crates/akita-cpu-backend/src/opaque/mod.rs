@@ -51,27 +51,26 @@ pub(crate) use capabilities::{
     RuntimeCoefficientPackingBackendFor, RuntimeFoldRelationBackend, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
 };
+pub use contracts::SubringCoefficientPackingBatchKernel;
 pub(crate) use contracts::{
     CpuWitnessBuildOutput, FoldHandleBackend, FoldResponseKernel, PreparedOpeningHandleBackend,
     PreparedRelationWitness, RecursiveWitnessAssemblyFinish, RecursiveWitnessAssemblyStart,
-    RingSwitchRelationKernel, SubringCoefficientPackingBatchKernel, TerminalFoldResponseKernel,
+    RingSwitchRelationKernel, TerminalFoldResponseKernel,
 };
-pub(crate) use decompose_fold::DecomposeFoldWitness;
+pub use decompose_fold::DecomposeFoldWitness;
 pub(crate) use eor_plans::{
     PreparedWitnessOpening, ValidatedWitnessEorPlan, ValidatedWitnessOpeningPlan,
 };
-pub(crate) use fold_kernels::{
-    FoldRelationKernel, FoldRelationOutput, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, RelationQuotientRow,
-};
+pub(crate) use fold_kernels::{FoldRelationKernel, FoldRelationOutput, RelationQuotientRow};
+pub use fold_kernels::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 pub(crate) use handles::{CpuWitnessBuildHandle, OperationBinding};
 use jolt_field::{CanonicalEncoding, Field};
 pub(crate) use lifecycle::{BackendIdentity, ScopeLease};
-pub(crate) use operation_plans::CommitInnerPlan;
-pub(crate) use operation_plans::{
-    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan, RingSwitchRelationPlan,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, ValidatedFoldRelationPlan,
+pub use operation_plans::{
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
+pub(crate) use operation_plans::{RingSwitchRelationPlan, ValidatedFoldRelationPlan};
 pub use owned::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
 pub(crate) use prepared_opening::PreparedGroupOpeningKernel;
 pub(crate) use recursive::OpaqueRecursiveWitness;
@@ -919,7 +918,7 @@ pub(crate) use witness_build::{
 
 pub(crate) mod fold;
 pub(crate) use fold::aggregate_decompose_fold_witnesses;
-pub(crate) use fold::CpuFoldResponses;
+pub use fold::CpuFoldResponses;
 pub(crate) use fold::{CpuAcceptedFold, CpuAcceptedTerminalFold};
 pub(crate) use fold::{CpuAcceptedFoldHandle, CpuAcceptedTerminalFoldHandle};
 

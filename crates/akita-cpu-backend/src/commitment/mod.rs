@@ -27,9 +27,6 @@ pub(crate) use capabilities::{
     CommitmentRequestCapabilities, CompressionOperationCapabilities, StageDimensionCapabilities,
 };
 pub(crate) use executor::CommitmentExecutor;
-pub(crate) use external::{
-    BackendKindId, ExternalInnerCommitmentCapability, PreparedExternalInnerCommitment,
-};
 pub(crate) use plan::{
     CommitmentExecutionMode, CommitmentExecutionPlan, OuterCommitPlan, UncompressedCommitPlan,
 };
@@ -45,10 +42,19 @@ pub(crate) use resources::{
 };
 
 pub(crate) use source::{
-    compile_commitment_request, AvailablePolynomialTypes, CommitSourceClass,
-    CommitSourceDescriptor, CommitmentSource, CompiledCommitmentRequest, DenseCoefficientSource,
-    DenseRepresentation, DenseType, OneHotIndexWidth, PolynomialRepresentation, PolynomialType,
-    PolynomialTypeSelection, PredecomposedDigitPlanes, ResolvedCommitSource, UnitPositionSlice,
+    compile_commitment_request, CompiledCommitmentRequest, DenseCoefficientSource,
+    DenseRepresentation, DenseType, OneHotIndexWidth, PolynomialType, PredecomposedDigitPlanes,
+    ResolvedCommitSource, UnitPositionSlice,
+};
+
+pub use external::{
+    cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup, BackendKindId,
+    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+    ExternalInnerCommitmentOperation, ExternalOperationIdentity, PreparedExternalInnerCommitment,
+};
+pub use source::{
+    AvailablePolynomialTypes, CommitSourceClass, CommitSourceDescriptor, CommitmentSource,
+    PolynomialRepresentation, PolynomialTypeSelection,
 };
 pub(crate) use stages::{
     CompressionOperation, CompressionStageOutput, FullCommitmentOutput, FusedInnerOuterOperation,
@@ -69,10 +75,7 @@ pub(crate) use portable::PortableCommitmentHandle;
 pub use setup_prefix::{SetupPrefixProverRegistry, SetupPrefixSlot};
 
 #[cfg(test)]
-pub(crate) use external::{
-    ExternalFusedInnerCommitmentEncoder, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity,
-};
+pub(crate) use external::ExternalFusedInnerCommitmentEncoder;
 #[cfg(test)]
 pub(crate) use resources::CommitmentResourceControl;
 #[cfg(test)]

@@ -338,17 +338,9 @@ where
                 }
                 inputs.push(*external.input());
             }
-            let image = first
+            first
                 .operation()
-                .commit_group(plan, &inputs, self.prepared)?;
-            if image.binding().inner_plan() != plan
-                || image.binding().source_count() != sources.len()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "external CPU commitment returned state for a different request".into(),
-                ));
-            }
-            first.operation().consume_inner_rows(plan, image)?
+                .commit_group(plan, &inputs, self.prepared)?
         } else {
             if sources.iter().any(|source| source.external().is_some()) {
                 return Err(AkitaError::InvalidInput(

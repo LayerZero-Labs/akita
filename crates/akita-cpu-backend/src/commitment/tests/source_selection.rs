@@ -29,7 +29,7 @@ impl ExternalInnerCommitmentOperation<F> for TestOperation {
         _plan: &CommitInnerPlan,
         _sources: &[ExternalInnerCommitmentInput<'_>],
         _context: &dyn Any,
-    ) -> Result<crate::commitment::BackendStateRef<crate::commitment::InnerImage>, AkitaError> {
+    ) -> Result<Vec<akita_types::RingVec<F>>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "selection test operation is not executable".into(),
         ))

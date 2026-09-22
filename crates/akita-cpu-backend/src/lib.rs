@@ -28,6 +28,35 @@ pub(crate) use setup::commit_setup_prefix;
 pub use setup::AkitaProverSetup;
 pub use sources::{DensePoly, OneHotIndex, OneHotPoly, OneHotSource};
 
+/// Extension contracts for application-owned CPU polynomial sources.
+///
+/// Sources imported through this module are still consumed and retained behind
+/// the owning backend's opaque handles; only their source-specific streaming
+/// kernels remain application-defined.
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod custom_source {
+    pub use crate::arithmetic::{ComputeBackendSetup, CpuPreparedSetup};
+    pub use crate::commitment::{
+        cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup,
+        AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
+        CommitmentSource, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+        ExternalInnerCommitmentOperation, ExternalOperationIdentity, PolynomialRepresentation,
+        PolynomialTypeSelection, PreparedExternalInnerCommitment,
+    };
+    pub use crate::opaque::{
+        CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+        DecomposeFoldWitness, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
+        OpeningFoldPlan, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+        SubringCoefficientPackingPlan,
+    };
+    pub use crate::sources::onehot::OneHotBatchView;
+    pub use crate::sources::poly::{
+        RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
+    };
+    pub use crate::sources::poly_helpers::fill_rotated_challenge;
+}
+
 /// Arithmetic entry points exercised by the crate's standalone kernel benchmarks.
 #[doc(hidden)]
 pub mod benchmark_support {

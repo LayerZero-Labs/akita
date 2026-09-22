@@ -14,7 +14,7 @@ use jolt_field::{CanonicalEncoding, Field};
 ///
 /// `prepared` is optional because some opening folds do not need setup-owned
 /// state; setup-dependent work stays explicitly tied to the backend context.
-pub(crate) trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+pub trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -40,7 +40,7 @@ where
 /// Implementations return the final aggregate witness. A backend without a
 /// fused path is responsible for folding its source polynomials individually
 /// and aggregating them before returning.
-pub(crate) trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
+pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,
 {
@@ -68,11 +68,11 @@ where
 
 /// Fused evaluate-and-fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OpeningFoldOutput<F: Field, const D: usize> {
+pub struct OpeningFoldOutput<F: Field, const D: usize> {
     /// Evaluation of the polynomial at the opening point.
-    pub(crate) eval: CyclotomicRing<F, D>,
+    pub eval: CyclotomicRing<F, D>,
     /// Folded witness rows in ring form.
-    pub(crate) folded: Vec<CyclotomicRing<F, D>>,
+    pub folded: Vec<CyclotomicRing<F, D>>,
 }
 
 /// One private relation row derived from an opaque accepted fold.

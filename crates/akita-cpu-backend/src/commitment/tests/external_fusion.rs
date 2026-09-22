@@ -49,7 +49,7 @@ impl ExternalInnerCommitmentOperation<F> for ExternalOperation {
         _plan: &crate::opaque::CommitInnerPlan,
         _sources: &[ExternalInnerCommitmentInput<'_>],
         _context: &dyn Any,
-    ) -> Result<crate::commitment::BackendStateRef<InnerImage>, AkitaError> {
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "ordinary external operation must not run in a fused request".into(),
         ))

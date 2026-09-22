@@ -1,4 +1,4 @@
-use crate::commitment::{BackendStateRef, InnerImage};
+use crate::arithmetic::CpuPreparedSetup;
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_types::RingVec;
@@ -8,9 +8,32 @@ use std::hash::{Hash, Hasher};
 
 pub(super) struct CpuBackendKind;
 
+/// Declare an application-owned source kernel compatible with the owning CPU backend.
+pub fn cpu_external_inner_commitment_capability<
+    Family: 'static,
+    Algorithm: 'static,
+    F: Field + 'static,
+>(
+    diagnostic_name: &'static str,
+) -> Result<ExternalInnerCommitmentCapability, AkitaError> {
+    ExternalInnerCommitmentCapability::new::<Family, Algorithm, CpuPreparedSetup<F>>(
+        BackendKindId::of::<CpuBackendKind>("cpu")?,
+        diagnostic_name,
+    )
+}
+
+/// Recover the prepared CPU setup supplied to an application-owned source kernel.
+pub fn cpu_external_inner_prepared_setup<F: Field + 'static>(
+    context: &dyn Any,
+) -> Result<&CpuPreparedSetup<F>, AkitaError> {
+    context
+        .downcast_ref()
+        .ok_or_else(|| AkitaError::InvalidInput("external CPU commitment context mismatch".into()))
+}
+
 /// Open, process-local backend family identity.
 #[derive(Clone, Copy)]
-pub(crate) struct BackendKindId {
+pub struct BackendKindId {
     type_id: TypeId,
     name: &'static str,
 }
@@ -31,7 +54,7 @@ impl Hash for BackendKindId {
 
 impl BackendKindId {
     /// Identify a backend family by a private marker type and diagnostic name.
-    pub(crate) fn of<T: 'static>(name: &'static str) -> Result<Self, AkitaError> {
+    pub fn of<T: 'static>(name: &'static str) -> Result<Self, AkitaError> {
         if name.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "backend kind diagnostic name must not be empty".into(),
@@ -55,7 +78,7 @@ impl std::fmt::Debug for BackendKindId {
 
 /// Type identities expected by one external operation object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ExternalOperationIdentity {
+pub struct ExternalOperationIdentity {
     family: TypeId,
     algorithm: TypeId,
     context: TypeId,
@@ -63,8 +86,7 @@ pub(crate) struct ExternalOperationIdentity {
 
 impl ExternalOperationIdentity {
     /// Bind an operation to payload-family, algorithm, and context marker types.
-    #[cfg(test)]
-    pub(crate) fn of<Family: 'static, Algorithm: 'static, Context: 'static>() -> Self {
+    pub fn of<Family: 'static, Algorithm: 'static, Context: 'static>() -> Self {
         Self {
             family: TypeId::of::<Family>(),
             algorithm: TypeId::of::<Algorithm>(),
@@ -75,7 +97,7 @@ impl ExternalOperationIdentity {
 
 /// Side-effect-free external inner-operation declaration.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ExternalInnerCommitmentCapability {
+pub struct ExternalInnerCommitmentCapability {
     backend: BackendKindId,
     identity: ExternalOperationIdentity,
     fused_command_context: Option<TypeId>,
@@ -93,8 +115,7 @@ impl Eq for ExternalInnerCommitmentCapability {}
 
 impl ExternalInnerCommitmentCapability {
     /// Declare an ordinary external inner operation.
-    #[cfg(test)]
-    pub(crate) fn new<Family: 'static, Algorithm: 'static, Context: 'static>(
+    pub fn new<Family: 'static, Algorithm: 'static, Context: 'static>(
         backend: BackendKindId,
         diagnostic_name: &'static str,
     ) -> Result<Self, AkitaError> {
@@ -125,7 +146,6 @@ impl ExternalInnerCommitmentCapability {
         )
     }
 
-    #[cfg(test)]
     fn build(
         backend: BackendKindId,
         identity: ExternalOperationIdentity,
@@ -145,7 +165,7 @@ impl ExternalInnerCommitmentCapability {
     }
 
     /// Backend family selected by this capability.
-    pub(crate) const fn backend(self) -> BackendKindId {
+    pub const fn backend(self) -> BackendKindId {
         self.backend
     }
 
@@ -160,7 +180,7 @@ impl ExternalInnerCommitmentCapability {
 
 /// One checked erased external payload.
 #[derive(Clone, Copy)]
-pub(crate) struct ExternalInnerCommitmentInput<'a> {
+pub struct ExternalInnerCommitmentInput<'a> {
     capability: ExternalInnerCommitmentCapability,
     // Erased payload storage is consumed by the test-only external operation implementations.
     _payload: &'a (dyn Any + Send + Sync),
@@ -168,13 +188,12 @@ pub(crate) struct ExternalInnerCommitmentInput<'a> {
 
 impl ExternalInnerCommitmentInput<'_> {
     /// Capability bound to this payload.
-    pub(crate) const fn capability(&self) -> ExternalInnerCommitmentCapability {
+    pub const fn capability(&self) -> ExternalInnerCommitmentCapability {
         self.capability
     }
 
     /// Safely recover the declared payload family.
-    #[cfg(test)]
-    pub(crate) fn payload<T: 'static>(&self) -> Result<&T, AkitaError> {
+    pub fn payload<T: 'static>(&self) -> Result<&T, AkitaError> {
         if self.capability.identity.family != TypeId::of::<T>() {
             return Err(AkitaError::InvalidInput(
                 "external commitment payload family mismatch".into(),
@@ -187,7 +206,7 @@ impl ExternalInnerCommitmentInput<'_> {
 }
 
 /// Source-provided external inner commitment implementation.
-pub(crate) trait ExternalInnerCommitmentOperation<F: Field>: Send + Sync {
+pub trait ExternalInnerCommitmentOperation<F: Field>: Send + Sync {
     /// Type identities implemented by this object.
     fn identity(&self) -> ExternalOperationIdentity;
 
@@ -197,24 +216,11 @@ pub(crate) trait ExternalInnerCommitmentOperation<F: Field>: Send + Sync {
         plan: &CommitInnerPlan,
         sources: &[ExternalInnerCommitmentInput<'_>],
         context: &dyn Any,
-    ) -> Result<BackendStateRef<InnerImage>, AkitaError>;
-
-    /// Consume the operation's opaque state into portable CPU rows when the
-    /// selected executor must hand off to a CPU outer stage.
-    fn consume_inner_rows(
-        &self,
-        _plan: &CommitInnerPlan,
-        _image: BackendStateRef<InnerImage>,
-    ) -> Result<Vec<RingVec<F>>, AkitaError> {
-        Err(AkitaError::InvalidInput(
-            "external inner operation does not support CPU outer-stage handoff".into(),
-        ))
-    }
+    ) -> Result<Vec<RingVec<F>>, AkitaError>;
 }
 
 /// Optional encoder that appends A work without submitting a fused command.
-#[cfg(test)]
-pub(crate) trait ExternalFusedInnerCommitmentEncoder: Send + Sync {
+pub trait ExternalFusedInnerCommitmentEncoder: Send + Sync {
     /// Required fused command-builder type.
     fn command_context_type_id(&self) -> TypeId;
 
@@ -228,7 +234,7 @@ pub(crate) trait ExternalFusedInnerCommitmentEncoder: Send + Sync {
 }
 
 /// Checked prepared external operation and borrowed source payload.
-pub(crate) struct PreparedExternalInnerCommitment<'a, F: Field> {
+pub struct PreparedExternalInnerCommitment<'a, F: Field> {
     input: ExternalInnerCommitmentInput<'a>,
     operation: &'a dyn ExternalInnerCommitmentOperation<F>,
     #[cfg(test)]
@@ -237,8 +243,7 @@ pub(crate) struct PreparedExternalInnerCommitment<'a, F: Field> {
 
 impl<'a, F: Field> PreparedExternalInnerCommitment<'a, F> {
     /// Pair a selected capability with its payload and operation after checking identities.
-    #[cfg(test)]
-    pub(crate) fn new<Payload: Any + Send + Sync>(
+    pub fn new<Payload: Any + Send + Sync>(
         capability: ExternalInnerCommitmentCapability,
         payload: &'a Payload,
         operation: &'a dyn ExternalInnerCommitmentOperation<F>,
@@ -260,6 +265,7 @@ impl<'a, F: Field> PreparedExternalInnerCommitment<'a, F> {
                 _payload: payload,
             },
             operation,
+            #[cfg(test)]
             fused_encoder,
         })
     }
@@ -334,7 +340,7 @@ mod tests {
             _plan: &CommitInnerPlan,
             _sources: &[ExternalInnerCommitmentInput<'_>],
             _context: &dyn Any,
-        ) -> Result<BackendStateRef<InnerImage>, AkitaError> {
+        ) -> Result<Vec<RingVec<Prime64Offset59>>, AkitaError> {
             Err(AkitaError::InvalidInput(
                 "not executable in this test".into(),
             ))
@@ -353,7 +359,7 @@ mod tests {
             _plan: &CommitInnerPlan,
             _sources: &[ExternalInnerCommitmentInput<'_>],
             _context: &dyn Any,
-        ) -> Result<BackendStateRef<InnerImage>, AkitaError> {
+        ) -> Result<Vec<RingVec<Prime64Offset59>>, AkitaError> {
             Err(AkitaError::InvalidInput(
                 "not executable in this test".into(),
             ))

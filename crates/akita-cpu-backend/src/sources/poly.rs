@@ -10,6 +10,14 @@ use jolt_field::{CanonicalEncoding, Field, Ring};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Canonical coefficient access used only by tensor-style root reductions.
+/// Streaming sources may reject this optional path when their schedules use
+/// source-specific opening kernels instead.
+pub trait SourceCoefficients<F: Field> {
+    /// Borrow or materialize the canonical coefficient table.
+    fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError>;
+}
+
 /// D-free shape metadata every root polynomial exposes.
 ///
 /// This is the **PCS/batch-facing** capability bound: it names a polynomial's

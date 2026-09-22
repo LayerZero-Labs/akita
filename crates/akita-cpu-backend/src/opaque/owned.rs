@@ -6,6 +6,7 @@ use super::source::{
 use crate::commitment::CommitmentSource;
 use crate::opaque::CpuPreparedOpeningHandle;
 use crate::opaque::*;
+use crate::sources::poly::SourceCoefficients;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
@@ -312,35 +313,32 @@ trait SourceImport<F: Field + CanonicalEncoding, E: Field>:
 {
     fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E>>;
 }
-macro_rules! owned_source_import {
-    ($source:ty) => {
-        impl<F, E> SourceImport<F, E> for $source
-        where
-            F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-            F::Wide: From<F> + jolt_field::AdditiveGroup,
-            E: ExtField<F>
-                + FpExtEncoding<F>
-                + MulBaseUnreduced<F>
-                + Unreduced
-                + Fold
-                + AkitaSerialize
-                + 'static,
-            CpuBackend: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
-                + FoldHandleBackend<F, AcceptedFold = super::CpuAcceptedFoldHandle<F>>
-                + RuntimeOpeningProveBackendFor<F, Self>
-                + RuntimeCoefficientPackingBackendFor<F, Self, E>,
-        {
-            fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E>> {
-                Arc::new(OwnedPolynomials { polynomials })
-            }
-        }
-    };
+impl<F, E, P> SourceImport<F, E> for P
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
+    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + MulBaseUnreduced<F>
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + 'static,
+    P: SourceCoefficients<F>
+        + RuntimeRootProvePoly<F>
+        + CommitmentSource<F>
+        + Send
+        + Sync
+        + 'static,
+    CpuBackend: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
+        + FoldHandleBackend<F, AcceptedFold = super::CpuAcceptedFoldHandle<F>>
+        + RuntimeOpeningProveBackendFor<F, P>
+        + RuntimeCoefficientPackingBackendFor<F, P, E>,
+{
+    fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E>> {
+        Arc::new(OwnedPolynomials { polynomials })
+    }
 }
-owned_source_import!(crate::opaque::DensePoly<F>);
-owned_source_import!(crate::opaque::OneHotPoly<F,u8>);
-owned_source_import!(crate::opaque::OneHotPoly<F,u16>);
-owned_source_import!(crate::opaque::OneHotPoly<F,u32>);
-owned_source_import!(crate::opaque::OneHotPoly<F,usize>);
 impl<F: Field + CanonicalEncoding, E: Field, P: SourceImport<F, E>> CpuSource<F, E> for P {}
 
 impl CpuBackend {
@@ -420,10 +418,6 @@ impl CpuBackend {
     }
 }
 
-/// Canonical immutable coefficient tables used only by the CPU tensor reduction.
-pub(super) trait SourceCoefficients<F: Field> {
-    fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError>;
-}
 impl<F: Field + CanonicalEncoding> SourceCoefficients<F> for crate::DensePoly<F> {
     fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
         let len = akita_error::checked::pow2(RootPolyMeta::<F>::num_vars(self))

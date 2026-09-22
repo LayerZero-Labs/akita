@@ -682,10 +682,7 @@ pub(crate) fn sparse_mul_acc_i16_pm1<const D: usize>(
 ///
 /// The table is 8 KB for D=64, fitting comfortably in L1 cache.
 #[inline(always)]
-pub(crate) fn fill_rotated_challenge<const D: usize>(
-    table: &mut [[i16; D]],
-    challenge: &SparseChallenge,
-) {
+pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge: &SparseChallenge) {
     debug_assert!(D.is_power_of_two());
     debug_assert!(table.len() >= D);
 

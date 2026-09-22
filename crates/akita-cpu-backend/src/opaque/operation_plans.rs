@@ -8,7 +8,7 @@ use akita_types::{
 use jolt_field::Field;
 use std::ops::Range;
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum OpeningFoldPlan<'a, F: Field> {
+pub enum OpeningFoldPlan<'a, F: Field> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
@@ -28,7 +28,7 @@ pub(crate) enum OpeningFoldPlan<'a, F: Field> {
 }
 
 impl<F: Field> OpeningFoldPlan<'_, F> {
-    pub(crate) fn num_positions_per_block(self) -> usize {
+    pub fn num_positions_per_block(self) -> usize {
         match self {
             Self::Base {
                 num_positions_per_block,
@@ -42,7 +42,7 @@ impl<F: Field> OpeningFoldPlan<'_, F> {
     }
 
     /// Validate exact position and live-fold weight lengths at a kernel boundary.
-    pub(crate) fn validate<const D: usize>(self, num_live_blocks: usize) -> Result<(), AkitaError> {
+    pub fn validate<const D: usize>(self, num_live_blocks: usize) -> Result<(), AkitaError> {
         let (fold_len, position_len, num_positions_per_block) = match self {
             Self::Base {
                 live_block_weights,
@@ -84,17 +84,14 @@ impl<F: Field> OpeningFoldPlan<'_, F> {
 /// output layout is fixed by `geometry` as
 /// `[claim][block][extension coordinate][subring coefficient]`.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct SubringCoefficientPackingPlan<'a, E: Field> {
+pub struct SubringCoefficientPackingPlan<'a, E: Field> {
     /// Canonically split public opening point.
     pub point: &'a PreparedSubringCoefficientPackingPoint<E>,
 }
 
 impl<E: Field> SubringCoefficientPackingPlan<'_, E> {
     /// Validate the plan at a source kernel boundary.
-    pub(crate) fn validate<const D: usize>(
-        &self,
-        source_num_vars: usize,
-    ) -> Result<(), AkitaError> {
+    pub fn validate<const D: usize>(&self, source_num_vars: usize) -> Result<(), AkitaError> {
         if self.point.geometry().a_ring_dimension() != D
             || self.point.source_num_vars() != source_num_vars
         {
@@ -108,7 +105,7 @@ impl<E: Field> SubringCoefficientPackingPlan<'_, E> {
 
 /// Canonical base-field coordinates for one claim's packed partials.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SubringCoefficientPackingPartials<F: Field> {
+pub struct SubringCoefficientPackingPartials<F: Field> {
     geometry: SubringCoefficientPackingGeometry,
     num_live_blocks: usize,
     coordinates: Vec<F>,
@@ -116,7 +113,7 @@ pub(crate) struct SubringCoefficientPackingPartials<F: Field> {
 
 impl<F: Field> SubringCoefficientPackingPartials<F> {
     /// Build a typed partial buffer after checking its exact physical width.
-    pub(crate) fn new(
+    pub fn new(
         geometry: SubringCoefficientPackingGeometry,
         num_live_blocks: usize,
         coordinates: Vec<F>,
@@ -140,17 +137,17 @@ impl<F: Field> SubringCoefficientPackingPartials<F> {
     }
 
     /// Checked packing geometry.
-    pub(crate) const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
         self.geometry
     }
 
     /// Number of live blocks represented by this claim.
-    pub(crate) const fn num_live_blocks(&self) -> usize {
+    pub const fn num_live_blocks(&self) -> usize {
         self.num_live_blocks
     }
 
     /// Canonical `[block][extension coordinate][subring coefficient]` data.
-    pub(crate) fn coordinates(&self) -> &[F] {
+    pub fn coordinates(&self) -> &[F] {
         &self.coordinates
     }
 }
@@ -163,7 +160,7 @@ impl<F: Field> AsRef<[F]> for SubringCoefficientPackingPartials<F> {
 
 /// Decompose + challenge-fold parameters for one opening.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DecomposeFoldPlan<'a> {
+pub struct DecomposeFoldPlan<'a> {
     /// Sparse fold challenges, outermost first.
     pub challenges: &'a [SparseChallenge],
     /// Number of ring-element positions in each block.
@@ -179,7 +176,7 @@ pub(crate) struct DecomposeFoldPlan<'a> {
 /// A representation may keep a fast batched kernel rather than folding each
 /// polynomial independently and aggregating later.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum DecomposeFoldBatchPlan<'a> {
+pub enum DecomposeFoldBatchPlan<'a> {
     /// Sparse-challenge batched fold.
     Sparse {
         /// Sparse fold challenges, outermost first.
@@ -207,7 +204,7 @@ pub(crate) enum DecomposeFoldBatchPlan<'a> {
 }
 
 impl DecomposeFoldBatchPlan<'_> {
-    pub(crate) fn scalar_params(self) -> (usize, usize, u32) {
+    pub fn scalar_params(self) -> (usize, usize, u32) {
         match self {
             Self::Sparse {
                 num_positions_per_block,
@@ -225,7 +222,7 @@ impl DecomposeFoldBatchPlan<'_> {
     }
 
     /// Validate the challenge layout against every source's live-block extent.
-    pub(crate) fn validate_uniform_batch(
+    pub fn validate_uniform_batch(
         self,
         live_blocks: impl ExactSizeIterator<Item = usize>,
     ) -> Result<usize, AkitaError> {
@@ -307,7 +304,7 @@ pub(crate) struct RingSwitchRelationPlan {
 /// Polynomial data lives in a request-compiled commitment representation; this
 /// plan carries only the shape parameters the selected operation needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CommitInnerPlan {
+pub struct CommitInnerPlan {
     /// Runtime ring dimension used by the A-side commitment.
     pub ring_dimension: usize,
     /// Number of live source blocks committed by this request.

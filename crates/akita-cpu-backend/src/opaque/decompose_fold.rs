@@ -8,7 +8,7 @@ use jolt_field::solinas::parallel::*;
 /// This is a CPU kernel value, not a protocol-facing witness. Protocol code
 /// transports the corresponding opaque accepted-fold handle instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DecomposeFoldWitness {
+pub struct DecomposeFoldWitness {
     centered_coeffs_flat: Vec<i32>,
     centered_min: i32,
     centered_max: i32,
@@ -16,7 +16,7 @@ pub(crate) struct DecomposeFoldWitness {
 }
 
 impl DecomposeFoldWitness {
-    pub(crate) fn from_centered_rows<const D: usize>(centered_coeffs: Vec<[i32; D]>) -> Self {
+    pub fn from_centered_rows<const D: usize>(centered_coeffs: Vec<[i32; D]>) -> Self {
         let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
         Self {
             centered_coeffs_flat: centered_coeffs.into_flattened(),
@@ -26,7 +26,7 @@ impl DecomposeFoldWitness {
         }
     }
 
-    pub(crate) fn from_centered_flat<const D: usize>(
+    pub fn from_centered_flat<const D: usize>(
         centered_coeffs_flat: Vec<i32>,
     ) -> Result<Self, AkitaError> {
         if D == 0 {
@@ -50,13 +50,13 @@ impl DecomposeFoldWitness {
         })
     }
 
-    pub(crate) fn into_centered_coeffs_flat(self) -> Vec<i32> {
+    pub fn into_centered_coeffs_flat(self) -> Vec<i32> {
         self.centered_coeffs_flat
     }
 
     /// Number of folded witness rows.
     #[must_use]
-    pub(crate) fn row_count(&self) -> usize {
+    pub fn row_count(&self) -> usize {
         self.centered_coeffs_flat
             .len()
             .checked_div(self.ring_dim)
@@ -68,7 +68,7 @@ impl DecomposeFoldWitness {
     /// # Errors
     ///
     /// Returns an error when the ring dimensions or row counts disagree.
-    pub(crate) fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         if self.ring_dim != D {
             return Err(AkitaError::InvalidInput(format!(
                 "decompose fold witness ring_d={} does not match requested D={D}",
@@ -84,7 +84,7 @@ impl DecomposeFoldWitness {
         Ok(())
     }
 
-    pub(crate) fn centered_coeffs_flat(&self) -> &[i32] {
+    pub fn centered_coeffs_flat(&self) -> &[i32] {
         &self.centered_coeffs_flat
     }
 
@@ -103,7 +103,7 @@ impl DecomposeFoldWitness {
 
     /// Infinity norm derived from the centered coefficient buffer.
     #[must_use]
-    pub(crate) fn centered_inf_norm(&self) -> u32 {
+    pub fn centered_inf_norm(&self) -> u32 {
         self.centered_min
             .unsigned_abs()
             .max(self.centered_max.unsigned_abs())
@@ -111,7 +111,7 @@ impl DecomposeFoldWitness {
 
     /// Signed extrema derived from the centered coefficient buffer.
     #[must_use]
-    pub(crate) fn centered_signed_extrema(&self) -> (i32, i32) {
+    pub fn centered_signed_extrema(&self) -> (i32, i32) {
         (self.centered_min, self.centered_max)
     }
 }

@@ -20,17 +20,17 @@ pub(crate) enum NttOperationCluster {
 
 /// One exact cache request routed to a fold-level operation cluster.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RoutedNttRequirement {
+pub struct RoutedNttRequirement {
     /// Fold level whose compute stack owns this work.
-    pub fold_level: usize,
+    pub(crate) fold_level: usize,
     /// Operation cluster within that stack.
-    pub cluster: NttOperationCluster,
+    pub(crate) cluster: NttOperationCluster,
     /// Exact commitment stage when `cluster` is [`NttOperationCluster::Commit`].
-    pub commitment_stage: Option<CommitmentNttStage>,
+    pub(crate) commitment_stage: Option<CommitmentNttStage>,
     /// Exact commitment execution route when `cluster` is commit.
-    pub commitment_route: Option<CommitmentNttRoute>,
+    pub(crate) commitment_route: Option<CommitmentNttRoute>,
     /// Exact transform prefix used when this operation is retained.
-    pub key: NttCacheKey,
+    pub(crate) key: NttCacheKey,
     /// Full operation extent used by the backend's cached-versus-streamed route.
     ///
     /// The production relation flow invokes A, B, and opening/D work as
@@ -38,7 +38,7 @@ pub(crate) struct RoutedNttRequirement {
     /// domains with one shared extent; each B or D operation emits its own
     /// cyclic request. This keeps prewarm routing identical to runtime routing
     /// without joining independent operations.
-    pub routing_extent: usize,
+    pub(crate) routing_extent: usize,
 }
 
 /// Canonical NTT requirement plan for one resolved schedule and call layout.
