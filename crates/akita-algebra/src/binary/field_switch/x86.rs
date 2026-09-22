@@ -7,12 +7,10 @@ use std::arch::x86_64::{
     _mm512_srli_epi64, _mm512_storeu_si512, _mm512_xor_si512,
 };
 
+use super::x86_common::{
+    coefficient_matrix, transpose8, LIMB_BYTES, MAX_HOST_BYTES, MAX_SOURCE_BYTES, TILE,
+};
 use super::{SwitchField, F};
-
-const TILE: usize = 64;
-const MAX_HOST_BYTES: usize = 192 / 8;
-const MAX_SOURCE_BYTES: usize = 128 / 8;
-const LIMB_BYTES: [usize; 3] = [8, 8, 5];
 
 const fn transpose_indices(stage: usize, output_vector_bit: usize) -> [u8; 64] {
     let mut indices = [0u8; 64];
@@ -38,17 +36,6 @@ const REVERSE_QWORD_BYTES: [u8; 64] = [
     11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15,
     14, 13, 12, 11, 10, 9, 8,
 ];
-
-/// Transpose one 8-by-8 bit matrix stored as eight row bytes.
-#[inline(always)]
-fn transpose8(mut value: u64) -> u64 {
-    let mut swap = (value ^ (value >> 7)) & 0x00aa_00aa_00aa_00aa;
-    value ^= swap ^ (swap << 7);
-    swap = (value ^ (value >> 14)) & 0x0000_cccc_0000_cccc;
-    value ^= swap ^ (swap << 14);
-    swap = (value ^ (value >> 28)) & 0x0000_0000_f0f0_f0f0;
-    value ^ swap ^ (swap << 28)
-}
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,avx512vbmi,gfni")]
@@ -238,21 +225,6 @@ pub(super) unsafe fn partials<H: SwitchField>(source: &[H::Source], weights: &[H
         }
     }
     output
-}
-
-/// Build the GFNI matrix mapping one host-coordinate byte into one output byte.
-fn coefficient_matrix(host_byte: usize, output_bit_offset: usize, rows: &[F; 256]) -> u64 {
-    let mut matrix = 0u64;
-    for input_bit in 0..8 {
-        let words = rows[8 * host_byte + input_bit].to_words();
-        for output_bit in 0..8 {
-            let bit_index = output_bit_offset + output_bit;
-            let bit = (words[bit_index / 64] >> (bit_index % 64)) & 1;
-            // GFNI computes result bit i from matrix byte 7-i.
-            matrix |= bit << (8 * (7 - output_bit) + input_bit);
-        }
-    }
-    matrix
 }
 
 /// Map host equality weights through the F162 row weights into SoA output.

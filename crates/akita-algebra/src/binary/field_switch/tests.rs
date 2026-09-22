@@ -59,6 +59,51 @@ where
     let mut packed_coefficients = PackedBinary162::new();
     batched_weights(&eq, &batch, &mut packed_coefficients).unwrap();
     let coefficients = packed_coefficients.to_scalars();
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if source.len() >= 64 {
+        let rows = row_weights::<H>(&batch).unwrap();
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("gfni")
+            {
+                // SAFETY: both features were detected and the full tile shape
+                // was established by the source length.
+                unsafe {
+                    backend_partials_match::<H>(source, &eq, &partials, x86_256::partials::<H>);
+                    backend_coefficients_match::<H>(
+                        &eq,
+                        &rows,
+                        &coefficients,
+                        x86_256::coefficients::<H>,
+                    );
+                }
+            }
+            if std::arch::is_x86_feature_detected!("avx512f")
+                && std::arch::is_x86_feature_detected!("avx512bw")
+                && std::arch::is_x86_feature_detected!("avx512vbmi")
+                && std::arch::is_x86_feature_detected!("gfni")
+            {
+                // SAFETY: every required feature and the tile shape were checked.
+                unsafe {
+                    backend_partials_match::<H>(source, &eq, &partials, x86::partials::<H>);
+                    backend_coefficients_match::<H>(
+                        &eq,
+                        &rows,
+                        &coefficients,
+                        x86::coefficients::<H>,
+                    );
+                }
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            // SAFETY: NEON and the full tile shape were checked.
+            unsafe {
+                backend_coefficients_match::<H>(&eq, &rows, &coefficients, arm::coefficients::<H>);
+            }
+        }
+    }
     for (j, &coefficient) in coefficients.iter().enumerate() {
         let bits = host_eq(point, j).coordinates();
         let expected = (0..H::ROWS)
@@ -110,6 +155,43 @@ where
         assert_ne!(
             changed.batch(&batch).unwrap(),
             partials.batch(&batch).unwrap()
+        );
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn backend_partials_match<H: SwitchField>(
+    source: &[H::Source],
+    weights: &[H],
+    expected_partials: &SwitchPartials<H>,
+    partial_kernel: unsafe fn(&[H::Source], &[H]) -> [u128; 192],
+) where
+    H::Source: std::fmt::Debug,
+{
+    // SAFETY: the caller checked all backend features and whole-tile lengths.
+    let actual = unsafe { partial_kernel(source, weights) };
+    for (row, &expected) in expected_partials.values()[..H::ROWS].iter().enumerate() {
+        assert_eq!(actual[row], expected.into(), "partial row {row}");
+    }
+    assert!(actual[H::ROWS..].iter().all(|&value| value == 0));
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+unsafe fn backend_coefficients_match<H: SwitchField>(
+    weights: &[H],
+    rows: &[F; 256],
+    expected_coefficients: &[F],
+    coefficient_kernel: unsafe fn(&[H], &[F; 256], [&mut [u64]; 3]),
+) {
+    let mut limbs = std::array::from_fn(|_| vec![0u64; weights.len()]);
+    let [low, high, top] = &mut limbs;
+    // SAFETY: the caller checked features and the output contains full limbs.
+    unsafe { coefficient_kernel(weights, rows, [low, high, top]) };
+    for (index, &expected) in expected_coefficients.iter().enumerate() {
+        assert_eq!(
+            F([limbs[0][index], limbs[1][index], limbs[2][index]]),
+            expected,
+            "coefficient {index}"
         );
     }
 }
@@ -208,6 +290,8 @@ fn full_tiles_match_dense_for_both_profiles() {
             ])
         })
         .collect();
+    profile_identities::<H128>(&source128[..64], &point128[..6]);
+    profile_identities::<H192>(&source64[..64], &point192[..6]);
     profile_identities::<H128>(&source128, &point128);
     profile_identities::<H192>(&source64, &point192);
 }
