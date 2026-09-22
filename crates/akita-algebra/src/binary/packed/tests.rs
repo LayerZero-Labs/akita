@@ -82,6 +82,18 @@ fn packed_storage_refills_and_handles_terminal_boundaries() {
     assert_eq!(packed.get(9), None);
     let shorter = PackedBinary162::from_scalars(&values[..8]);
     assert_eq!(packed.round_product(&shorter, F::ZERO), None);
+    let words = [0u128, u128::MAX, 1 << 127, 1 << 63];
+    let mut directly_packed = PackedBinary162::new();
+    directly_packed.refill_binary_words(&words);
+    let expected: Vec<_> = words
+        .into_iter()
+        .map(|x| F([x as u64, (x >> 64) as u64, 0]))
+        .collect();
+    assert_eq!(directly_packed.to_scalars(), expected);
+    directly_packed.refill_binary_words(&[0u64, u64::MAX]);
+    assert_eq!(directly_packed.to_scalars(), [F::ZERO, F([u64::MAX, 0, 0])]);
+    directly_packed.refill_binary_words::<u64>(&[]);
+    assert!(directly_packed.is_empty());
     let allocations = packed.words.each_ref().map(|words| words.as_ptr());
     while packed.len() > 1 {
         packed.fold_in_place(values[0]);
@@ -96,9 +108,9 @@ fn packed_storage_refills_and_handles_terminal_boundaries() {
 
 #[test]
 fn packed_round_coefficients_and_hardware_match_oracle() {
-    let lhs = sample_values(33, 0x1234_5678_9abc_def0);
-    let rhs = sample_values(33, 0x0fed_cba9_8765_4321);
-    for len in [2, 3, 4, 5, 7, 8, 9, 33] {
+    let lhs = sample_values(65, 0x1234_5678_9abc_def0);
+    let rhs = sample_values(65, 0x0fed_cba9_8765_4321);
+    for len in [2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 63, 64, 65] {
         let packed_lhs = PackedBinary162::from_scalars(&lhs[..len]);
         let packed_rhs = PackedBinary162::from_scalars(&rhs[..len]);
         let claim = oracle_claim(&lhs[..len], &rhs[..len]);

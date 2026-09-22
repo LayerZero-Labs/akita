@@ -56,8 +56,9 @@ where
     let z: Vec<_> = (0..point.len())
         .map(|i| f(0x385e_6147_e07a_dac9 ^ (i * 71) as u64))
         .collect();
-    let mut coefficients = Vec::new();
-    batched_weights(&eq, &batch, &mut coefficients).unwrap();
+    let mut packed_coefficients = PackedBinary162::new();
+    batched_weights(&eq, &batch, &mut packed_coefficients).unwrap();
+    let coefficients = packed_coefficients.to_scalars();
     for (j, &coefficient) in coefficients.iter().enumerate() {
         let bits = host_eq(point, j).coordinates();
         let expected = (0..H::ROWS)
@@ -167,10 +168,10 @@ fn shapes_padding_and_order_are_explicit() {
     assert!(partials.batch(&[F::ZERO; 8]).is_err());
     assert!(transparent_weight(&point, &[F::ZERO; 2], &[F::ZERO; 8]).is_err());
     assert!(transparent_weight(&point, &[F::ZERO; 3], &[F::ZERO; 7]).is_err());
-    let mut out = vec![F::ONE];
+    let mut out = PackedBinary162::from_scalars(&[F::ONE]);
     assert!(batched_weights::<H128>(&[], &[F::ZERO; 7], &mut out).is_err());
     assert!(batched_weights::<H128>(&[H128::ONE], &[F::ZERO; 8], &mut out).is_err());
-    assert_eq!(out, [F::ONE]);
+    assert_eq!(out.to_scalars(), [F::ONE]);
 
     // Boolean points give exact index fixtures and expose reversed variables.
     let source = [10, 20, 30, 40, 50, 60, 70, 80];
@@ -187,4 +188,26 @@ fn shapes_padding_and_order_are_explicit() {
     let embedded = embed_source::<H128>(1u128 << 127);
     assert_eq!(embedded.to_words(), [0, 1 << 63, 0]);
     assert_eq!(embed_source::<H192>(1 << 63).to_words(), [1 << 63, 0, 0]);
+}
+
+#[test]
+fn full_tiles_match_dense_for_both_profiles() {
+    let source128: Vec<_> = (0..128u128)
+        .map(|j| (u128::MAX >> (j % 7)) ^ j.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+        .collect();
+    let source64: Vec<_> = source128.iter().map(|&j| j as u64).collect();
+    let point128: Vec<_> = (0..7)
+        .map(|j| H128::from_words([0x7192_834a_bcde_f678 ^ j, 0xd391_0385_7abc_def0 ^ (j * 519)]))
+        .collect();
+    let point192: Vec<_> = (0..7)
+        .map(|j| {
+            H192::from_words([
+                0x7192_834a_bcde_f678 ^ j,
+                0xd391_0385_7abc_def0 ^ (j * 519),
+                0xac56_0123_cbe9_6384 ^ j,
+            ])
+        })
+        .collect();
+    profile_identities::<H128>(&source128, &point128);
+    profile_identities::<H192>(&source64, &point192);
 }

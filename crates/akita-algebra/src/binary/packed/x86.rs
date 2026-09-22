@@ -11,7 +11,7 @@ use super::{fold_with, round_product_with, PackedBinary162};
 use crate::binary::{product, BinaryField162 as F};
 
 #[target_feature(enable = "pclmulqdq")]
-unsafe fn product_words(a: F, b: F) -> [u64; 6] {
+pub(super) unsafe fn product_words(a: F, b: F) -> [u64; 6] {
     let [a0, a1, a2] = a.to_words();
     let [b0, b1, b2] = b.to_words();
     // SAFETY: the enclosing function carries the required target feature.

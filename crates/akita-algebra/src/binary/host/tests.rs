@@ -1,4 +1,7 @@
-use super::{BinaryField128 as F128, BinaryField192 as F192};
+use super::{
+    portable_equality128, portable_equality192, portable_multiply128, portable_multiply192,
+    BinaryField128 as F128, BinaryField192 as F192,
+};
 
 fn oracle128(a: F128, b: F128) -> F128 {
     let a = a.to_words();
@@ -144,7 +147,9 @@ fn binary128_matches_long_division_oracle() {
         assert_eq!(a + a, F128::ZERO);
         assert_eq!(a * F128::ONE, a);
         for &b in &values {
-            assert_eq!(a * b, oracle128(a, b));
+            let expected = oracle128(a, b);
+            assert_eq!(portable_multiply128(a, b), expected);
+            assert_eq!(a * b, expected);
         }
     }
 }
@@ -207,7 +212,9 @@ fn binary192_matches_long_division_oracle() {
         assert_eq!(a + a, F192::ZERO);
         assert_eq!(a * F192::ONE, a);
         for &b in &values {
-            assert_eq!(a * b, oracle192(a, b));
+            let expected = oracle192(a, b);
+            assert_eq!(portable_multiply192(a, b), expected);
+            assert_eq!(a * b, expected);
         }
     }
 }
@@ -252,5 +259,131 @@ fn binary192_frobenius_and_field_order() {
             order = order * order * value;
         }
         assert_eq!(order, F192::ONE);
+    }
+}
+
+fn equality128_oracle(point: &[F128]) -> Vec<F128> {
+    let mut output = vec![F128::ZERO; 1 << point.len()];
+    output[0] = F128::ONE;
+    for (axis, &r) in point.iter().enumerate() {
+        let width = 1 << axis;
+        for j in 0..width {
+            let high = oracle128(output[j], r);
+            output[j + width] = high;
+            output[j] += high;
+        }
+    }
+    output
+}
+
+fn equality192_oracle(point: &[F192]) -> Vec<F192> {
+    let mut output = vec![F192::ZERO; 1 << point.len()];
+    output[0] = F192::ONE;
+    for (axis, &r) in point.iter().enumerate() {
+        let width = 1 << axis;
+        for j in 0..width {
+            let high = oracle192(output[j], r);
+            output[j + width] = high;
+            output[j] += high;
+        }
+    }
+    output
+}
+
+#[test]
+fn equality_kernels_match_independent_oracles() {
+    let point128 = [
+        F128::from_words([0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210]),
+        F128::from_words([u64::MAX, 0]),
+        F128::from_words([0, u64::MAX]),
+        F128::from_words([0x55aa_55aa_55aa_55aa, 0xaa55_aa55_aa55_aa55]),
+        F128::from_words([7, 11]),
+        F128::from_words([13, 17]),
+    ];
+    let expected128 = equality128_oracle(&point128);
+    let mut portable128 = vec![F128::ZERO; expected128.len()];
+    portable_equality128(&point128, &mut portable128);
+    assert_eq!(portable128, expected128);
+    let mut selected128 = vec![F128::ZERO; expected128.len()];
+    F128::equality_weights(&point128, &mut selected128);
+    assert_eq!(selected128, expected128);
+
+    let point192 = [
+        F192::from_words([
+            0x0123_4567_89ab_cdef,
+            0xfedc_ba98_7654_3210,
+            0x55aa_33cc_0ff0_f00f,
+        ]),
+        F192::from_words([u64::MAX, 0, 0]),
+        F192::from_words([0, u64::MAX, 0]),
+        F192::from_words([0, 0, u64::MAX]),
+        F192::from_words([7, 11, 13]),
+        F192::from_words([17, 19, 23]),
+    ];
+    let expected192 = equality192_oracle(&point192);
+    let mut portable192 = vec![F192::ZERO; expected192.len()];
+    portable_equality192(&point192, &mut portable192);
+    assert_eq!(portable192, expected192);
+    let mut selected192 = vec![F192::ZERO; expected192.len()];
+    F192::equality_weights(&point192, &mut selected192);
+    assert_eq!(selected192, expected192);
+
+    #[cfg(target_arch = "aarch64")]
+    if std::arch::is_aarch64_feature_detected!("aes")
+        && std::arch::is_aarch64_feature_detected!("pmull")
+    {
+        let mut actual128 = vec![F128::ZERO; expected128.len()];
+        let mut actual192 = vec![F192::ZERO; expected192.len()];
+        // SAFETY: the feature checks establish the kernel requirement.
+        unsafe {
+            assert_eq!(
+                super::arm::multiply128(point128[0], point128[1]),
+                oracle128(point128[0], point128[1])
+            );
+            assert_eq!(
+                super::arm::multiply192(point192[0], point192[1]),
+                oracle192(point192[0], point192[1])
+            );
+            super::arm::equality128(&point128, &mut actual128);
+            super::arm::equality192(&point192, &mut actual192);
+        }
+        assert_eq!(actual128, expected128);
+        assert_eq!(actual192, expected192);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("pclmulqdq") {
+        let mut actual128 = vec![F128::ZERO; expected128.len()];
+        let mut actual192 = vec![F192::ZERO; expected192.len()];
+        // SAFETY: the feature check establishes the scalar kernel requirement.
+        unsafe {
+            assert_eq!(
+                super::x86::multiply128(point128[0], point128[1]),
+                oracle128(point128[0], point128[1])
+            );
+            assert_eq!(
+                super::x86::multiply192(point192[0], point192[1]),
+                oracle192(point192[0], point192[1])
+            );
+            super::x86::equality128(&point128, &mut actual128);
+            super::x86::equality192(&point192, &mut actual192);
+        }
+        assert_eq!(actual128, expected128);
+        assert_eq!(actual192, expected192);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx512f")
+        && std::arch::is_x86_feature_detected!("vpclmulqdq")
+    {
+        let mut actual128 = vec![F128::ZERO; expected128.len()];
+        let mut actual192 = vec![F192::ZERO; expected192.len()];
+        // SAFETY: the feature checks establish the vector-kernel requirements.
+        unsafe {
+            super::x86::equality128_vec4(&point128, &mut actual128);
+            super::x86::equality192_vec4(&point192, &mut actual192);
+        }
+        assert_eq!(actual128, expected128);
+        assert_eq!(actual192, expected192);
     }
 }

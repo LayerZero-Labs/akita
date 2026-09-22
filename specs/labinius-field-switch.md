@@ -10,7 +10,7 @@ The arithmetic implementation and scoped acceptance checks are complete on the
 topic branch. This record stays active through review and landing, then follows
 the Book-fold/archive lifecycle.
 
-This slice supplies portable host arithmetic and a field-switch reference for
+This slice supplies accelerated host arithmetic and field-switch kernels for
 both F128-witness/F128-challenge and F64-witness/F192-challenge profiles. It
 builds on the packed F162 round/fold kernels. It does not admit a production
 profile, define a proof encoding, sample transcript challenges or implement a
@@ -73,6 +73,24 @@ multiplication uses E's binary basis matrix for multiplication by each `r_i`,
 and F162 scaling for `1+z_i`. Storage is bounded by the fixed host dimension;
 work is O(log N * dim(E)^2) XORs and O(log N * dim(E)) F162 multiplications.
 The tensor algebra need not be a field and no tensor inverses are used.
+
+## Packed execution and hardware dispatch
+
+Host multiplication uses runtime-selected PMULL/PCLMUL, with a portable
+fallback. Equality expansion selects once per table and uses four-lane
+AVX-512/VPCLMUL on supported x86 CPUs. AVX-512/GFNI computes partial matrices
+and maps host weights directly into packed F162 coefficient buffers. The
+64-element tile boundary is checked before entering either unsafe kernel;
+small tables use the portable coordinate/lookup path. Packed F162 messages
+and folds use four-lane VPCLMUL with narrower fallbacks for short rounds.
+
+`batched_weights` takes `&mut PackedBinary162`, retaining its three limb buffers.
+`refill_binary_words` converts source words directly into that representation.
+No full AoS F162 coefficient or source vector is required between these stages.
+The external comparison script links a separately obtained LaBinius checkout;
+no reference source is vendored. It compares the entire matrix and all rounds,
+then alternates timed samples with equal batch-expansion boundaries. Its common
+native/LTO profile is distinct from the default Criterion release profile.
 
 ## Protocol boundary and remaining obligations
 

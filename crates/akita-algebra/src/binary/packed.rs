@@ -8,6 +8,8 @@ use super::{product, BinaryField162 as F};
 pub(super) mod arm;
 #[cfg(target_arch = "x86_64")]
 pub(super) mod x86;
+#[cfg(target_arch = "x86_64")]
+pub(super) mod x86_512;
 
 type RoundKernel = fn(&PackedBinary162, &PackedBinary162, F) -> [F; 3];
 type FoldKernel = fn(&mut PackedBinary162, F);
@@ -46,6 +48,30 @@ impl PackedBinary162 {
                 dst.push(word);
             }
         }
+    }
+
+    /// Pack binary source words directly into reusable F162 storage.
+    ///
+    /// Each source word supplies at most 128 low polynomial coefficients.
+    /// This preserves binary addition, not source-field multiplication.
+    pub fn refill_binary_words<T: Copy + Into<u128>>(&mut self, values: &[T]) {
+        let [low, high, top] = self.resize_words(values.len());
+        for ((lo, hi), &value) in low.iter_mut().zip(high).zip(values) {
+            let value: u128 = value.into();
+            *lo = value as u64;
+            *hi = (value >> 64) as u64;
+        }
+        top.fill(0);
+    }
+
+    // Internal writers must initialize all three words and keep word 2
+    // canonical. Equal lengths and retained capacity are owned here.
+    pub(super) fn resize_words(&mut self, len: usize) -> [&mut [u64]; 3] {
+        for words in &mut self.words {
+            words.resize(len, 0);
+        }
+        let [low, high, top] = &mut self.words;
+        [low, high, top]
     }
 
     /// Return the number of stored field elements.
@@ -146,6 +172,34 @@ fn detect() -> PackedKernels {
     }
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("pclmulqdq") {
+        if std::arch::is_x86_feature_detected!("avx2")
+            && std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw")
+            && std::arch::is_x86_feature_detected!("vpclmulqdq")
+        {
+            return PackedKernels {
+                round_product: |a, b, claim| {
+                    // SAFETY: all required wide-vector features were detected.
+                    unsafe {
+                        if a.len() >= 8 {
+                            x86_512::round_product_vec4(a, b, claim)
+                        } else {
+                            x86::round_product_vec2(a, b, claim)
+                        }
+                    }
+                },
+                fold_in_place: |values, r| {
+                    // SAFETY: all required wide-vector features were detected.
+                    unsafe {
+                        if values.len() >= 8 {
+                            x86_512::fold_in_place_vec4(values, r)
+                        } else {
+                            x86::fold_in_place_vec2(values, r)
+                        }
+                    }
+                },
+            };
+        }
         if std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("vpclmulqdq")
         {
