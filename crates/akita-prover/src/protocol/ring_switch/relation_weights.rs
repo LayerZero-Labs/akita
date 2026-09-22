@@ -590,6 +590,9 @@ where
                 })
                 .ok_or(AkitaError::InvalidProof)?
         };
+        let row_alpha_pows = row_alpha_pows
+            .get(..row_dim)
+            .ok_or(AkitaError::InvalidProof)?;
         let row_denom = RelationPolynomial::negacyclic(row_dim)?
             .evaluate_modulus_with_powers(alpha, row_alpha_pows)?;
         for (digit, gadget) in r_gadget.iter().enumerate() {
