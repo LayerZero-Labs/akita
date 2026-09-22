@@ -901,12 +901,12 @@ where
                     as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
             )
         };
-        let precommitted_honest_fold_policies =
-            vec![akita_config::honest_fold_policy_of::<Envelope>(); key.precommitteds.len()];
+        let precommitted_source_contracts =
+            vec![Envelope::committed_source_contract()?; key.precommitteds.len()];
         let schedule = akita_planner::find_schedule(
             key,
-            akita_config::honest_fold_policy_of::<Envelope>(),
-            &precommitted_honest_fold_policies,
+            Envelope::committed_source_contract()?,
+            &precommitted_source_contracts,
             &policy,
             ring_challenge_config,
         )?

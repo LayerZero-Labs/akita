@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_config::{
-    honest_fold_policy_of, policy_of,
+    policy_of,
     proof_optimized::{fp128::DenseMultiChunk, fp64::Dense},
     CommitmentConfig,
 };
@@ -34,7 +34,7 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
                 for opening_basis in Cfg::opening_basis_range().0..=Cfg::opening_basis_range().1 {
                     for (params, output_witness_len) in root_level_candidates_for_basis(
                         &key,
-                        honest_fold_policy_of::<Cfg>(),
+                        Cfg::committed_source_contract().unwrap(),
                         &[],
                         &policy,
                         dimensions,
@@ -66,7 +66,7 @@ fn contractive_winner_remains_selected() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         Dense::ring_challenge_config,
@@ -88,7 +88,7 @@ fn noncontractive_root_is_selected_by_the_complete_policy() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         Dense::ring_challenge_config,
@@ -107,7 +107,7 @@ fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<DenseMultiChunk>(),
+        DenseMultiChunk::committed_source_contract().unwrap(),
         &[],
         &policy,
         DenseMultiChunk::ring_challenge_config,
@@ -130,7 +130,7 @@ fn valid_small_scalar_root_has_a_schedule() {
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
         let schedule = find_schedule(
             &key,
-            honest_fold_policy_of::<Dense>(),
+            Dense::committed_source_contract().unwrap(),
             &[],
             &policy,
             Dense::ring_challenge_config,
@@ -183,7 +183,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     .expect("D64 producer opening");
     let producer = root_level_candidates_for_basis(
         &producer_key,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &[],
         &policy,
         producer_dimensions,
@@ -207,8 +207,8 @@ fn valid_small_grouped_root_has_a_schedule() {
     };
     let schedule = find_schedule(
         &key,
-        honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
+        Dense::committed_source_contract().unwrap(),
+        &[Dense::committed_source_contract().unwrap()],
         &policy,
         Dense::ring_challenge_config,
     )

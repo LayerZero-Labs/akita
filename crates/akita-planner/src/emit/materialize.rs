@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -82,6 +83,20 @@ pub(crate) fn materialized_entries_for_specs(
     specs: &[EmitSpec],
     diagnostics: MaterializationDiagnostics,
 ) -> Result<Vec<Vec<MaterializedEntry>>, String> {
+    for spec in specs {
+        let mut requests_by_key = HashMap::with_capacity(spec.grouped_requests.len());
+        for request in &spec.grouped_requests {
+            if requests_by_key
+                .insert(request.key(), request)
+                .is_some_and(|prior| prior != request)
+            {
+                return Err(format!(
+                    "{}: duplicate grouped lookup geometry has conflicting producer contracts",
+                    spec.family_name,
+                ));
+            }
+        }
+    }
     let request_count = specs
         .iter()
         .map(|spec| spec.keys.len() + spec.grouped_requests.len())
@@ -252,5 +267,42 @@ fn materialized_entry(
             };
             Err(format!("{}: {kind} {key:?}: {error}", spec.family_name))
         }
+    }
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod tests {
+    use super::*;
+    use akita_config::{
+        proof_optimized::fp128::{Dense, DenseBounded},
+        CommitmentConfig,
+    };
+
+    #[test]
+    fn conflicting_contracts_for_one_lookup_geometry_reject_before_planning() {
+        let group = PolynomialGroupLayout::singleton(14);
+        let descriptor = akita_config::test_support::workspace_schedule_catalog::<Dense>()
+            .unwrap()
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
+            .unwrap()
+            .profiles()
+            .final_group;
+        let family = crate::generated_families::ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.family_name() == Dense::schedule_family_name())
+            .unwrap();
+        let mut spec = crate::generated_families::empty_emit_spec(family, PathBuf::new()).unwrap();
+        spec.regen_group_batch = |_| panic!("conflicting contracts must reject before planning");
+        spec.grouped_requests = [
+            PrecommittedProducer::from_config::<Dense>(descriptor).unwrap(),
+            PrecommittedProducer::from_config::<DenseBounded>(descriptor).unwrap(),
+        ]
+        .into_iter()
+        .map(|producer| GroupedGenerationRequest::new(group, vec![producer]))
+        .collect();
+        let error = materialized_entries_for_specs(&[spec], MaterializationDiagnostics::default())
+            .err()
+            .expect("conflicting producer contracts must reject");
+        assert!(error.contains("conflicting producer contracts"));
     }
 }

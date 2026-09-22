@@ -96,12 +96,12 @@ pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     key: &AkitaScheduleLookupKey,
-    precommitted_honest_fold_policies: &[akita_types::sis::HonestFoldPolicySpec],
+    precommitted_source_contracts: &[akita_types::sis::CommittedSourceContract],
     max_products: Option<usize>,
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
-    if key.precommitteds.len() != precommitted_honest_fold_policies.len() {
+    if key.precommitteds.len() != precommitted_source_contracts.len() {
         return Err(AkitaError::InvalidSetup(
-            "root precommit opening products require one policy per profile".into(),
+            "root precommit opening products require one source contract per profile".into(),
         ));
     }
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
@@ -110,10 +110,8 @@ pub(crate) fn packing_precommit_opening_products(
     ) {
         return Ok(Vec::new());
     }
-    let equivalence_classes = precommitted_group_equivalence_classes(
-        &key.precommitteds,
-        precommitted_honest_fold_policies,
-    )?;
+    let equivalence_classes =
+        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?;
 
     let mut products = vec![vec![None; key.precommitteds.len()]];
     for indices in equivalence_classes {
@@ -314,7 +312,7 @@ fn opening_work_domain(
                         policy,
                         dimensions,
                         root_key,
-                        ctx.precommitted_honest_fold_policies,
+                        ctx.precommitted_source_contracts,
                         root_main_constraint.map(|_| crate::planner::MAX_ADAPTED_PRECOMMIT_WIDTH),
                     )?;
                     Ok(products)
@@ -588,12 +586,9 @@ impl<'a> CandidateDomain<'a> {
         };
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         let inner_source = if ctx.level_zero_is_root && state.level == 0 {
-            crate::schedule_params::root_inner_basis_source(
-                ctx.root_honest_fold_policy.ok_or_else(|| {
-                    AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
-                })?,
-                policy.decomposition.log_commit_bound,
-            )
+            crate::schedule_params::root_inner_basis_source(ctx.root_source_contract.ok_or_else(
+                || AkitaError::InvalidSetup("root batch is missing its source contract".into()),
+            )?)
         } else {
             crate::InnerBasisSource::BalancedDigits {
                 log_basis: state.current_lb,
@@ -693,12 +688,12 @@ impl<'a> CandidateDomain<'a> {
                 for work in &self.opening_work {
                     let mut dimension_candidates = root_level_candidates_for_basis(
                         root_key,
-                        ctx.root_honest_fold_policy.ok_or_else(|| {
+                        ctx.root_source_contract.ok_or_else(|| {
                             AkitaError::InvalidSetup(
-                                "root batch is missing its honest fold policy".into(),
+                                "root batch is missing its source contract".into(),
                             )
                         })?,
-                        ctx.precommitted_honest_fold_policies,
+                        ctx.precommitted_source_contracts,
                         policy,
                         work.dimensions,
                         work.opening,
@@ -887,15 +882,15 @@ impl<'a> CandidateDomain<'a> {
         let root_key = self.root_level_key.ok_or_else(|| {
             AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
         })?;
-        let final_policy = ctx.root_honest_fold_policy.ok_or_else(|| {
-            AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
+        let final_policy = ctx.root_source_contract.ok_or_else(|| {
+            AkitaError::InvalidSetup("root batch is missing its source contract".into())
         })?;
         for inner_lb in self.inner_basis_range.clone() {
             for work in &self.opening_work {
                 let mut dimension_candidates = root_level_candidates_for_basis(
                     root_key,
                     final_policy,
-                    ctx.precommitted_honest_fold_policies,
+                    ctx.precommitted_source_contracts,
                     ctx.policy,
                     work.dimensions,
                     work.opening,

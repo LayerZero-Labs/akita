@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
@@ -35,7 +35,6 @@ pub struct MaterializationDiagnostics {
 pub struct PrecommittedProducer {
     descriptor: GroupCommitPhaseParams,
     contract: CommittedSourceContract,
-    fold_policy: HonestFoldPolicySpec,
 }
 
 impl PrecommittedProducer {
@@ -45,24 +44,16 @@ impl PrecommittedProducer {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the descriptor is invalid for
-    /// the producer field or the fold policy disagrees with its declared source
-    /// class.
+    /// the producer field.
     pub fn try_new(
         descriptor: GroupCommitPhaseParams,
         contract: CommittedSourceContract,
-        fold_policy: HonestFoldPolicySpec,
     ) -> Result<Self, AkitaError> {
         let field_bits = contract.decomposition().field_bits();
         descriptor.validate_frozen_precommit(field_bits)?;
-        if fold_policy != contract.class().honest_fold_policy(field_bits) {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted producer fold policy does not match its source contract".into(),
-            ));
-        }
         Ok(Self {
             descriptor,
             contract,
-            fold_policy,
         })
     }
 
@@ -71,11 +62,7 @@ impl PrecommittedProducer {
     pub fn from_config<Cfg: akita_config::CommitmentConfig>(
         descriptor: GroupCommitPhaseParams,
     ) -> Result<Self, AkitaError> {
-        Self::try_new(
-            descriptor,
-            Cfg::committed_source_contract()?,
-            akita_config::honest_fold_policy_of::<Cfg>(),
-        )
+        Self::try_new(descriptor, Cfg::committed_source_contract()?)
     }
 
     /// Frozen commit-phase descriptor used in the grouped lookup key.
@@ -89,10 +76,6 @@ impl PrecommittedProducer {
     #[must_use]
     pub const fn source_contract(self) -> CommittedSourceContract {
         self.contract
-    }
-
-    const fn fold_policy(self) -> HonestFoldPolicySpec {
-        self.fold_policy
     }
 }
 
@@ -132,11 +115,14 @@ impl GroupedGenerationRequest {
         &self.precommitted_producers
     }
 
-    pub(crate) fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
+    /// Complete producer declarations in the same order as the frozen
+    /// precommit descriptors returned by [`Self::key`].
+    #[must_use]
+    pub fn source_contracts(&self) -> Vec<CommittedSourceContract> {
         self.precommitted_producers
             .iter()
             .copied()
-            .map(PrecommittedProducer::fold_policy)
+            .map(PrecommittedProducer::source_contract)
             .collect()
     }
 }
