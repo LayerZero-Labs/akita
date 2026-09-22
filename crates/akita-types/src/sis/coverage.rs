@@ -136,7 +136,7 @@ static Q64_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_C
 static Q128_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
     [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
 
-fn cached_inner_coeff_linf_bounds(
+pub(super) fn cached_inner_coeff_linf_bounds(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> Option<&'static [u128]> {
