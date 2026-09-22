@@ -118,6 +118,25 @@ fn run_trinomial_matvec_into<F, const D: usize, M, const PACKED: bool>(
     }
 }
 
+fn prepare_trinomial_matrix<F, const D: usize, M>(
+    domain: &TrinomialNttDomain<F, D, M>,
+    matrix: &[TrinomialRing<F, D, M>],
+) -> Vec<TrinomialNtt<F, D, M>>
+where
+    F: SmoothFftField + Debug,
+    M: TrinomialModulus,
+{
+    let mut workspace = domain.workspace();
+    matrix
+        .iter()
+        .map(|entry| {
+            let mut transformed = domain.zero_ntt();
+            domain.forward_into_with_workspace(entry, &mut transformed, &mut workspace);
+            transformed
+        })
+        .collect()
+}
+
 fn bench_crt<F, const K: usize, const D: usize>(
     criterion: &mut Criterion,
     field: &str,
@@ -509,7 +528,7 @@ fn bench_trinomial_matvec<F, const D: usize, M>(
     let rhs: [TrinomialRing<F, D, M>; MATVEC_COLS] = rhs_digits.map(|digits| {
         TrinomialRing::from_coefficients(digits.map(|digit| F::from_i64(i64::from(digit)))).unwrap()
     });
-    let prepared: Vec<_> = matrix.iter().map(|entry| domain.forward(entry)).collect();
+    let prepared = prepare_trinomial_matrix(&domain, &matrix);
     let lut = domain.prepare_i8_lut(MATVEC_LOG_BASIS).unwrap();
     let zero = domain.zero_ntt();
     let mut accumulators = vec![zero.clone(); MATVEC_ROWS];
@@ -549,16 +568,7 @@ fn bench_trinomial_matvec<F, const D: usize, M>(
     group.bench_with_input(
         BenchmarkId::new("prepared_matrix_setup", &label),
         &label,
-        |bench, _| {
-            bench.iter(|| {
-                black_box(
-                    matrix
-                        .iter()
-                        .map(|entry| domain.forward(black_box(entry)))
-                        .collect::<Vec<_>>(),
-                )
-            })
-        },
+        |bench, _| bench.iter(|| black_box(prepare_trinomial_matrix(&domain, black_box(&matrix)))),
     );
     group.bench_with_input(
         BenchmarkId::new("digit_lut_setup", &label),
