@@ -430,8 +430,7 @@ pub(super) unsafe fn x86_dot_product_vec2(a: &[F], b: &[F]) -> F {
     #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn pack(x0: u64, x1: u64) -> __m256i {
-        // SAFETY: AVX2 is established by the caller.
-        unsafe { _mm256_set_epi64x(0, x1 as i64, 0, x0 as i64) }
+        _mm256_set_epi64x(0, x1 as i64, 0, x0 as i64)
     }
 
     #[inline]
