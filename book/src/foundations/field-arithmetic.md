@@ -320,7 +320,9 @@ field `K = F2[x]/(x^64+x^4+x^3+x+1)` and the cubic extension
 In both profiles, bit zero means the constant coefficient. The F128 polynomial
 matches the GHASH polynomial, but these coordinates are not a reflected GHASH
 network encoding. An adapter must convert its actual source representation.
-The host arithmetic is currently portable; F162 keeps its accelerated kernels.
+Host multiplication selects PMULL on AArch64 or PCLMUL on x86 at runtime,
+with a portable fallback. Host equality expansion selects its kernel once per
+table; AVX-512/VPCLMUL processes four host elements together.
 
 To see why switching is possible, write each host equality weight in its binary
 basis. Each basis coordinate is either zero or one, so it selects a subset of
@@ -370,9 +372,12 @@ The arithmetic path in `binary::field_switch` is:
    authenticated host claim. `try_from_values` checks row count and zero padding
    for partials supplied by a caller.
 3. `SwitchPartials::batch` gives the F162 claim. `batched_weights` transforms
-   equality scratch for that same host point into F162 coefficients, using a
-   small lookup table and reusable output storage.
-4. `PackedBinary162` computes the round messages and folds. At the terminal
+   equality scratch for that same host point directly into `PackedBinary162`.
+   AVX-512/GFNI applies the binary coordinate map in 64-element tiles;
+   smaller tables and other CPUs use a nibble lookup table.
+4. `PackedBinary162::refill_binary_words` copies source words directly into
+   packed storage. AVX-512/VPCLMUL processes four adjacent pairs per message
+   or fold iteration, with narrower hardware and portable fallbacks. At the terminal
    point, `transparent_weight` independently evaluates the public coefficient
    factor without enumerating the source table.
 
@@ -392,3 +397,13 @@ packed folds for both profiles. The `binary_field_switch` Criterion groups in
 the existing `binary162` target separate partial generation, coefficient
 batching, prepared rounds, the combined arithmetic path, host reconstruction
 and structured verifier work. They do not measure complete PCS proofs.
+
+The external comparison runner `scripts/bench-binary-switch-comparison.py`
+accepts a separate LaBinius checkout and links both implementations under the
+same native release settings. It checks the complete partial matrix and every
+round before alternating timed samples. Bit reversal reconciles LaBinius's
+half-table folds with Akita's adjacent-pair folds. Both combined timings include
+row-weight expansion, coefficient construction, source packing and all rounds;
+the initial claim and challenges are provided to both. The reference keeps its
+native partial orientation during timing. The comparison covers the F128
+profile; it does not establish F64/F192 performance against LaBinius.

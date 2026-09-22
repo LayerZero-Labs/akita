@@ -29,13 +29,16 @@ fn profile<H: SwitchField>(c: &mut Criterion, name: &str, source: &[H::Source], 
         let z = vec![r; bits];
         let mut equality = Vec::new();
         let partials = partial_evaluations::<H>(source, point, &mut equality).unwrap();
-        let mut weights = Vec::new();
+        let mut weights = PackedBinary162::new();
         batched_weights(&equality, &batch, &mut weights).unwrap();
-        let mut source_f: Vec<_> = source.iter().copied().map(embed_source::<H>).collect();
+        let source_f: Vec<_> = source.iter().copied().map(embed_source::<H>).collect();
         let a = PackedBinary162::from_scalars(&source_f);
-        let b = PackedBinary162::from_scalars(&weights);
+        let b = weights.clone();
         let claim = partials.batch(&batch).unwrap();
-        assert_eq!(F::dot_product(&source_f, &weights), Some(claim));
+        assert_eq!(
+            F::dot_product(&source_f, &weights.to_scalars()),
+            Some(claim)
+        );
         let mut folded_a = a.clone();
         let mut folded_b = b.clone();
         let terminal = all_rounds(&mut folded_a, &mut folded_b, claim, r);
@@ -84,12 +87,9 @@ fn profile<H: SwitchField>(c: &mut Criterion, name: &str, source: &[H::Source], 
                         &mut equality,
                     )
                     .unwrap();
-                    batched_weights(&equality, black_box(&batch), &mut weights).unwrap();
+                    batched_weights(&equality, black_box(&batch), &mut b).unwrap();
                     let claim = partials.batch(&batch).unwrap();
-                    source_f.clear();
-                    source_f.extend(source.iter().copied().map(embed_source::<H>));
-                    a.refill(&source_f);
-                    b.refill(&weights);
+                    a.refill_binary_words(source);
                     black_box(all_rounds(&mut a, &mut b, claim, black_box(r)))
                 })
             },
