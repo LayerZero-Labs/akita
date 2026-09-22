@@ -298,7 +298,7 @@ pub(super) unsafe fn arm_dot_product(a: &[F], b: &[F]) -> F {
     unsafe fn vector_product(a: u64, b: u64) -> uint64x2_t {
         // Every bit pattern is valid in both representations. Keeping the
         // product in this form avoids two lane extracts per loop iteration.
-        unsafe { std::mem::transmute(vmull_p64(a, b)) }
+        unsafe { std::mem::transmute::<u128, uint64x2_t>(vmull_p64(a, b)) }
     }
 
     let zero = vdupq_n_u64(0);
@@ -319,12 +319,12 @@ pub(super) unsafe fn arm_dot_product(a: &[F], b: &[F]) -> F {
     // SAFETY: the accumulated vectors contain exactly six 128-bit products.
     unsafe {
         reduce_karatsuba(
-            std::mem::transmute(d0),
-            std::mem::transmute(d1),
-            std::mem::transmute(d2),
-            std::mem::transmute(m01),
-            std::mem::transmute(m02),
-            std::mem::transmute(m12),
+            std::mem::transmute::<uint64x2_t, u128>(d0),
+            std::mem::transmute::<uint64x2_t, u128>(d1),
+            std::mem::transmute::<uint64x2_t, u128>(d2),
+            std::mem::transmute::<uint64x2_t, u128>(m01),
+            std::mem::transmute::<uint64x2_t, u128>(m02),
+            std::mem::transmute::<uint64x2_t, u128>(m12),
         )
     }
 }
@@ -333,11 +333,11 @@ pub(super) unsafe fn arm_dot_product(a: &[F], b: &[F]) -> F {
 #[inline]
 #[target_feature(enable = "pclmulqdq")]
 unsafe fn x86_clmul(a: u64, b: u64) -> u128 {
-    use std::arch::x86_64::{_mm_clmulepi64_si128, _mm_cvtsi64_si128};
+    use std::arch::x86_64::{__m128i, _mm_clmulepi64_si128, _mm_cvtsi64_si128};
     // SAFETY: the function's target feature guarantees PCLMUL support, and the
     // transmute preserves all 128 product bits.
     unsafe {
-        std::mem::transmute(_mm_clmulepi64_si128::<0>(
+        std::mem::transmute::<__m128i, u128>(_mm_clmulepi64_si128::<0>(
             _mm_cvtsi64_si128(a as i64),
             _mm_cvtsi64_si128(b as i64),
         ))
@@ -422,8 +422,9 @@ pub(super) unsafe fn x86_dot_product(a: &[F], b: &[F]) -> F {
 #[target_feature(enable = "avx2,pclmulqdq,vpclmulqdq")]
 pub(super) unsafe fn x86_dot_product_vec2(a: &[F], b: &[F]) -> F {
     use std::arch::x86_64::{
-        __m256i, _mm256_castsi256_si128, _mm256_clmulepi64_epi128, _mm256_extracti128_si256,
-        _mm256_set_epi64x, _mm256_setzero_si256, _mm256_xor_si256, _mm_xor_si128,
+        __m128i, __m256i, _mm256_castsi256_si128, _mm256_clmulepi64_epi128,
+        _mm256_extracti128_si256, _mm256_set_epi64x, _mm256_setzero_si256, _mm256_xor_si256,
+        _mm_xor_si128,
     };
 
     #[inline]
@@ -439,7 +440,7 @@ pub(super) unsafe fn x86_dot_product_vec2(a: &[F], b: &[F]) -> F {
         // SAFETY: AVX2 is established by the caller; XOR combines the two
         // independent 128-bit lanes before conversion to a polynomial product.
         unsafe {
-            std::mem::transmute(_mm_xor_si128(
+            std::mem::transmute::<__m128i, u128>(_mm_xor_si128(
                 _mm256_castsi256_si128(value),
                 _mm256_extracti128_si256::<1>(value),
             ))
