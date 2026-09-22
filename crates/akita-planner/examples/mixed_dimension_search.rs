@@ -57,7 +57,7 @@ fn main() -> Result<(), akita_error::AkitaError> {
     let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let direct = find_schedule(
         &direct_key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract()?,
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -73,7 +73,7 @@ fn main() -> Result<(), akita_error::AkitaError> {
         AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let scalar_recursive = find_schedule(
         &scalar_recursive_key,
-        akita_config::honest_fold_policy_of::<Recursive>(),
+        Recursive::committed_source_contract()?,
         &[],
         &recursive_policy,
         Recursive::ring_challenge_config,
@@ -87,7 +87,7 @@ fn main() -> Result<(), akita_error::AkitaError> {
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let independent = find_schedule(
         &AkitaScheduleLookupKey::single(precommit_layout),
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract()?,
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -100,14 +100,11 @@ fn main() -> Result<(), akita_error::AkitaError> {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let precommitted_honest_fold_policies = vec![
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        akita_config::honest_fold_policy_of::<OneHot>(),
-    ];
+    let precommitted_source_contracts = vec![OneHot::committed_source_contract()?; 2];
     let adaptive_recursive = find_schedule(
         &recursive_key,
-        akita_config::honest_fold_policy_of::<Recursive>(),
-        &precommitted_honest_fold_policies,
+        Recursive::committed_source_contract()?,
+        &precommitted_source_contracts,
         &recursive_policy,
         Recursive::ring_challenge_config,
     )?;
