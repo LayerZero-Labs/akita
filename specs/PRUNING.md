@@ -106,9 +106,8 @@ The root live set is deliberately small and is synchronized with
 20. `transcript-grinding.md`
 21. `grinding-nonce-encoding.md`
 22. `guided-schedule-adaptation.md`
-23. `spongefish-integration.md`
 
-All 23 current live specifications must pass the default dead-symbol scan. A record
+All 22 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

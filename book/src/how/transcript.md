@@ -296,8 +296,10 @@ The native protocol uses a descriptor-bound positional grammar. Context records
 capture semantic sites and widths for logging diagnostics without adding
 production hashing work. Tests cover prover/verifier vectors, tampering,
 truncation, statement/session binding, and EOF; they do not freeze one
-proof-byte digest for all future schedules. The complete message and dependency review is in
-[`docs/native-proof-stream.md`](../../../docs/native-proof-stream.md).
+proof-byte digest for all future schedules. The native grinding grammar and
+nonce encoding are documented in
+[`specs/transcript-grinding.md`](../../../specs/transcript-grinding.md) and
+[`specs/grinding-nonce-encoding.md`](../../../specs/grinding-nonce-encoding.md).
 
 ## Code map
 

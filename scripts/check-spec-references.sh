@@ -159,7 +159,6 @@ live_specs=(
   specs/subring-coefficient-packing.md
   specs/transcript-grinding.md
   specs/grinding-nonce-encoding.md
-  specs/spongefish-integration.md
 )
 
 missing_live=()

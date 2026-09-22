@@ -228,7 +228,6 @@ structured proof replay, or alternate verifier is prohibited.
 ## References
 
 - [Grinding nonce encoding explainer](grinding-nonce-encoding.md)
-- [Native Spongefish transcript integration](spongefish-integration.md)
 - [Transcript implementation](../book/src/how/transcript.md)
 - [PCS binding and query accounting](../book/src/foundations/pcs-and-binding.md)
 - [Verifier contract](../docs/verifier-contract.md)

@@ -21,10 +21,9 @@ integer selected by grinding. The public grinding plan, nonce range, predicate,
 challenge order, response equations, and verifier checks define the security
 contract.
 
-This is the explanatory companion to the normative contracts in
-[`transcript-grinding.md`](transcript-grinding.md) and
-[`spongefish-integration.md`](spongefish-integration.md). Those specifications
-remain authoritative when this explanation and a protocol invariant differ.
+This is the explanatory companion to the normative contract in
+[`transcript-grinding.md`](transcript-grinding.md). That specification remains
+authoritative when this explanation and a protocol invariant differ.
 
 ## 1. What grinding is
 
@@ -962,8 +961,8 @@ Current PR:
 - `crates/akita-schedules/src/runtime.rs` — packed planner estimate versus
   native proof bound;
 - `specs/transcript-grinding.md` — authoritative grinding contract;
-- `specs/spongefish-main-parity-report.md` — recorded size and performance
-  comparison.
+- `book/src/how/transcript.md` — current transcript architecture and verifier
+  requirements.
 
 `origin/main`:
 

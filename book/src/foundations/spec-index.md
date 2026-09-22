@@ -33,7 +33,6 @@ policy and the checker use the same live set in
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
 | [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current native proof-of-work and fold-response grinding policy. |
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains the packed-main and inline-LEB128 nonce designs while PR #37 remains under review. |
-| [`spongefish-integration`](../../../specs/spongefish-integration.md) | implemented | Defines the current native Spongefish proof stream, transcript encoding, grinding integration, and soundness obligations. |
 
 ## Archived records
 
