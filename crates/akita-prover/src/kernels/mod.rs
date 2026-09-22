@@ -5,6 +5,7 @@ pub(crate) mod decompose_fold_avx;
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod decompose_fold_neon;
 pub mod linear;
+pub mod trinomial_relation;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 pub(crate) use decompose_fold_avx as avx_decompose_fold;

@@ -52,5 +52,9 @@ rand = "0.8"
 name = "golomb_rice"
 harness = false
 
+[[bench]]
+name = "trinomial_setup"
+harness = false
+
 [lints]
 workspace = true

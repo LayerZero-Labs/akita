@@ -17,6 +17,7 @@ mod plan;
 #[allow(dead_code)]
 #[cfg(test)]
 mod test_oracle_weights;
+mod trinomial;
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +30,7 @@ pub use plan::{
     PreparedCoefficientFunctional, PreparedRelationAddress, SetupContributionGroupInputs,
     SetupContributionPlan,
 };
+pub use trinomial::{PreparedTrinomialASetupWeights, TrinomialASetupView, TrinomialResponseLayout};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///

@@ -42,7 +42,7 @@
 //! - **Low-multiplication radix kernels**
 //!   (`FftWorkspace::butterfly_stages`): the size-`r` DFT inside each
 //!   butterfly is hand-tuned per radix, taking the multiplication
-//!   count from the naive `r²` down to `1, 2, 6, 18` for
+//!   count from the naive `r²` down to `1, 1, 6, 18` for
 //!   `r ∈ {2, 3, 5, 7}` (radix 3 uses `1 + ω + ω² = 0`; radix 5 / 7
 //!   use Karatsuba on the conjugate-pair-symmetrized inputs, with
 //!   the constants precomputed in `StageData::winograd`).
@@ -314,11 +314,10 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
 
 /// Pre-allocated ping-pong buffers for an iterative mixed-radix FFT.
 ///
-/// `buf_a` is updated in place across all stages and holds the result
-/// on return. `buf_b` is a scratch slot callers can pre-fill (see
-/// `execute_from_b`); reused across the inverse and forward passes
-/// inside `rs_extend_batch`.
-pub(crate) struct FftWorkspace<F> {
+/// Create this through [`SmoothDomain::workspace`] and reuse it for forward
+/// and inverse transforms of the same length. Buffers remain private so that
+/// callers cannot invalidate the workspace's shape.
+pub struct FftWorkspace<F> {
     n: usize,
     buf_a: Vec<F>,
     buf_b: Vec<F>,
@@ -581,6 +580,11 @@ pub struct SmoothDomain<F> {
 }
 
 impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
+    /// Allocate reusable scratch for this domain's transforms.
+    pub fn workspace(&self) -> FftWorkspace<F> {
+        FftWorkspace::new(self.n)
+    }
+
     /// Build a domain of size `n` from a primitive `n`-th root of
     /// unity. Precomputes the digit-reversal permutation and per-stage
     /// tables for both forward and inverse transforms.
@@ -634,26 +638,22 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
         result
     }
 
-    /// Allocation-free forward transform for crate-internal composite plans.
-    pub(crate) fn forward_into(
-        &self,
-        input: &[F],
-        output: &mut [F],
-        workspace: &mut FftWorkspace<F>,
-    ) {
+    /// Forward transform into caller-owned output using reusable scratch.
+    ///
+    /// # Panics
+    /// If either slice or the workspace has a length different from this domain.
+    pub fn forward_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
         assert_eq!(workspace.n, self.n);
         output.copy_from_slice(workspace.execute(input, &self.fwd_stages, &self.digit_rev));
     }
 
-    /// Allocation-free inverse transform for crate-internal composite plans.
-    pub(crate) fn inverse_into(
-        &self,
-        input: &[F],
-        output: &mut [F],
-        workspace: &mut FftWorkspace<F>,
-    ) {
+    /// Inverse transform into caller-owned output using reusable scratch.
+    ///
+    /// # Panics
+    /// If either slice or the workspace has a length different from this domain.
+    pub fn inverse_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
         assert_eq!(workspace.n, self.n);

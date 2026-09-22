@@ -16,8 +16,9 @@ use akita_types::{
     gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
     AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
+    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationPolynomial,
+    RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, RingRelationInstance,
+    SetupProjectionGeometry,
 };
 pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
 use compiler::{
@@ -589,7 +590,8 @@ where
                 })
                 .ok_or(AkitaError::InvalidProof)?
         };
-        let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
+        let row_denom = RelationPolynomial::negacyclic(row_dim)?
+            .evaluate_modulus_with_powers(alpha, row_alpha_pows)?;
         for (digit, gadget) in r_gadget.iter().enumerate() {
             let physical_start = compilation
                 .witness_layout
