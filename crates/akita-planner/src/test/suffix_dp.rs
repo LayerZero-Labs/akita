@@ -378,7 +378,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     );
     let root = crate::planner::find_schedule(
         &key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -397,8 +397,8 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         root_lookup_key: Some(&key),
         root_main_constraint: None,
         adaptation_guide: None,
-        root_honest_fold_policy: Some(akita_config::honest_fold_policy_of::<OneHot>()),
-        precommitted_honest_fold_policies: &[],
+        root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
+        precommitted_source_contracts: &[],
         level_zero_is_root: true,
         relation_traversal_order: super::RelationTraversalOrder::Canonical,
         relation_mode_filter: super::RelationModeFilter::All,
@@ -417,7 +417,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let mut memo = super::ScheduleMemo::new();
     let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
     let generated = domain
-        .generate_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
         .unwrap();
     let candidates =
         super::attach_source_moments(&ctx, state, false, &domain.opening_layout, generated.folds)

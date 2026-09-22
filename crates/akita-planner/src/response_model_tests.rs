@@ -107,9 +107,18 @@ fn field_plane_moments_include_the_residual_top_plane() {
 #[test]
 fn bounded_source_charges_the_carry_plane_past_its_bound() {
     let per_scalar = |bound, log_basis, digits| {
-        bounded_field_source_moment(1, bound, log_basis, digits)
-            .unwrap()
-            .mean_l2_sq()
+        let norms = CommittedSourceContract::try_new(
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+            akita_types::DecompositionParams {
+                log_basis,
+                log_commit_bound: bound,
+                log_open_bound: Some(128),
+            },
+        )
+        .unwrap()
+        .source_norms(log_basis, digits, 128, 1)
+        .unwrap();
+        SourceMomentEstimate::new(norms.l2_sq).unwrap().mean_l2_sq()
     };
     // `mean_l2_sq` is bucketed conservatively upward, so the expectation goes
     // through the same bucketing. That keeps the assertion exact about the plane
