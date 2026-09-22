@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_config::{
-    honest_fold_policy_of, policy_of,
+    policy_of,
     proof_optimized::fp128::{Dense, DenseBounded, OneHot},
     CommitmentConfig,
 };
@@ -13,7 +13,6 @@ fn producer<Cfg: CommitmentConfig>(
     crate::emit::PrecommittedProducer::try_new(
         profile,
         Cfg::committed_source_contract().expect("producer source contract"),
-        honest_fold_policy_of::<Cfg>(),
     )
     .expect("valid precommitted producer")
 }
@@ -129,21 +128,6 @@ fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, Akita
     akita_config::test_support::workspace_schedule_catalog::<Dense>()?
         .resolve_key(&AkitaScheduleLookupKey::single(group))
         .cloned()
-}
-
-#[test]
-fn precommitted_producer_rejects_a_mismatched_fold_policy() {
-    let profile = scalar_row(PolynomialGroupLayout::singleton(14))
-        .expect("scalar producer row")
-        .profiles()
-        .final_group;
-    let error = crate::emit::PrecommittedProducer::try_new(
-        profile,
-        Dense::committed_source_contract().expect("dense source contract"),
-        honest_fold_policy_of::<OneHot>(),
-    )
-    .expect_err("producer policy must agree with its source contract");
-    assert!(matches!(error, AkitaError::InvalidSetup(_)));
 }
 
 #[test]

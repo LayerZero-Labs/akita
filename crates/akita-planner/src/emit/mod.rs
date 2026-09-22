@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
@@ -44,20 +44,13 @@ impl PrecommittedProducer {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the descriptor is invalid for
-    /// the producer field or the fold policy disagrees with its declared source
-    /// class.
+    /// the producer field.
     pub fn try_new(
         descriptor: GroupCommitPhaseParams,
         contract: CommittedSourceContract,
-        fold_policy: HonestFoldPolicySpec,
     ) -> Result<Self, AkitaError> {
         let field_bits = contract.decomposition().field_bits();
         descriptor.validate_frozen_precommit(field_bits)?;
-        if fold_policy != contract.class().honest_fold_policy(field_bits) {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted producer fold policy does not match its source contract".into(),
-            ));
-        }
         Ok(Self {
             descriptor,
             contract,
@@ -69,11 +62,7 @@ impl PrecommittedProducer {
     pub fn from_config<Cfg: akita_config::CommitmentConfig>(
         descriptor: GroupCommitPhaseParams,
     ) -> Result<Self, AkitaError> {
-        Self::try_new(
-            descriptor,
-            Cfg::committed_source_contract()?,
-            akita_config::honest_fold_policy_of::<Cfg>(),
-        )
+        Self::try_new(descriptor, Cfg::committed_source_contract()?)
     }
 
     /// Frozen commit-phase descriptor used in the grouped lookup key.
