@@ -1,7 +1,7 @@
 use super::{product, BinaryField162 as F};
 
 // Deliberately independent bit convolution and polynomial long division.
-fn oracle(a: F, b: F) -> F {
+pub(super) fn oracle(a: F, b: F) -> F {
     let a = a.to_words();
     let b = b.to_words();
     let mut bits = [false; 323];
