@@ -32,6 +32,7 @@ mod generated_l2_sis_table;
 mod generated_sis_table;
 pub mod honest_fold_policy;
 mod l2_table;
+pub mod labinius;
 pub mod norm_bound;
 mod onehot_source;
 mod physical_l2;
@@ -71,8 +72,8 @@ pub use norm_bound::{
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,
     role_a_collision_inf_norm_for_response_bound,
     role_a_collision_inf_norm_for_response_difference, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, source_comparison_inf_norm,
+    weak_binding_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
 };

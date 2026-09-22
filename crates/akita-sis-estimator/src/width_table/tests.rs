@@ -85,6 +85,31 @@ fn work_identifiers_track_semantics_but_not_progress_output() {
 }
 
 #[test]
+fn explicit_staged_origins_do_not_become_production_coverage() {
+    let origin = InfinityWidthOrigin {
+        modulus_profile: AkitaModulusProfileId::Q64Offset23703,
+        d: 162,
+        coeff_linf_bound: 1_580_547_964_560,
+    };
+    let config = InfinityWidthTableConfig {
+        profiles: vec![origin.modulus_profile],
+        ring_dims: vec![origin.d],
+        coeff_linf_bounds: vec![origin.coeff_linf_bound],
+        max_rank: 2,
+        explicit_origins: Some(vec![origin]),
+        ..InfinityWidthTableConfig::default()
+    };
+    assert!(!is_production_infinity_width_table_config(&config));
+    let work = infinity_width_work_items(&config).unwrap();
+    assert_eq!(work.len(), 2);
+    assert!(work.iter().all(|item| {
+        item.modulus_profile == origin.modulus_profile
+            && item.d == origin.d
+            && item.coeff_linf_bound == origin.coeff_linf_bound
+    }));
+}
+
+#[test]
 fn work_results_round_trip_and_bind_the_planned_item() {
     let config = InfinityWidthTableConfig {
         profiles: vec![AkitaModulusProfileId::Q32Offset99],

@@ -55,6 +55,26 @@ pub fn weak_binding_inf_norm(challenge_l1_norm: u128, z_inf_norm: u128) -> Optio
         .checked_mul(z_inf_norm)
 }
 
+/// Exact mixed-envelope collision bound for two compatible source openings.
+///
+/// Each opening contributes a certified numerator bound `B` and the induced
+/// coefficient-`L∞` multiplication norm `K` of its extracted slack. Cross
+/// multiplication produces `K_right * B_left + K_left * B_right`. This helper
+/// is the canonical arithmetic available to ordinary and binary
+/// source-comparison ledgers, so table pricing and verifier admission can share
+/// one implementation.
+#[must_use]
+pub fn source_comparison_inf_norm(
+    left_numerator_bound: u128,
+    left_slack_operator_bound: u128,
+    right_numerator_bound: u128,
+    right_slack_operator_bound: u128,
+) -> Option<u128> {
+    right_slack_operator_bound
+        .checked_mul(left_numerator_bound)?
+        .checked_add(left_slack_operator_bound.checked_mul(right_numerator_bound)?)
+}
+
 /// Complete A-role collision price for two accepted folded responses.
 ///
 /// Both the fold challenge and the raw response may differ between two valid
@@ -419,6 +439,12 @@ pub fn fold_witness_linf_cap(
 mod tests {
     use super::super::ajtai_key::DEFAULT_SIS_SECURITY_POLICY;
     use super::*;
+
+    #[test]
+    fn mixed_source_comparison_uses_each_slack_once() {
+        assert_eq!(source_comparison_inf_norm(11, 7, 13, 5), Some(146));
+        assert_eq!(source_comparison_inf_norm(u128::MAX, 2, 1, 1), None);
+    }
 
     #[test]
     fn physical_response_bound_uses_the_complete_difference_interval() {
