@@ -11,9 +11,9 @@ use crate::schedule_params::{
 };
 
 const SETUP_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
+    crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3;
 const PADDED_ENVELOPE_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3;
+    crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4;
 
 fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
     DescriptorOrderContext {
@@ -52,6 +52,7 @@ fn setup_score(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
+        proof_and_work_score: (payload_bytes + nonce_bytes) as u128,
         cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0).unwrap(),
         setup_field_elements,
     }
@@ -66,6 +67,7 @@ fn setup_score_with_queries(
     SetupScore {
         first_direct_setup_capacity: capacity,
         first_direct_output_witness_len: 0,
+        proof_and_work_score: payload_bytes as u128,
         cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count).unwrap(),
         setup_field_elements,
     }
@@ -77,6 +79,7 @@ fn payload_score(
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
+        proof_and_work_score: (payload_bytes + nonce_bytes) as u128,
         cost: NativeProofCost::new(payload_bytes, nonce_bytes, 0).unwrap(),
         setup_field_elements,
     }
@@ -89,6 +92,7 @@ fn payload_score_with_queries(
     setup_field_elements: usize,
 ) -> PayloadScore {
     PayloadScore {
+        proof_and_work_score: (payload_bytes + nonce_bytes) as u128,
         cost: NativeProofCost::new(payload_bytes, nonce_bytes, expanded_query_count).unwrap(),
         setup_field_elements,
     }
@@ -445,6 +449,7 @@ fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
     CandidateMetrics {
         first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
         first_direct_output_witness_len: 0,
+        fold_work_elements: 0,
         cost: NativeProofCost::new(proof_bytes, 0, 0).unwrap(),
         setup_field_elements: 0,
     }
@@ -455,6 +460,7 @@ fn recursive_bound_requires_dominance_in_both_parent_projections() {
     let candidate_admission = admission(2, 16);
     let lower_bound = CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 16,
+        proof_and_work_score: 10,
         proof_bytes: 10,
         setup_field_elements: 0,
     };

@@ -104,8 +104,10 @@ where
             level,
             0,
         );
+        let shape =
+            akita_sumcheck::NativeSumcheckShape::new(self.num_rounds(), self.degree_bound())?;
         let (setup_prefix_point, _) =
-            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(self, &mut channel, 0)?;
+            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(self, &mut channel, shape, 0)?;
         let setup_prefix_eval = self.setup.folded_table_value()?;
         akita_types::native_stage3_prover_prefix_eval::<F, E>(grinding, level, setup_prefix_eval)?;
         Ok(NativeAkitaStage3ProverOutput {

@@ -20,6 +20,7 @@ pub use sampling::{
 };
 mod verifier;
 pub use verifier::NativeVerifierState;
+mod site;
 
 /// Native transcript and proof-stream format version.
 pub const NATIVE_PROTOCOL_VERSION: u32 = 7;

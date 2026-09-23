@@ -20,6 +20,11 @@ use rand::{Rng, SeedableRng};
 
 mod common;
 use common::load_workspace_scheme;
+#[cfg(feature = "logging-transcript")]
+use common::native_mutations::{
+    assert_native_ranges_match_context, representative_native_mutation_ranges,
+    selected_sumcheck_protocols,
+};
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -212,6 +217,8 @@ where
         make_dense_fixture::<F, Cfg>(&scheme, num_vars, label);
     #[cfg(feature = "logging-transcript")]
     let proof_ranges = akita_transcript::thread_proof_ranges();
+    #[cfg(feature = "logging-transcript")]
+    assert_native_ranges_match_context(&proof_ranges);
     let resolved = scheme
         .schedules()
         .resolve_selection(selection)
@@ -257,47 +264,53 @@ where
 
     #[cfg(feature = "logging-transcript")]
     let mutation_offsets = {
-        let coordinate = |site: &[u8; 32], index: usize| {
-            u32::from_le_bytes(site[index..index + 4].try_into().unwrap())
-        };
-        let mut by_role = std::collections::BTreeMap::new();
-        for range in proof_ranges.into_iter().filter(|range| range.len != 0) {
-            let site = &range.context.site_id;
-            let key = (
-                coordinate(site, 0),
-                coordinate(site, 12),
-                coordinate(site, 28),
-                range.context.kind,
-            );
-            let rank = (
-                coordinate(site, 8),
-                coordinate(site, 4),
-                coordinate(site, 16),
-                coordinate(site, 20),
-                coordinate(site, 24),
-            );
-            let replace = by_role
-                .get(&key)
-                .is_none_or(|(selected_rank, _)| rank > *selected_rank);
-            if replace {
-                by_role.insert(key, (rank, range.start));
-            }
-        }
+        let by_role = representative_native_mutation_ranges(proof_ranges);
         assert!(
             !by_role.is_empty(),
             "native proof must expose fixed-shape semantic-role ranges"
         );
+        let sumcheck_protocols = selected_sumcheck_protocols(&by_role);
+        for protocol in [
+            akita_types::SumcheckProtocol::Stage1,
+            akita_types::SumcheckProtocol::Stage2,
+        ] {
+            assert!(
+                sumcheck_protocols.contains(&protocol),
+                "native fixture must exercise {protocol:?} sumcheck messages"
+            );
+        }
+        for (family, protocol) in [
+            (
+                akita_transcript::SITE_FAMILY_PHYSICAL_L2,
+                akita_types::SumcheckProtocol::PhysicalL2,
+            ),
+            (
+                akita_transcript::SITE_FAMILY_STAGE3,
+                akita_types::SumcheckProtocol::Stage3,
+            ),
+        ] {
+            if by_role.iter().any(|(bucket, _)| bucket.family == family) {
+                assert!(
+                    sumcheck_protocols.contains(&protocol),
+                    "fixture with {protocol:?} messages must mutate its sumcheck"
+                );
+            }
+        }
         if Cfg::ExtField::DEGREE > 1 {
             assert!(
-                by_role
-                    .keys()
-                    .any(|key| key.0 == akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
+                by_role.iter().any(|(bucket, _)| bucket.family
+                    == akita_transcript::SITE_FAMILY_EXTENSION_OPENING_REDUCTION),
                 "extension-field workload must exercise native EOR messages"
+            );
+            assert!(
+                sumcheck_protocols
+                    .contains(&akita_types::SumcheckProtocol::ExtensionOpeningReduction),
+                "extension-field workload must exercise EOR sumcheck messages"
             );
         }
         by_role
-            .into_values()
-            .map(|(_, offset)| offset)
+            .into_iter()
+            .map(|(_, range)| range.start)
             .collect::<Vec<_>>()
     };
     #[cfg(not(feature = "logging-transcript"))]

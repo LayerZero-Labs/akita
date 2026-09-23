@@ -1259,16 +1259,18 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs retain `MinFirstDirectSetupThenPayloadV2`:
-first-direct padded setup capacity, proof payload, exact total setup field
-elements, root output-witness length, and the canonical descriptor. Recursive
-catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
-compares the next-power-of-two capacity covering the total setup envelope.
+Adaptive direct catalogs retain `MinFirstDirectSetupThenProofAndWorkV3`:
+first-direct padded setup capacity, proof-and-work score, exact proof payload,
+exact total setup field elements, root output-witness length, and the canonical
+descriptor. The proof-and-work score is native proof bytes plus one byte per
+started `2^18` total fold-output witness elements. Recursive catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4`, which first compares
+the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, proof payload, and first-direct
-output-witness length. A numeric tie then goes directly to the canonical descriptor.
-No objective component for `s`, `d_A`, rank, fold count, or prover time is
-added.
+before comparing first-direct capacity, proof-and-work score, exact proof
+payload, and first-direct output-witness length. A numeric tie then goes
+directly to the canonical descriptor. No direct objective component for `s`,
+`d_A`, rank, fold count, or measured wall-clock time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1328,7 +1330,7 @@ proof payload. The two proof regressions remain explicit in the per-row review
 data; setup-primary selection does not imply per-row proof nonregression.
 
 At the checked head, the fp32 dense nv20 adaptive direct rows use
-`MinFirstDirectSetupThenPayloadV2`. Their first-direct padded
+`MinFirstDirectSetupThenProofAndWorkV3`. Their first-direct padded
 capacities are 131,072 and 262,144 fields. Their six-level schedules use
 458,752 and 524,288 total setup fields and produce 62,447 and 63,254 proof
 bytes across six fold levels. The checked decision is recorded in the

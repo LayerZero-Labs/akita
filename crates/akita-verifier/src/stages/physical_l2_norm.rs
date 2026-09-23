@@ -264,8 +264,10 @@ where
         &mut channel,
         0,
         input_claim,
-        plan.domain().num_vars(),
-        range.leaf_coefficients.len(),
+        akita_sumcheck::NativeSumcheckShape::new(
+            plan.domain().num_vars(),
+            range.leaf_coefficients.len(),
+        )?,
     )?;
     let virtual_evaluations = akita_types::native_l2_verifier_virtual_evaluations::<F, E>(
         grinding,

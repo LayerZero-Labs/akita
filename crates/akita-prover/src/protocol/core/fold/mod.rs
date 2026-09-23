@@ -446,6 +446,7 @@ fn commit_next_witness_native<'stack, F, E, O, TS, R, SP, Cfg>(
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
     next_witness_binding: akita_types::NextWitnessBindingPolicy,
+    level_layout: &akita_types::NativeNonterminalLevelLayout,
     instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F>,
 ) -> Result<CommittedNextWitness<F, SP::State>, AkitaError>
@@ -499,6 +500,11 @@ where
         .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     match &state.binding {
         NextWitnessState::OuterPayload(commitment) => {
+            if commitment.coeff_len() != level_layout.next_outer_payload_coeffs() {
+                return Err(AkitaError::InvalidSetup(
+                    "native successor payload disagrees with the level grammar".into(),
+                ));
+            }
             if !commitment.can_decode_vec(
                 next_params
                     .recursive()
@@ -579,6 +585,25 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let opening_batch = prepared_fold.instance.opening_batch().clone();
+    let challenge_field_bits = F::MODULUS_BITS
+        .checked_mul(
+            u32::try_from(E::DEGREE)
+                .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
+    let relation_geometry = lp.relation_address_geometry(
+        &opening_batch,
+        E::DEGREE,
+        next_params.inner_ring_dimension(),
+        expected_output_witness_len,
+    )?;
+    let level_layout = akita_types::native_nonterminal_level_layout(
+        F::MODULUS_BITS,
+        challenge_field_bits,
+        lp,
+        relation_geometry,
+        next_params.recursive().map(|params| &params.params),
+    )?;
     let PreparedFold {
         instance,
         witness,
@@ -603,6 +628,7 @@ where
         next_params,
         expected_output_witness_len,
         next_witness_binding,
+        &level_layout,
         &instance,
         witness,
     )?;
@@ -636,7 +662,14 @@ where
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
-    } = prove_stage1_native::<F, E>(grinding, level_u32, &mut rs, lp, &relation_range_image_plan)?;
+    } = prove_stage1_native::<F, E>(
+        grinding,
+        level_u32,
+        &mut rs,
+        lp,
+        &relation_range_image_plan,
+        &level_layout,
+    )?;
     let physical_l2 = prepare_physical_l2_batch_native::<F, E>(grinding, level, physical_l2)?;
     let compression = prepare_stage2_compression_native::<F, E>(grinding, level, &mut rs)?;
     let batching_coeff =
@@ -674,6 +707,7 @@ where
         linear_terms,
         scalar_opening_claim,
         relation_range_image_plan,
+        level_layout.stage2_sumcheck(),
     )?;
     let w_eval = stage2_prover.final_w_eval();
     akita_types::native_stage2_prover_w_eval::<F, E>(grinding, level_u32, w_eval)?;

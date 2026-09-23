@@ -3,17 +3,20 @@ use super::*;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OracleObjective {
     Payload {
+        proof_and_work_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     SetupFirst {
         first_direct_setup_capacity: usize,
+        proof_and_work_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
+        proof_and_work_score: u128,
         proof_bytes: usize,
         first_direct_output_witness_len: usize,
     },
@@ -22,7 +25,7 @@ enum OracleObjective {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct OracleScore {
     objective: OracleObjective,
-    legacy_root_output_witness_len: Option<usize>,
+    root_output_witness_tiebreak: Option<usize>,
     descriptor: Vec<u8>,
 }
 
@@ -63,21 +66,26 @@ pub(super) fn score(
     let first_direct_setup_capacity = candidate
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
+    let metrics = candidate.metrics();
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => OracleObjective::Payload {
+        crate::SelectionPolicyId::MinEstimatedProofAndWorkV3 => OracleObjective::Payload {
+            proof_and_work_score: metrics.proof_and_work_score(),
             proof_bytes: candidate.cost.proof_bytes(),
             setup_field_elements: candidate.setup_field_elements,
         },
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => OracleObjective::SetupFirst {
-            first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "unpruned setup-first candidate is missing direct setup size".into(),
-                )
-            })?,
-            proof_bytes: candidate.cost.proof_bytes(),
-            setup_field_elements: candidate.setup_field_elements,
-        },
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3 => {
+            OracleObjective::SetupFirst {
+                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unpruned setup-first candidate is missing direct setup size".into(),
+                    )
+                })?,
+                proof_and_work_score: metrics.proof_and_work_score(),
+                proof_bytes: candidate.cost.proof_bytes(),
+                setup_field_elements: candidate.setup_field_elements,
+            }
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => {
             OracleObjective::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
@@ -86,6 +94,7 @@ pub(super) fn score(
                             .into(),
                     )
                 })?,
+                proof_and_work_score: metrics.proof_and_work_score(),
                 proof_bytes: candidate.cost.proof_bytes(),
                 first_direct_output_witness_len: candidate.first_direct_output_witness_len,
             }
@@ -93,8 +102,8 @@ pub(super) fn score(
     };
     Ok(OracleScore {
         objective,
-        legacy_root_output_witness_len: (policy.selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
+        root_output_witness_tiebreak: (policy.selection_policy
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4)
             .then(|| {
                 candidate
                     .folds

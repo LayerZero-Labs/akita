@@ -139,6 +139,24 @@ where
                 None,
             )
         };
+    let challenge_field_bits = F::MODULUS_BITS
+        .checked_mul(
+            u32::try_from(E::DEGREE)
+                .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
+    let level_layout = akita_types::native_nonterminal_level_layout(
+        F::MODULUS_BITS,
+        challenge_field_bits,
+        root_lp,
+        root_lp.relation_address_geometry(
+            opening_batch,
+            E::DEGREE,
+            next_witness_ring_dim,
+            witness_len,
+        )?,
+        next_fold_params.map(|next| &next.params),
+    )?;
     verify_fold_native(
         setup,
         grinding,
@@ -150,6 +168,7 @@ where
             commitment_payloads,
             prefix,
             w_len: witness_len,
+            level_layout,
             next_witness,
             next_witness_ring_dim,
             next_opening_source_len,

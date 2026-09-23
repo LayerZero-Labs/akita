@@ -25,6 +25,57 @@ pub enum NativeSumcheckRole {
     Challenge = 4,
 }
 
+/// Public fixed grammar of one native sumcheck invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeSumcheckShape {
+    num_rounds: usize,
+    degree_bound: usize,
+}
+
+impl NativeSumcheckShape {
+    /// Construct a checked native sumcheck grammar.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a proof-controlled round body would have no
+    /// coefficients or the shape cannot be represented safely.
+    pub fn new(num_rounds: usize, degree_bound: usize) -> Result<Self, AkitaError> {
+        if degree_bound == 0
+            || u32::try_from(num_rounds).is_err()
+            || checked::product([degree_bound, num_rounds]).is_none()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "invalid native sumcheck shape".into(),
+            ));
+        }
+        Ok(Self {
+            num_rounds,
+            degree_bound,
+        })
+    }
+
+    /// Number of proof rounds.
+    #[must_use]
+    pub const fn num_rounds(self) -> usize {
+        self.num_rounds
+    }
+
+    /// Fixed extension coefficients emitted in each compressed round body.
+    #[must_use]
+    pub const fn degree_bound(self) -> usize {
+        self.degree_bound
+    }
+
+    fn validate_instance(self, num_rounds: usize, degree_bound: usize) -> Result<(), AkitaError> {
+        if self.num_rounds != num_rounds || self.degree_bound != degree_bound {
+            return Err(AkitaError::InvalidSetup(
+                "native sumcheck instance disagrees with its public shape".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Prover-side native operations required by the standard sumcheck driver.
 pub trait NativeSumcheckProverChannel<E> {
     /// Borrow the native state for public and proof messages.
@@ -160,6 +211,7 @@ where
 pub fn prove_sumcheck_native<F, E, C, P>(
     prover: &mut P,
     channel: &mut C,
+    shape: NativeSumcheckShape,
     invocation: u32,
 ) -> Result<(Vec<E>, E), AkitaError>
 where
@@ -168,8 +220,9 @@ where
     C: NativeSumcheckProverChannel<E>,
     P: SumcheckInstanceProver<E> + ?Sized,
 {
-    let num_rounds = prover.num_rounds();
-    let degree_bound = prover.degree_bound();
+    shape.validate_instance(prover.num_rounds(), prover.degree_bound())?;
+    let num_rounds = shape.num_rounds();
+    let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
@@ -217,6 +270,7 @@ where
 pub fn verify_sumcheck_native<'proof, F, E, C, V>(
     verifier: &V,
     channel: &mut C,
+    shape: NativeSumcheckShape,
     invocation: u32,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -225,12 +279,12 @@ where
     C: NativeSumcheckVerifierChannel<'proof, E>,
     V: SumcheckInstanceVerifier<E> + ?Sized,
 {
+    shape.validate_instance(verifier.num_rounds(), verifier.degree_bound())?;
     let replay = verify_sumcheck_rounds_native::<F, E, C>(
         channel,
         invocation,
         verifier.input_claim(),
-        verifier.num_rounds(),
-        verifier.degree_bound(),
+        shape,
     )?;
     if replay.output_claim != verifier.expected_output_claim(&replay.challenges)? {
         return Err(AkitaError::InvalidProof);
@@ -243,23 +297,21 @@ pub fn verify_sumcheck_rounds_native<'proof, F, E, C>(
     channel: &mut C,
     invocation: u32,
     mut claim: E,
-    num_rounds: usize,
-    degree_bound: usize,
+    shape: NativeSumcheckShape,
 ) -> Result<NativeSumcheckRoundResult<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     C: NativeSumcheckVerifierChannel<'proof, E>,
 {
+    let num_rounds = shape.num_rounds();
+    let degree_bound = shape.degree_bound();
     let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_verifier::<F, E>(channel.state_mut(), claim_site, claim)?;
 
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        if degree_bound == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         verifier_context(
@@ -300,6 +352,7 @@ where
 pub fn prove_eq_factored_sumcheck_native<F, E, C, P>(
     prover: &mut P,
     channel: &mut C,
+    shape: NativeSumcheckShape,
     invocation: u32,
 ) -> Result<(Vec<E>, E), AkitaError>
 where
@@ -308,8 +361,9 @@ where
     C: NativeSumcheckProverChannel<E>,
     P: EqFactoredSumcheckInstanceProver<E> + ?Sized,
 {
-    let num_rounds = prover.num_rounds();
-    let degree_bound = prover.degree_bound();
+    shape.validate_instance(prover.num_rounds(), prover.degree_bound())?;
+    let num_rounds = shape.num_rounds();
+    let degree_bound = shape.degree_bound();
     let mut claim = prover.input_claim();
     let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
     public_claim_prover::<F, E>(channel.state_mut(), claim_site, claim)?;
@@ -352,7 +406,7 @@ where
 pub fn verify_eq_factored_sumcheck_native<'proof, F, E, C, O>(
     equality_point: &[E],
     input_claim: E,
-    degree_bound: usize,
+    shape: NativeSumcheckShape,
     channel: &mut C,
     invocation: u32,
     expected_output_claim: O,
@@ -366,7 +420,7 @@ where
     let replay = verify_eq_factored_sumcheck_rounds_native::<F, E, C>(
         equality_point,
         input_claim,
-        degree_bound,
+        shape,
         channel,
         invocation,
     )?;
@@ -380,7 +434,7 @@ where
 pub fn verify_eq_factored_sumcheck_rounds_native<'proof, F, E, C>(
     equality_point: &[E],
     input_claim: E,
-    degree_bound: usize,
+    shape: NativeSumcheckShape,
     channel: &mut C,
     invocation: u32,
 ) -> Result<NativeSumcheckRoundResult<E>, AkitaError>
@@ -389,6 +443,8 @@ where
     E: ExtField<F>,
     C: NativeSumcheckVerifierChannel<'proof, E>,
 {
+    shape.validate_instance(equality_point.len(), shape.degree_bound())?;
+    let degree_bound = shape.degree_bound();
     let mut equality = GruenSplitEq::new(equality_point)?;
     let mut claim = input_claim;
     let claim_site = channel.sumcheck_site(invocation, 0, NativeSumcheckRole::Claim);
@@ -781,8 +837,9 @@ mod tests {
             state: new_native_prover(b"native-sumcheck", b"fixture").unwrap(),
             invocation: 7,
         };
+        let shape = NativeSumcheckShape::new(4, 1).unwrap();
         let (prover_point, _) =
-            prove_sumcheck_native(&mut prover_instance, &mut prover, 7).unwrap();
+            prove_sumcheck_native(&mut prover_instance, &mut prover, shape, 7).unwrap();
         let proof = prover.state.narg_string().to_vec();
 
         let verifier_instance = DenseInstance {
@@ -794,7 +851,8 @@ mod tests {
             state: new_native_verifier(b"native-sumcheck", b"fixture", &proof).unwrap(),
             invocation: 7,
         };
-        let verifier_point = verify_sumcheck_native(&verifier_instance, &mut verifier, 7).unwrap();
+        let verifier_point =
+            verify_sumcheck_native(&verifier_instance, &mut verifier, shape, 7).unwrap();
         assert_eq!(verifier_point, prover_point);
         assert!(verifier.state.check_eof().is_ok());
     }
@@ -811,7 +869,8 @@ mod tests {
             state: new_native_prover(b"native-sumcheck", b"fixture").unwrap(),
             invocation: 7,
         };
-        prove_sumcheck_native(&mut prover_instance, &mut prover, 7).unwrap();
+        let shape = NativeSumcheckShape::new(4, 1).unwrap();
+        prove_sumcheck_native(&mut prover_instance, &mut prover, shape, 7).unwrap();
         let proof = prover.state.narg_string();
         let verifier_instance = DenseInstance {
             evaluations,
@@ -825,7 +884,7 @@ mod tests {
             invocation: 7,
         };
         assert_eq!(
-            verify_sumcheck_native(&verifier_instance, &mut truncated, 7),
+            verify_sumcheck_native(&verifier_instance, &mut truncated, shape, 7),
             Err(AkitaError::InvalidProof)
         );
     }
@@ -837,12 +896,13 @@ mod tests {
         let mut instance = OneRoundEq::new(tau, coefficients.clone());
         let claim = instance.claim();
         let degree = instance.degree_bound();
+        let shape = NativeSumcheckShape::new(1, degree).unwrap();
         let mut prover = TestProverChannel {
             state: new_native_prover(b"native-eq-sumcheck", b"fixture").unwrap(),
             invocation: 12,
         };
         let (prover_point, _) =
-            prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, 12)
+            prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, shape, 12)
                 .unwrap();
         let proof = prover.state.narg_string().to_vec();
 
@@ -854,7 +914,7 @@ mod tests {
         let verifier_point = verify_eq_factored_sumcheck_native::<F, F, _, _>(
             &[tau],
             claim,
-            degree,
+            shape,
             &mut verifier,
             12,
             |point| Ok(expected.evaluate(point[0])),
@@ -882,7 +942,7 @@ mod tests {
             verify_eq_factored_sumcheck_native::<F, F, _, _>(
                 &[F::zero()],
                 instance.claim(),
-                instance.degree_bound(),
+                NativeSumcheckShape::new(1, instance.degree_bound()).unwrap(),
                 &mut verifier,
                 19,
                 |_| Ok(instance.evaluate(challenge)),
@@ -907,7 +967,9 @@ mod tests {
             state: new_native_prover(b"native-eq-late", b"fixture").unwrap(),
             challenges: point.to_vec(),
         };
-        prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, 23).unwrap();
+        let shape = NativeSumcheckShape::new(2, 1).unwrap();
+        prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, shape, 23)
+            .unwrap();
         let honest = prover.state.narg_string().to_vec();
         let expected = TwoRoundEq::new(equality, coefficients).evaluate(point[0], point[1]);
         let verify = |proof: &[u8]| {
@@ -918,7 +980,7 @@ mod tests {
             verify_eq_factored_sumcheck_native::<F, F, _, _>(
                 &equality,
                 input_claim,
-                1,
+                shape,
                 &mut verifier,
                 23,
                 |_| Ok(expected),

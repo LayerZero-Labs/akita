@@ -57,7 +57,7 @@ pub enum GrindingQueryKind {
 }
 
 /// Sumcheck family used in a fixed-width site payload.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SumcheckProtocol {
     ExtensionOpeningReduction,
     Stage1,
@@ -67,13 +67,28 @@ pub enum SumcheckProtocol {
 }
 
 impl SumcheckProtocol {
-    const fn tag(self) -> u32 {
+    /// Canonical protocol discriminator stored in native sumcheck site identities.
+    #[must_use]
+    pub const fn tag(self) -> u32 {
         match self {
             Self::ExtensionOpeningReduction => 0,
             Self::Stage1 => 1,
             Self::PhysicalL2 => 2,
             Self::Stage2 => 3,
             Self::Stage3 => 4,
+        }
+    }
+
+    /// Decode a canonical native sumcheck protocol discriminator.
+    #[must_use]
+    pub const fn from_tag(tag: u32) -> Option<Self> {
+        match tag {
+            0 => Some(Self::ExtensionOpeningReduction),
+            1 => Some(Self::Stage1),
+            2 => Some(Self::PhysicalL2),
+            3 => Some(Self::Stage2),
+            4 => Some(Self::Stage3),
+            _ => None,
         }
     }
 }

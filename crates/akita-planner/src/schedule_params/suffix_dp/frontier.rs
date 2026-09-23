@@ -143,12 +143,14 @@ fn first_parent_visible_cost(
 struct SetupScore {
     first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
     first_direct_output_witness_len: usize,
+    proof_and_work_score: u128,
     cost: crate::schedule_params::NativeProofCost,
     setup_field_elements: usize,
 }
 
 #[derive(Clone, Copy)]
 struct PayloadScore {
+    proof_and_work_score: u128,
     cost: crate::schedule_params::NativeProofCost,
     setup_field_elements: usize,
 }
@@ -158,7 +160,7 @@ fn setup_envelope_score(
     setup_field_elements: usize,
 ) -> usize {
     if selection_policy
-        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
     {
         akita_types::padded_setup_prefix_len(setup_field_elements)
     } else {
@@ -173,6 +175,7 @@ fn setup_score(
     SetupScore {
         first_direct_setup_capacity: metrics.first_direct_setup_capacity,
         first_direct_output_witness_len: metrics.first_direct_output_witness_len,
+        proof_and_work_score: metrics.proof_and_work_score(),
         cost: metrics.cost,
         setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
     }
@@ -183,6 +186,7 @@ fn payload_score(
     metrics: super::super::CandidateMetrics,
 ) -> PayloadScore {
     PayloadScore {
+        proof_and_work_score: metrics.proof_and_work_score(),
         cost: metrics.cost,
         setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
     }
@@ -432,12 +436,13 @@ impl ProjectedFrontier {
         projections: &[Projection],
     ) -> ProjectionMask {
         let choices = self.by_parent_cost.get(parent_cost);
-        let keep = |projection| match projection {
+        let keep = |projection| {
+            match projection {
             Projection::FirstDirectSetup => {
                 matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+                crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
             ) && !choices.is_some_and(|choices| {
                     choices.projected(projection).iter().any(|existing| {
                         setup_primary_strictly_dominates(
@@ -461,6 +466,7 @@ impl ProjectedFrontier {
                     )
                 })
             }),
+        }
         };
         let mut retained = ProjectionMask::default();
         for &projection in projections {
@@ -637,20 +643,22 @@ fn setup_primary_strictly_dominates(
     }
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
     ) {
         return left_score.setup_field_elements <= right_score.setup_field_elements
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
                 || (left_score.first_direct_setup_capacity
                     == right_score.first_direct_setup_capacity
-                    && (left_score.cost.strictly_better(right_score.cost)
-                        || (left_score.cost.never_worse(right_score.cost)
+                    && (left_score.proof_and_work_score < right_score.proof_and_work_score
+                        || (left_score.proof_and_work_score
+                            == right_score.proof_and_work_score
+                            && left_score.cost.never_worse(right_score.cost)
                             && left_score.first_direct_output_witness_len
                                 < right_score.first_direct_output_witness_len))));
     }
     left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
         || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
-            && left_score.cost.strictly_better(right_score.cost))
+            && left_score.proof_and_work_score < right_score.proof_and_work_score)
 }
 
 #[derive(Clone, Copy)]
@@ -669,6 +677,7 @@ fn setup_projection_dominates(
     if !left.admission.admits_every_parent_of(right.admission) {
         return false;
     }
+    let score_never_worse = left.score.proof_and_work_score <= right.score.proof_and_work_score;
     let cost_never_worse = left.score.cost.never_worse(right.score.cost);
     let equal_output_is_canonical = cost_never_worse
         && left.score.first_direct_output_witness_len
@@ -679,22 +688,23 @@ fn setup_projection_dominates(
         cost_never_worse && left.context == right.context && left.descriptor <= right.descriptor;
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
     ) {
         return left.score.setup_field_elements <= right.score.setup_field_elements
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
                 || (left.score.first_direct_setup_capacity
                     == right.score.first_direct_setup_capacity
-                    && (left.score.cost.strictly_better(right.score.cost)
-                        || (cost_never_worse
+                    && (left.score.proof_and_work_score < right.score.proof_and_work_score
+                        || (score_never_worse
                             && left.score.first_direct_output_witness_len
                                 < right.score.first_direct_output_witness_len)
-                        || equal_output_is_canonical)));
+                        || (score_never_worse && equal_output_is_canonical))));
     }
     left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
         || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
-            && (left.score.cost.strictly_better(right.score.cost)
-                || (equal_later_coordinates_are_canonical
+            && (left.score.proof_and_work_score < right.score.proof_and_work_score
+                || (score_never_worse
+                    && equal_later_coordinates_are_canonical
                     && left.score.setup_field_elements <= right.score.setup_field_elements)))
 }
 
@@ -730,9 +740,9 @@ fn payload_primary_strictly_dominates(
     right_admission: ParentAdmissionClass,
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
-        && left_score.cost.strictly_better(right_score.cost)
+        && left_score.proof_and_work_score < right_score.proof_and_work_score
         && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
             || left_score.setup_field_elements <= right_score.setup_field_elements)
 }
 
@@ -743,10 +753,11 @@ fn payload_projection_dominates(
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
         && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
             || left.score.setup_field_elements <= right.score.setup_field_elements)
-        && (left.score.cost.strictly_better(right.score.cost)
-            || (left.score.cost.never_worse(right.score.cost)
+        && (left.score.proof_and_work_score < right.score.proof_and_work_score
+            || (left.score.proof_and_work_score <= right.score.proof_and_work_score
+                && left.score.cost.never_worse(right.score.cost)
                 && left.score.setup_field_elements <= right.score.setup_field_elements
                 && left.context == right.context
                 && left.descriptor <= right.descriptor))

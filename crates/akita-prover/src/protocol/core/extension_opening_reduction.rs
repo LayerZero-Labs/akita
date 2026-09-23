@@ -106,9 +106,12 @@ where
             self.level,
             0,
         );
+        let shape =
+            akita_sumcheck::NativeSumcheckShape::new(prover.num_rounds(), prover.degree_bound())?;
         let (point, final_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
             prover,
             &mut channel,
+            shape,
             akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
         )?;
         Ok(((), point, final_claim))

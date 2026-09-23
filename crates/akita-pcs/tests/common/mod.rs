@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[cfg(feature = "logging-transcript")]
+pub(crate) mod native_mutations;
 mod opening_oracles;
 #[path = "../../examples/support/workspace_schedules.rs"]
 mod workspace_schedules;

@@ -27,6 +27,7 @@ where
 struct NativeStage2ProverStream<'a, 'plan> {
     grinding: &'a mut akita_types::NativeProverGrinding<'plan>,
     level: u32,
+    shape: akita_sumcheck::NativeSumcheckShape,
 }
 
 impl<F, E> Stage2ProverStream<F, E> for NativeStage2ProverStream<'_, '_>
@@ -46,8 +47,12 @@ where
             self.level,
             0,
         );
-        let (point, final_claim) =
-            akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(prover, &mut channel, 0)?;
+        let (point, final_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+            prover,
+            &mut channel,
+            self.shape,
+            0,
+        )?;
         Ok(((), point, final_claim))
     }
 }
@@ -57,6 +62,7 @@ pub(super) fn prove_stage1_native<F, E>(
     rs: &mut RingSwitchOutput<E>,
     lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
+    layout: &akita_types::NativeNonterminalLevelLayout,
 ) -> Result<NativeStage1ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -69,6 +75,15 @@ where
     {
         return Err(AkitaError::InvalidSetup(
             "ring-switch output disagrees with the relation/range-image plan".into(),
+        ));
+    }
+    let (stage1_stages, stage1_norm) = plan.digit_range_plan().proof_shapes_for_route(
+        rs.relation_address_geometry.relation_point_variable_count(),
+        lp.inner().matrix.security_route(),
+    )?;
+    if stage1_stages != layout.stage1_stages() || stage1_norm.as_ref() != layout.stage1_norm() {
+        return Err(AkitaError::InvalidSetup(
+            "native Stage 1 replay disagrees with the level grammar".into(),
         ));
     }
     let digit_range_equality_col_bits = rs
@@ -135,6 +150,7 @@ pub(super) fn prove_stage2_native<F, E>(
     linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
+    shape: akita_sumcheck::NativeSumcheckShape,
 ) -> Result<Stage2ProveOutput<E, ()>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -145,6 +161,7 @@ where
     let mut stream = NativeStage2ProverStream {
         grinding,
         level: level_u32,
+        shape,
     };
     prove_stage2_with_stream::<F, E, _>(
         level,

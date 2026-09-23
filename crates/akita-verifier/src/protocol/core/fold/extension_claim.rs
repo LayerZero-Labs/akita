@@ -102,8 +102,10 @@ where
             &mut channel,
             akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
             input_claim,
-            num_rounds,
-            akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+            akita_sumcheck::NativeSumcheckShape::new(
+                num_rounds,
+                akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+            )?,
         )?;
         Ok((replay.output_claim, replay.challenges))
     }
@@ -540,9 +542,15 @@ mod tests {
             level,
             0,
         );
+        let shape = akita_sumcheck::NativeSumcheckShape::new(
+            sumcheck.num_rounds(),
+            sumcheck.degree_bound(),
+        )
+        .unwrap();
         akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
             &mut sumcheck,
             &mut channel,
+            shape,
             akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
         )
         .unwrap();

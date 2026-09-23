@@ -199,7 +199,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofAndWorkV3;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -308,7 +308,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofAndWorkV3;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -716,7 +716,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
+fn adaptive_nv36_minimizes_setup_envelope_then_proof_and_work() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -766,8 +766,8 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     );
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
-        selected_root.role_dims(),
-        "native grinding cost keeps the D256 A-role through the first packing fold"
+        CommitmentRingDims::uniform(64),
+        "the work-aware objective should avoid carrying the D256 A-role into the first packing fold"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
@@ -788,11 +788,38 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     }
     let selected_score = (
         estimated_first_direct_setup_capacity(&selected),
+        proof_and_work_score(
+            selected.estimate.estimated_proof_payload_bytes().unwrap(),
+            std::iter::once(selected.schedule.root.output_witness_len as u128)
+                .chain(
+                    selected
+                        .schedule
+                        .recursive_folds
+                        .iter()
+                        .map(|fold| fold.output_witness_len as u128),
+                )
+                .sum(),
+        ),
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         selected.estimate.estimated_num_setup_field_elements,
     );
     let rank_one_capped_score = (
         estimated_first_direct_setup_capacity(&rank_one_capped),
+        proof_and_work_score(
+            rank_one_capped
+                .estimate
+                .estimated_proof_payload_bytes()
+                .unwrap(),
+            std::iter::once(rank_one_capped.schedule.root.output_witness_len as u128)
+                .chain(
+                    rank_one_capped
+                        .schedule
+                        .recursive_folds
+                        .iter()
+                        .map(|fold| fold.output_witness_len as u128),
+                )
+                .sum(),
+        ),
         rank_one_capped
             .estimate
             .estimated_proof_payload_bytes()

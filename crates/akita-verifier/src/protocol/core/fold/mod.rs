@@ -99,6 +99,7 @@ pub(in crate::protocol::core) struct NativePreparedFoldReplay<'a, F: Field, E: F
     pub(in crate::protocol::core) commitment_payloads: Vec<RingVec<F>>,
     pub(in crate::protocol::core) prefix: FoldPrefix<F, E>,
     pub(in crate::protocol::core) w_len: usize,
+    pub(in crate::protocol::core) level_layout: akita_types::NativeNonterminalLevelLayout,
     pub(in crate::protocol::core) next_witness: NativeNextWitnessPlan,
     pub(in crate::protocol::core) next_witness_ring_dim: usize,
     pub(in crate::protocol::core) next_opening_source_len: usize,
@@ -134,6 +135,7 @@ fn verify_stage1_native<'a, F, E>(
     relation_plan: &RelationRangeImagePlan,
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
+    layout: &akita_types::NativeNonterminalLevelLayout,
 ) -> Result<Stage1Replay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -157,6 +159,13 @@ where
         rs.digit_range_equality_low_variable_count,
     )?;
     let stage1_verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
+    let (stage1_stages, stage1_norm) = DigitRangePlan::new(rs.b)?
+        .proof_shapes_for_route(num_rounds, lp.inner().matrix.security_route())?;
+    if stage1_stages != layout.stage1_stages() || stage1_norm.as_ref() != layout.stage1_norm() {
+        return Err(AkitaError::InvalidSetup(
+            "native Stage 1 replay disagrees with the level grammar".into(),
+        ));
+    }
     let physical_plan = PhysicalResponsePlan::new(lp, relation_plan)?;
     let physical = physical_plan
         .as_ref()
@@ -238,8 +247,7 @@ fn replay_stage2_native<F, E>(
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
     input_claim: E,
-    num_rounds: usize,
-    degree_bound: usize,
+    shape: akita_sumcheck::NativeSumcheckShape,
 ) -> Result<Stage2RoundReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -255,8 +263,7 @@ where
         &mut channel,
         0,
         input_claim,
-        num_rounds,
-        degree_bound,
+        shape,
     )?;
     let witness_eval = akita_types::native_stage2_verifier_w_eval::<F, E>(grinding, level)?;
     Ok(Stage2RoundReplay {
@@ -322,6 +329,9 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
 {
     let opening_shape = prepared.opening_shape.clone();
+    if prepared.opening_payload.coeff_len() != prepared.level_layout.opening_payload_coeffs() {
+        return Err(AkitaError::InvalidProof);
+    }
     let num_groups = opening_shape.num_groups();
     let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
@@ -434,6 +444,11 @@ where
     }
     let next_witness = match prepared.next_witness {
         NativeNextWitnessPlan::OuterPayload { coefficient_count } => {
+            if coefficient_count != prepared.level_layout.next_outer_payload_coeffs() {
+                return Err(AkitaError::InvalidSetup(
+                    "native successor payload disagrees with the level grammar".into(),
+                ));
+            }
             akita_transcript::receive_native_field_group::<F>(
                 grinding.state_mut(),
                 akita_transcript::ProtocolSiteId {
@@ -531,6 +546,7 @@ where
         &relation_range_image_plan,
         grinding,
         prepared.level,
+        &prepared.level_layout,
     )?;
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();
     if trace_domain.live_len() != prepared.w_len {
@@ -613,9 +629,12 @@ where
         + relation_claim
         + opening_semantics.opening_claim()
         + stage1_replay.physical_l2_claim;
-    let num_rounds = stage1_replay.stage1_point.len();
-    let stage2_replay =
-        replay_stage2_native::<F, E>(grinding, prepared.level, input_claim, num_rounds, 3)?;
+    let stage2_replay = replay_stage2_native::<F, E>(
+        grinding,
+        prepared.level,
+        input_claim,
+        prepared.level_layout.stage2_sumcheck(),
+    )?;
     let (setup_claim, setup_prefix_opening) = if let Some(next_params) = prepared.stage3 {
         let setup_coefficient_bits = rs
             .relation_address_geometry

@@ -1,19 +1,17 @@
 //! Header-stripped proof-byte formula for one fold level, shared by the
 //! offline planner DP, the schedule selector, and profiling tooling.
 //!
-//! This is the single source of truth for direct-mode per-level proof-byte accounting:
-//! [`native_nonterminal_level_layout`] describes one fold level. It is not on the
-//! prover/verifier replay path. The compact-entry walker that sums a whole
+//! This is the single source of truth for direct-mode per-level proof grammar and
+//! byte accounting. [`native_nonterminal_level_layout`] describes the fixed atom
+//! counts and sumcheck shapes consumed by native replay. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
 //! Native nonce messages are priced independently by the canonical grinding
 //! plan and are not attributed to this fixed-width level layout.
 
-use crate::layout::{field_bytes, proof_ring_vec_bytes};
-use crate::{
-    CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
-    RelationAddressGeometry,
-};
+use crate::layout::field_bytes;
+use crate::proof::PhysicalL2NormProofWireShape;
+use crate::{AkitaStage1StageShape, CommittedGroupParams, DigitRangePlan, RelationAddressGeometry};
 use akita_error::AkitaError;
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
@@ -25,23 +23,20 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 }
 
 fn stage1_proof_bytes(
-    rounds: usize,
-    b: usize,
+    stages: &[AkitaStage1StageShape],
+    norm: Option<&PhysicalL2NormProofWireShape>,
     elem_bytes: usize,
-    route: InnerCommitSecurityRoute,
 ) -> Result<usize, AkitaError> {
-    let plan = DigitRangePlan::new(b)?;
-    let (stages, norm) = plan.proof_shapes_for_route(rounds, route)?;
     let stages_bytes = stages
-        .into_iter()
+        .iter()
         .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+            sumcheck_bytes(stage.sumcheck_proof.0, stage.sumcheck_proof.1, elem_bytes)
                 + stage.child_claims * elem_bytes
         })
         .sum::<usize>();
     let norm_bytes = norm.map_or(0, |shape| {
         16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
-            + shape.sumcheck.into_iter().sum::<usize>() * elem_bytes
+            + shape.sumcheck.iter().sum::<usize>() * elem_bytes
     });
     // The ordinary final range evaluation remains outside the optional norm
     // payload. The fused standard leaf shape accounts for the one additional
@@ -49,25 +44,81 @@ fn stage1_proof_bytes(
     Ok(stages_bytes + elem_bytes + norm_bytes)
 }
 
-/// Immutable byte layout of one non-terminal native proof level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Immutable public grammar of one non-terminal native proof level.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeNonterminalLevelLayout {
-    opening_payload_bytes: usize,
-    stage1_bytes: usize,
-    stage2_bytes: usize,
-    next_witness_bytes: usize,
-    next_witness_evaluation_bytes: usize,
+    base_field_bytes: usize,
+    challenge_field_bytes: usize,
+    opening_payload_coeffs: usize,
+    stage1_stages: Vec<AkitaStage1StageShape>,
+    stage1_norm: Option<PhysicalL2NormProofWireShape>,
+    stage2_sumcheck: akita_sumcheck::NativeSumcheckShape,
+    next_outer_payload_coeffs: usize,
+    next_witness_evaluations: usize,
 }
 
 impl NativeNonterminalLevelLayout {
+    /// Fixed base-field atom count in the opening payload.
+    #[must_use]
+    pub const fn opening_payload_coeffs(&self) -> usize {
+        self.opening_payload_coeffs
+    }
+
+    /// Stage-1 range-tree sumcheck and child-claim shapes in replay order.
+    #[must_use]
+    pub fn stage1_stages(&self) -> &[AkitaStage1StageShape] {
+        &self.stage1_stages
+    }
+
+    /// Optional physical-L2 native message shape.
+    #[must_use]
+    pub const fn stage1_norm(&self) -> Option<&PhysicalL2NormProofWireShape> {
+        self.stage1_norm.as_ref()
+    }
+
+    /// Fixed Stage-2 native sumcheck shape.
+    #[must_use]
+    pub const fn stage2_sumcheck(&self) -> akita_sumcheck::NativeSumcheckShape {
+        self.stage2_sumcheck
+    }
+
+    /// Fixed base-field atom count in an ordinary recursive successor payload.
+    #[must_use]
+    pub const fn next_outer_payload_coeffs(&self) -> usize {
+        self.next_outer_payload_coeffs
+    }
+
     /// Maximum fixed-width bytes emitted by this level.
     pub fn encoded_len(self) -> Result<usize, AkitaError> {
+        let opening_payload_bytes =
+            akita_error::checked::product([self.opening_payload_coeffs, self.base_field_bytes])
+                .ok_or_else(|| AkitaError::InvalidSetup("opening payload size overflow".into()))?;
+        let stage1_bytes = stage1_proof_bytes(
+            &self.stage1_stages,
+            self.stage1_norm.as_ref(),
+            self.challenge_field_bytes,
+        )?;
+        let stage2_bytes = sumcheck_bytes(
+            self.stage2_sumcheck.num_rounds(),
+            self.stage2_sumcheck.degree_bound(),
+            self.challenge_field_bytes,
+        );
+        let next_witness_bytes =
+            akita_error::checked::product([self.next_outer_payload_coeffs, self.base_field_bytes])
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness payload size overflow".into())
+                })?;
+        let next_witness_evaluation_bytes = akita_error::checked::product([
+            self.next_witness_evaluations,
+            self.challenge_field_bytes,
+        ])
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness evaluation size overflow".into()))?;
         akita_error::checked::sum([
-            self.opening_payload_bytes,
-            self.stage1_bytes,
-            self.stage2_bytes,
-            self.next_witness_bytes,
-            self.next_witness_evaluation_bytes,
+            opening_payload_bytes,
+            stage1_bytes,
+            stage2_bytes,
+            next_witness_bytes,
+            next_witness_evaluation_bytes,
         ])
         .ok_or_else(|| AkitaError::InvalidSetup("native level byte size overflow".into()))
     }
@@ -114,54 +165,38 @@ pub fn native_nonterminal_level_layout(
     relation_geometry: RelationAddressGeometry,
     next_outer_payload: Option<&CommittedGroupParams>,
 ) -> Result<NativeNonterminalLevelLayout, AkitaError> {
-    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let base_field_bytes = field_bytes(base_field_bits);
+    let challenge_field_bytes = field_bytes(challenge_field_bits);
     let rounds = relation_geometry.relation_point_variable_count();
-    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-    let v_bytes = payload_bytes(
-        base_field_bits,
-        lp.open().matrix.sis_modulus_profile(),
-        lp.opening_payload_geometry()?,
-    )?;
-    let next_commit_bytes = match next_outer_payload {
-        Some(next_lp) => payload_bytes(
-            base_field_bits,
-            next_lp.outer().matrix.sis_modulus_profile(),
-            next_lp.outer_payload_geometry()?,
-        )?,
-        None => 0,
-    };
-    let next_eval_bytes = challenge_elem_bytes;
-    let b = 1usize << lp.open().digits.log_basis;
-    let stage1_bytes = stage1_proof_bytes(
-        rounds,
-        b,
-        challenge_elem_bytes,
-        lp.inner().matrix.security_route(),
-    )?;
-    Ok(NativeNonterminalLevelLayout {
-        opening_payload_bytes: v_bytes,
-        stage1_bytes,
-        stage2_bytes: sumcheck,
-        next_witness_bytes: next_commit_bytes,
-        next_witness_evaluation_bytes: next_eval_bytes,
-    })
-}
-
-fn payload_bytes(
-    base_field_bits: u32,
-    profile: crate::SisModulusProfileId,
-    geometry: CommitmentPayloadGeometry,
-) -> Result<usize, AkitaError> {
-    if base_field_bits != profile.field_bits() {
+    if base_field_bits != lp.open().matrix.sis_modulus_profile().field_bits() {
         return Err(AkitaError::InvalidSetup(
-            "commitment payload profile disagrees with the base field width".into(),
+            "opening payload profile disagrees with the base field width".into(),
         ));
     }
-    Ok(proof_ring_vec_bytes(
-        geometry.transmitted_rows()?,
-        geometry.transcript_ring_dimension(),
-        field_bytes(base_field_bits),
-    ))
+    let (stage1_stages, stage1_norm) =
+        DigitRangePlan::new(1usize << lp.open().digits.log_basis)?
+            .proof_shapes_for_route(rounds, lp.inner().matrix.security_route())?;
+    let next_outer_payload_coeffs = match next_outer_payload {
+        Some(next_lp) => {
+            if base_field_bits != next_lp.outer().matrix.sis_modulus_profile().field_bits() {
+                return Err(AkitaError::InvalidSetup(
+                    "successor payload profile disagrees with the base field width".into(),
+                ));
+            }
+            next_lp.outer_payload_geometry()?.transmitted_coefficients()
+        }
+        None => 0,
+    };
+    Ok(NativeNonterminalLevelLayout {
+        base_field_bytes,
+        challenge_field_bytes,
+        opening_payload_coeffs: lp.opening_payload_geometry()?.transmitted_coefficients(),
+        stage1_stages,
+        stage1_norm,
+        stage2_sumcheck: akita_sumcheck::NativeSumcheckShape::new(rounds, 3)?,
+        next_outer_payload_coeffs,
+        next_witness_evaluations: 1,
+    })
 }
 
 /// Header-stripped byte size of the recursive-mode stage-3 setup-product
@@ -195,9 +230,9 @@ pub fn stage3_setup_product_bytes(
 
 #[cfg(test)]
 mod tests {
-    //! End-to-end byte-formula tests: build a synthetic proof body via the
-    //! runtime serializer and compare its size against the
-    //! native fixed-message layout at every supported log_basis.
+    //! Legacy structured-fixture cross-checks for the native fixed-message
+    //! layout. End-to-end native emission and parser-bound reconciliation live
+    //! in the PCS transcript-hardening and protocol-soundness suites.
 
     use super::*;
 
@@ -213,6 +248,7 @@ mod tests {
 
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::sis::sis_l2_table_key_for_collision_sq;
+    use crate::InnerCommitSecurityRoute;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
         FoldLevelProof, OpeningClaimsLayout, PhysicalL2NormProof, PhysicalL2NormProofShape,

@@ -118,8 +118,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             &mut channel,
             0,
             claim,
-            self.rounds,
-            SETUP_SUMCHECK_DEGREE,
+            akita_sumcheck::NativeSumcheckShape::new(self.rounds, SETUP_SUMCHECK_DEGREE)?,
         )?;
         let setup_prefix_eval =
             akita_types::native_stage3_verifier_prefix_eval::<F, E>(grinding, level)?;

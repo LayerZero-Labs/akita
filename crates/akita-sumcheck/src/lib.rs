@@ -20,7 +20,7 @@ pub use native::{
     prove_eq_factored_sumcheck_native, prove_sumcheck_native, verify_eq_factored_sumcheck_native,
     verify_eq_factored_sumcheck_rounds_native, verify_sumcheck_native,
     verify_sumcheck_rounds_native, NativeSumcheckProverChannel, NativeSumcheckRole,
-    NativeSumcheckRoundResult, NativeSumcheckVerifierChannel,
+    NativeSumcheckRoundResult, NativeSumcheckShape, NativeSumcheckVerifierChannel,
 };
 pub use single::advance_eq_factored_claim;
 pub use traits::{

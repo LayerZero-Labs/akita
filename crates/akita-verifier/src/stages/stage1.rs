@@ -102,7 +102,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
                 &current_equality_point,
                 current_claim,
-                arity,
+                akita_sumcheck::NativeSumcheckShape::new(rounds, arity)?,
                 &mut channel,
                 0,
             )?;
@@ -191,7 +191,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         let replay = akita_sumcheck::verify_eq_factored_sumcheck_rounds_native::<F, E, _>(
             &leaf.equality_point,
             leaf.input_claim,
-            degree_bound,
+            akita_sumcheck::NativeSumcheckShape::new(leaf.equality_point.len(), degree_bound)?,
             &mut channel,
             0,
         )?;

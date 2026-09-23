@@ -78,8 +78,10 @@ This gives the extraction argument the required fork: one challenge can change
 while every other challenge and the surrounding transcript remain fixed.
 
 Expanding the whole challenge vector from one shared cursor would give a
-different oracle dependency. The challenge context encodes the numeric nonce
-separately from its compact 12-bit proof representation.
+different oracle dependency. Each accepted nonce has one canonical unsigned
+LEB128 representation: those exact proof bytes are absorbed into the live
+transcript before the challenge context is derived. There is no second compact
+nonce representation or separate nonce absorption.
 
 The indexed readers are an expansion of one transcript root, not additional
 Fiat--Shamir squeezes and not additional proof data.

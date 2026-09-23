@@ -28,6 +28,7 @@ pub use direct_range_leaf::LowBasisRangeCheckProver;
 use crate::backend::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::{
     DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, PhysicalResponsePlan,
 };
@@ -80,9 +81,11 @@ where
         level,
         stage_index,
     );
+    let shape = akita_sumcheck::NativeSumcheckShape::new(stage.num_rounds(), stage.degree_bound())?;
     let (next_equality_point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
         &mut stage,
         &mut channel,
+        shape,
         0,
     )?;
     Ok((stage.final_child_claims(), next_equality_point))
@@ -313,9 +316,14 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
                 level,
                 0,
             );
+            let shape = akita_sumcheck::NativeSumcheckShape::new(
+                leaf_stage.num_rounds(),
+                leaf_stage.degree_bound(),
+            )?;
             let (point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
                 &mut leaf_stage,
                 &mut channel,
+                shape,
                 0,
             )?;
             let range_image_evaluation = leaf_stage.final_range_image_eval();
@@ -390,9 +398,14 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             level,
             stage,
         );
+        let shape = akita_sumcheck::NativeSumcheckShape::new(
+            leaf_stage.num_rounds(),
+            leaf_stage.degree_bound(),
+        )?;
         let (point, _) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
             &mut leaf_stage,
             &mut channel,
+            shape,
             0,
         )?;
         let range_image_evaluation = leaf_stage.final_range_image_eval();
