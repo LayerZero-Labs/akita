@@ -69,6 +69,7 @@ jobs:
         run: |
           scripts/check-crate-deps.sh akita-verifier
           scripts/check-crate-deps.sh akita-prover
+          scripts/check-crate-deps.sh akita-cpu-backend
           scripts/check-crate-deps.sh akita-config
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
@@ -236,9 +237,15 @@ jobs:
           cargo test --release -p akita-pcs
           --test protocol_soundness
           --test fold_linf
-          --test stage1_roundtrip
           --test transcript
           --test label_schedule
+          --no-default-features
+          --features parallel,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
+      - name: Audit CPU Stage 1 roundtrips
+        run: >-
+          cargo test --release -p akita-cpu-backend --lib stage1_roundtrip_tests
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --

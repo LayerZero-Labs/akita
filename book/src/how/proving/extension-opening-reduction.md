@@ -165,9 +165,9 @@ proof coefficients.
 
 ## Implementation map
 
-- `crates/akita-prover/src/protocol/extension_opening_reduction/`.
-- `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`.
-- `crates/akita-prover/src/protocol/extension_opening_reduction/dense.rs`
+- `crates/akita-cpu-backend/src/opaque/recursive/opening/`.
+- `crates/akita-prover/src/protocol/prove/opening_reduction.rs`.
+- `crates/akita-cpu-backend/src/opaque/recursive/opening/dense.rs`
   contains the fused fold-and-accumulate kernels.
 - `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs`.
 - `crates/akita-types/src/extension_opening_reduction.rs`.

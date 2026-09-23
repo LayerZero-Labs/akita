@@ -1,8 +1,10 @@
 //! Direct single-instance sumcheck protocol functions.
 
+#[cfg(test)]
+use crate::SumcheckInstanceProver;
 use crate::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckProof, EqFactoredUniPoly,
-    SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof,
+    SumcheckInstanceVerifier, SumcheckProof,
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -71,7 +73,7 @@ where
     T: Transcript<F>,
     E: Field + AkitaSerialize,
     S: FnMut(&mut T) -> Result<E, AkitaError>,
-    P: SumcheckInstanceProver<E> + ?Sized,
+    P: crate::SumcheckKernel<E> + ?Sized,
 {
     let num_rounds = prover.num_rounds();
     let mut claim = prover.input_claim();
@@ -94,13 +96,13 @@ where
         .entered();
         let poly = {
             let _span = tracing::info_span!("sumcheck_round_univariate").entered();
-            prover.compute_round_univariate(round, claim)
+            prover.round_polynomial(round, claim)?
         };
-        debug_assert_eq!(
-            poly.evaluate(&E::zero()) + poly.evaluate(&E::one()),
-            claim,
-            "sumcheck round {round} univariate does not match previous claim hint"
-        );
+        if poly.evaluate(&E::zero()) + poly.evaluate(&E::one()) != claim {
+            return Err(AkitaError::InvalidInput(
+                "sumcheck round polynomial does not match its input claim".into(),
+            ));
+        }
         let compressed = poly.compress();
         if compressed.degree() > degree_bound {
             return Err(AkitaError::InvalidInput(format!(
@@ -114,12 +116,12 @@ where
         claim = compressed.eval_from_hint(&claim, &challenge);
         {
             let _span = tracing::info_span!("sumcheck_round_fold").entered();
-            prover.ingest_challenge(round, challenge);
+            prover.bind_challenge(round, challenge)?;
         }
         challenges.push(challenge);
         round_polys.push(compressed);
     }
-    prover.finalize();
+    prover.finish()?;
     Ok((SumcheckProof { round_polys }, challenges, claim))
 }
 
@@ -289,5 +291,7 @@ where
     Ok(challenges)
 }
 
+#[cfg(test)]
+mod fallible_tests;
 #[cfg(test)]
 mod tests;

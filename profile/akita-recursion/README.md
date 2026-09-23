@@ -327,7 +327,7 @@ size.
    benefit any future Jolt integration with Akita:
    - If the umbrella verification entry point ever becomes timer-free, the
      guest can reconsider using it. Until then, the guest should remain free of
-     `akita-pcs`, `akita-prover`, and `akita-setup` dependencies.
+     `akita-pcs`, `akita-prover`, `akita-cpu-backend`, and `akita-setup` dependencies.
    - `AkitaSerialize` / `AkitaDeserialize` impls for proof-shape types
      (already added under `akita-types::proof` and used by the `glue`
      crate).

@@ -1,182 +1,102 @@
-# Akita Compute Backends
+# Akita compute backends
 
-Akita prover compute is now routed through an explicit backend operation
-boundary. The first implementation is `CpuBackend`; Metal and true hybrid
-scheduling remain follow-up work.
+The generic prover in `akita-prover` owns protocol sequencing, public geometry,
+transcript absorption, challenges, and proof assembly. `akita-cpu-backend` owns
+CPU sources, commitment material, witnesses, arithmetic, setup resources,
+caches, and independent proof lifetimes. The generic crate has no production
+dependency on the CPU crate.
 
-## Ownership
+## Application ownership
 
-- `AkitaExpandedSetup<F>` owns setup data shared with verifier/protocol code:
-  seed, shared matrix, descriptor digest, and setup shape.
-- `AkitaProverSetup<F>` is a D-free prover setup wrapper around expanded setup.
-  It stores a flat public-matrix prefix and does not own CPU NTT caches, device
-  buffers, command queues, or any backend-prepared state.
-- `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
-  keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
-- `CommitmentSource<F>` exposes D-free source metadata and standard or external
-  representations. `CommitmentExecutor` routes checked requests through
-  registered inner, outer, compression, or fused operations.
-- `DigitRowsComputeBackend<F>` and `CyclicRowsComputeBackend<F>` own reusable
-  row arithmetic. `RingSwitchRelationKernel<S, F, D>` owns the complete
-  source-typed ring-switch relation operation.
-- `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
-  an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
-  prepared stack. Matrix-consuming kernels lazily acquire exact prefixes keyed
-  by ring dimension and transform domain.
-
-Callers prepare once, then pass both the backend and prepared setup into prover
-entrypoints:
+Create one backend for a setup and trusted configuration. Share it explicitly
+through `Arc` when several callers need it:
 
 ```rust
 let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
 let setup = scheme.setup_prover(nv, num_polys)?;
-let backend = CpuBackend::DEFAULT;
-let prepared = backend.prepare_setup(&setup)?;
-let stack = UniformProverStack::uniform(
-    &backend,
-    &prepared,
-    setup.expanded.as_ref(),
-)?;
-let commit_output = scheme.commit(
-    &setup,
-    polys,
-    stack.commitment(),
+let backend = std::sync::Arc::new(CpuBackend::<Cfg>::new(
+    setup.expanded.clone(),
+    scheme.schedules(),
+)?);
+let source = backend.import_source(polys)?;
+let committed = backend.commit(
+    &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
 
-The CPU kernel sizes one-hot commitment scratch automatically from the
-commitment geometry. Scratch sizing is an internal implementation detail;
-see the [CPU resource policy](../book/src/how/optimizations.md#cpu-resource-limits).
+The backend implements neither `Clone` nor `Copy`. Constructing another backend
+creates another owner identity, even for the same public setup. Source import
+consumes the application's polynomial storage. Commitment handles share
+immutable retained source and commitment contents; dropping the source handle
+does not invalidate its commitments.
 
-Applications may configure ring-switch cache retention with
-`CpuBackend::with_ring_switch_cache_limit(max_cached_ring_switch_elements)`.
-A zero limit streams every operation that has a streamed path. `usize::MAX`
-retains every supported ring switch operation. This setting changes memory
-use and CPU work. Cached and streamed ring-switch routes use the same
-validated quotient arithmetic, including the same exact field fallback when
-one centered term is unsafe in CRT form. The setting does not change the
-schedule, transcript, setup bytes, proof bytes, or verifier.
+Opening pairs an ordered vector of commitment handles with public claims.
+There is no separately supplied polynomial table. Admission checks setup,
+owner, public commitment, frozen profile, and ordered group. Each proof then
+gets an opaque session handle with independent state. The handle owns cleanup
+on completion, failure, or early return; it cannot be cloned or constructed
+from a numeric scope ID. Scope IDs in public operation contexts serve only as
+correlation metadata. Finishing one proof leaves other proofs and reusable
+commitments valid.
 
-Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
-not as a type parameter on the PCS API.
+See the [commitment API](../book/src/usage/commitment-api.md) for complete caller
+examples and the [architecture](../book/src/how/architecture.md) for the crate
+map.
 
-One hot sources cross the commitment boundary as validated `OneHotRepresentation`
-values. The CPU operation derives one flat sparse block tile from those inputs, selects a private
-bucketed or merge sweep, and drops the tile after producing its commitment
-rows. `OneHotView` remains an opening-only view. `OneHotPoly` does not own block caches. Opening derives its active data
-for the lifetime of the operation. Recursive `EvaluationTrace` suffixes derive
-their tensor data from the committed recursive witness.
+## Opaque protocol operations
 
-## NTT lifecycle
+`CpuBackend` directly implements the focused contracts in
+`akita-prover::compute`. Contracts carry public plans, validated geometry,
+challenges, and proof context. Opaque handles retain source lineage, opening
+points, accepted challenges, intermediate rows, witness construction state,
+and mutable sumcheck sessions inside the backend.
 
-`NttExecutionRequirements` describes the matrix work for one proof. It does not
-choose a cache policy. `prewarm_ntt_requirements` routes each requirement to the
-backend that will run it. That backend uses the same retention decision for
-prewarming, memory reporting, and runtime execution. The CPU backend skips full
-slots for large ring switch operations because those kernels stream transform
-chunks from the public matrix.
+Readable results are public commitments, scheduled proof messages, public
+metadata, acceptance decisions, and errors. Fold probes expose only acceptance
+or rejection. Stage 1, Stage 2, and Stage 3 sessions emit their designated round
+and completion messages. Terminal commitment fields are released at their
+original transcript position and remain tied to the final terminal response.
 
-Each routed requirement keeps the complete operation extent until that
-decision is made. Requests from cached and streamed operations are therefore
-not joined prematurely. After streamed requests are removed, planned memory
-reporting max-joins the retained prefixes by physical cache owner, ring
-dimension, and transform domain.
+Physical representation dispatch and commitment execution components remain
+inside the CPU crate. They can exchange ordinary slices and ring buffers
+internally. Generic proving does not select physical routes or manage NTT
+resources.
 
-Prepared caches remain resident across proofs by default. This is the normal
-choice for shared prepared state. `ReleaseRootNttAfterFold` is an explicit
-memory policy for a caller that owns an isolated root cache. It releases each
-physical owner once after the root fold.
+## CPU resource controls
 
-CPU release removes built keys from the shared matrix NTT cache and returns the
-checked sum of the bytes removed. A later request creates its exact extent
-unless another populated covering slot exists. Readers that already hold an
-`Arc` remain valid. Release does not stop construction already in progress. A
-caller that needs the shared matrix cache to be empty after release must prevent
-concurrent construction at that boundary.
+`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup, trusted
+catalog, and maximum cached ring-switch elements. A zero limit streams
+supported operations; `usize::MAX` retains all supported ring-switch
+operations. The CPU kernel sizes one-hot commitment scratch automatically from
+the commitment geometry; see the
+[CPU resource policy](../book/src/how/optimizations.md#cpu-resource-limits).
 
-Compression NTT entries are small and reusable, so generic and root release
-leave them resident. This avoids repeated compression setup work while giving
-up only a small memory reduction.
+These controls change CPU work and memory retention without changing public
+parameters or protocol messages. Ring dimensions come from validated schedule
+parameters. Cached and streamed ring-switch paths use the same quotient
+arithmetic and exact field fallback.
 
-`CpuPreparedSetup` reports the shared matrix and compression cache byte counts
-separately. `ntt_cache_bytes` is their checked sum and reports the complete
-resident CPU NTT footprint. Planned requirement metrics remain specific to the
-shared matrix cache because compression entries are created by compression
-operations rather than by the proof schedule.
+The backend lazily prepares NTT prefixes and can prewarm a schedule. Shared
+caches survive completed proofs. Applications can use `trim_caches()` to remove
+cached entries; active operations retain their owned references. Concurrent
+construction can repopulate a cache during trimming. Cache metrics and witness
+energy diagnostics are CPU/application capabilities, outside generic proving
+contracts.
 
-The lifecycle sequence is:
+## Setup-prefix persistence
 
-```text
-prepare empty state
-prewarm retained requirements
-stream nonretained operations during the proof
-retain slots for another proof, or release at an exclusive boundary
-rebuild released shared matrix slots at the next exact request
-```
+The CPU backend exports portable setup-prefix artifacts for application-managed
+storage. Import checks the setup seed, exact prefix parameters, public
+commitment, and retained material against recomputed setup data before issuing
+fresh current-owner commitment handles. Serialized process-local identities
+never grant authority.
 
-## Boundary Rules
+Generic proving receives a registry of public prefix commitments and opaque
+ordinary commitment handles. Missing prefixes are prepared through its
+backend-neutral setup-prefix kernel. It neither builds dense sources nor
+extracts or deserializes retained CPU material.
 
-- Protocol code owns transcript order, challenge squeezes, batching order, and
-  proof object construction.
-- Backends run named operations and return rows or witnesses. They do not
-  absorb to or squeeze from transcripts.
-- Prepared compute state carries only setup artifact digests for identity
-  checks. Prover APIs still take explicit setup metadata and reject a prepared
-  context built from a different setup.
-- Backend operations return `Result<_, AkitaError>` whenever a future
-  accelerator may need to report unsupported shape, device, or submission
-  failure.
-- Migrated prover code must not accept legacy per-`D` NTT slot caches directly.
-  CPU NTT slots stay inside `CpuPreparedSetup` / `ProverComputeStack`.
-- Root commit kernels consume borrowed dense and one-hot source views.
-  Recursive-witness sources do not cross a public representation-specific
-  row-plan boundary.
-- The group method is the only root commitment method. A singleton call passes
-  one source. Backends cannot replace a fused group operation with an optional
-  default loop.
-- One-hot compact block storage is private to its source or operation. An
-  accelerator integration should register an inner or fused commitment
-  operation instead of depending on CPU storage plans.
-- Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
-  target backend context inside the matched `D` arm.
-- Cached and streamed ring-switch relation routes consume the same validated
-  source abstraction. Width dispatch selects CRT arithmetic only; route
-  selection does not change input acceptance.
-
-## Current Scope
-
-The CPU cutover routes commitments through `CommitmentExecutor`; opening,
-tensor, and ring-switch work remains on `ProverComputeStack` and source-typed
-kernels. Setup-owned CPU NTT caches live in `CpuPreparedSetup` only.
-
-Covered operation families:
-
-- dense, one-hot, and recursive-witness commitment through D-free sources and
-  registered CPU commitment operations;
-- dense cached digits remain an internal CPU optimization;
-- opening fold / decompose-fold, plus suffix-only tensor projection (single +
-  batch);
-- single-row cyclic and negacyclic digit rows;
-- ring-switch relation rows, including the D-domain quotient inputs, via
-  `RingSwitchRelationKernel`.
-
-**Prove routing:** `batched_prove` takes `&impl LevelProveStacks`. Each fold
-selects a `ProverComputeStack<O, TS, R>`; commit / opening / tensor /
-ring-switch call the matching `OperationCtx`. `TieredProveStacks` supports
-per-fold backend tiers; `UniformProverStack::uniform(cpu)` is the degenerate
-single-backend case.
-
-## Deferred Work
-
-Deferred accelerator work should be split into fresh current specs when it
-becomes active:
-
-- `akita-metal` device/runtime skeleton with one tiny deterministic dispatch;
-- production Metal ring/NTT kernels;
-- fused inner-commit witness operations that return decomposed digits and
-  recomposed rows together for device backends;
-- base-field and MLE kernels tied to concrete prover consumers;
-- stage-1/stage-2 sumcheck backend hooks;
-- deterministic true CPU/GPU hybrid scheduling;
-- Jolt/Akita adapter APIs for opening obligations.
+Cross-backend commitment transfer is similarly explicit:
+`backend.import_commitment(&foreign_handle)` validates the retained source and
+commitment under the receiving setup before creating a new owner-bound handle.

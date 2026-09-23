@@ -9,8 +9,10 @@ mod recursive_prefixes;
 #[cfg(feature = "disk-persistence")]
 use akita_config::ValidatedScheduleCatalog;
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
+use akita_cpu_backend::AkitaProverSetup;
+#[cfg(feature = "disk-persistence")]
+use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_error::AkitaError;
-use akita_prover::AkitaProverSetup;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{Compress, SerializationError, Validate};
@@ -19,7 +21,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, sample_akita_setup_seed, setup_seed_digest, AkitaSetupDescriptor,
-    AkitaSetupSeed, FlatMatrix, SetupPrefixProverRegistry,
+    AkitaSetupSeed, FlatMatrix,
 };
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_field::{Unreduced, WithCommitAccumulator};
@@ -72,7 +74,7 @@ where
         SetupRequirements::from_catalog::<Cfg>(schedules, max_num_vars, max_num_batched_polys)?;
     #[cfg(feature = "disk-persistence")]
     {
-        match load_prover_setup::<F>(
+        match load_prover_setup::<F, Cfg>(
             schedules,
             max_num_vars,
             max_num_batched_polys,
@@ -96,6 +98,7 @@ where
 
     recursive_prefixes::populate_required_setup_prefix_slots(
         &mut setup,
+        schedules,
         &requirements.prefix_slot_ids,
     )?;
 
@@ -367,8 +370,9 @@ pub(crate) fn load_prover_setup<
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + 'static,
+    Cfg: CommitmentConfig<Field = F>,
 >(
-    schedules: &ValidatedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog<Cfg>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
     requirements: &SetupRequirements,
@@ -467,6 +471,7 @@ pub(crate) fn load_prover_setup<
             SetupPrefixProverRegistry::new(setup.expanded.descriptor().setup_seed.clone());
         recursive_prefixes::populate_required_setup_prefix_slots(
             &mut setup,
+            schedules,
             &requirements.prefix_slot_ids,
         )?;
         save_prover_setup::<F>(&setup, schedules, max_num_vars, max_num_batched_polys)?;
@@ -636,7 +641,6 @@ mod tests {
 
     #[cfg(feature = "disk-persistence")]
     mod disk_persistence {
-        const TEST_D: usize = 64;
         use super::*;
         use std::fs;
         use std::sync::{LazyLock, Mutex};
@@ -686,7 +690,7 @@ mod tests {
                 let prover_setup =
                     new_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
 
-                let loaded = load_prover_setup::<TestF>(
+                let loaded = load_prover_setup::<TestF, Cfg>(
                     &schedules(),
                     MAX_VARS,
                     1,
@@ -747,141 +751,35 @@ mod tests {
         #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
-                use akita_types::{
-                    scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
-                    CompressionChainWitness, GroupCommitPhaseParams, GroupOpenPhaseParams,
-                    InnerCommitMatrixParams, OuterCommitMatrixParams, PackedNegativeBinary,
-                    PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-                    SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
-                };
-
                 const MAX_VARS: usize = 14;
-
                 cleanup_setup_file_shape(MAX_VARS, 1);
-
-                let mut setup = new_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
-                let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    TEST_D,
-                    3,
-                    &akita_challenges::SparseChallengeConfig::production_for_ring_dim(TEST_D)
-                        .expect("D=64 has a production challenge configuration"),
-                    1,
-                    1,
-                )
-                .expect("audited prefix A bound");
-                let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-                    SisTableKey {
-                        policy: DEFAULT_SIS_SECURITY_POLICY,
-                        table_digest: SisTableDigest::CURRENT,
-                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-                        role: akita_types::SisMatrixRole::Inner,
-                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
-                        coeff_linf_bound: inner_bound,
-                    },
-                    1,
-                )
-                .expect("audited prefix A matrix");
-                let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-                    SisTableKey {
-                        policy: DEFAULT_SIS_SECURITY_POLICY,
-                        table_digest: SisTableDigest::CURRENT,
-                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-                        role: akita_types::SisMatrixRole::Outer,
-                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
-                        coeff_linf_bound: 3,
-                    },
-                    inner_commit_matrix.output_rank(),
-                )
-                .expect("audited prefix B matrix");
-                let commitment_rows = outer_commit_matrix.output_rank();
-                let commitment_params = GroupOpenPhaseParams {
-                    setup_natural_len: None,
-                    profile: GroupCommitPhaseParams {
-                        version: GroupCommitPhaseParams::VERSION,
-                        group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        blocks: akita_types::BlockGeometry::new(1, 1, 1),
-                        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                        inner: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(1, 1),
-                            inner_commit_matrix,
-                        ),
-                        outer: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(1, 1),
-                            outer_commit_matrix,
-                        ),
-                    },
-                    opening: akita_types::GroupOpeningPlan::evaluation_trace(
-                        akita_challenges::SparseChallengeConfig::pm1_only(0),
-                        1,
-                        1,
-                        1,
-                    ),
-                };
-                let id = scheduled_setup_prefix(TEST_D, commitment_params)
-                    .slot_id()
-                    .expect("setup prefix group");
-                let mut requirements =
-                    SetupRequirements::from_catalog::<Cfg>(&schedules(), MAX_VARS, 1).unwrap();
-                requirements.prefix_slot_ids = vec![id.clone()];
-                let compression_plan = CompressionChainPlan::for_complete_source(
-                    commitment_params.profile.outer.matrix.sis_modulus_profile(),
-                    commitment_params.profile.outer.matrix.output_rank() * TEST_D,
-                )
-                .expect("compression plan");
-                let compression_stages = compression_plan
-                    .maps()
-                    .iter()
-                    .map(|map| {
-                        PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()])
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .expect("zero compression stages");
-                let compression_witness =
-                    CompressionChainWitness::new(compression_plan, compression_stages)
-                        .expect("zero compression witness");
-                let compression_quotients = compression_witness
-                    .plan()
-                    .maps()
-                    .iter()
-                    .map(|map| {
-                        RingVec::from_coeffs_with_ring_dim(
-                            vec![TestF::zero(); map.output_coefficients()],
-                            map.ring_dimension(),
-                        )
-                        .expect("zero compression quotient")
-                    })
-                    .collect::<Vec<_>>();
-                let terminal_map = compression_witness
-                    .plan()
-                    .maps()
-                    .last()
-                    .expect("terminal compression map");
-                let commitment_row =
-                    RingVec::from_coeffs(vec![TestF::zero(); terminal_map.output_coefficients()]);
-                let hint = AkitaCommitmentHint::singleton_with_outer_compression(
-                    RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
-                        .expect("inner rows"),
-                    &compression_witness,
-                    &compression_quotients,
-                )
-                .expect("hint");
-                setup
-                    .prefix_slots
-                    .insert(SetupPrefixSlot {
-                        id,
-                        commitment: SetupPrefixPublicCommitment {
-                            rows: vec![commitment_row; commitment_rows],
-                        },
-                        hint,
-                    })
+                let catalog = schedules();
+                let mut setup = new_prover_setup::<TestF, Cfg>(&catalog, MAX_VARS, 1).unwrap();
+                let row = catalog
+                    .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                        akita_types::PolynomialGroupLayout::new(MAX_VARS, 1),
+                    ))
                     .unwrap();
+                let params = &row.schedule().root.params;
+                let n_prefix =
+                    (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
+                let prefix =
+                    akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+                let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+                    .slot_id()
+                    .unwrap();
+                let mut requirements =
+                    SetupRequirements::from_catalog::<Cfg>(&catalog, MAX_VARS, 1).unwrap();
+                requirements.prefix_slot_ids = vec![id.clone()];
+                let backend =
+                    akita_cpu_backend::CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog)
+                        .unwrap();
+                setup.prefix_slots = backend.export_setup_prefixes(&[id]).unwrap();
                 save_prover_setup::<TestF>(&setup, &schedules(), MAX_VARS, 1).unwrap();
 
                 let loaded =
-                    load_prover_setup::<TestF>(&schedules(), MAX_VARS, 1, &requirements).unwrap();
+                    load_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1, &requirements)
+                        .unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
@@ -993,7 +891,7 @@ mod tests {
                     barrier.wait();
                 });
 
-                let loaded = load_prover_setup::<TestF>(
+                let loaded = load_prover_setup::<TestF, Cfg>(
                     &schedules(),
                     LARGE_VARS,
                     1,
@@ -1037,7 +935,7 @@ mod tests {
                 })
                 .unwrap();
 
-                let err = load_prover_setup::<TestF>(
+                let err = load_prover_setup::<TestF, Cfg>(
                     &schedules(),
                     MAX_VARS,
                     1,
@@ -1067,7 +965,7 @@ mod tests {
                 let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
                 file.write_all(&[0]).unwrap();
 
-                let err = load_prover_setup::<TestF>(
+                let err = load_prover_setup::<TestF, Cfg>(
                     &schedules(),
                     MAX_VARS,
                     1,
@@ -1086,11 +984,7 @@ mod tests {
                 .stack_size(64 * 1024 * 1024)
                 .spawn(|| {
                     with_test_cache_dir("ntt-rebuild", || {
-                        use akita_prover::{
-                            CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource,
-                            ComputeBackendSetup, CpuBackend, DensePoly, DenseType, PolynomialType,
-                            PortableStatePolicy,
-                        };
+                        use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 
                         const MAX_VARS: usize = 14;
 
@@ -1099,7 +993,7 @@ mod tests {
                         let fresh_setup =
                             new_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
 
-                        let disk_setup = load_prover_setup::<TestF>(
+                        let disk_setup = load_prover_setup::<TestF, Cfg>(
                             &schedules(),
                             MAX_VARS,
                             1,
@@ -1109,44 +1003,22 @@ mod tests {
                         .unwrap();
 
                         let catalog = schedules();
-                        let opening = akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
-                            .expect("singleton opening batch");
-                        let lp = catalog
-                            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                                opening
-                                    .root_final_group_layout()
-                                    .expect("root group layout"),
-                            ))
-                            .unwrap()
-                            .schedule()
-                            .root
-                            .params
-                            .clone();
                         let poly = DensePoly::<TestF>::from_field_evals(
                             MAX_VARS,
                             vec![TestF::zero(); 1usize << MAX_VARS],
                         )
                         .unwrap();
-                        let plan =
-                            CommitmentExecutionPlan::for_root(&lp.own_group().profile).unwrap();
-
                         let commit_payload = |setup: &AkitaProverSetup<TestF>| {
-                            let backend = CpuBackend::DEFAULT;
-                            let prepared = backend.prepare_setup(setup).unwrap();
-                            let executor = CommitmentExecutor::cpu(
-                                &backend,
-                                &prepared,
-                                &setup.expanded,
-                                vec![PolynomialType::Dense(DenseType::Coefficients)],
-                                PortableStatePolicy,
-                            )
-                            .unwrap();
-                            let sources: [&dyn CommitmentSource<TestF>; 1] = [&poly];
-                            executor
-                                .execute_full(&plan, &sources)
+                            let backend =
+                                CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
+                            let source = backend.import_source(vec![poly.clone()]).unwrap();
+                            backend
+                                .commit(
+                                    &source,
+                                    GroupContext::scheduler_without_precommitted_groups(),
+                                )
                                 .unwrap()
-                                .into_parts()
-                                .0
+                                .committed_group
                         };
 
                         let fresh_payload = commit_payload(&fresh_setup);

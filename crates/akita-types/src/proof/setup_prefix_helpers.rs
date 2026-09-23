@@ -40,7 +40,7 @@ pub fn suffix_opening_layout(
     }
 }
 
-pub(super) fn setup_prefix_compression_plan(
+pub fn setup_prefix_compression_plan(
     params: &GroupCommitPhaseParams,
 ) -> Result<CompressionChainPlan, SerializationError> {
     let matrix = &params.outer.matrix;

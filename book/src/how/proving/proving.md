@@ -194,13 +194,13 @@ commitment, and sum-check work can stay local to separate machines.
 
 | Responsibility | Prover | Verifier |
 | --- | --- | --- |
-| Top-level schedule walk | `akita-prover/src/protocol/core/prove.rs` | `akita-verifier/src/protocol/core/verify.rs` |
-| Root and recursive fold orchestration | `akita-prover/src/protocol/core/fold/` | `akita-verifier/src/protocol/core/fold/` |
-| Extension-opening reduction | `akita-prover/src/protocol/extension_opening_reduction/` | `akita-verifier/src/protocol/core/fold/extension_claim.rs` |
-| Stage 1 range and norm proof | `akita-prover/src/protocol/sumcheck/digit_range/` and `physical_l2_norm.rs` | `akita-verifier/src/stages/stage1.rs` |
-| Stage 2 fused relation | `akita-prover/src/protocol/sumcheck/relation_range_image/` | `akita-verifier/src/stages/stage2.rs` |
-| Stage 3 setup product | `akita-prover/src/protocol/sumcheck/akita_stage3/` | `akita-verifier/src/stages/stage3.rs` |
-| Terminal path | `akita-prover/src/protocol/core/suffix.rs` | `akita-verifier/src/protocol/core/suffix.rs` and `terminal_direct.rs` |
+| Top-level schedule walk | `akita-prover/src/protocol/prove/root.rs` | `akita-verifier/src/protocol/core/verify.rs` |
+| Root and recursive fold orchestration | `akita-prover/src/protocol/prove/fold/` | `akita-verifier/src/protocol/core/fold/` |
+| Extension-opening reduction | `akita-cpu-backend/src/opaque/recursive/opening/` | `akita-verifier/src/protocol/core/fold/extension_claim.rs` |
+| Stage 1 range and norm proof | `akita-cpu-backend/src/opaque/sumcheck/digit_range/` and `physical_l2_norm.rs` | `akita-verifier/src/stages/stage1.rs` |
+| Stage 2 fused relation | `akita-cpu-backend/src/opaque/sumcheck/relation_range_image/` | `akita-verifier/src/stages/stage2.rs` |
+| Stage 3 setup product | `akita-cpu-backend/src/opaque/sumcheck/stage3/` | `akita-verifier/src/stages/stage3.rs` |
+| Terminal path | `akita-prover/src/protocol/prove/suffix.rs` | `akita-verifier/src/protocol/core/suffix.rs` and `terminal_direct.rs` |
 
 The exact source layout can evolve, so begin with the public core entry points
 and follow the shared types they call. The Book's Verification child pages
