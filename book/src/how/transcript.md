@@ -312,7 +312,7 @@ nonce encoding are documented in
 - `crates/akita-transcript/src/native.rs` owns native state construction,
   context framing, canonical atom codecs, bounded bytes, and EOF-compatible
   proof transport.
-- `crates/akita-types/src/transcript_grinding_plan.rs` defines the ordered
+- `crates/akita-types/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/native_replay.rs` couples
   native nonce transport, predicate checks, challenges, and plan progress.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse

@@ -202,7 +202,7 @@ impl DigitRangePlan {
 
     /// Product-stage arities in transcript order, before the leaf stage.
     #[must_use]
-    pub fn product_stage_arities(&self) -> &[usize] {
+    pub fn product_stage_arities(&self) -> &'static [usize] {
         match self.log_basis {
             2 | 3 => &[],
             4 => &[2],
@@ -215,12 +215,10 @@ impl DigitRangePlan {
     /// Number of child lanes emitted by one product substage.
     #[must_use]
     pub fn product_stage_lane_count(self, stage_index: usize) -> Option<usize> {
-        let arity = *self.product_stage_arities().get(stage_index)?;
-        let parent_count = self.product_stage_arities()[..stage_index]
-            .iter()
-            .copied()
-            .product::<usize>();
-        parent_count.checked_mul(arity)
+        self.stage_shapes_iter(0)
+            .take(self.product_stage_arities().len())
+            .nth(stage_index)
+            .map(|shape| shape.child_claims)
     }
 
     /// Number of quartic (or smaller for basis four) leaf factors.
@@ -251,28 +249,38 @@ impl DigitRangePlan {
         self.product_stage_arities().len() + 1
     }
 
-    /// Wire shape of one range subproof in transcript order.
-    #[must_use]
-    pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<AkitaStage1StageShape> {
-        if stage_index < self.product_stage_arities().len() {
-            let arity = self.product_stage_arities()[stage_index];
-            return Some(AkitaStage1StageShape {
-                sumcheck_proof: (rounds, arity),
-                child_claims: self.product_stage_lane_count(stage_index)?,
+    /// The supported bases have at most two product stages and eight lanes.
+    /// Every yielded stage is therefore complete, with no per-index failure.
+    fn stage_shapes_iter(self, rounds: usize) -> impl Iterator<Item = AkitaStage1StageShape> {
+        let mut child_claims = 1;
+        let products = self
+            .product_stage_arities()
+            .iter()
+            .copied()
+            .map(move |arity| {
+                child_claims *= arity;
+                AkitaStage1StageShape {
+                    sumcheck_proof: (rounds, arity),
+                    child_claims,
+                }
             });
-        }
-        (stage_index == self.product_stage_arities().len()).then_some(AkitaStage1StageShape {
+        products.chain(std::iter::once(AkitaStage1StageShape {
             sumcheck_proof: (rounds, self.leaf_degree()),
             child_claims: 0,
-        })
+        }))
+    }
+
+    /// Wire shape of one range subproof in transcript order.
+    /// Returns `None` only when `stage_index` is outside this plan.
+    #[must_use]
+    pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<AkitaStage1StageShape> {
+        self.stage_shapes_iter(rounds).nth(stage_index)
     }
 
     /// Wire shapes of all range subproofs in transcript order.
     #[must_use]
     pub fn stage_shapes(self, rounds: usize) -> Vec<AkitaStage1StageShape> {
-        (0..self.stage_count())
-            .filter_map(|stage_index| self.stage_shape(rounds, stage_index))
-            .collect()
+        self.stage_shapes_iter(rounds).collect()
     }
 
     /// Derive the headerless Stage 1 wire shape from the scheduled A route.
@@ -287,27 +295,46 @@ impl DigitRangePlan {
         ),
         AkitaError,
     > {
-        match route {
-            InnerCommitSecurityRoute::Linf(_) => Ok((self.stage_shapes(rounds), None)),
+        let shape = self.route_shape(rounds, route)?;
+        Ok((
+            shape.stages().collect(),
+            shape.norm.map(|norm| PhysicalL2NormProofWireShape {
+                subclaims: norm.subclaims,
+                virtual_evaluations: norm.virtual_evaluations,
+                sumcheck: vec![norm.degree; norm.rounds],
+            }),
+        ))
+    }
+
+    /// Return the selected Stage 1 product stages and optional L2 norm shape.
+    ///
+    /// Returns an error if the selected L2 norm geometry is invalid.
+    pub(crate) fn route_shape(
+        self,
+        rounds: usize,
+        route: InnerCommitSecurityRoute,
+    ) -> Result<DigitRangeRouteShape, AkitaError> {
+        let norm = match route {
+            InnerCommitSecurityRoute::Linf(_) => None,
             InnerCommitSecurityRoute::L2 {
                 norm_proof_shape, ..
             } => {
                 norm_proof_shape.validate()?;
-                Ok((
-                    self.stage_shapes(rounds)
-                        .into_iter()
-                        .take(self.product_stage_arities().len())
-                        .collect(),
-                    Some(PhysicalL2NormProofWireShape {
-                        subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
-                            AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
-                        })?,
-                        virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
-                        sumcheck: vec![self.leaf_degree() + 1; rounds],
-                    }),
-                ))
+                Some(PhysicalL2NormShape {
+                    subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
+                        AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
+                    })?,
+                    virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
+                    rounds,
+                    degree: self.leaf_degree() + 1,
+                })
             }
-        }
+        };
+        Ok(DigitRangeRouteShape {
+            plan: self,
+            rounds,
+            norm,
+        })
     }
 
     /// Validate the complete in-memory range-proof shape without allocation.
@@ -430,6 +457,34 @@ impl DigitRangePlan {
     }
 }
 
+/// Stage 1 shape for a selected A route, retaining only the optional L2 norm
+/// payload in addition to the canonical digit-range stages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DigitRangeRouteShape {
+    plan: DigitRangePlan,
+    rounds: usize,
+    pub(crate) norm: Option<PhysicalL2NormShape>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalL2NormShape {
+    pub(crate) subclaims: usize,
+    pub(crate) virtual_evaluations: usize,
+    pub(crate) rounds: usize,
+    pub(crate) degree: usize,
+}
+
+impl DigitRangeRouteShape {
+    pub(crate) fn stages(self) -> impl Iterator<Item = AkitaStage1StageShape> {
+        let count = if self.norm.is_some() {
+            self.plan.product_stage_arities().len()
+        } else {
+            self.plan.stage_count()
+        };
+        self.plan.stage_shapes_iter(self.rounds).take(count)
+    }
+}
+
 fn stage1_root_values<E: Field + Ring>(b: usize) -> Vec<E> {
     let half = b / 2;
     (0..half)
@@ -482,6 +537,10 @@ mod tests {
                 .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected_stages);
+            assert!(plan.stage_shape(7, plan.stage_count()).is_none());
+            assert!(plan
+                .product_stage_lane_count(plan.product_stage_arities().len())
+                .is_none());
             assert_eq!(plan.leaf_coeffs::<F>().len(), plan.leaf_factor_count());
         }
     }
@@ -590,5 +649,74 @@ mod tests {
         assert_eq!(l2_norm.subclaims, 0);
         assert_eq!(l2_norm.virtual_evaluations, 1);
         assert_eq!(l2_norm.sumcheck, vec![plan.leaf_degree() + 1; 7]);
+    }
+
+    #[test]
+    fn compact_route_shape_matches_materialized_shapes_and_rejects_bad_norms() {
+        let key = SisL2TableKey {
+            policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            table_digest: SisL2TableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            ring_dimension: 64,
+            collision_l2_sq: 1,
+        };
+        let shapes = [
+            PhysicalL2NormProofShape::Direct {
+                physical_response_len: 512,
+            },
+            PhysicalL2NormProofShape::LimbGram {
+                physical_response_len: 512,
+                block_len: 32,
+                limb_count: 3,
+            },
+        ];
+        for basis in [4, 8, 16, 32, 64] {
+            let plan = DigitRangePlan::new(basis).unwrap();
+            for rounds in [0, 1, 7, 32] {
+                for norm in shapes {
+                    let route = InnerCommitSecurityRoute::L2 {
+                        table_key: key,
+                        response_l2_sq_cap: 1,
+                        norm_proof_shape: norm,
+                    };
+                    let compact = plan.route_shape(rounds, route).unwrap();
+                    let (stages, wire_norm) = plan.proof_shapes_for_route(rounds, route).unwrap();
+                    // Reconstruct the former materialized rule independently.
+                    let expected: Vec<_> = plan
+                        .stage_shapes(rounds)
+                        .into_iter()
+                        .take(plan.product_stage_arities().len())
+                        .collect();
+                    assert_eq!(compact.stages().collect::<Vec<_>>(), expected);
+                    assert_eq!(stages, expected);
+                    let compact_norm = compact.norm.unwrap();
+                    let wire_norm = wire_norm.unwrap();
+                    assert_eq!(wire_norm.subclaims, norm.subclaim_count().unwrap());
+                    assert_eq!(
+                        wire_norm.virtual_evaluations,
+                        norm.virtual_evaluation_count()
+                    );
+                    assert_eq!(wire_norm.sumcheck, vec![plan.leaf_degree() + 1; rounds]);
+                    assert_eq!(compact_norm.subclaims, wire_norm.subclaims);
+                    assert_eq!(
+                        compact_norm.virtual_evaluations,
+                        wire_norm.virtual_evaluations
+                    );
+                    assert_eq!(
+                        vec![compact_norm.degree; compact_norm.rounds],
+                        wire_norm.sumcheck
+                    );
+                }
+            }
+            let bad = InnerCommitSecurityRoute::L2 {
+                table_key: key,
+                response_l2_sq_cap: 1,
+                norm_proof_shape: PhysicalL2NormProofShape::Direct {
+                    physical_response_len: 0,
+                },
+            };
+            assert!(plan.route_shape(7, bad).is_err());
+            assert!(plan.proof_shapes_for_route(7, bad).is_err());
+        }
     }
 }

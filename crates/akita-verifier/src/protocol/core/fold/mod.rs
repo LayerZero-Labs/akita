@@ -161,7 +161,9 @@ where
     let stage1_verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(rs.b)?);
     let (stage1_stages, stage1_norm) = DigitRangePlan::new(rs.b)?
         .proof_shapes_for_route(num_rounds, lp.inner().matrix.security_route())?;
-    if stage1_stages != layout.stage1_stages() || stage1_norm.as_ref() != layout.stage1_norm() {
+    if !stage1_stages.iter().copied().eq(layout.stage1_stages())
+        || stage1_norm != layout.stage1_norm()
+    {
         return Err(AkitaError::InvalidSetup(
             "native Stage 1 replay disagrees with the level grammar".into(),
         ));

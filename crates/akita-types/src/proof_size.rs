@@ -10,6 +10,7 @@
 //! plan and are not attributed to this fixed-width level layout.
 
 use crate::layout::field_bytes;
+use crate::proof::stage1::DigitRangeRouteShape;
 use crate::proof::PhysicalL2NormProofWireShape;
 use crate::{AkitaStage1StageShape, CommittedGroupParams, DigitRangePlan, RelationAddressGeometry};
 use akita_error::AkitaError;
@@ -22,21 +23,17 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-fn stage1_proof_bytes(
-    stages: &[AkitaStage1StageShape],
-    norm: Option<&PhysicalL2NormProofWireShape>,
-    elem_bytes: usize,
-) -> Result<usize, AkitaError> {
-    let stages_bytes = stages
-        .iter()
+fn stage1_proof_bytes(shape: DigitRangeRouteShape, elem_bytes: usize) -> Result<usize, AkitaError> {
+    let stages_bytes = shape
+        .stages()
         .map(|stage| {
             sumcheck_bytes(stage.sumcheck_proof.0, stage.sumcheck_proof.1, elem_bytes)
                 + stage.child_claims * elem_bytes
         })
         .sum::<usize>();
-    let norm_bytes = norm.map_or(0, |shape| {
-        16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
-            + shape.sumcheck.iter().sum::<usize>() * elem_bytes
+    let norm_bytes = shape.norm.map_or(0, |norm| {
+        16 + (norm.subclaims + norm.virtual_evaluations) * elem_bytes
+            + norm.rounds * norm.degree * elem_bytes
     });
     // The ordinary final range evaluation remains outside the optional norm
     // payload. The fused standard leaf shape accounts for the one additional
@@ -50,8 +47,7 @@ pub struct NativeNonterminalLevelLayout {
     base_field_bytes: usize,
     challenge_field_bytes: usize,
     opening_payload_coeffs: usize,
-    stage1_stages: Vec<AkitaStage1StageShape>,
-    stage1_norm: Option<PhysicalL2NormProofWireShape>,
+    stage1_shape: DigitRangeRouteShape,
     stage2_sumcheck: akita_sumcheck::NativeSumcheckShape,
     next_outer_payload_coeffs: usize,
     next_witness_evaluations: usize,
@@ -65,15 +61,20 @@ impl NativeNonterminalLevelLayout {
     }
 
     /// Stage-1 range-tree sumcheck and child-claim shapes in replay order.
-    #[must_use]
-    pub fn stage1_stages(&self) -> &[AkitaStage1StageShape] {
-        &self.stage1_stages
+    pub fn stage1_stages(&self) -> impl Iterator<Item = AkitaStage1StageShape> + '_ {
+        self.stage1_shape.stages()
     }
 
     /// Optional physical-L2 native message shape.
     #[must_use]
-    pub const fn stage1_norm(&self) -> Option<&PhysicalL2NormProofWireShape> {
-        self.stage1_norm.as_ref()
+    pub fn stage1_norm(&self) -> Option<PhysicalL2NormProofWireShape> {
+        self.stage1_shape
+            .norm
+            .map(|norm| PhysicalL2NormProofWireShape {
+                subclaims: norm.subclaims,
+                virtual_evaluations: norm.virtual_evaluations,
+                sumcheck: vec![norm.degree; norm.rounds],
+            })
     }
 
     /// Fixed Stage-2 native sumcheck shape.
@@ -93,11 +94,7 @@ impl NativeNonterminalLevelLayout {
         let opening_payload_bytes =
             akita_error::checked::product([self.opening_payload_coeffs, self.base_field_bytes])
                 .ok_or_else(|| AkitaError::InvalidSetup("opening payload size overflow".into()))?;
-        let stage1_bytes = stage1_proof_bytes(
-            &self.stage1_stages,
-            self.stage1_norm.as_ref(),
-            self.challenge_field_bytes,
-        )?;
+        let stage1_bytes = stage1_proof_bytes(self.stage1_shape, self.challenge_field_bytes)?;
         let stage2_bytes = sumcheck_bytes(
             self.stage2_sumcheck.num_rounds(),
             self.stage2_sumcheck.degree_bound(),
@@ -173,9 +170,8 @@ pub fn native_nonterminal_level_layout(
             "opening payload profile disagrees with the base field width".into(),
         ));
     }
-    let (stage1_stages, stage1_norm) =
-        DigitRangePlan::new(1usize << lp.open().digits.log_basis)?
-            .proof_shapes_for_route(rounds, lp.inner().matrix.security_route())?;
+    let stage1_shape = DigitRangePlan::new(1usize << lp.open().digits.log_basis)?
+        .route_shape(rounds, lp.inner().matrix.security_route())?;
     let next_outer_payload_coeffs = match next_outer_payload {
         Some(next_lp) => {
             if base_field_bits != next_lp.outer().matrix.sis_modulus_profile().field_bits() {
@@ -191,8 +187,7 @@ pub fn native_nonterminal_level_layout(
         base_field_bytes,
         challenge_field_bytes,
         opening_payload_coeffs: lp.opening_payload_geometry()?.transmitted_coefficients(),
-        stage1_stages,
-        stage1_norm,
+        stage1_shape,
         stage2_sumcheck: akita_sumcheck::NativeSumcheckShape::new(rounds, 3)?,
         next_outer_payload_coeffs,
         next_witness_evaluations: 1,
