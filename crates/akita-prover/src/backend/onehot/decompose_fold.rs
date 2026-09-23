@@ -207,43 +207,54 @@ pub(super) fn finish_decompose_fold<F: Field + CanonicalEncoding, const D: usize
 }
 
 impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
+    /// Fused decompose-fold of `polys`, each consuming exactly
+    /// `challenges_per_poly` consecutive challenges.
+    ///
+    /// Every source must have exactly `challenges_per_poly` live blocks.
+    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
     pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         challenges_per_poly: usize,
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F>>
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError>
     where
         F: Field + CanonicalEncoding,
     {
-        if challenges_per_poly == 0 {
-            return None;
+        if polys.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "one-hot decompose_fold requires at least one polynomial".into(),
+            ));
         }
-        let challenge_chunks = challenges.chunks_exact(challenges_per_poly);
-        if !challenge_chunks.remainder().is_empty() || challenge_chunks.len() != polys.len() {
-            return None;
+        let expected = akita_error::checked::product([polys.len(), challenges_per_poly])
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("one-hot decompose_fold challenge count overflow".into())
+            })?;
+        if challenges.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: challenges.len(),
+            });
         }
-        let mut challenge_start = 0;
         let mut sources = Vec::with_capacity(polys.len());
-        for &poly in polys {
-            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
+        for (index, &poly) in polys.iter().enumerate() {
+            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block)?;
             if num_blocks != challenges_per_poly {
-                return None;
+                return Err(AkitaError::InvalidSize {
+                    expected: num_blocks,
+                    actual: challenges_per_poly,
+                });
             }
             sources.push(DecomposeSource {
                 poly,
-                challenge_start,
+                challenge_start: index * challenges_per_poly,
                 active_blocks: challenges_per_poly,
                 ring_elems,
             });
-            challenge_start += challenges_per_poly;
         }
-        let compressed = accumulate_indices::<F, I, D>(
-            &sources,
-            &challenges[..challenge_start],
-            num_positions_per_block,
-        );
-        Some(finish_decompose_fold(compressed, num_digits))
+        let compressed =
+            accumulate_indices::<F, I, D>(&sources, challenges, num_positions_per_block);
+        Ok(finish_decompose_fold(compressed, num_digits))
     }
 }

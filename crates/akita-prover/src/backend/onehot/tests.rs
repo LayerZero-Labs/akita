@@ -1,7 +1,10 @@
 use super::test_helpers::inner_ajtai_reference;
 use super::*;
 use crate::backend::test_support::aggregate_witnesses;
-use crate::compute::{CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel, RootOpeningSource};
+use crate::compute::{
+    CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
+    RootOpeningSource,
+};
 use crate::DensePoly;
 use akita_types::FlatMatrix;
 use jolt_field::{Field, Ring};
@@ -66,6 +69,43 @@ fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
         run(&[&polys[0], &polys[0]], 2),
         Err(AkitaError::InvalidSize { .. })
     ));
+}
+
+#[test]
+fn scalar_fold_rejects_short_and_excess_challenges() {
+    type F = Prime24Offset3;
+    const D: usize = 64;
+    // Two chunks of 64 positions fill two rings, so two live blocks at one position per block.
+    let poly = OneHotPoly::<F>::new(64, vec![Some(0usize); 2]).unwrap();
+    let challenge = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let run = |count: usize| {
+        let challenges = vec![challenge.clone(); count];
+        OpeningFoldKernel::decompose_fold(
+            &CpuBackend::DEFAULT,
+            None,
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_view(&poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 1,
+            },
+        )
+    };
+
+    assert!(run(2).is_ok());
+    for count in [0, 1, 3] {
+        assert!(
+            matches!(
+                run(count),
+                Err(AkitaError::InvalidSize { expected: 2, actual }) if actual == count
+            ),
+            "{count} challenges for two live blocks must be rejected"
+        );
+    }
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
@@ -403,16 +443,17 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             .zip(challenges.chunks(2))
             .map(|(poly, poly_challenges)| {
                 poly.decompose_fold::<D>(poly_challenges, num_positions_per_block, 1, 0)
+                    .unwrap()
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
-    let got = OneHotPoly::<F>::decompose_fold_batched::<D>(
+    let got = OneHotPoly::<F>::decompose_fold_batched_onehot::<D>(
         &poly_refs,
         &challenges,
+        2,
         num_positions_per_block,
         1,
-        0,
     )
     .expect("onehot batched path should apply");
 

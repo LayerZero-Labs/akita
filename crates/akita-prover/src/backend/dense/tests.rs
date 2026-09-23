@@ -206,17 +206,25 @@ fn batch_fold_returns_one_witness_per_chunk() {
                 num_chunks,
                 num_positions_per_block: 1,
                 num_digits: 1,
-                log_basis: 1,
+                log_basis: 6,
             },
         )
     };
 
     let chunks = run(2).unwrap();
+    assert_eq!(chunks.len(), 2);
+    // Chunk `i` folds only block `i`. A +1 monomial with one exact base-2^6
+    // digit returns that block's coefficients, `10 * i + 1..=D`.
+    for (block, chunk) in chunks.iter().enumerate() {
+        let expected = (1..=D as i32)
+            .map(|coeff| 10 * block as i32 + coeff)
+            .collect::<Vec<_>>();
+        assert_eq!(chunk.centered_coeffs_flat(), expected);
+    }
+
     let global = run(1).unwrap().pop().unwrap();
     let recombined =
         aggregate_decompose_fold_witnesses::<F, D>(chunks.iter().cloned().map(Ok)).unwrap();
-
-    assert_eq!(chunks.len(), 2);
     assert_eq!(recombined, global);
 }
 
