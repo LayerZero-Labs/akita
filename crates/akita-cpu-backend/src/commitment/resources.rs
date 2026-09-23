@@ -1,0 +1,594 @@
+use super::{CommitmentExecutionPlan, PolynomialType};
+#[cfg(test)]
+use super::{CommitmentExecutor, CommitmentStatePolicy};
+use crate::arithmetic::requirements::{signed_commit_domain, SignedCommitSource};
+use crate::opaque::{
+    CompressionComputeBackend, NttCacheOwnerId, NttOperationCluster, RoutedNttRequirement,
+};
+use akita_error::{checked, AkitaError};
+use akita_types::{AkitaSetupDescriptor, NttCacheKey, NttTransformDomain};
+use jolt_field::{CanonicalEncoding, Field};
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+static NEXT_BACKEND_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Builder-issued identity for one physical backend instance.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BackendInstanceId(u64);
+
+impl std::fmt::Debug for BackendInstanceId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BackendInstanceId(..)")
+    }
+}
+
+impl BackendInstanceId {
+    pub(crate) fn issue() -> Self {
+        Self(NEXT_BACKEND_INSTANCE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Builder-issued identity for one registered stage operation.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct CommitmentOperationId(u64);
+
+impl std::fmt::Debug for CommitmentOperationId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CommitmentOperationId(..)")
+    }
+}
+
+impl CommitmentOperationId {
+    pub(crate) fn issue() -> Self {
+        Self(NEXT_OPERATION_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Commitment stage that owns one exact NTT request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommitmentNttStage {
+    /// Inner A commitment.
+    Inner,
+    /// Outer B commitment.
+    Outer,
+}
+
+/// Execution route that owns a proof-wide commitment cache request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommitmentNttRoute {
+    /// Terminal A-only commitment.
+    InnerOnly,
+    /// A/B commitment, executed by the fused registration when one exists.
+    InnerOuter,
+}
+
+/// Exact cache request routed to one registered commitment stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CommitmentNttRequirement {
+    fold_level: usize,
+    route: CommitmentNttRoute,
+    stage: CommitmentNttStage,
+    key: NttCacheKey,
+    routing_extent: usize,
+}
+
+impl CommitmentNttRequirement {
+    /// Construct after validating the operation-level routing extent.
+    pub(crate) fn new(
+        fold_level: usize,
+        route: CommitmentNttRoute,
+        stage: CommitmentNttStage,
+        key: NttCacheKey,
+        routing_extent: usize,
+    ) -> Result<Self, AkitaError> {
+        if routing_extent < key.num_ring_elements {
+            return Err(AkitaError::InvalidSetup(
+                "commitment NTT routing extent is smaller than its cache prefix".into(),
+            ));
+        }
+        Ok(Self {
+            fold_level,
+            route,
+            stage,
+            key,
+            routing_extent,
+        })
+    }
+
+    /// Fold level whose compute stack owns this request.
+    #[cfg(test)]
+    pub(crate) const fn fold_level(&self) -> usize {
+        self.fold_level
+    }
+
+    /// Execution route whose cache policy owns this request.
+    #[cfg(test)]
+    pub(crate) const fn route(&self) -> CommitmentNttRoute {
+        self.route
+    }
+
+    /// Owning commitment stage.
+    pub(crate) const fn stage(&self) -> CommitmentNttStage {
+        self.stage
+    }
+
+    /// Exact backend cache key.
+    pub(crate) const fn key(&self) -> NttCacheKey {
+        self.key
+    }
+
+    /// Full operation extent used by cached-versus-streamed policy.
+    #[cfg(test)]
+    pub(crate) const fn routing_extent(&self) -> usize {
+        self.routing_extent
+    }
+
+    fn routed(&self) -> RoutedNttRequirement {
+        RoutedNttRequirement {
+            fold_level: self.fold_level,
+            cluster: NttOperationCluster::Commit,
+            commitment_stage: Some(self.stage),
+            commitment_route: Some(self.route),
+            key: self.key,
+            routing_extent: self.routing_extent,
+        }
+    }
+}
+
+impl CommitmentExecutionPlan {
+    /// Exact A-matrix cache request for a selected standard source kernel.
+    ///
+    /// One-hot commitment reads matrix columns directly and therefore has no
+    /// inner NTT requirement.
+    pub(crate) fn inner_ntt_requirement(
+        &self,
+        selected: PolynomialType,
+    ) -> Result<Option<CommitmentNttRequirement>, AkitaError> {
+        let source = match selected {
+            PolynomialType::Dense(_) => SignedCommitSource::Dense,
+            PolynomialType::ShortNorm(_) => SignedCommitSource::RecursiveWitness,
+            PolynomialType::OneHot(_) => return Ok(None),
+        };
+        let plan = self.inner();
+        let width = checked::product([plan.num_positions_per_block, plan.num_digits_inner])
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
+        let domain = signed_commit_domain(
+            self.inner_modulus_profile(),
+            plan.ring_dimension,
+            width,
+            plan.log_basis_inner,
+            source,
+        )?;
+        let key = NttCacheKey::from_matrix_shape(plan.ring_dimension, plan.n_a, width, domain)?;
+        let routing_extent = checked::product([plan.n_a, width])
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment A extent overflow".into()))?;
+        let route = match self.mode() {
+            super::CommitmentExecutionMode::InnerOnly => CommitmentNttRoute::InnerOnly,
+            super::CommitmentExecutionMode::Full | super::CommitmentExecutionMode::Uncompressed => {
+                CommitmentNttRoute::InnerOuter
+            }
+        };
+        CommitmentNttRequirement::new(
+            self.fold_level(),
+            route,
+            CommitmentNttStage::Inner,
+            key,
+            routing_extent,
+        )
+        .map(Some)
+    }
+
+    /// Exact B-matrix cache request when this route contains an outer stage.
+    pub(crate) fn outer_ntt_requirement(
+        &self,
+    ) -> Result<Option<CommitmentNttRequirement>, AkitaError> {
+        let Some(plan) = self.uncompressed().map(|plan| plan.outer()) else {
+            return Ok(None);
+        };
+        let width = plan.geometry().physical_input_width();
+        let key = NttCacheKey::from_matrix_shape(
+            plan.ring_dimension(),
+            plan.n_b(),
+            width,
+            NttTransformDomain::Negacyclic,
+        )?;
+        let routing_extent = checked::product([plan.n_b(), width])
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment B extent overflow".into()))?;
+        CommitmentNttRequirement::new(
+            self.fold_level(),
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Outer,
+            key,
+            routing_extent,
+        )
+        .map(Some)
+    }
+}
+
+/// Object-safe lifecycle boundary for backend resources used by a stage.
+pub(crate) trait CommitmentResourceControl<F>: Send + Sync
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Setup descriptor from which the captured prepared state was built.
+    fn setup_descriptor(&self) -> &AkitaSetupDescriptor;
+
+    /// Ensure one exact NTT cache slot.
+    fn ensure_ntt_slot(&self, requirement: CommitmentNttRequirement) -> Result<(), AkitaError>;
+
+    /// Whether this request remains cached rather than streamed.
+    fn requirement_is_cached(
+        &self,
+        requirement: CommitmentNttRequirement,
+    ) -> Result<bool, AkitaError>;
+
+    /// Physical cache-owner identity used for deduplication.
+    fn cache_owner_id(&self) -> NttCacheOwnerId;
+
+    /// Release backend-designated cache slots.
+    #[cfg(test)]
+    fn release_built_ntt_slots(&self) -> Result<usize, AkitaError>;
+}
+
+/// Associated-type-erased resource adapter over one prepared backend.
+pub(crate) struct PreparedCommitmentResources<'a, F, B>
+where
+    F: Field + CanonicalEncoding,
+    B: CompressionComputeBackend<F>,
+{
+    backend: &'a B,
+    prepared: &'a B::PreparedSetup,
+    setup: AkitaSetupDescriptor,
+    marker: PhantomData<fn() -> F>,
+}
+
+impl<'a, F, B> PreparedCommitmentResources<'a, F, B>
+where
+    F: Field + CanonicalEncoding,
+    B: CompressionComputeBackend<F>,
+{
+    /// Capture a prepared backend after checking its expanded setup.
+    pub(crate) fn new(
+        backend: &'a B,
+        prepared: &'a B::PreparedSetup,
+        setup: &akita_types::AkitaExpandedSetup<F>,
+    ) -> Result<Self, AkitaError> {
+        backend.validate_prepared_setup(prepared, setup)?;
+        Ok(Self {
+            backend,
+            prepared,
+            setup: setup.descriptor().clone(),
+            marker: PhantomData,
+        })
+    }
+}
+
+impl<F, B> CommitmentResourceControl<F> for PreparedCommitmentResources<'_, F, B>
+where
+    F: Field + CanonicalEncoding,
+    B: CompressionComputeBackend<F>,
+{
+    fn setup_descriptor(&self) -> &AkitaSetupDescriptor {
+        &self.setup
+    }
+
+    fn ensure_ntt_slot(&self, requirement: CommitmentNttRequirement) -> Result<(), AkitaError> {
+        self.backend
+            .ensure_ntt_slot(self.prepared, requirement.key())
+    }
+
+    fn requirement_is_cached(
+        &self,
+        requirement: CommitmentNttRequirement,
+    ) -> Result<bool, AkitaError> {
+        self.backend
+            .ntt_requirement_is_cached(self.prepared, requirement.routed())
+    }
+
+    fn cache_owner_id(&self) -> NttCacheOwnerId {
+        self.backend.ntt_cache_owner_id(self.prepared)
+    }
+
+    #[cfg(test)]
+    fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
+        self.backend.release_built_ntt_slots(self.prepared)
+    }
+}
+
+/// Explicit resource declaration attached to one stage registration.
+pub(crate) enum StageResources<'a, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// This operation owns no prepared matrix or cache resources.
+    None,
+    /// This operation uses the captured resource controller.
+    Controlled(Arc<dyn CommitmentResourceControl<F> + 'a>),
+}
+
+/// Builder-validated backend identity, diagnostic name, and resource declaration.
+pub(crate) struct CommitmentOperationContext<'a, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    pub(crate) setup: AkitaSetupDescriptor,
+    pub(crate) backend_instance: BackendInstanceId,
+    pub(crate) name: &'static str,
+    pub(crate) resources: StageResources<'a, F>,
+}
+
+impl<F> Clone for StageResources<'_, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    fn clone(&self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Controlled(control) => Self::Controlled(control.clone()),
+        }
+    }
+}
+
+impl<'a, F> StageResources<'a, F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Explicit no-resources declaration.
+    #[cfg(test)]
+    pub(crate) const fn none() -> Self {
+        Self::None
+    }
+
+    /// Capture a resource controller.
+    pub(crate) fn controlled(control: impl CommitmentResourceControl<F> + 'a) -> Self {
+        Self::Controlled(Arc::new(control))
+    }
+
+    pub(crate) fn validate_setup(&self, setup: &AkitaSetupDescriptor) -> Result<(), AkitaError> {
+        if let Self::Controlled(control) = self {
+            if control.setup_descriptor() != setup {
+                return Err(AkitaError::InvalidSetup(
+                    "commitment stage resources were prepared for a different setup".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn is_controlled(&self) -> bool {
+        matches!(self, Self::Controlled(_))
+    }
+
+    pub(crate) fn cache_owner_id(&self) -> Option<NttCacheOwnerId> {
+        match self {
+            Self::None => None,
+            Self::Controlled(control) => Some(control.cache_owner_id()),
+        }
+    }
+
+    pub(crate) fn ensure_ntt_slot(
+        &self,
+        requirement: CommitmentNttRequirement,
+    ) -> Result<(), AkitaError> {
+        match self {
+            Self::None => Err(AkitaError::InvalidSetup(
+                "commitment stage has no resources for its NTT requirement".into(),
+            )),
+            Self::Controlled(control) => control.ensure_ntt_slot(requirement),
+        }
+    }
+
+    pub(crate) fn requirement_is_cached(
+        &self,
+        requirement: CommitmentNttRequirement,
+    ) -> Result<bool, AkitaError> {
+        match self {
+            Self::None => Ok(false),
+            Self::Controlled(control) => control.requirement_is_cached(requirement),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn release_built_ntt_slots(&self) -> Result<usize, AkitaError> {
+        match self {
+            Self::None => Ok(0),
+            Self::Controlled(control) => control.release_built_ntt_slots(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, F, SP> CommitmentExecutor<'a, F, SP>
+where
+    F: Field + CanonicalEncoding,
+    SP: CommitmentStatePolicy<F>,
+{
+    fn routed_requirement(
+        requirement: RoutedNttRequirement,
+    ) -> Result<CommitmentNttRequirement, AkitaError> {
+        let route = requirement.commitment_route.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no route discriminator".into())
+        })?;
+        let stage = requirement.commitment_stage.ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment NTT requirement has no stage discriminator".into())
+        })?;
+        CommitmentNttRequirement::new(
+            requirement.fold_level,
+            route,
+            stage,
+            requirement.key,
+            requirement.routing_extent,
+        )
+    }
+
+    fn routed_resources(
+        &self,
+        route: CommitmentNttRoute,
+        stage: CommitmentNttStage,
+    ) -> Result<&StageResources<'a, F>, AkitaError> {
+        match route {
+            CommitmentNttRoute::InnerOnly => match stage {
+                CommitmentNttStage::Inner => self
+                    .inner()
+                    .map(|inner| &inner.stage.resources)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("commitment route has no inner resources".into())
+                    }),
+                CommitmentNttStage::Outer => Err(AkitaError::InvalidSetup(
+                    "inner-only route cannot request outer resources".into(),
+                )),
+            },
+            CommitmentNttRoute::InnerOuter => {
+                if let Some(fused) = self.fused() {
+                    return Ok(&fused.stage.resources);
+                }
+                let inner = self.inner().ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment route has no inner operation".into())
+                })?;
+                let outer = self.outer().ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment route has no outer operation".into())
+                })?;
+                Ok(match stage {
+                    CommitmentNttStage::Inner => &inner.stage.resources,
+                    CommitmentNttStage::Outer => &outer.stage.resources,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn prewarm_routed_requirement(
+        &self,
+        requirement: RoutedNttRequirement,
+    ) -> Result<(), AkitaError> {
+        let requirement = Self::routed_requirement(requirement)?;
+        self.routed_resources(requirement.route(), requirement.stage())?
+            .ensure_ntt_slot(requirement)
+    }
+
+    pub(crate) fn retained_routed_requirement(
+        &self,
+        requirement: RoutedNttRequirement,
+    ) -> Result<Option<NttCacheOwnerId>, AkitaError> {
+        let requirement = Self::routed_requirement(requirement)?;
+        let resources = self.routed_resources(requirement.route(), requirement.stage())?;
+        if !resources.requirement_is_cached(requirement)? {
+            return Ok(None);
+        }
+        Ok(resources.cache_owner_id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_types::{CommittedGroupParams, SisModulusProfileId};
+
+    fn full_plan() -> CommitmentExecutionPlan {
+        let params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q64Offset59,
+            64,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        )
+        .with_decomp(4, 8, 1, 2, 2)
+        .unwrap();
+        CommitmentExecutionPlan::for_root(&params.own_group().profile).unwrap()
+    }
+
+    #[test]
+    fn commitment_requirement_rejects_short_routing_extent() {
+        let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
+        assert!(CommitmentNttRequirement::new(
+            0,
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Inner,
+            key,
+            15,
+        )
+        .is_err());
+        assert!(CommitmentNttRequirement::new(
+            0,
+            CommitmentNttRoute::InnerOuter,
+            CommitmentNttStage::Inner,
+            key,
+            16,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn commitment_requirement_preserves_owning_fold() {
+        let key = NttCacheKey::from_matrix_shape(64, 2, 8, NttTransformDomain::Negacyclic).unwrap();
+        let requirement = CommitmentNttRequirement::new(
+            7,
+            CommitmentNttRoute::InnerOnly,
+            CommitmentNttStage::Inner,
+            key,
+            16,
+        )
+        .unwrap();
+        assert_eq!(requirement.fold_level(), 7);
+        assert_eq!(requirement.routed().fold_level, 7);
+    }
+
+    #[test]
+    fn selected_kernel_determines_stage_specific_requirements() {
+        let plan = full_plan();
+        let dense = plan
+            .inner_ntt_requirement(PolynomialType::Dense(super::super::DenseType::Coefficients))
+            .unwrap()
+            .unwrap();
+        assert_eq!(dense.stage(), CommitmentNttStage::Inner);
+        assert_eq!(dense.key().ring_d, plan.inner().ring_dimension);
+
+        let onehot = super::super::OneHotType::new(8, super::super::OneHotIndexWidth::U8).unwrap();
+        assert!(plan
+            .inner_ntt_requirement(PolynomialType::OneHot(onehot))
+            .unwrap()
+            .is_none());
+
+        let outer = plan.outer_ntt_requirement().unwrap().unwrap();
+        assert_eq!(outer.stage(), CommitmentNttStage::Outer);
+        assert_eq!(outer.key().domain, NttTransformDomain::Negacyclic);
+        assert_eq!(
+            outer.key().num_ring_elements,
+            plan.uncompressed()
+                .unwrap()
+                .outer()
+                .geometry()
+                .physical_input_width()
+        );
+    }
+
+    #[test]
+    fn plan_derived_requirements_preserve_nonzero_owner_fold() {
+        let params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q64Offset59,
+            64,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        )
+        .with_decomp(4, 8, 1, 2, 2)
+        .unwrap();
+        let terminal = CommitmentExecutionPlan::for_terminal(
+            &akita_types::TerminalFoldParams::from_expanded_group(params),
+            9,
+        )
+        .unwrap();
+        let inner = terminal
+            .inner_ntt_requirement(PolynomialType::Dense(super::super::DenseType::Coefficients))
+            .unwrap()
+            .unwrap();
+        assert_eq!(inner.fold_level(), 9);
+    }
+}

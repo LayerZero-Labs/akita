@@ -86,7 +86,7 @@ impl SetupRequirements {
                 scan.observe_schedule(row.schedule())?;
                 if Cfg::recursive_setup_planning() {
                     prefix_slot_ids.extend(
-                        crate::setup_prefix_slots::extract_setup_prefix_slot_ids_from_schedule(
+                        crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
                             row.schedule(),
                             &key.opening_layout()?,
                         )?,

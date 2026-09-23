@@ -499,7 +499,7 @@ form instead identifies a future small-space execution strategy; see the
   defines the head split, basis packing, column-to-row transpose, and public
   factor evaluation. In particular, `tensor_equality_factor_eval_at_point`
   evaluates Equation (12), not coordinates of an already evaluated equality.
-- [Prover orchestration](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/extension_opening_reduction.rs)
+- [Prover orchestration](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/opening_reduction.rs)
   absorbs claims and partials before sampling $\eta$, runs sumcheck, and
   records the terminal products. The
   [proof type](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)

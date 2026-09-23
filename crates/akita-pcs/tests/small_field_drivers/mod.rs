@@ -12,11 +12,8 @@
 
 use crate::common::load_workspace_scheme;
 use akita_config::CommitmentConfig;
+use akita_cpu_backend::CpuBackend;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    CommitmentSource, ComputeBackendSetup, CpuBackend, RuntimeCoefficientPackingBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, UniformProverStack,
-};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -26,7 +23,7 @@ use akita_types::{
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring, Zero};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
 /// Artifacts retained from a successful single-group roundtrip so focused
@@ -74,36 +71,32 @@ where
         + Valid
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
-        + AkitaSerialize,
+        + AkitaSerialize
+        + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
-    P: CommitmentSource<Cfg::Field> + RuntimeRootProvePoly<Cfg::Field>,
-    CpuBackend: RuntimeOpeningProveBackendFor<Cfg::Field, P>
-        + RuntimeCoefficientPackingBackendFor<Cfg::Field, P, Cfg::ExtField>,
+    P: akita_cpu_backend::CpuSource<Cfg::Field, Cfg::ExtField, Cfg> + Clone,
+    Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field>,
+    <Cfg::Field as Unreduced>::Wide: jolt_field::AdditiveGroup,
 {
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =
-        UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
-    let poly_refs = [poly];
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
-        vec![Cfg::ExtField::zero()],
+        vec![expected],
         commitment.clone(),
     )
     .expect("prover group")])
@@ -111,7 +104,6 @@ where
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         prover_claims,
         vec![hint],
-        vec![&poly_refs[..]],
         scheme.schedules(),
     )
     .expect("prover data");
@@ -119,7 +111,7 @@ where
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .batched_prove(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
         .expect("prove");
 
     let shape = proof.shape();

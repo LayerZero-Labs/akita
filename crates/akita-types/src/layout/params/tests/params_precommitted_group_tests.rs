@@ -594,7 +594,13 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
     assert_eq!(precommitted.polynomial_modulus_dimension(), 64);
     assert_eq!(precommitted.coordinate_plane_count(), 2);
     assert_eq!(precommitted.physical_coefficient_width(), 128);
-    assert_eq!(geometry.relation_coefficient_block_len().unwrap(), 64);
+    assert_eq!(
+        geometry
+            .rhs_layout()
+            .relation_coefficient_block_len()
+            .unwrap(),
+        64
+    );
 
     let layout = WitnessLayout::new(
         &lp,

@@ -5,15 +5,15 @@ mod workspace_schedules;
 use workspace_schedules::load_workspace_scheme;
 
 use akita_config::proof_optimized::fp128;
-use akita_prover::{
-    ComputeBackendSetup, CpuBackend, DensePoly, SelectedProverOpeningData, UniformProverStack,
-};
+use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 use jolt_field::CanonicalEncoding;
+use std::sync::Arc;
 
 type Config = fp128::Dense;
 type F = fp128::Field;
@@ -33,15 +33,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scheme = load_workspace_scheme::<Config>()?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
-    let backend = CpuBackend::DEFAULT;
-    let prepared = backend.prepare_setup(&setup)?;
-    let stack = UniformProverStack::uniform(&backend, &prepared, setup.expanded.as_ref())?;
-
-    let commit_output = scheme.commit(
-        &setup,
-        std::slice::from_ref(&polynomial),
-        stack.commitment(),
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    let backend = Arc::new(CpuBackend::<Config>::new(
+        setup.expanded.clone(),
+        scheme.schedules(),
+    )?);
+    let source = backend.import_source(vec![polynomial])?;
+    let commit_output = backend.commit(
+        &source,
+        GroupContext::scheduler_without_precommitted_groups(),
     )?;
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -49,11 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vec![evaluation],
         commit_output.committed_group.clone(),
     )?])?;
-    let polynomial_group = [&polynomial];
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
         prover_claims,
-        vec![commit_output.prover_state],
-        vec![&polynomial_group],
+        vec![commit_output.private_handle.clone()],
         scheme.schedules(),
     )?;
     let selection = prover_data.selection();
@@ -62,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof = scheme.batched_prove(
         &setup,
         prover_data,
-        &stack,
+        &backend,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )?;
