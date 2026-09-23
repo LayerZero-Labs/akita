@@ -126,7 +126,6 @@ fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixtu
             relation_rhs_coeff_len(relation_geometry.rhs_layout())
                 .unwrap()
         ]),
-        RingVec::from_coeffs(Vec::new()),
         lp.role_dims(),
     )
     .unwrap();

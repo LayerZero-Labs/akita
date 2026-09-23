@@ -143,7 +143,6 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             relation_rhs_coeff_len(relation_geometry.rhs_layout())
                 .unwrap()
         ]),
-        RingVec::from_coeffs(Vec::new()),
         params.role_dims(),
     )
     .unwrap();

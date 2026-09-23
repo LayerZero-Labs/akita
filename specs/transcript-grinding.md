@@ -1445,14 +1445,14 @@ The expected primary surfaces are:
 | transcript diagnostics | `crates/akita-transcript/src/labels.rs`, `logging.rs` | grind labels and events |
 | proof objects and shapes | `crates/akita-types/src/proof/levels.rs`, `shapes.rs` | top-level stream and exact bit shape |
 | plan and policy types | new focused module under `crates/akita-types/src/` | validated runs, canonical bytes, stream length |
-| plan derivation | `crates/akita-types/src/transcript_grinding_plan.rs`, typed adapter in `crates/akita-config/src/transcript_grinding_plan.rs` | single schedule and call-data constructor shared with exact sizing |
+| plan derivation | `crates/akita-types/src/transcript_grinding/plan.rs`, typed adapter in `crates/akita-config/src/transcript_grinding_plan.rs` | single schedule and call-data constructor shared with exact sizing |
 | descriptor | `crates/akita-types/src/instance_descriptor/` | digest-only binding for the canonical policy and plan |
 | fold response search | `crates/akita-prover/src/protocol/fold_grind.rs` | 12-bit stream writer |
 | sparse fold draw | `crates/akita-challenges/src/fold_draw.rs` | one root per group and indexed coordinates |
 | sparse sampling | `crates/akita-challenges/src/sampler/mod.rs`, `xof.rs` | fresh cursor per coordinate for both rejection modes |
 | sumcheck drivers | `crates/akita-sumcheck/src/drivers/`, callers in prover and verifier | captured grind cursor in challenge closures |
 | ring switching | `crates/akita-prover/src/protocol/ring_switch/`, `crates/akita-verifier/src/protocol/ring_switch.rs` | alpha and point query integration |
-| fold stages | `crates/akita-prover/src/protocol/core/`, `crates/akita-verifier/src/protocol/core/` | shared cursor replay |
+| fold stages | `crates/akita-prover/src/protocol/prove/`, `crates/akita-verifier/src/protocol/core/` | shared cursor replay |
 | proof size | `crates/akita-types/src/proof_size.rs`, layout sizing | exact packed bytes |
 | planning | `crates/akita-planner/`, `crates/akita-schedules/` | pricing, reporting, identity, generation |
 | CWSS design record | `specs/subring-coefficient-packing.md`, `book/src/how/security.md` | close full-vector blocker with coordinate forks |

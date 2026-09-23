@@ -117,7 +117,7 @@ address split.
 - Stage 1 verifier: `crates/akita-verifier/src/stages/stage1.rs`.
 - Relation preparation: `crates/akita-verifier/src/protocol/ring_switch.rs`.
 - Evaluation trace: `crates/akita-verifier/src/protocol/evaluation_trace.rs`.
-- Prover stage: `crates/akita-prover/src/protocol/sumcheck/relation_range_image/`.
+- Prover stage: `crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/`.
 
 The next chapter derives the evaluation trace path and explains its compact
 contraction. The packing equations are in

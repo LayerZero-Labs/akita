@@ -12,25 +12,25 @@ readme = "../../README.md"
 default = ["transcript-blake2b"]
 transcript-blake2b = [
   "akita-config/transcript-blake2b",
-  "akita-prover/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
   "akita-types/transcript-blake2b",
 ]
 transcript-keccak = [
   "akita-config/transcript-keccak",
-  "akita-prover/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
   "akita-types/transcript-keccak",
 ]
-parallel = ["jolt-field/parallel", "akita-prover/parallel"]
-disk-persistence = []
+parallel = ["jolt-field/parallel", "akita-cpu-backend/parallel"]
+disk-persistence = ["akita-cpu-backend/disk-persistence"]
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 tracing = "0.1"

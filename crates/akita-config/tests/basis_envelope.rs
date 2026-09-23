@@ -111,9 +111,16 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
 
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
-                witness_norms: honest_policy
-                    .witness_norms_for_inner_basis(root.inner().digits.log_basis, root.d_a())
-                    .expect("one-hot source geometry"),
+                witness_norms: Cfg::committed_source_contract()
+                    .unwrap()
+                    .source_norms(
+                        root.inner().digits.log_basis,
+                        root.inner().digits.num_digits,
+                        root.d_a(),
+                        1usize << nv,
+                    )
+                    .expect("one-hot source geometry")
+                    .fold_witness,
                 log_basis_response: root.open().digits.log_basis,
                 challenge_config: &root.fold_challenge_config(),
             })
