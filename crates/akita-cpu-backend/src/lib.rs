@@ -24,7 +24,6 @@ pub use opaque::{
     RootPolyMeta, RootPolyShape, RootPolynomialEvaluator,
 };
 pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
-pub(crate) use setup::commit_setup_prefix;
 pub use setup::AkitaProverSetup;
 pub use sources::{DensePoly, OneHotIndex, OneHotPoly, OneHotSource};
 

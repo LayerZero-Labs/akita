@@ -53,8 +53,7 @@ pub(crate) use capabilities::{
 };
 pub use contracts::SubringCoefficientPackingBatchKernel;
 pub(crate) use contracts::{
-    CpuWitnessBuildOutput, FoldHandleBackend, FoldResponseKernel, PreparedOpeningHandleBackend,
-    PreparedRelationWitness, RecursiveWitnessAssemblyFinish, RecursiveWitnessAssemblyStart,
+    CpuWitnessBuildOutput, FoldHandleBackend, FoldResponseKernel, PreparedRelationWitness,
     RingSwitchRelationKernel, TerminalFoldResponseKernel,
 };
 pub use decompose_fold::DecomposeFoldWitness;
@@ -235,31 +234,22 @@ where
             opening_binding.validate_group(group_index, opening_batch.num_groups())?;
             material_binding.validate_group(group_index, opening_batch.num_groups())?;
         }
-        let start =
-            crate::opaque::consumer_kernels::CpuWitnessBuildKernel::begin_recursive_witness(
-                self,
-                Some(self.prepared::<F>()?),
-                context.scope_id(),
-                prepared_opening_handles,
-                commitment_material_handles,
-                level,
-                opening_batch,
-                relation_rhs_layout,
-                group_commitments,
-            )?;
-        let (groups, opening_payload, opening_ring_dimension, mut build_handle) =
-            start.into_parts();
-        build_handle.binding = binding;
-        build_handle.opening_bindings = prepared_opening_handles
+        let opening_bindings = prepared_opening_handles
             .iter()
             .map(|opening| opening.operation_binding())
             .collect();
-        Ok(crate::opaque::RecursiveWitnessBuildStart::new(
-            groups,
-            opening_payload,
-            opening_ring_dimension,
-            build_handle,
-        ))
+        crate::opaque::witness_build::begin_cpu_recursive_witness(
+            self,
+            self.prepared::<F>()?,
+            binding,
+            opening_bindings,
+            prepared_opening_handles,
+            commitment_material_handles,
+            level,
+            opening_batch,
+            relation_rhs_layout,
+            group_commitments,
+        )
     }
 
     fn finish_recursive_witness(
@@ -288,15 +278,14 @@ where
             )?;
             binding.validate_group(group_index, build_handle.opening_batch.num_groups())?;
         }
-        let output =
-            crate::opaque::consumer_kernels::CpuWitnessBuildKernel::finish_recursive_witness(
-                self,
-                Some(self.prepared::<F>()?),
-                build_handle,
-                fold_inputs,
-                public_inputs,
-                plan,
-            )?;
+        let output = crate::opaque::witness_build::finish_cpu_recursive_witness(
+            self,
+            self.prepared::<F>()?,
+            build_handle,
+            fold_inputs,
+            public_inputs,
+            plan,
+        )?;
         let (instance, mut witness_handle) = output.into_instance_and_witness_handle();
         let witness_layout = instance.segment_layout(&level, None)?;
         let geometry = level.relation_address_geometry(

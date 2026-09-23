@@ -10,12 +10,49 @@ use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPr
 use jolt_field::{CanonicalEncoding, Field};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 type SetupPrefixCacheValue = Arc<dyn Any + Send + Sync>;
-type SetupPrefixCacheCell = Arc<Mutex<Option<SetupPrefixCacheValue>>>;
+
+enum SetupPrefixCacheState {
+    Computing,
+    Ready(SetupPrefixCacheValue),
+    Failed,
+}
+
+struct SetupPrefixCacheCell {
+    state: Mutex<SetupPrefixCacheState>,
+    ready: Condvar,
+}
+
+impl SetupPrefixCacheCell {
+    fn computing() -> Self {
+        Self {
+            state: Mutex::new(SetupPrefixCacheState::Computing),
+            ready: Condvar::new(),
+        }
+    }
+}
 
 /// Reusable owner of CPU setup resources and independent proof scopes.
+///
+/// Prepared-opening handles are linear protocol capabilities and cannot be
+/// cloned, even though their immutable backing allocations may be shared
+/// internally.
+///
+/// ```compile_fail
+/// use akita_cpu_backend::CpuBackend;
+/// use akita_prover::ProverHandleFamily;
+/// use jolt_field::Prime128OffsetA7F7;
+///
+/// type Opening = <CpuBackend as ProverHandleFamily<
+///     Prime128OffsetA7F7,
+///     Prime128OffsetA7F7,
+/// >>::PreparedOpeningHandle;
+///
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<Opening>();
+/// ```
 pub struct CpuBackend {
     identity: Arc<BackendIdentity>,
     prepared: Box<dyn CpuSetupResources>,
@@ -30,7 +67,7 @@ pub struct CpuBackend {
     /// wasted work. Values are type-erased because the backend is erased over
     /// its field; `validate_config` has already pinned the field before any
     /// lookup, so the downcast is exact.
-    setup_prefix_cache: Mutex<BTreeMap<SetupPrefixSlotId, SetupPrefixCacheCell>>,
+    setup_prefix_cache: Mutex<BTreeMap<SetupPrefixSlotId, Arc<SetupPrefixCacheCell>>>,
 }
 
 trait CpuSetupResources: Send + Sync {
@@ -163,29 +200,89 @@ impl CpuBackend {
         T: Any + Send + Sync,
         Derive: FnOnce() -> Result<T, AkitaError>,
     {
-        let cell = {
-            let mut cache = self
-                .setup_prefix_cache
+        let mut derive = Some(derive);
+        loop {
+            let (cell, derive_here) = {
+                let mut cache = self.setup_prefix_cache.lock().map_err(|_| {
+                    AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
+                })?;
+                match cache.get(id) {
+                    Some(cell) => (Arc::clone(cell), false),
+                    None => {
+                        let cell = Arc::new(SetupPrefixCacheCell::computing());
+                        cache.insert(id.clone(), Arc::clone(&cell));
+                        (cell, true)
+                    }
+                }
+            };
+
+            if derive_here {
+                let derive = derive.take().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "setup prefix cache derivation was already consumed".into(),
+                    )
+                })?;
+                match derive() {
+                    Ok(value) => {
+                        let value = Arc::new(value);
+                        let erased: SetupPrefixCacheValue = value.clone();
+                        let mut state = cell.state.lock().map_err(|_| {
+                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
+                        })?;
+                        *state = SetupPrefixCacheState::Ready(erased);
+                        cell.ready.notify_all();
+                        return Ok(value);
+                    }
+                    Err(error) => {
+                        let mut state = cell.state.lock().map_err(|_| {
+                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
+                        })?;
+                        *state = SetupPrefixCacheState::Failed;
+                        let mut cache = self.setup_prefix_cache.lock().map_err(|_| {
+                            AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
+                        })?;
+                        if cache
+                            .get(id)
+                            .is_some_and(|current| Arc::ptr_eq(current, &cell))
+                        {
+                            cache.remove(id);
+                        }
+                        cell.ready.notify_all();
+                        return Err(error);
+                    }
+                }
+            }
+
+            let mut state = cell
+                .state
                 .lock()
-                .map_err(|_| AkitaError::InvalidSetup("setup prefix cache lock poisoned".into()))?;
-            Arc::clone(
-                cache
-                    .entry(id.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(None))),
-            )
-        };
-        let mut cached = cell
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("setup prefix slot lock poisoned".into()))?;
-        if let Some(value) = cached.as_ref() {
-            return Arc::clone(value).downcast::<T>().map_err(|_| {
-                AkitaError::InvalidInput("setup prefix material belongs to another field".into())
-            });
+                .map_err(|_| AkitaError::InvalidSetup("setup prefix slot lock poisoned".into()))?;
+            loop {
+                match &*state {
+                    SetupPrefixCacheState::Computing => {
+                        state = cell.ready.wait(state).map_err(|_| {
+                            AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
+                        })?;
+                    }
+                    SetupPrefixCacheState::Ready(value) => {
+                        return Arc::clone(value).downcast::<T>().map_err(|_| {
+                            AkitaError::InvalidInput(
+                                "setup prefix material belongs to another field".into(),
+                            )
+                        });
+                    }
+                    SetupPrefixCacheState::Failed => break,
+                }
+            }
         }
-        let value = Arc::new(derive()?);
-        let erased: SetupPrefixCacheValue = value.clone();
-        *cached = Some(erased);
-        Ok(value)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn setup_prefix_cache_len(&self) -> Result<usize, AkitaError> {
+        self.setup_prefix_cache
+            .lock()
+            .map(|cache| cache.len())
+            .map_err(|_| AkitaError::InvalidSetup("setup prefix cache lock poisoned".into()))
     }
 
     pub(crate) fn validate_config<Cfg: CommitmentConfig>(&self) -> Result<(), AkitaError> {

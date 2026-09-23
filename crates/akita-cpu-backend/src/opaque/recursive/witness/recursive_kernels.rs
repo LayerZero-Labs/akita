@@ -88,7 +88,7 @@ pub(crate) fn prepare_recursive_witness_opening<F, E, B, const D: usize>(
 ) -> Result<
     crate::opaque::PreparedGroupOpening<
         E,
-        <B as crate::opaque::PreparedOpeningHandleBackend<F, E>>::PreparedOpeningHandle,
+        <B as akita_prover::ProverHandleFamily<F, E>>::PreparedOpeningHandle,
     >,
     AkitaError,
 >

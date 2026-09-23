@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use crate::opaque::DecomposeFoldWitness;
 
-#[derive(Clone)]
 enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
     EvaluationTrace {
         point: akita_types::PreparedOpeningPoint<F, E>,
@@ -32,7 +31,6 @@ enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
 /// Consumer-private prepared opening state. Its witness-derived rows never
 /// appear in a protocol-facing carrier.
 #[doc(hidden)]
-#[derive(Clone)]
 pub struct CpuPreparedOpeningHandle<F: Field, E: Field> {
     binding: crate::opaque::OperationBinding,
     kind: OpaquePreparedGroupOpeningKind<F, E>,

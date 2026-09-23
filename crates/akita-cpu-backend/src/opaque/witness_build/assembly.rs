@@ -499,384 +499,251 @@ pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
 /// transcript-owned fold grind. No protocol module can inspect its E/T/R or
 /// compression material.
 pub(crate) struct CpuRecursiveWitnessAssemblyState<F: Field + CanonicalEncoding> {
-    level: CommittedGroupParams,
-    opening_batch: akita_types::OpeningClaimsLayout,
     group_openings: Vec<PreparedOpeningWitness<F>>,
     d_quotients: RelationDQuotientWitness<F>,
     inner_relation: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
     compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
-macro_rules! impl_cpu_recursive_witness_assembly_kernel {
-    ($backend:ty) => {
-        impl<F, E>
-            crate::opaque::consumer_kernels::RecursiveWitnessAssemblyKernel<
-                F,
-                E,
-                crate::opaque::CpuPreparedOpeningHandle<F, E>,
-                crate::opaque::CpuAcceptedFold<F>,
-                CpuCommitmentMaterial<F>,
-            > for $backend
-        where
-            F: Field + CanonicalEncoding + AkitaSerialize + Send + 'static,
-            E: jolt_field::ExtField<F>,
-        {
-            type State = CpuRecursiveWitnessAssemblyState<F>;
-            type Witness = RingRelationWitness<F>;
-
-            fn begin_recursive_witness_assembly(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
-                commitment_material: Vec<CpuCommitmentMaterial<F>>,
-                level: &CommittedGroupParams,
-                opening_batch: &akita_types::OpeningClaimsLayout,
-                relation_rhs_layout: &akita_types::RelationRhsLayout,
-                group_commitments: &[RingVec<F>],
-            ) -> Result<crate::opaque::RecursiveWitnessAssemblyStart<F, E, Self::State>, AkitaError> {
-                let prepared = prepared.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "recursive witness assembly requires prepared setup".into(),
-                    )
-                })?;
-                let ctx = OperationCtx::new(
-                    self,
-                    prepared,
-                    crate::opaque::ComputeBackendSetup::prepared_expanded_setup(self, prepared),
-                )?;
-                if prepared_group_openings.len() != opening_batch.num_groups()
-                    || commitment_material.len() != opening_batch.num_groups()
-                {
-                    return Err(AkitaError::InvalidSize {
-                        expected: opening_batch.num_groups(),
-                        actual: prepared_group_openings.len().min(commitment_material.len()),
-                    });
-                }
-                let geometry = akita_types::RelationWitnessGeometry::for_level(
-                    level,
-                    opening_batch,
-                    E::DEGREE,
-                )?;
-                let mut group_openings = Vec::with_capacity(opening_batch.num_groups());
-                let mut public_groups = Vec::with_capacity(opening_batch.num_groups());
-                for (group_index, opening) in prepared_group_openings.iter().enumerate() {
-                    let group_dims = level.group_role_dims_geometry(opening_batch, group_index)?;
-                    let (opening, public_kind, scalar_openings) = dispatch_for_field!(
-                        ProtocolDispatchSlot::Role(RingRole::Opening),
-                        F,
-                        group_dims.d_d(),
-                        |D_D| prepare_group_opening_witness::<F, E, D_D>(
-                            opening,
-                            level,
-                            opening_batch,
-                            &geometry,
-                            group_index,
-                            group_dims,
-                        )
-                    )?;
-                    group_openings.push(opening);
-                    public_groups.push(crate::opaque::PreparedRelationGroupPublic::new(
-                        public_kind,
-                        scalar_openings,
-                    ));
-                }
-                crate::arithmetic::requirements::warm_relation_ntt_cache(
-                    self, prepared, level,
-                )?;
-                let dims = level.role_dims();
-                let (v, d_quotients) = dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Opening),
-                    F,
-                    dims.d_d(),
-                    |D_D| prepare_opening_relation_rows::<F, $backend, D_D>(
-                        &ctx,
-                        opening_batch,
-                        &group_openings,
-                        level.has_preceding_groups(),
-                        level.open().matrix.output_rank(),
-                        level.shared_d_digit_log_basis(),
-                        level.ring_relation_mode,
-                    )
-                )?;
-                let payload = prepare_relation_payload(
-                    &ctx,
-                    level,
-                    opening_batch,
-                    relation_rhs_layout,
-                    group_commitments,
-                    commitment_material,
-                    &v,
-                )?;
-                let PreparedRelationPayload {
-                    inner,
-                    relation_rhs,
-                    opening_payload,
-                    opening_payload_ring_dimension,
-                    compression,
-                } = payload;
-                Ok(crate::opaque::RecursiveWitnessAssemblyStart {
-                    groups: public_groups,
-                    relation_rhs,
-                    opening_payload,
-                    opening_payload_ring_dimension,
-                    v,
-                    state: CpuRecursiveWitnessAssemblyState {
-                        level: level.clone(),
-                        opening_batch: opening_batch.clone(),
-                        group_openings,
-                        d_quotients,
-                        inner_relation: inner,
-                        compression,
-                    },
-                })
-            }
-
-            fn finish_recursive_witness_assembly(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                state: Self::State,
-                folds: Vec<crate::opaque::RecursiveWitnessFoldInput<crate::opaque::CpuAcceptedFold<F>>>,
-            ) -> Result<crate::opaque::RecursiveWitnessAssemblyFinish<F, Self::Witness>, AkitaError> {
-                let _ = prepared.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "recursive witness assembly requires prepared setup".into(),
-                    )
-                })?;
-                let CpuRecursiveWitnessAssemblyState {
-                    level,
-                    opening_batch,
-                    group_openings,
-                    d_quotients,
-                    inner_relation,
-                    compression,
-                } = state;
-                if folds.len() != opening_batch.num_groups()
-                    || group_openings.len() != folds.len()
-                    || inner_relation.len() != folds.len()
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                let mut relation_group_openings = Vec::with_capacity(folds.len());
-                let mut group_witnesses = Vec::with_capacity(folds.len());
-                for (group_index, ((fold, opening), inner_relation)) in folds
-                    .into_iter()
-                    .zip(group_openings)
-                    .zip(inner_relation)
-                    .enumerate()
-                {
-                    let (fold_handle, challenges) = fold.into_fold_handle_and_challenges();
-                    let group_dims = level.group_role_dims_geometry(&opening_batch, group_index)?;
-                    let source_count = opening_batch.group_layout(group_index)?.num_polynomials();
-                    if inner_relation.ring_dimension() != group_dims.d_a()
-                        || inner_relation.source_count() != source_count
-                    {
-                        return Err(AkitaError::InvalidInput(
-                            "inner-relation state shape does not match its commitment group".into(),
-                        ));
-                    }
-                    let (public, witness) = opening.into_relation_group(
-                        fold_handle,
-                        challenges,
-                        inner_relation,
-                        group_dims,
-                    )?;
-                    relation_group_openings.push(public);
-                    group_witnesses.push(witness);
-                }
-                Ok(crate::opaque::RecursiveWitnessAssemblyFinish {
-                    group_openings: relation_group_openings,
-                    witness: RingRelationWitness::from_groups(
-                        group_witnesses,
-                        d_quotients,
-                        compression,
-                    ),
-                })
-            }
-        }
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn begin_cpu_recursive_witness<F, E>(
+    backend: &crate::opaque::CpuBackend,
+    prepared: &crate::opaque::CpuPreparedSetup<F>,
+    binding: crate::opaque::OperationBinding,
+    opening_bindings: Vec<crate::opaque::OperationBinding>,
+    prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
+    commitment_material: Vec<CpuCommitmentMaterial<F>>,
+    level: &CommittedGroupParams,
+    opening_batch: &akita_types::OpeningClaimsLayout,
+    relation_rhs_layout: &akita_types::RelationRhsLayout,
+    group_commitments: &[RingVec<F>],
+) -> Result<
+    crate::opaque::RecursiveWitnessBuildStart<
+        F,
+        E,
+        crate::opaque::CpuWitnessBuildHandle<F, E>,
+    >,
+    AkitaError,
+>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
+    E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
+{
+    let ctx = OperationCtx::new(
+        backend,
+        prepared,
+        crate::opaque::ComputeBackendSetup::prepared_expanded_setup(backend, prepared),
+    )?;
+    if prepared_group_openings.len() != opening_batch.num_groups()
+        || commitment_material.len() != opening_batch.num_groups()
+        || opening_bindings.len() != opening_batch.num_groups()
+    {
+        return Err(AkitaError::InvalidSize {
+            expected: opening_batch.num_groups(),
+            actual: prepared_group_openings
+                .len()
+                .min(commitment_material.len())
+                .min(opening_bindings.len()),
+        });
+    }
+    let geometry =
+        akita_types::RelationWitnessGeometry::for_level(level, opening_batch, E::DEGREE)?;
+    let mut group_openings = Vec::with_capacity(opening_batch.num_groups());
+    let mut public_groups = Vec::with_capacity(opening_batch.num_groups());
+    for (group_index, opening) in prepared_group_openings.iter().enumerate() {
+        let group_dims = level.group_role_dims_geometry(opening_batch, group_index)?;
+        let (opening, public_kind, scalar_openings) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            group_dims.d_d(),
+            |D_D| prepare_group_opening_witness::<F, E, D_D>(
+                opening,
+                level,
+                opening_batch,
+                &geometry,
+                group_index,
+                group_dims,
+            )
+        )?;
+        group_openings.push(opening);
+        public_groups.push(crate::opaque::PreparedRelationGroupPublic::new(
+            public_kind,
+            scalar_openings,
+        ));
+    }
+    crate::arithmetic::requirements::warm_relation_ntt_cache(backend, prepared, level)?;
+    let dims = level.role_dims();
+    let (v, d_quotients) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Opening),
+        F,
+        dims.d_d(),
+        |D_D| prepare_opening_relation_rows::<F, crate::opaque::CpuBackend, D_D>(
+            &ctx,
+            opening_batch,
+            &group_openings,
+            level.has_preceding_groups(),
+            level.open().matrix.output_rank(),
+            level.shared_d_digit_log_basis(),
+            level.ring_relation_mode,
+        )
+    )?;
+    let payload = prepare_relation_payload(
+        &ctx,
+        level,
+        opening_batch,
+        relation_rhs_layout,
+        group_commitments,
+        commitment_material,
+        &v,
+    )?;
+    let PreparedRelationPayload {
+        inner,
+        relation_rhs,
+        opening_payload,
+        opening_payload_ring_dimension,
+        compression,
+    } = payload;
+    let build_handle = crate::opaque::CpuWitnessBuildHandle {
+        binding,
+        opening_bindings,
+        assembly_state: CpuRecursiveWitnessAssemblyState {
+            group_openings,
+            d_quotients,
+            inner_relation: inner,
+            compression,
+        },
+        public_groups: public_groups.clone(),
+        relation_rhs,
+        v,
+        level: level.clone(),
+        opening_batch: opening_batch.clone(),
     };
+    Ok(crate::opaque::RecursiveWitnessBuildStart::new(
+        public_groups,
+        opening_payload,
+        opening_payload_ring_dimension,
+        build_handle,
+    ))
 }
 
-impl_cpu_recursive_witness_assembly_kernel!(crate::opaque::CpuBackend);
-
-macro_rules! impl_cpu_opaque_recursive_witness_build {
-    ($backend:ty) => {
-        impl<F, E> crate::opaque::consumer_kernels::CpuWitnessBuildKernel<F, E> for $backend
-        where
-            F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
-            E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
+pub(crate) fn finish_cpu_recursive_witness<F, E>(
+    backend: &crate::opaque::CpuBackend,
+    prepared: &crate::opaque::CpuPreparedSetup<F>,
+    build_handle: crate::opaque::CpuWitnessBuildHandle<F, E>,
+    fold_inputs: Vec<crate::opaque::RecursiveWitnessFoldInput<crate::opaque::CpuAcceptedFold<F>>>,
+    public_inputs: crate::opaque::RecursiveWitnessPublicInputs<'_, F>,
+    plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
+) -> Result<
+    crate::opaque::CpuWitnessBuildOutput<F, crate::opaque::CpuWitnessHandle>,
+    AkitaError,
+>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
+    E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
+{
+    for (group_index, fold_input) in fold_inputs.iter().enumerate() {
+        let group_params = build_handle
+            .level
+            .group_params_geometry(&build_handle.opening_batch, group_index)?;
+        fold_input.fold_handle().validate_for_build(
+            &build_handle.binding,
+            &group_params,
+            build_handle
+                .opening_batch
+                .group_layout(group_index)?
+                .num_polynomials(),
+            build_handle.level.witness_chunk.num_chunks,
+        )?;
+    }
+    let crate::opaque::CpuWitnessBuildHandle {
+        binding,
+        assembly_state,
+        public_groups,
+        relation_rhs,
+        v,
+        level,
+        opening_batch,
+        ..
+    } = build_handle;
+    let CpuRecursiveWitnessAssemblyState {
+        group_openings,
+        d_quotients,
+        inner_relation,
+        compression,
+    } = assembly_state;
+    if fold_inputs.len() != opening_batch.num_groups()
+        || group_openings.len() != fold_inputs.len()
+        || inner_relation.len() != fold_inputs.len()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut relation_group_openings = Vec::with_capacity(fold_inputs.len());
+    let mut group_witnesses = Vec::with_capacity(fold_inputs.len());
+    for (group_index, ((fold, opening), inner_relation)) in fold_inputs
+        .into_iter()
+        .zip(group_openings)
+        .zip(inner_relation)
+        .enumerate()
+    {
+        let (fold_handle, challenges) = fold.into_fold_handle_and_challenges();
+        let group_dims = level.group_role_dims_geometry(&opening_batch, group_index)?;
+        let source_count = opening_batch.group_layout(group_index)?.num_polynomials();
+        if inner_relation.ring_dimension() != group_dims.d_a()
+            || inner_relation.source_count() != source_count
         {
-            fn begin_recursive_witness(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                scope_id: crate::opaque::ProofScopeId,
-                prepared_opening_handles: &[Self::PreparedOpeningHandle],
-                commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
-                level: &CommittedGroupParams,
-                opening_batch: &akita_types::OpeningClaimsLayout,
-                relation_rhs_layout: &akita_types::RelationRhsLayout,
-                group_commitments: &[RingVec<F>],
-            ) -> Result<
-                crate::opaque::RecursiveWitnessBuildStart<
-                    F,
-                    E,
-                    Self::WitnessBuildHandle,
-                >,
-                AkitaError,
-            > {
-                let prepared = prepared.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "recursive witness construction requires prepared setup".into(),
-                    )
-                })?;
-                let consumer_id = u64::try_from(scope_id.raw() >> 64).map_err(|_| {
-                    AkitaError::InvalidInput("proof-scope consumer identifier overflow".into())
-                })?;
-                let setup_digest = akita_types::setup_seed_digest(
-                    &crate::opaque::ComputeBackendSetup::prepared_expanded_setup(self, prepared)
-                        .descriptor
-                        .setup_seed,
-                )
-                .map_err(|err| AkitaError::InvalidSetup(format!("setup identity: {err}")))?;
-                let start = crate::opaque::consumer_kernels::RecursiveWitnessAssemblyKernel::begin_recursive_witness_assembly(
-                    self,
-                    Some(prepared),
-                    prepared_opening_handles,
-                    commitment_material_handles,
-                    level,
-                    opening_batch,
-                    relation_rhs_layout,
-                    group_commitments,
-                )?;
-                let crate::opaque::RecursiveWitnessAssemblyStart {
-                    groups,
-                    relation_rhs,
-                    opening_payload,
-                    opening_payload_ring_dimension,
-                    v,
-                    state,
-                } = start;
-                let build_handle = crate::opaque::CpuWitnessBuildHandle {
-                    binding: crate::opaque::OperationBinding::new(
-                        consumer_id,
-                        scope_id,
-                        setup_digest,
-                        0,
-                        self.owner().next_operation_id()?,
-                    ),
-                    opening_bindings: Vec::new(),
-                    assembly_state: state,
-                    public_groups: groups.clone(),
-                    relation_rhs: relation_rhs.clone(),
-                    v: v.clone(),
-                    level: level.clone(),
-                    opening_batch: opening_batch.clone(),
-                };
-                Ok(crate::opaque::RecursiveWitnessBuildStart::new(
-                    groups,
-                    opening_payload,
-                    opening_payload_ring_dimension,
-                    build_handle,
-                ))
-            }
-
-            fn finish_recursive_witness(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                build_handle: Self::WitnessBuildHandle,
-                fold_inputs: Vec<
-                    crate::opaque::RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>,
-                >,
-                public_inputs: crate::opaque::RecursiveWitnessPublicInputs<'_, F>,
-                plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
-            ) -> Result<
-                crate::opaque::CpuWitnessBuildOutput<F, Self::WitnessHandle>,
-                AkitaError,
-            > {
-                let prepared = prepared.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "recursive witness construction requires prepared setup".into(),
-                    )
-                })?;
-                for (group_index, fold_input) in fold_inputs.iter().enumerate() {
-                    let group_params =
-                        build_handle.level.group_params_geometry(&build_handle.opening_batch, group_index)?;
-                    fold_input.fold_handle().validate_for_build(
-                        &build_handle.binding,
-                        &group_params,
-                        build_handle
-                            .opening_batch
-                            .group_layout(group_index)?
-                            .num_polynomials(),
-                        build_handle.level.witness_chunk.num_chunks,
-                    )?;
-                }
-                let crate::opaque::CpuWitnessBuildHandle {
-                    binding,
-                    assembly_state,
-                    public_groups,
-                    relation_rhs,
-                    v,
-                    level,
-                    opening_batch,
-                    ..
-                } = build_handle;
-                let finish = <$backend as crate::opaque::consumer_kernels::RecursiveWitnessAssemblyKernel<
-                    F,
-                    E,
-                    crate::opaque::CpuPreparedOpeningHandle<F, E>,
-                    crate::opaque::CpuAcceptedFold<F>,
-                    CpuCommitmentMaterial<F>,
-                >>::finish_recursive_witness_assembly(
-                    self, Some(prepared), assembly_state, fold_inputs,
-                )?;
-                let crate::opaque::RecursiveWitnessAssemblyFinish {
-                    group_openings,
-                    witness,
-                } = finish;
-                let dims = level.role_dims();
-                RingRelationInstance::check_v_shape_for_level(&v, &level)?;
-                let instance = RingRelationInstance::new(
-                    group_openings,
-                    public_inputs.extension_degree,
-                    opening_batch.clone(),
-                    public_inputs.gamma.to_vec(),
-                    public_inputs.row_coefficient_rings.clone(),
-                    relation_rhs,
-                    dims,
-                )?;
-                crate::protocol::validate_prepared_relation_groups(
-                    &public_groups,
-                    &level,
-                    &opening_batch,
-                    &instance,
-                )?;
-                if instance.segment_layout(&level, None)?.live_coeff_len() != plan.logical_len() {
-                    return Err(AkitaError::InvalidInput(
-                        "recursive witness plan disagrees with its relation instance".into(),
-                    ));
-                }
-                let expanded =
-                    crate::opaque::ComputeBackendSetup::prepared_expanded_setup(self, prepared);
-                let ctx = OperationCtx::new(self, prepared, expanded)?;
-                let witness_handle = cpu_recursive_witness_build(
-                    &instance,
-                    witness,
-                    &ctx,
-                    &ctx,
-                    &level,
-                    plan.commitment_ring_dimension(),
-                    binding,
-                )?;
-                Ok(crate::opaque::CpuWitnessBuildOutput::new(
-                    instance,
-                    witness_handle,
-                ))
-            }
+            return Err(AkitaError::InvalidInput(
+                "inner-relation state shape does not match its commitment group".into(),
+            ));
         }
-    };
+        let (public, witness) = opening.into_relation_group(
+            fold_handle,
+            challenges,
+            inner_relation,
+            group_dims,
+        )?;
+        relation_group_openings.push(public);
+        group_witnesses.push(witness);
+    }
+    let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression);
+    let dims = level.role_dims();
+    RingRelationInstance::check_v_shape_for_level(&v, &level)?;
+    let instance = RingRelationInstance::new(
+        relation_group_openings,
+        public_inputs.extension_degree,
+        opening_batch.clone(),
+        public_inputs.gamma.to_vec(),
+        public_inputs.row_coefficient_rings.clone(),
+        relation_rhs,
+        dims,
+    )?;
+    crate::protocol::validate_prepared_relation_groups(
+        &public_groups,
+        &level,
+        &opening_batch,
+        &instance,
+    )?;
+    if instance.segment_layout(&level, None)?.live_coeff_len() != plan.logical_len() {
+        return Err(AkitaError::InvalidInput(
+            "recursive witness plan disagrees with its relation instance".into(),
+        ));
+    }
+    let expanded =
+        crate::opaque::ComputeBackendSetup::prepared_expanded_setup(backend, prepared);
+    let ctx = OperationCtx::new(backend, prepared, expanded)?;
+    let witness_handle = cpu_recursive_witness_build(
+        &instance,
+        witness,
+        &ctx,
+        &ctx,
+        &level,
+        plan.commitment_ring_dimension(),
+        binding,
+    )?;
+    Ok(crate::opaque::CpuWitnessBuildOutput::new(
+        instance,
+        witness_handle,
+    ))
 }
-
-impl_cpu_opaque_recursive_witness_build!(crate::opaque::CpuBackend);
 
 fn prepare_relation_payload<F, B>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,

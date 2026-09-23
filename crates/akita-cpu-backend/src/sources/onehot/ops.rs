@@ -40,7 +40,7 @@ impl<'a, F: Field, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
 
 /// Same-point batch view over several one-hot polynomials.
 ///
-/// `D` is the kernel dispatch dimension, as in [`OneHotView`].
+/// `D` is the ring dimension selected for this kernel invocation.
 #[derive(Debug, Clone, Copy)]
 pub struct OneHotBatchView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],

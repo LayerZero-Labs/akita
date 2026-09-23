@@ -6,7 +6,7 @@ use jolt_field::{CanonicalEncoding, Field};
 /// These buffers are an implementation detail of the in-tree backends. The
 /// protocol boundary transports only `PreparedOpeningHandle`.
 pub(crate) trait PreparedGroupOpeningKernel<F, E>:
-    crate::opaque::PreparedOpeningHandleBackend<F, E> + crate::opaque::ComputeBackendSetup<F>
+    akita_prover::ProverHandleFamily<F, E> + crate::opaque::ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,
     E: Field,

@@ -12,26 +12,16 @@ use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId};
 use jolt_field::{CanonicalEncoding, Field};
 
-/// Commit one actual power-of-two flat prefix of the shared setup matrix.
-///
-/// The witness is the coefficient form of `S^flat[0..n_prefix]`. The caller
-/// supplies the checked slot identity whose profile commits that exact prefix.
-///
-/// # Errors
-///
-/// Returns an error if shapes overflow, the prefix does not fit the setup matrix,
-/// or backend commitment fails.
-pub(crate) fn commit_setup_prefix<F, SP>(
+pub(crate) struct ValidatedSetupPrefixCommitment<'a> {
+    id: &'a SetupPrefixSlotId,
+    n_prefix: usize,
+    plan: CommitmentExecutionPlan,
+}
+
+pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     expanded: &AkitaExpandedSetup<F>,
-    executor: &CommitmentExecutor<'_, F, SP>,
-    id: &SetupPrefixSlotId,
-) -> Result<SetupPrefixSlot<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + 'static,
-    SP: CommitmentStatePolicy<F>,
-    SP::State: IntoPortableCommitmentState<F>,
-{
-    executor.validate_setup(expanded)?;
+    id: &'a SetupPrefixSlotId,
+) -> Result<ValidatedSetupPrefixCommitment<'a>, AkitaError> {
     let commitment_profile = &id.commitment_profile;
     commitment_profile.validate(
         commitment_profile
@@ -64,25 +54,66 @@ where
             "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
-
-    let available_field_len = expanded.shared_matrix().num_field_elements();
-    if n_prefix > available_field_len {
+    if n_prefix > expanded.shared_matrix().num_field_elements() {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
+    Ok(ValidatedSetupPrefixCommitment {
+        id,
+        n_prefix,
+        plan: CommitmentExecutionPlan::for_setup_prefix(id)?,
+    })
+}
 
+/// Commit one actual power-of-two flat prefix of the shared setup matrix.
+///
+/// The witness is the coefficient form of `S^flat[0..n_prefix]`. The caller
+/// supplies the checked slot identity whose profile commits that exact prefix.
+///
+/// # Errors
+///
+/// Returns an error if shapes overflow, the prefix does not fit the setup matrix,
+/// or backend commitment fails.
+#[cfg(test)]
+fn commit_setup_prefix<F, SP>(
+    expanded: &AkitaExpandedSetup<F>,
+    executor: &CommitmentExecutor<'_, F, SP>,
+    id: &SetupPrefixSlotId,
+) -> Result<SetupPrefixSlot<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: IntoPortableCommitmentState<F>,
+{
+    let validated = validate_setup_prefix_commitment(expanded, id)?;
+    commit_validated_setup_prefix(expanded, executor, validated)
+}
+
+pub(crate) fn commit_validated_setup_prefix<F, SP>(
+    expanded: &AkitaExpandedSetup<F>,
+    executor: &CommitmentExecutor<'_, F, SP>,
+    validated: ValidatedSetupPrefixCommitment<'_>,
+) -> Result<SetupPrefixSlot<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    SP: CommitmentStatePolicy<F>,
+    SP::State: IntoPortableCommitmentState<F>,
+{
+    executor.validate_setup(expanded)?;
+    let id = validated.id;
+    let commitment_profile = &id.commitment_profile;
     let source_coefficients = expanded
         .shared_matrix()
         .as_field_slice()
-        .get(..n_prefix)
+        .get(..validated.n_prefix)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix length exceeds shared matrix capacity".into())
         })?
         .to_vec();
     let source =
         DensePoly::from_field_evals(commitment_profile.group.num_vars(), source_coefficients)?;
-    let plan = CommitmentExecutionPlan::for_setup_prefix(id)?;
+    let plan = validated.plan;
     let sources: [&dyn CommitmentSource<F>; 1] = [&source];
     executor.preflight_portable_export(&plan, &sources)?;
     let output = executor.execute_full(&plan, &sources)?;

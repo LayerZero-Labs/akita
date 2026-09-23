@@ -62,6 +62,8 @@ impl CpuBackend {
         F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
     {
         let prepared = self.prepared::<F>()?;
+        let validated =
+            crate::setup::setup_prefix::validate_setup_prefix_commitment(&prepared.expanded, id)?;
         self.memoized_setup_prefix(id, || {
             let executor = CommitmentExecutor::cpu(
                 self,
@@ -70,7 +72,11 @@ impl CpuBackend {
                 vec![PolynomialType::Dense(DenseType::Coefficients)],
                 PortableStatePolicy,
             )?;
-            let artifact = crate::commit_setup_prefix(&prepared.expanded, &executor, id)?;
+            let artifact = crate::setup::setup_prefix::commit_validated_setup_prefix(
+                &prepared.expanded,
+                &executor,
+                validated,
+            )?;
             Ok(CachedSetupPrefix {
                 artifact,
                 source: self.setup_prefix_source(id)?,
@@ -86,6 +92,11 @@ impl CpuBackend {
     where
         F: Field + CanonicalEncoding + 'static,
     {
+        let prepared = self.prepared::<F>()?;
+        crate::setup::setup_prefix::validate_setup_prefix_commitment(
+            &prepared.expanded,
+            &artifact.id,
+        )?;
         self.memoized_setup_prefix(&artifact.id, || {
             Ok(CachedSetupPrefix {
                 artifact: artifact.clone(),
@@ -319,9 +330,18 @@ mod tests {
                     .slot_id()
                     .unwrap();
                 let first = CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
+                for offset in 1..=32 {
+                    let mut invalid = id.clone();
+                    invalid.natural_len = invalid.natural_len.checked_add(offset).unwrap();
+                    assert!(first
+                        .export_setup_prefixes::<F>(std::slice::from_ref(&invalid))
+                        .is_err());
+                }
+                assert_eq!(first.setup_prefix_cache_len().unwrap(), 0);
                 let artifacts = first
                     .export_setup_prefixes::<F>(std::slice::from_ref(&id))
                     .unwrap();
+                assert_eq!(first.setup_prefix_cache_len().unwrap(), 1);
                 assert!(artifacts.is_backend_validated());
                 let cached_after_export = first
                     .memoized_setup_prefix::<CachedSetupPrefix<F>, _>(&id, || {
@@ -397,5 +417,114 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn failed_prefix_cache_generations_are_removed_and_retriable() {
+        type Cfg = fp128::Dense;
+        const NV: usize = 14;
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+        let row = catalog
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .unwrap();
+        let params = &row.schedule().root.params;
+        let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
+        let prefix = akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+            .slot_id()
+            .unwrap();
+
+        let failed = CpuBackend::for_arithmetic_tests();
+        for offset in 0..32 {
+            let mut failed_id = id.clone();
+            failed_id.natural_len = failed_id.natural_len.checked_add(offset).unwrap();
+            assert!(failed
+                .memoized_setup_prefix::<u64, _>(&failed_id, || {
+                    Err(AkitaError::InvalidSetup("injected prefix failure".into()))
+                })
+                .is_err());
+        }
+        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 0);
+
+        assert!(failed
+            .memoized_setup_prefix::<u64, _>(&id, || {
+                Err(AkitaError::InvalidSetup("injected prefix failure".into()))
+            })
+            .is_err());
+        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 0);
+        assert_eq!(
+            *failed.memoized_setup_prefix(&id, || Ok(17u64)).unwrap(),
+            17
+        );
+        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 1);
+    }
+
+    #[test]
+    fn concurrent_prefix_cache_failure_preserves_the_successful_retry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Barrier, Mutex};
+
+        type Cfg = fp128::Dense;
+        const NV: usize = 14;
+        const WORKERS: usize = 8;
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+        let row = catalog
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .unwrap();
+        let params = &row.schedule().root.params;
+        let n_prefix = (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
+        let prefix = akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
+        let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
+            .slot_id()
+            .unwrap();
+
+        let backend = Arc::new(CpuBackend::for_arithmetic_tests());
+        let start = Arc::new(Barrier::new(WORKERS));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let outcomes = Arc::new(Mutex::new(Vec::with_capacity(WORKERS)));
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS {
+                let backend = Arc::clone(&backend);
+                let start = Arc::clone(&start);
+                let attempts = Arc::clone(&attempts);
+                let outcomes = Arc::clone(&outcomes);
+                let id = id.clone();
+                scope.spawn(move || {
+                    start.wait();
+                    let result = backend.memoized_setup_prefix::<u64, _>(&id, || {
+                        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            Err(AkitaError::InvalidSetup("injected prefix failure".into()))
+                        } else {
+                            Ok(23)
+                        }
+                    });
+                    outcomes.lock().unwrap().push(result.map(|value| *value));
+                });
+            }
+        });
+
+        let outcomes = outcomes.lock().unwrap();
+        assert_eq!(outcomes.iter().filter(|result| result.is_err()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|result| matches!(result, Ok(23)))
+                .count(),
+            WORKERS - 1
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(backend.setup_prefix_cache_len().unwrap(), 1);
+        assert_eq!(
+            *backend
+                .memoized_setup_prefix::<u64, _>(&id, || {
+                    panic!("successful retry must remain cached")
+                })
+                .unwrap(),
+            23
+        );
     }
 }

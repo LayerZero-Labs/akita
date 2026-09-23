@@ -1,10 +1,8 @@
 //! Private execution contracts used after consumer binding validation.
 use crate::opaque::{
-    ComputeBackendSetup, CpuWitnessBuildOutput, FoldHandleBackend, FoldProbeOutcome,
-    PreparedRelationWitness, PreparedWitnessOpening, ProofScopeId, ProverHandleFamily,
-    RecursiveWitnessAssemblyFinish, RecursiveWitnessAssemblyStart, RecursiveWitnessBuildStart,
-    RecursiveWitnessFoldInput, RecursiveWitnessPublicInputs, RelationWitnessFinalClaims,
-    Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
+    ComputeBackendSetup, FoldHandleBackend, FoldProbeOutcome, PreparedRelationWitness,
+    PreparedWitnessOpening, ProverHandleFamily, RelationWitnessFinalClaims, Stage1FinalClaims,
+    Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
     ValidatedFoldProbePlan, ValidatedRelationSessionPlan, ValidatedRelationWitnessPlan,
     ValidatedStage1Plan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
 };
@@ -87,39 +85,6 @@ where
     fn finish_stage1(&self, session: Self::Session) -> Result<Stage1FinalClaims<E>, AkitaError>;
 }
 
-/// Consumer-owned preparation of E, T, R, and compression witness state.
-///
-/// Akita transports `State` and `Witness` but can inspect only the public
-/// artifacts returned alongside them.
-pub(crate) trait RecursiveWitnessAssemblyKernel<F, E, OpeningH, FoldH, CommitH>:
-    ComputeBackendSetup<F>
-where
-    F: Field + CanonicalEncoding,
-    E: Field,
-{
-    type State: Send + 'static;
-    type Witness: Send + 'static;
-
-    #[allow(clippy::too_many_arguments)]
-    fn begin_recursive_witness_assembly(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        prepared_group_openings: &[OpeningH],
-        commitment_material: Vec<CommitH>,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        relation_rhs_layout: &akita_types::RelationRhsLayout,
-        group_commitments: &[akita_types::RingVec<F>],
-    ) -> Result<RecursiveWitnessAssemblyStart<F, E, Self::State>, AkitaError>;
-
-    fn finish_recursive_witness_assembly(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        state: Self::State,
-        folds: Vec<RecursiveWitnessFoldInput<FoldH>>,
-    ) -> Result<RecursiveWitnessAssemblyFinish<F, Self::Witness>, AkitaError>;
-}
-
 /// Backend-associated preparation of the consumer-owned Stage 1/2 witness.
 pub(crate) trait RecursiveRelationWitnessKernel<H, F>: ComputeBackendSetup<F>
 where
@@ -133,35 +98,6 @@ where
         witness: &H,
         plan: &ValidatedRelationWitnessPlan,
     ) -> Result<PreparedRelationWitness<Self::RelationWitness>, AkitaError>;
-}
-
-pub(crate) trait CpuWitnessBuildKernel<F, E>:
-    ProverHandleFamily<F, E> + ComputeBackendSetup<F>
-where
-    F: Field + CanonicalEncoding,
-    E: Field,
-{
-    #[allow(clippy::too_many_arguments)]
-    fn begin_recursive_witness(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        scope_id: ProofScopeId,
-        prepared_opening_handles: &[Self::PreparedOpeningHandle],
-        commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
-        level: &akita_types::CommittedGroupParams,
-        opening_batch: &akita_types::OpeningClaimsLayout,
-        relation_rhs_layout: &akita_types::RelationRhsLayout,
-        group_commitments: &[akita_types::RingVec<F>],
-    ) -> Result<RecursiveWitnessBuildStart<F, E, Self::WitnessBuildHandle>, AkitaError>;
-
-    fn finish_recursive_witness(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        build_handle: Self::WitnessBuildHandle,
-        fold_inputs: Vec<RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>>,
-        public_inputs: RecursiveWitnessPublicInputs<'_, F>,
-        plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
-    ) -> Result<CpuWitnessBuildOutput<F, Self::WitnessHandle>, AkitaError>;
 }
 
 pub(crate) trait CpuWitnessOpeningKernel<F, E>:
