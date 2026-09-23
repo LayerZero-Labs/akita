@@ -1452,7 +1452,7 @@ The expected primary surfaces are:
 | sparse sampling | `crates/akita-challenges/src/sampler/mod.rs`, `xof.rs` | fresh cursor per coordinate for both rejection modes |
 | sumcheck drivers | `crates/akita-sumcheck/src/drivers/`, callers in prover and verifier | captured grind cursor in challenge closures |
 | ring switching | `crates/akita-prover/src/protocol/ring_switch/`, `crates/akita-verifier/src/protocol/ring_switch.rs` | alpha and point query integration |
-| fold stages | `crates/akita-prover/src/protocol/core/`, `crates/akita-verifier/src/protocol/core/` | shared cursor replay |
+| fold stages | `crates/akita-prover/src/protocol/prove/`, `crates/akita-verifier/src/protocol/core/` | shared cursor replay |
 | proof size | `crates/akita-types/src/proof_size.rs`, layout sizing | exact packed bytes |
 | planning | `crates/akita-planner/`, `crates/akita-schedules/` | pricing, reporting, identity, generation |
 | CWSS design record | `specs/subring-coefficient-packing.md`, `book/src/how/security.md` | close full-vector blocker with coordinate forks |

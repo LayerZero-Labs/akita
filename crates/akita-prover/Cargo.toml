@@ -21,15 +21,9 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
-aes = "0.9.3"
-ctr = "0.10.1"
-rand_core = "0.6"
-rayon = { version = "1.10", optional = true }
-shake = "0.1.0"
 tracing = "0.1"
 
 [dev-dependencies]
-rand = "0.8"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
@@ -60,7 +54,6 @@ logging-transcript = [
 ]
 response-model-diagnostics = []
 parallel = [
-  "dep:rayon",
   "akita-challenges/parallel",
   "jolt-field/parallel",
   "akita-sumcheck/parallel",

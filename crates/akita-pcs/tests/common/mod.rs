@@ -12,29 +12,26 @@ pub(super) use akita_config::CommitmentConfig;
 use akita_config::{
     derive_transcript_grinding_plan, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
+pub(super) use akita_cpu_backend::CommitmentHandle;
+pub(super) use akita_cpu_backend::DensePoly;
+pub(super) use akita_cpu_backend::OneHotPoly;
+use akita_cpu_backend::SetupPrefixProverRegistry;
+use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
+use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
-pub(super) use akita_prover::DensePoly;
-pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::SelectedProverOpeningData;
-use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitmentExecutor, ComputeBackendSetup, CpuBackend,
-    DenseType, PolynomialType, PortableStatePolicy,
-};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     canonical_proof_shape, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
     AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    PolynomialGroupLayout, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+use jolt_field::One;
 pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
-use jolt_field::{One, Zero};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -313,54 +310,45 @@ where
         .collect()
 }
 
-pub(super) fn prove_input<'a, Cfg, P>(
+#[allow(clippy::type_complexity)]
+pub(super) fn prove_input<'a, Cfg>(
     point: &'a [Cfg::ExtField],
-    polynomials: &'a [&'a P],
+    evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: AkitaCommitmentHint<Cfg::Field>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    akita_prover::PreparedProverGroup<'a, P>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 >
 where
     Cfg: CommitmentConfig,
-    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![Cfg::ExtField::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover claims group");
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), commitment.clone())
+            .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        opening_claims,
-        vec![hint],
-        vec![polynomials],
-        schedules,
-    )
-    .expect("valid prover opening data")
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(opening_claims, vec![hint], schedules)
+        .expect("valid prover opening data")
 }
 
-pub(super) fn selected_prover_data<'a, Cfg, P>(
+#[allow(clippy::type_complexity)]
+pub(super) fn selected_prover_data<'a, Cfg>(
     claims: OpeningClaims<'a, Cfg::ExtField, CommittedGroup<Cfg::Field>>,
-    hints: Vec<AkitaCommitmentHint<Cfg::Field>>,
-    polynomials: Vec<&'a [&'a P]>,
+    hints: Vec<CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    akita_prover::PreparedProverGroup<'a, P>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 >
 where
     Cfg: CommitmentConfig,
-    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials, schedules)
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, schedules)
         .expect("valid selected prover data")
 }
 
@@ -416,25 +404,18 @@ where
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-pub(super) fn opening_from_poly_for_layout<'a, P>(
-    poly: &'a P,
+pub(super) fn opening_from_poly_for_layout<P>(
+    poly: &P,
     point: &[F],
     layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
-    P: RootOpeningSource<F, 64>
-        + RootPolyShape<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootPolyShape<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootPolyShape<F, 256>
-        + RootOpeningSource<F, 512>
-        + RootPolyShape<F, 512>,
-    CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
-        + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
-        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>
-        + OpeningFoldKernel<<P as RootOpeningSource<F, 512>>::OpeningView<'a>, F, 512>,
+    P: RootPolyShape<F, 64> + RootPolyShape<F, 128> + RootPolyShape<F, 256> + RootPolyShape<F, 512>,
+    P: akita_cpu_backend::RootPolynomialEvaluator<F, 64>
+        + akita_cpu_backend::RootPolynomialEvaluator<F, 128>
+        + akita_cpu_backend::RootPolynomialEvaluator<F, 256>
+        + akita_cpu_backend::RootPolynomialEvaluator<F, 512>,
 {
     match layout.inner_commit_matrix_params().ring_dimension() {
         64 => opening_from_poly_with_basis::<64, _>(poly, point, layout, basis_mode),
@@ -445,52 +426,24 @@ where
     }
 }
 
-pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
-    poly: &'a P,
+pub(super) fn opening_from_poly_with_basis<const D: usize, P>(
+    poly: &P,
     point: &[F],
     layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
-    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
-    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    P: RootPolyShape<F, D>,
+    P: akita_cpu_backend::RootPolynomialEvaluator<F, D>,
 {
-    let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.position_index_bits() + layout.block_index_bits();
-    assert!(
-        point.len() <= target_num_vars,
-        "opening point length {} exceeds target root arity {}",
-        point.len(),
-        target_num_vars
-    );
-    let mut padded_point = point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-
-    let inner_point = &padded_point[..alpha_bits];
-    let reduced_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
+    evaluate_root_polynomial::<F, P, D>(
+        poly,
+        point,
         layout.num_positions_per_block(),
         layout.num_live_blocks(),
         basis_mode,
     )
-    .expect("opening point shape should match layout");
-
-    let opening = OpeningFoldKernel::<P::OpeningView<'a>, F, D>::evaluate_and_fold(
-        &CpuBackend::DEFAULT,
-        None,
-        poly.opening_view().expect("opening view"),
-        OpeningFoldPlan::Base {
-            live_block_weights: &ring_opening_point.live_block_weights,
-            position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.num_positions_per_block(),
-        },
-    )
-    .expect("evaluate_and_fold");
-    let folded_ring = opening.eval;
-    let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
-        .expect("inner opening point should match ring dimension");
-    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
+    .expect("root polynomial opening")
 }
 
 pub(super) fn make_onehot_poly<Cfg>(num_vars: usize, seed: u64) -> OneHotPoly<F, u8>
@@ -653,20 +606,13 @@ fn verifier_setup_with_alternate_full_prefix(
         expanded: altered_expanded,
         prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
     };
-    let backend = CpuBackend::DEFAULT;
-    let prepared = backend
-        .prepare_setup(&altered_setup)
-        .expect("prepare altered setup");
-    let executor = CommitmentExecutor::cpu(
-        &backend,
-        &prepared,
-        &altered_setup.expanded,
-        vec![PolynomialType::Dense(DenseType::Coefficients)],
-        PortableStatePolicy,
-    )
-    .expect("altered setup-prefix executor");
-    let altered_slot = commit_setup_prefix(&altered_setup.expanded, &executor, slot_id)
-        .expect("commit altered full setup prefix");
+    let scheme = load_workspace_scheme::<DenseCfg>().expect("dense catalog");
+    let backend = CpuBackend::<DenseCfg>::new(altered_setup.expanded.clone(), scheme.schedules())
+        .expect("altered setup backend");
+    let artifacts = backend
+        .export_setup_prefixes::<F>(std::slice::from_ref(slot_id))
+        .expect("altered prefix artifact");
+    let altered_slot = artifacts.get(slot_id).expect("altered prefix slot");
 
     let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
     for (id, slot) in verifier_setup.prefix_slots().iter() {

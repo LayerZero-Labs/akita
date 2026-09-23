@@ -11,7 +11,7 @@ use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
+    AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, BasisMode, CallSection,
     FoldSchedule, FpExtEncoding, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
     PlanSection, SetupSection, TranscriptGrindingBinding,
 };
@@ -35,7 +35,7 @@ use jolt_field::{CanonicalEncoding, Field};
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
 pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
-    setup: &AkitaExpandedSetup<F>,
+    setup: &AkitaSetupDescriptor,
     opening_batch: &OpeningClaimsLayout,
     selection: OpeningScheduleSelection,
     schedule: &FoldSchedule,
@@ -54,7 +54,7 @@ where
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
-            &setup.descriptor().setup_seed,
+            &setup.setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),

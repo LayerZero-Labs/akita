@@ -28,6 +28,17 @@ fi
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
 # small-field profiles by name (see remove-fp16).
 dead_patterns=(
+  'CommitmentExecutionSchedule'
+  'CommitmentRoundStep'
+  'InnerOuterRouteKind'
+  'CpuProverConsumer'
+  'ProverConsumerFactory'
+  'PreparedProverGroup'
+  'ErasedPreparedProverGroup'
+  'UniformProverStack'
+  'LevelProveStacks'
+  'TieredProveStacks'
+  'ProverComputeStack'
   'CpuBackend::with_resource_limits'
   'commit_scratch_bytes_per_worker'
   'DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER'

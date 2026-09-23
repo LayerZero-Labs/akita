@@ -443,7 +443,7 @@ Primary implemented files:
 - `crates/akita-prover/src/kernels/linear/`: canonicalized i8 kernel surface.
 - `crates/akita-pcs/benches/ring_ntt.rs`: residue, mixed matvec,
   reconstruction, LUT, terminal, and cache-construction comparisons.
-- `crates/akita-pcs/benches/ntt_matvec.rs`: rank, width, ring-degree, common
+- `crates/akita-cpu-backend/benches/ntt_matvec.rs`: rank, width, ring-degree, common
   basis, and equal-I/O scaling grid.
 
 ### Final cache-refactor surface
@@ -456,7 +456,7 @@ Primary implemented files:
 | `akita-algebra/src/ring/crt_ntt_repr/mixed.rs` | keeps only `I16TailParams` and one shape-checked operation over separate base and tail slices; the public aggregate element type is gone |
 | `akita-algebra/src/ring/crt_ntt_repr/ops.rs` | owns the homogeneous signed-i16 matvec and common SIMD pointwise dispatch |
 | `akita-verifier/src/protocol/core/terminal_ntt.rs` | coalesces terminal group requirements during warm-up and invokes the unified signed-i16 cache operation |
-| `akita-prover/src/compute/` | CPU caches use checked standard type erasure internally; compute-backend traits and delegating wrappers no longer expose prepared NTT slots |
+| `akita-cpu-backend/src/arithmetic/` | CPU caches use checked standard type erasure internally; backend traits no longer expose prepared NTT slots |
 | prover linear kernels | consume typed prepared caches inside CPU execution and call canonical algebra operations directly |
 | tests/benches/docs | cover layout selection, prefix reuse, type mismatch rejection, scaling, cache construction, and final vocabulary |
 
@@ -558,7 +558,7 @@ arithmetic, not another CRT path, as the oracle.
 
 ### NTT matvec benchmark
 
-`crates/akita-pcs/benches/ntt_matvec.rs` is the canonical scaling benchmark for
+`crates/akita-cpu-backend/benches/ntt_matvec.rs` is the canonical scaling benchmark for
 this PR. It uses the production Q128 field and holds two axes fixed while
 sweeping the third:
 
@@ -594,11 +594,11 @@ results across shapes can be normalized without hiding their absolute
 latency. Run the complete groups or one representative shape with:
 
 ```bash
-cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
-cargo bench -p akita-pcs --bench ntt_matvec -- width
-cargo bench -p akita-pcs --bench ntt_matvec -- equal_output
-cargo bench -p akita-pcs --bench ntt_matvec -- equal_io
-cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- rank_ring_dim
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- width
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- equal_output
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- equal_io
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- d64_r4_w128
 ```
 
 This benchmark is kernel evidence, not a protocol performance claim. Protocol
@@ -823,10 +823,10 @@ the exact field/ring/width CRT selector remains in
 | CRT exactness and reconstruction | `crates/akita-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
 | cache API and type erasure | `crates/akita-types/src/ntt_cache.rs`, `crates/akita-types/src/proof/setup.rs` |
 | terminal verifier and no-panic behavior | `crates/akita-verifier/src/protocol/core/terminal_direct.rs`, `terminal_ntt.rs`, `verify.rs` |
-| backend portability | `crates/akita-prover/src/compute/backend.rs`, `cpu.rs`, `delegating_cpu.rs` |
+| backend portability | `crates/akita-prover/src/backend/`, `crates/akita-cpu-backend/src/opaque/backend.rs`, `crates/akita-cpu-backend/src/arithmetic/` |
 | dead-code cutover | deleted `partial_split_ntt.rs`; `crates/akita-prover/src/kernels/linear/` |
 | schedule capability | `crates/akita-config/src/proof_optimized/tests.rs` |
-| benchmarks | `crates/akita-pcs/benches/ntt_matvec.rs`, `crates/akita-pcs/benches/ring_ntt.rs` |
+| benchmarks | `crates/akita-cpu-backend/benches/ntt_matvec.rs`, `crates/akita-pcs/benches/ring_ntt.rs` |
 | generated capacity artifact | `scripts/gen_crt_capacity_profile.py`, `docs/crt-ntt-capacity-profile.md` |
 
 ## References
