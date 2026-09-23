@@ -53,8 +53,8 @@ pub(crate) use capabilities::{
 };
 pub use contracts::SubringCoefficientPackingBatchKernel;
 pub(crate) use contracts::{
-    CpuWitnessBuildOutput, FoldHandleBackend, FoldResponseKernel, PreparedRelationWitness,
-    RingSwitchRelationKernel, TerminalFoldResponseKernel,
+    FoldHandleBackend, FoldResponseKernel, PreparedRelationWitness, RingSwitchRelationKernel,
+    TerminalFoldResponseKernel,
 };
 pub use decompose_fold::DecomposeFoldWitness;
 pub(crate) use eor_plans::{
@@ -99,7 +99,7 @@ where
     type CommitmentMaterialHandle = CpuCommitmentMaterialHandle<F>;
     type AcceptedFoldHandle = CpuAcceptedFoldHandle<F>;
     type AcceptedTerminalFoldHandle = CpuAcceptedTerminalFoldHandle<F>;
-    type WitnessBuildHandle = CpuWitnessBuildHandle<F, E>;
+    type WitnessBuildHandle = CpuWitnessBuildHandle<F>;
     type WitnessHandle = crate::opaque::CpuWitnessHandle;
     type RelationHandle = crate::opaque::CpuRelationHandle;
     type Stage1SessionHandle = crate::opaque::CpuStage1SessionHandle<E>;
@@ -260,13 +260,12 @@ where
         &self,
         build_handle: Self::WitnessBuildHandle,
         fold_inputs: Vec<crate::opaque::RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>>,
-        public_inputs: crate::opaque::RecursiveWitnessPublicInputs<'_, F>,
+        relation: &akita_types::RingRelationInstance<F>,
         plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
     ) -> Result<Self::WitnessHandle, AkitaError> {
         self.validate_binding(&build_handle.binding)?;
         let parent_binding = build_handle.binding;
         let level = build_handle.level.clone();
-        let layout = build_handle.opening_batch.clone();
         for (group_index, input) in fold_inputs.iter().enumerate() {
             input
                 .fold_handle()
@@ -282,34 +281,15 @@ where
             )?;
             binding.validate_group(group_index, build_handle.opening_batch.num_groups())?;
         }
-        let output = crate::opaque::witness_build::finish_cpu_recursive_witness(
+        let mut witness_handle = crate::opaque::witness_build::finish_cpu_recursive_witness(
             self,
             self.prepared()?,
             build_handle,
             fold_inputs,
-            public_inputs,
+            relation,
             plan,
         )?;
-        let (instance, mut witness_handle) = output.into_instance_and_witness_handle();
-        let witness_layout = instance.segment_layout(&level, None)?;
-        let geometry = level.relation_address_geometry(
-            &layout,
-            E::DEGREE,
-            plan.commitment_ring_dimension(),
-            witness_layout.live_coeff_len(),
-        )?;
-        witness_handle.relation_plan = Some(std::sync::Arc::new(
-            akita_types::RelationRangeImagePlan::new(
-                akita_types::RelationWitnessGeometry::for_level(&level, &layout, E::DEGREE)?,
-                geometry,
-                akita_types::DigitRangePlan::new(
-                    akita_error::checked::pow2(level.open().digits.log_basis as usize)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?,
-                witness_layout,
-                &layout,
-            )?,
-        ));
+        witness_handle.initialize_relation_plan(relation, &level)?;
         witness_handle.set_operation_binding(self.next_binding(parent_binding)?);
         Ok(witness_handle)
     }
@@ -354,7 +334,6 @@ where
             plan,
         )?;
         let (mut relation_handle, column_bits, coefficient_bits) = prepared.into_parts();
-        relation_handle.relation_plan = witness_handle.relation_plan.clone();
         let metadata = crate::opaque::RelationWitnessMetadata::try_new(
             plan.witness_len(),
             column_bits,

@@ -583,18 +583,18 @@ where
         fold_inputs: Vec<
             RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>,
         >,
-        public_inputs: RecursiveWitnessPublicInputs<'_, F>,
+        relation: &RingRelationInstance<F>,
         plan: &ValidatedRecursiveWitnessPlan<'_, F>,
-    ) -> Result<
-        RecursiveWitnessBuildOutput<F, Self::WitnessHandle>,
-        AkitaError,
-    >;
+    ) -> Result<Self::WitnessHandle, AkitaError>;
 }
 ```
 
 This replaces the current protocol-visible intermediate
 `RingRelationWitness`. Complete private witness construction happens inside the
-consumer before the final witness handle is returned.
+consumer before the final witness handle is returned. The protocol constructs
+and validates the public `RingRelationInstance` once, then lends that canonical
+instance to the consumer. A consumer may check backend-private material against
+the instance, but must not construct a parallel public relation statement.
 
 ## Commitment lifecycle
 
@@ -1161,20 +1161,15 @@ let fold_inputs = grind_fold_handles(
     level,
 )?;
 
-let build_output = consumer.finish_recursive_witness(
+// The protocol constructs and validates the canonical instance from the
+// transcript-derived challenges, public openings, and relation RHS here.
+let witness_handle = consumer.finish_recursive_witness(
     Some(prepared),
     build_start.into_build_handle(),
     fold_inputs,
-    RecursiveWitnessPublicInputs {
-        extension_degree: E::DEGREE,
-        gamma: &gamma,
-        row_coefficient_rings: &row_coefficient_rings,
-    },
+    &instance,
     &witness_plan,
 )?;
-
-let (instance, witness_handle) =
-    build_output.into_instance_and_witness_handle();
 
 let commitment_output = consumer.commit_witness(
     Some(prepared),

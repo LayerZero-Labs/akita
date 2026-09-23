@@ -192,7 +192,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueRecursiveWitnessBuildKernel<F
         &self,
         build_handle: Self::WitnessBuildHandle,
         fold_inputs: Vec<RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>>,
-        public_inputs: RecursiveWitnessPublicInputs<'_, F>,
+        relation: &akita_types::RingRelationInstance<F>,
         plan: &akita_prover::backend::ValidatedRecursiveWitnessPlan<'_, F>,
     ) -> Result<Self::WitnessHandle, AkitaError> {
         Err(AkitaError::InvalidInput(

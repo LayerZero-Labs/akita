@@ -155,8 +155,7 @@ where
                         "batched prover EvaluationTrace point layout mismatch".into(),
                     ));
                 }
-                let opening = crate::opaque::PreparedOpeningWitness::evaluation_trace::<D, E>(
-                    point,
+                let opening = crate::opaque::PreparedOpeningWitness::evaluation_trace::<D>(
                     folded_by_claim,
                     group_dims.d_a() / group_dims.d_d(),
                     group.num_digits_open(),
@@ -212,7 +211,8 @@ pub(crate) struct RecursiveWitnessFlat {
 /// recursive-witness adapter.
 pub struct CpuWitnessHandle {
     pub(crate) pending_successor: Option<u32>,
-    pub(crate) relation_plan: Option<Arc<akita_types::RelationRangeImagePlan>>,
+    pub(in crate::opaque::recursive) relation_plan:
+        Option<Arc<akita_types::RelationRangeImagePlan>>,
     pub(in crate::opaque::recursive) manifest: crate::opaque::RecursiveWitnessManifest,
     pub(in crate::opaque::recursive) binding: crate::opaque::OperationBinding,
     pub(in crate::opaque::recursive) logical: RecursiveWitnessFlat,
@@ -246,6 +246,50 @@ impl CpuWitnessHandle {
 
     pub(crate) fn set_operation_binding(&mut self, binding: crate::opaque::OperationBinding) {
         self.binding = binding;
+    }
+
+    pub(crate) fn initialize_relation_plan<F>(
+        &mut self,
+        relation: &akita_types::RingRelationInstance<F>,
+        level: &akita_types::CommittedGroupParams,
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        if self.relation_plan.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "recursive witness relation plan is already initialized".into(),
+            ));
+        }
+        let opening_batch = relation.opening_batch();
+        let witness_layout = relation.segment_layout(level, None)?;
+        if witness_layout.live_coeff_len() != self.manifest.logical_len() {
+            return Err(AkitaError::InvalidInput(
+                "recursive witness manifest disagrees with its relation instance".into(),
+            ));
+        }
+        let geometry = level.relation_address_geometry(
+            opening_batch,
+            relation.extension_degree(),
+            self.manifest.commitment_ring_dimension(),
+            witness_layout.live_coeff_len(),
+        )?;
+        let digit_range = akita_types::DigitRangePlan::new(
+            akita_error::checked::pow2(level.open().digits.log_basis as usize)
+                .ok_or(AkitaError::InvalidProof)?,
+        )?;
+        self.relation_plan = Some(Arc::new(akita_types::RelationRangeImagePlan::new(
+            akita_types::RelationWitnessGeometry::for_level(
+                level,
+                opening_batch,
+                relation.extension_degree(),
+            )?,
+            geometry,
+            digit_range,
+            witness_layout,
+            opening_batch,
+        )?));
+        Ok(())
     }
 }
 

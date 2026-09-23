@@ -10,7 +10,6 @@ use jolt_field::{CanonicalEncoding, Field};
 enum ConsumerOpeningKind<F: Field> {
     EvaluationTrace {
         e_folded: RingVec<F>,
-        ring_multiplier_point: akita_types::RingMultiplierOpeningPoint<F>,
     },
     CoefficientPacking {
         partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
@@ -59,8 +58,7 @@ fn decompose_opening_rows<F: Field + CanonicalEncoding, const D: usize>(
 }
 
 impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
-    pub(crate) fn evaluation_trace<const D: usize, E: Field>(
-        point: &akita_types::PreparedOpeningPoint<F, E>,
+    pub(crate) fn evaluation_trace<const D: usize>(
         folded_by_claim: &[RingVec<F>],
         role_subcolumns: usize,
         depth_open: usize,
@@ -79,10 +77,7 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
         );
         Ok(Self {
             e_hat,
-            kind: ConsumerOpeningKind::EvaluationTrace {
-                e_folded,
-                ring_multiplier_point: point.ring_multiplier_point.clone(),
-            },
+            kind: ConsumerOpeningKind::EvaluationTrace { e_folded },
         })
     }
 
@@ -110,38 +105,23 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
         &self.e_hat
     }
 
-    pub(crate) fn into_relation_group(
+    pub(crate) fn into_relation_witness(
         self,
         fold: crate::opaque::CpuAcceptedFold<F>,
         challenges: akita_types::GroupFoldChallenges,
         inner_relation: crate::opaque::OpaqueInnerRelationState<F>,
         role_dims: akita_types::CommitmentRingDims,
-    ) -> Result<
-        (
-            akita_types::RingRelationGroupOpening<F>,
-            RingRelationGroupWitness<F>,
-        ),
-        AkitaError,
-    > {
+    ) -> Result<RingRelationGroupWitness<F>, AkitaError> {
         match (self.kind, challenges) {
             (
-                ConsumerOpeningKind::EvaluationTrace {
-                    e_folded,
-                    ring_multiplier_point,
-                },
-                akita_types::OpeningFamily::EvaluationTrace(challenges),
-            ) => Ok((
-                akita_types::RingRelationGroupOpening::evaluation_trace(
-                    challenges,
-                    ring_multiplier_point,
-                ),
-                RingRelationGroupWitness::from_parts(
-                    fold,
-                    self.e_hat,
-                    e_folded,
-                    inner_relation,
-                    role_dims,
-                ),
+                ConsumerOpeningKind::EvaluationTrace { e_folded },
+                akita_types::OpeningFamily::EvaluationTrace(_),
+            ) => Ok(RingRelationGroupWitness::from_parts(
+                fold,
+                self.e_hat,
+                e_folded,
+                inner_relation,
+                role_dims,
             )),
             (
                 ConsumerOpeningKind::CoefficientPacking { partials_by_claim },
@@ -152,15 +132,12 @@ impl<F: Field + CanonicalEncoding> PreparedOpeningWitness<F> {
                     &partials_by_claim,
                     challenges.canonical(),
                 )?;
-                Ok((
-                    akita_types::RingRelationGroupOpening::coefficient_packing(challenges),
-                    RingRelationGroupWitness::from_coefficient_packing_parts(
-                        fold,
-                        self.e_hat,
-                        product,
-                        inner_relation,
-                        role_dims,
-                    ),
+                Ok(RingRelationGroupWitness::from_coefficient_packing_parts(
+                    fold,
+                    self.e_hat,
+                    product,
+                    inner_relation,
+                    role_dims,
                 ))
             }
             _ => Err(AkitaError::InvalidSetup(

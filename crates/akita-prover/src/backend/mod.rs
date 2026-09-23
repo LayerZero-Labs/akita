@@ -22,7 +22,7 @@ pub use identity::ProofContext;
 pub use messages::{
     FoldProbeDiagnostics, FoldProbeOutcome, NextWitnessBindingMessage, PreparedGroupOpening,
     PreparedRelationHandle, RecursiveWitnessBuildStart, RecursiveWitnessFoldInput,
-    RecursiveWitnessPublicInputs, TerminalTFieldsMessage, WitnessCommitmentOutput,
+    TerminalTFieldsMessage, WitnessCommitmentOutput,
 };
 pub use metadata::{
     AcceptedFoldMetadata, CommitmentMaterialMetadata, CommitmentRelationMaterial,

@@ -90,32 +90,6 @@ where
     ) -> Result<Vec<u8>, AkitaError>;
 }
 
-/// Public relation instance paired with its private recursive-witness handle.
-pub(crate) struct CpuWitnessBuildOutput<F: Field, WitnessHandle> {
-    instance: akita_types::RingRelationInstance<F>,
-    witness_handle: WitnessHandle,
-}
-
-impl<F: Field, WitnessHandle> CpuWitnessBuildOutput<F, WitnessHandle> {
-    /// Construct a completed recursive-witness build message.
-    pub(crate) fn new(
-        instance: akita_types::RingRelationInstance<F>,
-        witness_handle: WitnessHandle,
-    ) -> Self {
-        Self {
-            instance,
-            witness_handle,
-        }
-    }
-
-    /// Consume the message into its public instance and private handle.
-    pub(crate) fn into_instance_and_witness_handle(
-        self,
-    ) -> (akita_types::RingRelationInstance<F>, WitnessHandle) {
-        (self.instance, self.witness_handle)
-    }
-}
-
 pub(crate) struct PreparedRelationWitness<H> {
     handle: H,
     column_bits: usize,

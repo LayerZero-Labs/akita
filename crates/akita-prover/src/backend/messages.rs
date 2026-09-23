@@ -160,16 +160,6 @@ impl<FoldHandle> RecursiveWitnessFoldInput<FoldHandle> {
     }
 }
 
-/// Transcript-derived public inputs for completing recursive witness construction.
-pub struct RecursiveWitnessPublicInputs<'a, F: Field> {
-    /// Extension degree used by the relation layout.
-    pub extension_degree: usize,
-    /// Public group batching coefficients.
-    pub gamma: &'a [F],
-    /// Public row-coefficient rings.
-    pub row_coefficient_rings: &'a akita_types::RingVec<F>,
-}
-
 /// Public commitment and replacement private handles after commitment.
 pub enum NextWitnessBindingMessage<F: Field> {
     OuterPayload(akita_types::RingVec<F>),

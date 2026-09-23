@@ -10,7 +10,9 @@ use crate::opaque::{
 };
 
 use crate::opaque::{multi_group_quotient_calls, reset_multi_group_quotient_calls};
-use crate::opaque::{ComputeBackendSetup, CpuBackend, OperationCtx};
+use crate::opaque::{
+    ComputeBackendSetup, CpuBackend, CpuWitnessHandle, OperationCtx, RecursiveWitnessFlat,
+};
 
 use super::DecomposeFoldWitness;
 use crate::opaque::{RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness};
@@ -98,6 +100,31 @@ fn reduced_instance(
     )
     .expect("reduced relation instance");
     (instance, rhs_layout)
+}
+
+#[test]
+fn witness_relation_plan_is_initialized_once_from_canonical_relation() {
+    let params = reduced_params(CommitmentPayloadMode::Raw);
+    let (relation, _) = reduced_instance(&params);
+    let logical_len = relation
+        .segment_layout(&params, None)
+        .expect("witness layout")
+        .live_coeff_len();
+    let mut witness = CpuWitnessHandle::from_cpu(
+        RecursiveWitnessFlat::from_i8_digits(vec![0; logical_len]),
+        REDUCED_D,
+        crate::opaque::OperationBinding::legacy_unscoped(),
+    )
+    .expect("witness handle");
+
+    witness
+        .initialize_relation_plan(&relation, &params)
+        .expect("relation plan initialization");
+    assert!(matches!(
+        witness.initialize_relation_plan(&relation, &params),
+        Err(akita_error::AkitaError::InvalidInput(message))
+            if message.contains("already initialized")
+    ));
 }
 
 fn reduced_group_witness(

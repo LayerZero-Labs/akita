@@ -3,15 +3,10 @@ use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Linear CPU state retained across transcript-owned fold grinding.
-pub struct CpuWitnessBuildHandle<F, E>
-where
-    F: Field + CanonicalEncoding,
-    E: Field,
-{
+pub struct CpuWitnessBuildHandle<F: Field + CanonicalEncoding> {
     pub(crate) binding: OperationBinding,
     pub(crate) opening_bindings: Vec<OperationBinding>,
     pub(crate) assembly_state: crate::opaque::CpuRecursiveWitnessAssemblyState<F>,
-    pub(crate) public_groups: Vec<crate::opaque::PreparedRelationGroupPublic<F, E>>,
     pub(crate) relation_rhs: akita_types::RingVec<F>,
     pub(crate) v: akita_types::RingVec<F>,
     pub(crate) level: akita_types::CommittedGroupParams,

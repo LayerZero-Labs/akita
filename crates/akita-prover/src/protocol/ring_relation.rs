@@ -448,11 +448,7 @@ impl RingRelationProver {
                 consumer,
                 build_handle,
                 folds,
-                crate::backend::RecursiveWitnessPublicInputs {
-                    extension_degree: PointF::DEGREE,
-                    gamma: &gamma,
-                    row_coefficient_rings: &row_coefficient_rings,
-                },
+                &instance,
                 &witness_plan,
             )?;
         drop(fold_grind_span);

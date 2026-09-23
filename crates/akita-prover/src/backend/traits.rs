@@ -1,7 +1,7 @@
 use super::{
     AcceptedFoldHandle, FoldProbeOutcome, PreparedGroupOpening, PreparedRelationHandle,
     RecursiveWitnessBuildStart, RecursiveWitnessFoldInput, RecursiveWitnessHandle,
-    RecursiveWitnessPublicInputs, WitnessCommitmentOutput,
+    WitnessCommitmentOutput,
 };
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
@@ -75,7 +75,7 @@ where
         &self,
         build_handle: Self::WitnessBuildHandle,
         fold_inputs: Vec<RecursiveWitnessFoldInput<Self::AcceptedFoldHandle>>,
-        public_inputs: RecursiveWitnessPublicInputs<'_, F>,
+        relation: &akita_types::RingRelationInstance<F>,
         plan: &crate::backend::ValidatedRecursiveWitnessPlan<'_, F>,
     ) -> Result<Self::WitnessHandle, AkitaError>;
 }

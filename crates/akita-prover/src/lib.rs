@@ -17,9 +17,8 @@ pub use backend::{
     OperationCtx, PreparedGroupOpening, PreparedRelationHandle, ProofAdmission, ProofContext,
     ProofScope, ProofScopeConsumer, ProofScopeId, ProverBackend, ProverHandleFamily,
     RecursiveWitnessBuildStart, RecursiveWitnessFoldInput, RecursiveWitnessHandle,
-    RecursiveWitnessManifest, RecursiveWitnessPublicInputs, RelationWitnessMetadata,
-    SourceMetadata, TerminalCommitmentMaterialKernel, TerminalTFieldsMessage,
-    WitnessCommitmentOutput,
+    RecursiveWitnessManifest, RelationWitnessMetadata, SourceMetadata,
+    TerminalCommitmentMaterialKernel, TerminalTFieldsMessage, WitnessCommitmentOutput,
 };
 pub use opening::{ProverOpeningData, SelectedProverOpeningData};
 pub use protocol::{
