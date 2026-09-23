@@ -10,15 +10,15 @@ Construct a backend with the setup and trusted catalog, then transfer the
 polynomials into its source storage:
 
 ```rust
-let backend = std::sync::Arc::new(CpuBackend::new::<Config>(
+let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
     setup.expanded.clone(),
     scheme.schedules(),
 )?);
-let source = backend.import_source::<Config, _>(polynomials)?;
+let source = backend.import_source(polynomials)?;
 let CommitOutput {
     committed_group,
     private_handle,
-} = backend.commit::<Config>(
+} = backend.commit(
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
@@ -89,8 +89,8 @@ commitments:
 let prior = PrecommittedGroupProfiles::from_ordered_groups(
     prior_commitments.iter(),
 )?;
-let final_source = backend.import_source::<Config, _>(final_polynomials)?;
-let final_output = backend.commit::<Config>(
+let final_source = backend.import_source(final_polynomials)?;
+let final_output = backend.commit(
     &final_source,
     GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;

@@ -14,12 +14,12 @@ through `Arc` when several callers need it:
 ```rust
 let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
 let setup = scheme.setup_prover(nv, num_polys)?;
-let backend = std::sync::Arc::new(CpuBackend::new::<Cfg>(
+let backend = std::sync::Arc::new(CpuBackend::<Cfg>::new(
     setup.expanded.clone(),
     scheme.schedules(),
 )?);
-let source = backend.import_source::<Cfg, _>(polys)?;
-let committed = backend.commit::<Cfg>(
+let source = backend.import_source(polys)?;
+let committed = backend.commit(
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;

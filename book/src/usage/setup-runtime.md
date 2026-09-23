@@ -55,7 +55,7 @@ setup with the configuration that will produce the final proofs.
 The CPU backend turns public setup into reusable execution state.
 
 ```rust
-let backend = std::sync::Arc::new(CpuBackend::new::<Config>(
+let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
     setup.expanded.clone(),
     scheme.schedules(),
 )?);
