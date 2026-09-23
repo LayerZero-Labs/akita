@@ -1,8 +1,8 @@
 use super::poly::DensePoly;
 use crate::commitment::CommitmentSource;
 use crate::compute::{
-    aggregate_decompose_fold_witnesses, CpuBackend, DecomposeFoldBatchPlan, OpeningBatchKernel,
-    RootOpeningSource, RootPolyMeta,
+    aggregate_decompose_fold_witnesses, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RootPolyMeta,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
@@ -226,6 +226,42 @@ fn batch_fold_returns_one_witness_per_chunk() {
     let recombined =
         aggregate_decompose_fold_witnesses::<F, D>(chunks.iter().cloned().map(Ok)).unwrap();
     assert_eq!(recombined, global);
+}
+
+#[test]
+fn scalar_fold_rejects_short_and_excess_challenges() {
+    const D: usize = 8;
+    // Two rings at one position per block give two live blocks.
+    let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+    let challenge = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let run = |count: usize| {
+        let challenges = vec![challenge.clone(); count];
+        OpeningFoldKernel::decompose_fold(
+            &CpuBackend::DEFAULT,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(&poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 6,
+            },
+        )
+    };
+
+    assert!(run(2).is_ok());
+    for count in [0, 1, 3] {
+        assert!(
+            matches!(
+                run(count),
+                Err(AkitaError::InvalidSize { expected: 2, actual }) if actual == count
+            ),
+            "{count} challenges for two live blocks must be rejected"
+        );
+    }
 }
 
 // A +1 monomial challenge must leave every single balanced digit unchanged.
