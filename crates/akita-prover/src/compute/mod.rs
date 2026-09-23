@@ -47,8 +47,9 @@ pub use cpu::{
 };
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub use kernels::{
-    BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
-    SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
+    aggregate_decompose_fold_witnesses, OpeningBatchKernel, OpeningFoldKernel,
+    RingSwitchRelationKernel, SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,

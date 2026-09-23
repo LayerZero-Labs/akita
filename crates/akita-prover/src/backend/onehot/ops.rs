@@ -3,11 +3,10 @@ use super::fold::fold_onehot_block_ring;
 use super::fold::{fold_onehot_block, fold_onehot_block_subfield};
 use super::*;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
-    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
-    SubringCoefficientPackingPlan,
+    CommitInnerPlan, ComputeBackendSetup, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 
 /// Borrowed single-polynomial view over one-hot chunk storage.
@@ -192,12 +191,12 @@ where
         source: OneHotView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-        Ok(source.poly.decompose_fold::<D>(
+        source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
-        ))
+        )
     }
 }
 
@@ -211,23 +210,25 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError> {
         let DecomposeFoldBatchPlan::Sparse {
-            challenges,
+            challenges_per_poly,
             num_positions_per_block,
             num_digits,
-            log_basis,
+            ..
         } = plan;
-        match OneHotPoly::decompose_fold_batched::<D>(
-            source.polys,
-            challenges,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        ) {
-            Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-            None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-        }
+        plan.validate_uniform_batch(source.polys.iter().map(|poly| {
+            RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
+        }))?;
+        plan.map_challenge_windows(|window| {
+            OneHotPoly::decompose_fold_batched_onehot::<D>(
+                source.polys,
+                window,
+                challenges_per_poly,
+                num_positions_per_block,
+                num_digits,
+            )
+        })
     }
 }
 
@@ -550,40 +551,11 @@ where
         num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F> {
-        self.view_layout(D, num_positions_per_block)
-            .expect("OneHotPoly::decompose_fold: invalid block layout");
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Self::decompose_fold_batched_onehot::<D>(
             &[self],
             challenges,
-            num_positions_per_block,
-            num_digits,
-        )
-        .unwrap_or_else(|| {
-            super::decompose_fold::finish_decompose_fold(
-                vec![[0i32; D]; num_positions_per_block],
-                num_digits,
-            )
-        })
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
-    pub(crate) fn decompose_fold_batched<const D: usize>(
-        polys: &[&Self],
-        challenges: &[SparseChallenge],
-        num_positions_per_block: usize,
-        num_digits: usize,
-        _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F>> {
-        let first = polys.first()?;
-        first
-            .num_live_blocks_for(D, num_positions_per_block)
-            .expect(
-            "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
-        );
-        Self::decompose_fold_batched_onehot::<D>(
-            polys,
-            challenges,
+            challenges.len(),
             num_positions_per_block,
             num_digits,
         )

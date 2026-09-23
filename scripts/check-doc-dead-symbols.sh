@@ -142,6 +142,7 @@ removed_api_patterns=(
   'TerminalWitnessPlan'
   'MultilinearPolynomial\b'
   'multilinear_polynomial'
+  'BatchDecomposeFoldOutcome'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
