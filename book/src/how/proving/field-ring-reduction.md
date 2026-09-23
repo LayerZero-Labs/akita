@@ -695,21 +695,21 @@ The base-field path follows the reduction above:
    [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/batch.rs)
    constructs $Q_p$, $B_b$, and $P$.
 2. **Evaluate the ring polynomial.**
-   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
+   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/fold_kernels.rs)
    returns the position-folded rings $E_b$ and the temporary ring $Y$.
 3. **Recover the scalar evaluation.**
-   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
+   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/fold_kernels.rs)
    computes $\operatorname{TraceOpen}_P(Y)$.
 4. **Prepare the trace factors.**
    [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/trace_weight/evaluation_trace.rs)
    prepares the block point underlying $B_b$, the gadget weights $G_h$, and
    the inner trace weights $J_\ell$.
 5. **Construct the trace weights.**
-   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs)
+   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/evaluation_trace.rs)
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
+   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/mod.rs)
    adds the prepared linear relation to the fused Stage-2 sumcheck.
 
 The main data flow is:
@@ -794,7 +794,7 @@ The implementation follows the same derivation in three stages:
    It recombines those coordinates as in Equation (30), then binds their digit
    decompositions before sampling the fold challenges.
 3. **Fold and verify.**
-   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/coefficient_packing.rs)
+   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/coefficient_packing.rs)
    folds the packed partials and produces $Q_{\mathrm{pack}}$. Stage 2 then
    checks both the packing relation and the direct scalar opening, using
    $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.

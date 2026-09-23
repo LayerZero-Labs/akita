@@ -25,7 +25,8 @@ orchestration lives in `akita-pcs`.
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>()`, and transcript binding |
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
-| `akita-prover` | Commitment, proving, setup expansion, witnesses, polynomial backends, compute operation traits |
+| `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
+| `akita-cpu-backend` | Backend-owned sources, commitment and witness arithmetic, prepared setup resources, caches |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](../../../docs/crate-graph.md).
@@ -51,12 +52,12 @@ Key structural facts:
 
 1. **Preset and trusted catalog selection.** The caller picks a `CommitmentConfig` preset and loads the matching schedule artifact from the same trusted parameter source used for setup or preprocessing. The caller constructs one `AkitaCommitmentScheme<Cfg>` with that catalog. The catalog contains complete expanded rows. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup (Ajtai matrices and stride envelopes) to cover the requested capacity.
-3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by the same scheme instance) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
+3. **Commit.** The application consumes its polynomials into a reusable `CpuBackend` and commits the imported source using `GroupContext`. The result contains a public commitment and an opaque handle retaining the exact source and commitment parameters. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
-5. **Prove.** `batched_prove` walks the schedule level by level. It prepares each group with the scheduled opening method, runs the sumchecks, performs EOR when required, and hands the last folded witness to the direct terminal proof.
+5. **Prove.** `batched_prove` receives retained commitment handles and public claims. The backend checks that each claim matches its commitment before preparing a fresh proof session. The generic prover walks the schedule, absorbs backend messages, samples challenges, and assembles the proof. Source coefficients and witness arithmetic remain inside the backend.
 6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
-Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
+Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/prove/root.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
 Further reading: [Configuration and planning](./configuration.md), [Setup
 offloading](./setup-offloading.md), [Proving](./proving/proving.md), and
@@ -69,6 +70,28 @@ degree-two sumcheck over the native setup domain.
 Its round count and planned size do not depend on the successor witness length.
 The [setup offloading chapter](./setup-offloading.md) follows this path from
 offline planning through the recursive verifier handoff.
+
+## Prover consumer boundary
+
+Protocol orchestration passes private state as associated handles through
+`OpaqueProverConsumer`. It owns transcript order, public plans, commitments,
+claims, and round messages. The selected consumer owns opening buffers, fold
+responses, compression witnesses, recursive witnesses, and mutable sumcheck
+and extension-opening sessions.
+
+One `CpuBackend` implements the opaque contracts directly. Physical routing,
+prepared setup storage, and cache policy live in `akita-cpu-backend`. The
+generic prover has no production dependency on that crate. Source import and
+persistence are application/backend operations. Setup prefixes enter generic
+proving as ordinary reusable commitment handles with checked public metadata.
+
+A shared `ConsumerIdentity` binds all fold levels to the same setup. A
+`ProofContext` identifies an active proof, fold level, and source group before
+private preparation starts. Witness assembly checks those identities before
+consuming its inputs, and checks that each accepted fold carries its original
+public challenges. EOR openings also bind to the exact witness operation that
+produced them. Finishing or abandoning a proof invalidates its retained scope
+leases; round operations check those leases without locking the scope registry.
 
 ## Ring-dimension ownership
 
@@ -131,18 +154,22 @@ Mixed-dimension malformed proof rejection is covered by
 | `FoldParams`, `TerminalFoldParams`, `FoldSchedule` | Verifier-visible nonterminal, terminal, and complete schedule structure |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `CommitmentSource`, `CommitmentExecutor` | D-free polynomial storage, commitment representations, and the checked split-or-fused commitment boundary |
-| `RootOpeningSource`, `RootTensorSource`, compute-backend traits | Typed views and kernels retained for opening, tensor, and ring-switch operations |
+| `ProverBackend`, focused opaque kernel traits | Public protocol operations with backend-owned opening, EOR, fold, and sumcheck state |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
 | `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
 | `GroupCommitPhaseParams`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
-| `PreparedProverGroup` | Borrowed homogeneous prover group whose polynomials all have the same concrete source type |
-| `ErasedPreparedProverGroup` | Type-erased whole-group carrier that allows different concrete source types between commitment groups |
-| `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
+| `SourceHandle`, `CommitmentHandle` | Backend-owned immutable source and reusable source-retaining commitment |
+| `ProverOpeningData`, `SelectedProverOpeningData` | Ordered opaque commitment handles bound to public claims and one exact schedule selection |
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |
 | `ValidatedScheduleCatalog` | Config-free, semantically audited expanded rows with canonical lookup indexes and artifact I/O |
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |
+
+Opening batch kernels validate one authoritative challenge partition against every
+source and return one aggregate witness per requested chunk. The protocol combines
+their `z` values into the global fold witness; non-fused backends reuse the public
+checked aggregator within each chunk.

@@ -284,7 +284,7 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/mod.rs),
 [`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf

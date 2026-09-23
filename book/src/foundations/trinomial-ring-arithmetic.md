@@ -164,12 +164,12 @@ method, change the proof transcript, or register a mixed-root protocol profile.
 `crates/akita-algebra/src/fft/fields.rs`; the protocol-neutral bridge is in
 `crates/akita-types/src/relation_bridge.rs` and
 `crates/akita-types/src/setup_contribution/trinomial.rs`; quotient construction
-is in `crates/akita-prover/src/kernels/trinomial_relation.rs`.
+is in `crates/akita-cpu-backend/src/kernels/trinomial_relation.rs`.
 
 **Tests:** `crates/akita-algebra/src/ring/trinomial/tests.rs` and
 `crates/akita-algebra/src/fft/fields/tests.rs`. The bridge modules include
 layout and setup-weight oracle tests; independent coefficient recomposition
-is checked in `crates/akita-prover/src/kernels/trinomial_relation/tests.rs`.
+is checked in `crates/akita-cpu-backend/src/kernels/trinomial_relation/tests.rs`.
 
 **Benchmarks:** `crates/akita-algebra/benches/trinomial_ntt.rs` compares the
 workspace-based transforms and multiplication against schoolbook
@@ -177,7 +177,7 @@ multiplication. `crates/akita-algebra/benches/ntt_comparison.rs` compares
 conversion, prepared pointwise work, and a checked bounded matrix-vector
 workload with the existing CRT NTT backends. Setup time and prepared storage
 are reported separately from the hot matrix-vector operation.
-`crates/akita-prover/benches/trinomial_relation.rs` measures quotient plan
+`crates/akita-cpu-backend/benches/trinomial_relation.rs` measures quotient plan
 and common-operand preparation separately from one-row and eight-row assembly.
 `crates/akita-types/benches/trinomial_setup.rs` compares compact setup-weight
 evaluation with dense MLE evaluation, with preparation and materialization

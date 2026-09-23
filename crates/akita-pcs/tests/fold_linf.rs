@@ -2,9 +2,9 @@
 
 mod common;
 
+use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -55,33 +55,24 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     );
 
     let setup = scheme.setup_prover(num_vars, 1).expect("setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepare setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
+            prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -327,40 +318,25 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = scheme.setup_prover(num_vars, 1).expect("setup");
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepare setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(
-                    &point,
-                    &[&poly],
-                    &commitment,
-                    hint,
-                    scheme.schedules(),
-                ),
+                prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,

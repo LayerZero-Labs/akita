@@ -1055,6 +1055,41 @@ where
     })
 }
 
+/// Build a terminal response from an opaque backend-produced canonical Z payload.
+pub fn build_terminal_response_from_payload<F>(
+    params: &TerminalFoldParams,
+    scheduled_shape: &TerminalResponseShape,
+    e_folded: &RingVec<F>,
+    t_fields: RingVec<F>,
+    z_payload: Vec<u8>,
+) -> Result<TerminalResponse<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+{
+    let group = scheduled_shape
+        .layout
+        .groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
+    if scheduled_shape.layout.groups.len() != 1
+        || e_folded.coeff_len() != group.e_field_elems
+        || t_fields.coeff_len() != group.t_field_elems
+        || !t_fields.can_decode_vec(params.d_a())
+    {
+        return Err(AkitaError::InvalidInput(
+            "terminal response segment length mismatch".into(),
+        ));
+    }
+    params.validate_terminal_linf_cap(group.z_linf_cap)?;
+    decode_terminal_z_golomb_payload(&z_payload, group)?;
+    Ok(TerminalResponse {
+        layout: scheduled_shape.layout.clone(),
+        z_payloads: vec![z_payload],
+        e_fields: e_folded.clone().into_compact(),
+        t_fields: t_fields.into_compact(),
+    })
+}
+
 /// Check a segment witness `z` payload against the schedule-bound byte budget and public
 /// Golomb admissibility.
 ///

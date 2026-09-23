@@ -39,6 +39,7 @@ pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
 mod transcript_grinding;
+#[path = "transcript_grinding/plan.rs"]
 mod transcript_grinding_plan;
 pub mod witness;
 
@@ -71,10 +72,11 @@ pub use field_reduction::{
     FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_flat_admit_terminal_wire, golomb_rice_flat_rows_admit_terminal_wire,
-    golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits,
-    golomb_rice_values_within_cap, golomb_rice_zigzag_width, ZFoldEncodingStats,
+    golomb_rice_encode_vec, golomb_rice_flat_admit_terminal_wire,
+    golomb_rice_flat_rows_admit_terminal_wire, golomb_rice_max_quotient_for_cap,
+    golomb_rice_rows_admit_terminal_wire, golomb_rice_rows_encodable_at_wire_low_bits,
+    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
+    ZFoldEncodingStats,
 };
 pub use instance_descriptor::{
     digest_descriptor_bytes, digest_effective_schedule, digest_level_params, digest_serializable,
@@ -112,11 +114,11 @@ pub use proof::{
     append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     build_terminal_response, build_terminal_response_from_groups,
-    canonical_extension_opening_reduction_shape, canonical_proof_shape,
-    commit_only_setup_field_elements, commitment_execution_setup_field_elements,
-    compression_relation_claim_from_rhs_extension, decode_terminal_z_golomb_payload,
-    derive_public_matrix_prefix, draw_group_fold_challenges, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    build_terminal_response_from_payload, canonical_extension_opening_reduction_shape,
+    canonical_proof_shape, commit_only_setup_field_elements,
+    commitment_execution_setup_field_elements, compression_relation_claim_from_rhs_extension,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     evaluate_reduced_compression_map, folded_root_supports_opening_shape, generate_relation_rhs,
     padded_setup_prefix_len, prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
@@ -132,9 +134,9 @@ pub use proof::{
     terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
     validate_batched_inputs, validate_public_matrix_matches_seed, validate_setup_prefix_domain,
     validate_terminal_response_z_payload, verifier_setup_matrix_capacity_for_schedule,
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof,
-    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaExpandedSetup,
+    AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup,
     CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CoefficientPackingChallenges, CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
     CoefficientPackingStage2Terms, CoefficientPackingVerifierBatchSemantics,
@@ -151,8 +153,8 @@ pub use proof::{
     RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
     RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity,
+    SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
     SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof,
     SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
@@ -237,3 +239,5 @@ pub use witness::{
     QuotientCoefficientBreakdown, RelationQuotientLayout, RelationQuotientPlan, WitnessLayout,
     WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };
+
+pub use proof::setup_prefix::setup_prefix_compression_plan;
