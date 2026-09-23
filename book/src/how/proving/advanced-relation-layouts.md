@@ -178,8 +178,8 @@ but not the ordinary quotient or compression machinery.
 ### Return to the single-group recursion
 
 The root fold consumes this multi-group semantic structure. After the semantic
-rows have been realized and lifted as described on the previous page, their
-witness coordinates form one complete flat ring-switch witness. That witness
+rows have been realized and prepared for [field
+checking](./ring-relation-checking.md), their witness coordinates form one complete flat ring-switch witness. That witness
 is aligned to the successor commitment ring dimension and committed once.
 Stage 2 evaluates it at its sumcheck-derived opening point, producing one
 witness-side opening claim for the next fold.
@@ -476,9 +476,10 @@ $$
 
 Thus $\mathbf w$ is the complete chunk-major logical witness for those four
 families, not one separately proved witness per chunk. The physical
-realizations extend it with the shared ordinary quotients and, in compressed
-mode, the compression data described on the [realizations
-page](./akita-fold-realizations.md).
+realizations extend it with compression data when the payload is compressed
+and quotient digits when the relation mode uses quotient lifting. The
+[complete witness layouts](./ring-relation-checking.md#what-enters-the-next-witness)
+describe both choices.
 
 The local responses still define the same global folded response
 algebraically:
@@ -804,9 +805,9 @@ introduced for witness storage.
 
 ### Lift and switch the native rows
 
-Rows over different quotient rings cannot be combined directly. The physical
-realization first lifts each row from its native quotient ring to an exact
-polynomial identity. If row $i$ has native dimension $d_i$ and semantic form
+Rows over different quotient rings first become scalar claims over the same
+field. We derive this step for `QuotientLift` below, then describe the
+`ReducedEvaluation` case. If row $i$ has native dimension $d_i$ and semantic form
 
 $$
 L_i(X)=y_i(X)
@@ -848,24 +849,32 @@ This is the precise role of ring switching in the mixed-ring protocol. It does
 not first convert all relations into one common quotient ring. Role-native
 projection makes each relation well formed in its own ring; the native
 quotient lift and evaluation at $\alpha$ then place all row checks in one
-common field. The [realizations page](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck)
-derives this lift for the complete physical witness.
+common field.
+
+Reduced evaluation preserves the same native dimensions. It replaces the
+lifted check by public residue weights $\kappa^{(d_i)}$ for each row and omits
+the quotient digits. After evaluation at the shared $\alpha$, these rows are
+also scalar claims over the same field. The [ring-checking
+chapter](./ring-relation-checking.md#from-one-equation-to-the-full-relation)
+derives both methods before row batching.
 
 ### Relation to compressed realization
 
-Compressed realization uses the same native-row quotient and ring-switch
-mechanism. In raw mode, the semantic commitment images
+Compressed realization uses the selected ring-relation mode for its
+additional native rows as well. In raw mode, the semantic commitment images
 $\mathbf u=\mathbf B\hat{\mathbf t}$ and
 $\mathbf v_D=\mathbf D\hat{\mathbf e}$ are public. In compressed mode they are
 private intermediate values, and additional $\mathbf F$ and $\mathbf H$ rows
 bind them to smaller public payloads. Those compression rows have their own
-native ring dimensions, quotients, and instances of Equation (9).
+native ring dimensions. Quotient lifting gives each one a quotient and an
+instance of Equation (9); reduced evaluation uses the corresponding residue
+weights without quotient digits.
 
 The difference is structural. Mixed $\mathbf A$/$\mathbf B$/$\mathbf D$
 dimensions assign native rings to the existing four semantic relation
 families. Compression adds new $\mathbf F$/$\mathbf H$ physical row families.
-Once the rows have been formed, both constructions use the same native
-quotient lift and ring-switch evaluation before Stage 2.
+Once the rows have been formed, the selected ring-relation mode turns them
+into field claims before Stage 2.
 
 Choosing a smaller $d_B$ or $d_D$ is not automatically cheaper. The physical
 column counts expand by the projection ratios
@@ -902,8 +911,9 @@ $$
  \mid\hat{\mathbf t}^{(j)}_g].
 $$
 
-The resulting physical witness remains one chunk-major flat coefficient vector
-followed by the shared native quotient rows and any compression suffix. Stage 2
-uses each row's own dimension in its powers of $\alpha$ and denominator
-$\alpha^{d_i}+1$, so group, chunk, and mixed-ring layouts can be combined
-without introducing a common carrier ring.
+The resulting physical witness remains one chunk-major flat coefficient
+vector with any required compression suffix. Quotient-lift mode adds the
+shared ordinary quotient digits and any compression quotients. Each row uses
+its own dimension in the quotient-lift weights or the reduced-evaluation
+kernel. Thus group, chunk, and mixed-ring layouts combine without introducing
+a common carrier ring.

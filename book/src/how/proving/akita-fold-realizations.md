@@ -1,31 +1,20 @@
-# Payload and ring-relation realizations of an Akita fold
+# Raw and compressed payload realizations
 
-This page starts from the [four semantic relation
-families](./akita-fold.md#the-four-semantic-relation-families) derived on the
-previous page and explains how they become physical proof rows. Three schedule
-choices are involved:
+Raw mode sends the semantic commitments themselves. Compressed mode binds
+those same commitments to smaller public payloads through additional private
+digits and ring equations. Both modes preserve the [four semantic relation
+families](./akita-fold.md#the-four-semantic-relation-families).
 
-| Choice | Alternatives | What it changes |
-|---|---|---|
-| opening method | `EvaluationTrace`, `SubringCoefficientPacking` | opening-digit geometry, source-consistency realization, scalar opening row |
-| payload mode | raw, compressed | how $\mathbf B\hat{\mathbf t}$ and $\mathbf D\hat{\mathbf e}$ are publicly bound |
-| ring-relation mode | `QuotientLift`, `ReducedEvaluation` | how physical ring equations become field equations for Stage 2 |
+This chapter explains which witness values, public targets, and physical rows
+each payload mode needs. A physical row is one coordinate equation in its
+stated ring. We first compare the two payloads, then derive the compression
+chains that connect them to the semantic commitments.
 
-Raw mode transmits the semantic commitments directly. Compressed mode keeps
-those values private, binds them to smaller terminal payloads through two-map
-commitment chains, and adds the corresponding witness segments and physical
-rows. Neither payload choice changes which opening method was scheduled.
-
-Quotient lifting adds private polynomial-modulus quotient digits. Reduced
-evaluation instead transposes negacyclic reduction into public coefficient
-weights and omits those digits. Relation mode is independent of raw versus
-compressed payload where schedule validation permits the combination;
-production coefficient-packing folds remain quotient-lift-only.
-
-After defining the payload modes, the page explains the method-dependent
-consistency geometry and both ring-relation realizations before evaluation at
-the ring-switch challenge. It then separates those physical rows from the
-field-valued virtual opening row consumed by Stage 2.
+The output is a set of ring equations. [Checking ring relations over a
+field](./ring-relation-checking.md) explains the next step: use either quotient
+lifting or quotient-free checking to turn those equations into field claims
+for Stage 2. The opening method remains a separate choice. It determines the
+partial-evaluation geometry in either payload mode.
 
 ## Contents
 
@@ -38,9 +27,7 @@ field-valued virtual opening row consumed by Stage 2.
   - [One recommitment step](#one-recommitment-step)
   - [The two-map commitment chains](#the-two-map-commitment-chains)
   - [Additional physical relations and witness](#additional-physical-relations-and-witness)
-- [Ring-relation realization before sumcheck](#ring-relation-realization-before-sumcheck)
-  - [Quotient lifting](#quotient-lifting)
-  - [Reduced evaluation](#reduced-evaluation)
+- [From physical rows to field checks](#from-physical-rows-to-field-checks)
 - [The scalar opening claim is a method-dependent virtual row](#the-scalar-opening-claim-is-a-method-dependent-virtual-row)
 - [Code reference](#code-reference)
 
@@ -147,15 +134,15 @@ $\mathbf B$, and $\mathbf D$.
 
 With `SubringCoefficientPacking`, raw mode still transmits the same semantic
 $\mathbf B$ and $\mathbf D$ commitments, but Equation (12b) is realized by
-the packed coordinate-plane relations described below. It therefore does not
-reuse the single ordinary `consistency` row counted in this example.
+the [packed coordinate-plane
+relation](./root-fold-ring-switch.md#the-packing-consistency-quotient).
+It therefore does not reuse the single ordinary `consistency` row counted in this example.
 
 Equation (17) is still a relation in the native cyclotomic ring; it is not yet
 the exact field identity consumed by sumcheck. The
-[ring-relation realization](#ring-relation-realization-before-sumcheck) later
-on this page explains the two schedule-selected ways to obtain that field
-identity. This step is deferred until after the compressed rows have also been
-defined.
+next chapter, [Checking ring relations over a field](./ring-relation-checking.md),
+explains the two schedule-selected ways to obtain that field claim. We first
+finish defining the physical rows for compressed payloads.
 
 ### Compressed realization
 
@@ -207,8 +194,8 @@ with the ordinary relations. The proof does not carry a separate mode tag.
 ### Planner-selected realization transition
 
 Compression saves public payload bytes but adds digit witnesses, relation
-rows, quotient witnesses, and restricted range-check work. The planner prices
-both sides of this tradeoff for the complete recursive schedule; it does not
+rows, and restricted range-check work. With quotient lifting, its additional
+rows also add quotient witnesses. The planner prices both sides of this tradeoff for the complete recursive schedule; it does not
 choose a mode from the payload size alone.
 
 Commitment groups created separately before recursive proving—for example,
@@ -619,259 +606,31 @@ $$
 \boldsymbol\xi_{H,2}.
 $$
 
-The next section explains when the witness adds one quotient-digit row for
-every physical ring row and when reduced evaluation omits all such rows. The
-restricted $\{-1,0\}$ check on the compression digits is described with the
-Stage 2 sumcheck rather than as another physical ring row.
+The restricted $\{-1,0\}$ check on the compression digits is described with
+the Stage 2 sumcheck. It is separate from the physical ring equations above.
 
-## Ring-relation realization before sumcheck
+<a id="ring-relation-realization-before-sumcheck"></a>
 
-The schedule stores one `RingRelationMode` per nonterminal fold. It is bound by
-the effective schedule descriptor before the outgoing witness commitment and
-the ring-switch challenge `alpha`. The terminal fold has no mode because it
-checks its clear response directly.
+## From physical rows to field checks
 
-The payload and ring-relation axes produce four witness shapes:
+Both payload modes now supply physical ring equations. Raw mode uses the
+public $\mathbf u$ and $\mathbf v_D$ as targets. Compressed mode uses zero
+targets for the intermediate relations and the public $p_F,p_H$ for the final
+compression rows. Each row keeps the native ring defined above.
 
-| Payload | Quotient lifting | Reduced evaluation |
-|---|---|---|
-| raw | Z/E/T and ordinary quotient digits | Z/E/T |
-| compressed | Z/E/T, F/H digits, ordinary quotients, and F/H quotients | Z/E/T and F/H digits |
+The next step is to check those equations over a field. The schedule selects
+one of two methods:
 
-`WitnessLayout` is the authority for these ranges. An omitted quotient is not a
-zero-width placeholder and does not enter Stage 1, Stage 2, response sizing, or
-the successor commitment.
+- [Quotient lifting](./ring-relation-checking.md#quotient-lifting) adds private
+  quotient digits that record reduction by each row's ring modulus.
+- [Reduced evaluation](./ring-relation-checking.md#quotient-free-checking-by-reduced-evaluation)
+  includes that reduction in public coefficient weights and adds no quotient
+  digits.
 
-### Quotient lifting
-
-The payload mode determines which commitment rows exist; the opening method
-determines how the first semantic family enters this lift.
-
-| Opening method | Consistency realization | Source-fold geometry |
-|---|---|---|
-| `EvaluationTrace` | one ordinary relation in $R_D$ | the same $R_D$ challenge acts on $\mathbf z$ and $\hat{\mathbf e}$ |
-| `SubringCoefficientPacking` | one logical $C=E[U]/(U^s+1)$ relation over $k$ base-field coordinate planes; packed E/Q use the common relation events and the folded source uses the packing-Z term | $c(U)$ is embedded as $c(X^{k\eta})$ in the A ring |
-
-For packing, each coordinate plane has modulus $U^s+1$. The complete relation
-has physical width $ks$; that does **not** make it one ring of dimension $ks$.
-The logical consistency-row slot remains in the row domain, so its $\tau_1$
-weight also batches the packed relation. The packed E/Q coordinate-plane
-events join the common relation-weight factorization; only the folded-source
-side is supplied as the separate packing-Z structured term. These coefficients
-replace the legacy `EvaluationTrace` consistency formula, and all planes
-together realize the single semantic Equation (12b).
-
-The ordinary physical equations are congruences in cyclotomic rings, whereas
-sumcheck needs exact field identities. In the raw basic case, every ordinary
-row uses the common ring $R_D$ for `EvaluationTrace`. Packing omits the
-legacy `EvaluationTrace` consistency coefficients; its A, B, and D rows remain
-in their scheduled native rings, while its consistency-row slot uses $k$
-coordinate planes of dimension $s$. Compressed mode retains those scheduled
-dimensions and adds two
-compression-only dimensions: the $\mathbf F_1$ and $\mathbf H_1$ rows lie in
-$R_{d_1}$, while the $\mathbf F_2$ and $\mathbf H_2$ rows lie in $R_{d_2}$.
-There is therefore no single denominator $X^D+1$ that applies to every row in
-the general physical layout.
-
-Instead, lift each physical row in its own ring. Index the rows by $i$, let
-$d_i$ be the native dimension of row $i$, and choose the canonical
-degree-less-than-$d_i$ representative of each ring element used by that row.
-If $\mathbf M_i$ and $y_i$ denote its matrix coefficients and right-hand side,
-then the ring equality is equivalent to
-
-$$
-\sum_j
-\widetilde M_{i,j}(X)\widetilde w_j(X)
--
-\widetilde y_i(X)
-=
-(X^{d_i}+1)r_i(X).
-\tag{19}
-$$
-
-Thus every physical row owns one quotient polynomial $r_i$ in the same native
-dimension. Digit-decompose it with the quotient gadget:
-
-$$
-r_i(X)
-=
-\sum_{g=0}^{L_r-1}
-G_g^{(r)}\hat r_{i,g}(X),
-\qquad
-\hat r_{i,g}\in R_{d_i}.
-\tag{20}
-$$
-
-Logically, these quotient digits extend the witness in the same way in both
-payload modes. Before any compression-only suffix, the witness layout places
-the quotient digits for every relation-row family in one shared segment
-$\hat{\mathbf r}_{\mathrm{ord}}$. In raw `EvaluationTrace` mode this segment
-contains the quotients for the `consistency`, $\mathbf A$, $\mathbf B$, and
-$\mathbf D$ rows in canonical row order:
-
-$$
-\boxed{
-\mathbf w_{\mathrm{raw}}
-=
-\hat{\mathbf z}
-\;\Vert\;
-\hat{\mathbf e}
-\;\Vert\;
-\hat{\mathbf t}
-\;\Vert\;
-\hat{\mathbf r}_{\mathrm{ord}}.
-}
-\tag{21a}
-$$
-
-For packing, the same shared segment still includes the consistency-row
-quotient slot. That slot stores the digit-decomposed $k$ coordinate planes of
-$Q_{\mathrm{pack}}$; the A, B, and D quotients follow their normal row layout.
-$Q_{\mathrm{pack}}$ is therefore not stored in a separate method-dependent
-witness span. Its packed Q events, together with the packed E events, enter the
-common relation-weight factorization. The packing-Z and direct-opening terms
-are the separate structured Stage-2 sources.
-
-Compressed mode keeps that ordinary quotient segment, then stores each
-compression layer's balanced base-$2$ digits beside the quotient digits for
-the same $\mathbf F/\mathbf H$ maps. Suppressing derived zero-alignment ranges,
-the basic one-group layout is
-
-$$
-\boxed{
-\begin{aligned}
-\mathbf w_{\mathrm{comp}}
-={}&
-\hat{\mathbf z}
-\Vert\hat{\mathbf e}
-\Vert\hat{\mathbf t}
-\Vert\hat{\mathbf r}_{\mathrm{ord}}
-\\
-&\Vert\boldsymbol\xi_{F,1}
-\Vert\boldsymbol\xi_{H,1}
-\Vert\hat{\mathbf r}_{F,1}
-\Vert\hat{\mathbf r}_{H,1}
-\\
-&\Vert\boldsymbol\xi_{F,2}
-\Vert\boldsymbol\xi_{H,2}
-\Vert\hat{\mathbf r}_{F,2}
-\Vert\hat{\mathbf r}_{H,2}.
-\end{aligned}
-}
-\tag{21b}
-$$
-
-The implementation derives zero padding before the first compression layer,
-between layers when required, and at the end of the witness. Raw mode has no
-compression spans or compression-alignment padding.
-
-Substituting Equation (20) into Equation (19) and moving the denominator term
-to the left gives one exact polynomial identity per row:
-
-$$
-\sum_j
-\widetilde M_{i,j}(X)\widetilde w_j(X)
--
-(X^{d_i}+1)
-\sum_{g=0}^{L_r-1}G_g^{(r)}\hat r_{i,g}(X)
-=
-\widetilde y_i(X).
-\tag{22}
-$$
-
-Call the row operator on the left $\mathbf M_{\mathrm{ext},i}(X)$. Then
-
-$$
-\boxed{
-\mathbf M_{\mathrm{ext},i}(X)\widetilde{\mathbf w}(X)
-=
-\widetilde y_i(X).
-}
-\tag{23}
-$$
-
-Equation (19) uses the undecomposed quotient $r_i$, whereas Equation (23)
-already includes its digits inside the appropriate raw or compressed witness
-layout. The denominator term must not also be added to the right-hand side.
-
-Ring switching samples one field element $\alpha$ and evaluates every row. A
-row of dimension $d_i$ uses the powers
-$1,\alpha,\ldots,\alpha^{d_i-1}$ and its own denominator
-$\alpha^{d_i}+1$:
-
-$$
-\boxed{
-\mathbf M_{\mathrm{ext},i}(\alpha)\mathbf w(\alpha)
-=
-y_i(\alpha)
-\qquad\text{for every physical row }i.
-}
-\tag{24}
-$$
-
-After evaluation, all rows are scalar identities over the same extension
-field even though they originated in different cyclotomic rings. Equation
-(24) is therefore the field relation that Stage 2 can batch with $\tau_1$. The
-[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) page
-explains how $\tau_1$ batches its physical rows and how the resulting relation
-is proved over the flat witness address.
-
-### Reduced evaluation
-
-Reduced evaluation checks the same native-ring equation without introducing
-$r_i$. For a public multiplier
-$A(X)=\sum_{k=0}^{d-1}a_kX^k$ and private witness coefficients $w_j$, define
-
-$$
-\kappa_{A,\alpha}(j)
-=\left(A(X)X^j\bmod(X^d+1)\right)(\alpha).
-$$
-
-Then
-
-$$
-(A\circledast W)(\alpha)
-=\sum_{j=0}^{d-1}w_j\kappa_{A,\alpha}(j),
-$$
-
-so reduction is moved into public weights rather than a private quotient. The
-weights are prepared in linear time:
-
-$$
-\kappa_{A,\alpha}(0)=A(\alpha),
-\qquad
-\kappa_{A,\alpha}(j+1)
-=\alpha\kappa_{A,\alpha}(j)
--(\alpha^d+1)a_{d-1-j}.
-$$
-
-This recurrence never divides by $\alpha^d+1$; an evaluation point that is a
-root of the modulus remains valid. Each physical row uses its own native
-dimension, including the F/H compression rows.
-
-At the verifier's final multilinear point, an exact physical coefficient
-window has equality weights $e_j$. The transposed terminal functional obeys
-
-$$
-H_0=\sum_je_j\alpha^j,
-\qquad
-H_{k+1}=\alpha H_k-(\alpha^d+1)e_{d-1-k}.
-$$
-
-The verifier uses this $O(d)$ functional state for structured terms and for
-the existing fused A/B/D setup traversal. Compression F/H maps use their
-canonical compression program with the same reduced semantics. The verifier
-does not materialize a witness-sized table or rescan A, B, and D separately.
-The prover currently materializes one ephemeral dense Stage-2 weight table;
-that table is folded by sumcheck but is neither committed nor serialized.
-
-Production schedules admit reduced evaluation only as a monotone,
-setup-direct `EvaluationTrace` suffix beginning at absolute level 2. It composes
-with raw or compressed payloads and with Linf or selective L2 security. An
-incoming setup prefix, a later setup-offload edge, coefficient packing, or a
-return to quotient lifting is rejected by `FoldSchedule::validate_structure`.
-These are the supported scope of the current implementation, not algebraic
-claims that reduced evaluation could never support a broader protocol.
+The next chapter derives both methods from one ring equation. Only then does
+it combine them with raw and compressed payloads to give the [complete witness
+layouts](./ring-relation-checking.md#what-enters-the-next-witness). This keeps
+the payload choice separate from the method used to check its rows.
 
 ## The scalar opening claim is a method-dependent virtual row
 
@@ -888,16 +647,15 @@ reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-c
 `SubringCoefficientPacking` uses the [direct packed scalar
 row](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials).
 The direct scalar opening in either method reuses the same row-batching
-challenge $\tau_1$, but it is absent from the physical ring-row layout, its
-public right-hand side, and the quotient polynomials $r_i$. Coefficient packing
-also changes the physical consistency realization through the packed E/Q
-events in the common relation-weight factorization and the separate packing-Z
-term described above. Both are distinct from the direct scalar opening.
+challenge $\tau_1$. It is absent from the physical ring-row layout and its
+public right-hand side. Thus it needs no ring-switch quotient in either
+relation mode. Coefficient packing also has a physical source-consistency
+relation, derived in [Root fold and ring
+switching](./root-fold-ring-switch.md#the-packing-consistency-quotient).
 
-[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
-continues from Equation (24) and fuses the physical relation, the
-method-selected opening terms, and the range-image binding into one Stage-2
-sumcheck.
+After the physical ring rows become field claims, [Stage
+2](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) fuses them with this
+scalar opening and the range-image binding in one sumcheck.
 
 ## Code reference
 
@@ -919,8 +677,9 @@ page.
    for that level. A raw recursive level exposes $\mathbf u$ directly. A
    compressed commitment passes it to
    [`execute_compression_chains`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/compute/compression.rs),
-   exposes only $p_F$, and retains the two packed $\mathbf F$ digit layers and
-   their quotient rows in the commitment hint.
+   exposes only $p_F$, and retains the two packed $\mathbf F$ digit layers in
+   the commitment hint. It retains their quotient rows when the consuming
+   fold uses quotient lifting.
 2. **Build the fold-side objects.**
    [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation.rs)
    decomposes the position-folded values into $\hat{\mathbf e}$, computes
@@ -1048,7 +807,7 @@ vector contains one
 | `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
 | `e_folded` | recomposed position-folded rings $E_b$ |
 | `e_hat` | opening digits $\hat{\mathbf e}$ |
-| `hint` | semantic inner rows, plus retained $\mathbf F$ stages and quotients when the incoming payload is compressed |
+| `hint` | semantic inner rows, plus retained $\mathbf F$ stages for compressed payloads and quotients when required by the relation mode |
 
 The
 [`AkitaCommitmentHint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/hints.rs)
