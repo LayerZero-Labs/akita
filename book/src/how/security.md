@@ -382,13 +382,13 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 
 - `crates/akita-types/src/sis/norm_bound.rs` owns the two physical collision
   formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
-  physical response map. `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs`
+  physical response map. `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs`
   and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
 - `specs/archive/2026-Q3/weak-binding-norm-fix.md` records the earlier fold reprice.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
-  `crates/akita-prover/src/commitment/api.rs`
+  `crates/akita-cpu-backend/src/commitment/api.rs`
   (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.

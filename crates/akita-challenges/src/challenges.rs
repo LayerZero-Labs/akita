@@ -22,7 +22,7 @@ const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Challenges {
     /// Per-(claim, block) sparse challenges.
-    challenges: Vec<SparseChallenge>,
+    challenges: std::sync::Arc<[SparseChallenge]>,
     /// Exact number of live blocks packed into one claim.
     num_live_blocks_per_claim: usize,
     /// Number of claims represented by this vector.
@@ -50,7 +50,7 @@ impl Challenges {
             });
         }
         Ok(Self {
-            challenges,
+            challenges: challenges.into(),
             num_live_blocks_per_claim,
             num_claims,
         })

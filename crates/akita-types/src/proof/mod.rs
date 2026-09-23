@@ -26,7 +26,6 @@ pub mod stage1;
 pub mod terminal_witness;
 
 mod containers;
-mod hints;
 mod levels;
 mod shapes;
 mod tail_segments;
@@ -72,7 +71,6 @@ pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
-pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof,
@@ -113,9 +111,8 @@ pub use setup_envelope::{
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
     setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
-    validate_setup_prefix_domain, SetupPrefixProverRegistry, SetupPrefixPublicCommitment,
-    SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SETUP_PREFIX_CONTENT_TAG,
+    validate_setup_prefix_domain, SetupPrefixPublicCommitment, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
     canonical_extension_opening_reduction_shape, canonical_proof_shape, AkitaBatchedProofShape,
@@ -127,7 +124,8 @@ pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
-    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    build_terminal_response, build_terminal_response_from_groups,
+    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
     raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,

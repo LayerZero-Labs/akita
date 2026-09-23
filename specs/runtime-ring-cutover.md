@@ -67,7 +67,7 @@ removed at merge:
 - the former dimension-typed commitment prover trait
 - the former dimension-typed commitment verifier trait
 - `AkitaProverSetup<F, D>`
-- `AkitaCommitmentHint<F, D>`
+- `PortableCommitmentHandle<F, D>`
 - the former dimension-typed prover opening-batch carrier
 - the former dimension-typed prover commitment-group carrier
 - `RingCommitment<F, D>` as a protocol-facing commitment object
@@ -309,7 +309,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] Protocol-facing commitments use `RingVec<F>` or an equivalent D-free
       owned field-vector type, not `RingCommitment<F, D>`.
 - [x] Protocol-facing prover and verifier opening batches are D-free.
-- [x] `AkitaCommitmentHint` and digit-block storage no longer carry a
+- [x] `PortableCommitmentHandle` and digit-block storage no longer carry a
       compile-time `D`.
 - [x] Transcript absorption of commitments and ring-shaped proof data uses
       flat field coefficients under schedule-derived shape.
@@ -517,7 +517,7 @@ digits are interpreted. If storing a dimension locally is useful for debug
 validation, it must not be a protocol authority and must not replace schedule
 validation.
 
-`AkitaCommitmentHint<F, D>` becomes `AkitaCommitmentHint<F>`.
+`PortableCommitmentHandle<F, D>` becomes `PortableCommitmentHandle<F>`.
 
 #### Prover Claims
 
@@ -674,7 +674,7 @@ execution list below is retained as historical implementation order.
 1. Land this spec and create the branch/PR as the single cutover vehicle.
 2. Introduce the final D-free storage names: `RingVec<F>` and borrowed view
    helpers.
-3. Convert `FlatDigitBlocks<D>` and `AkitaCommitmentHint<F, D>` to runtime-shaped
+3. Convert `FlatDigitBlocks<D>` and `PortableCommitmentHandle<F, D>` to runtime-shaped
    storage.
 4. Convert `AkitaProverSetup<F, D>` to `AkitaProverSetup<F>`.
 5. Convert protocol-facing commitments to D-free storage.

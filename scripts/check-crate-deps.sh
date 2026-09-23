@@ -14,22 +14,25 @@ if [ "$#" -gt 0 ]; then
 else
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-planner akita-prover akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs)
       ;;
     akita-prover)
-      forbidden=(akita-planner akita-verifier akita-pcs)
+      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs)
+      ;;
+    akita-cpu-backend)
+      forbidden=(akita-planner akita-verifier akita-setup akita-pcs)
       ;;
     akita-config)
-      forbidden=(akita-planner akita-prover akita-verifier akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs)
       ;;
     akita-schedules)
-      forbidden=(akita-planner akita-config akita-prover akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
       ;;
     akita-planner)
       # `akita-planner` is offline-only. It may use `akita-config` behind its
       # catalog-generation feature, but it must never pull in protocol-layer
       # prover/verifier/setup crates.
-      forbidden=(akita-prover akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
       ;;
     akita-setup)
       forbidden=(akita-verifier akita-pcs)
@@ -66,3 +69,15 @@ for label in default all-features; do
 done
 
 echo "${pkg} dependency hygiene check passed"
+
+if [ "${pkg}" = "akita-prover" ]; then
+  # Kernel contracts are backend-neutral under every feature combination.
+  # Keep CPU storage, resource policy, routing, and portable witness artifacts
+  # out of generic source as well as out of the production dependency graph.
+  if rg --line-number --glob '*.rs' \
+      '\b(CpuBackend|CpuProverConsumer|ComputeBackendSetup|LevelProveStacks|ProverConsumerFactory|SetupSourceFactory|NttCacheOwnerId|PortableCommitmentHandle|PreparedCommitmentResources)\b' \
+      crates/akita-prover/src; then
+    echo "CPU execution or witness storage leaked into generic prover contracts" >&2
+    exit 1
+  fi
+fi
