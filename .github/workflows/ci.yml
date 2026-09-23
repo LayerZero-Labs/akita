@@ -243,6 +243,23 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      - name: Audit the grinding plan across akita-types shapes
+        run: >-
+          cargo test --release -p akita-types
+          --features logging-transcript
+
+  # The backend lib-test target builds a separate release test graph. Keep it
+  # isolated so Keccak runner variance cannot exhaust the transcript job budget.
+  test-cpu-stage1-transcript-roundtrips:
+    name: CPU Stage 1 transcript roundtrips (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        backend: [transcript-blake2b, transcript-keccak]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Audit CPU Stage 1 roundtrips
         run: >-
           cargo test --release -p akita-cpu-backend --lib stage1_roundtrip_tests
@@ -250,10 +267,6 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
-      - name: Audit the grinding plan across akita-types shapes
-        run: >-
-          cargo test --release -p akita-types
-          --features logging-transcript
 
   test-timing:
     name: Test timing
