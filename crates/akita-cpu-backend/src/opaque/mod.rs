@@ -912,7 +912,7 @@ pub(crate) use witness_build::{
 };
 
 pub(crate) mod fold;
-pub(crate) use fold::aggregate_decompose_fold_witnesses;
+pub use fold::aggregate_decompose_fold_witnesses;
 pub use fold::CpuFoldResponses;
 pub(crate) use fold::{CpuAcceptedFold, CpuAcceptedTerminalFold};
 pub(crate) use fold::{CpuAcceptedFoldHandle, CpuAcceptedTerminalFoldHandle};

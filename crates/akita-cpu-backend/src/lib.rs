@@ -46,9 +46,10 @@ pub mod custom_source {
         PolynomialTypeSelection, PreparedExternalInnerCommitment,
     };
     pub use crate::opaque::{
-        CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-        DecomposeFoldWitness, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-        OpeningFoldPlan, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+        aggregate_decompose_fold_witnesses, CommitInnerPlan, CpuFoldResponses,
+        DecomposeFoldBatchPlan, DecomposeFoldPlan, DecomposeFoldWitness, OpeningBatchKernel,
+        OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+        SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
         SubringCoefficientPackingPlan,
     };
     pub use crate::sources::onehot::OneHotBatchView;

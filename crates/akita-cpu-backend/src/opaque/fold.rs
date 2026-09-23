@@ -445,7 +445,12 @@ fn admit_fold_response(
     Ok(response_l2_sq_cap.is_none_or(|cap| total <= cap))
 }
 
-pub(crate) fn aggregate_decompose_fold_witnesses<const D: usize>(
+/// Sum per-polynomial decompose-fold witnesses into one response.
+///
+/// A custom `OpeningBatchKernel` that folds each polynomial separately uses
+/// this to produce the same aggregate as the fused CPU kernels. Every witness
+/// must have ring dimension `D` and the same row count.
+pub fn aggregate_decompose_fold_witnesses<const D: usize>(
     witnesses: impl IntoIterator<Item = Result<DecomposeFoldWitness, AkitaError>>,
 ) -> Result<DecomposeFoldWitness, AkitaError> {
     let mut witnesses = witnesses.into_iter();
