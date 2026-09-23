@@ -649,7 +649,9 @@ impl WitnessLayout {
                 .max()
                 .ok_or_else(|| AkitaError::InvalidSetup("witness groups are empty".into()))?
         } else {
-            relation_geometry.relation_coefficient_block_len()?
+            relation_geometry
+                .rhs_layout()
+                .relation_coefficient_block_len()?
         };
         let tail = tail::materialize(
             lp,

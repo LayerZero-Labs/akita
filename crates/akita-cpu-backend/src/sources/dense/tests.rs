@@ -238,3 +238,79 @@ fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
         Err(AkitaError::InvalidInput(_))
     ));
 }
+
+#[test]
+fn scalar_fold_rejects_short_and_excess_challenges() {
+    use crate::opaque::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel, RootOpeningSource};
+    use akita_challenges::SparseChallenge;
+
+    const D: usize = 8;
+    // Two rings at one position per block give two live blocks.
+    let poly = DensePoly::from_ring_coeffs(vec![ring::<D>(0), ring::<D>(10)]).unwrap();
+    let challenge = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let backend = CpuBackend::for_arithmetic_tests();
+    let run = |count: usize| {
+        let challenges = vec![challenge.clone(); count];
+        OpeningFoldKernel::decompose_fold(
+            &backend,
+            None,
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_view(&poly).unwrap(),
+            DecomposeFoldPlan {
+                challenges: &challenges,
+                num_positions_per_block: 1,
+                num_digits: 1,
+                log_basis: 6,
+            },
+        )
+    };
+
+    assert!(run(2).is_ok());
+    for count in [0, 1, 3] {
+        assert!(
+            matches!(
+                run(count),
+                Err(AkitaError::InvalidSize { expected: 2, actual }) if actual == count
+            ),
+            "{count} challenges for two live blocks must be rejected"
+        );
+    }
+}
+
+// A +1 monomial challenge must leave every single balanced digit unchanged.
+// The expectation is the input integer itself, independent of decomposition.
+#[test]
+fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
+    use akita_challenges::SparseChallenge;
+    use jolt_field::Prime64Offset59;
+    const D: usize = 128;
+    let challenge = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let mut mismatches = Vec::new();
+    for log_basis in [8_u32, 9] {
+        let half = 1_i64 << (log_basis - 1);
+        for value in [127_i64, 128, 255, -128, -129, -256] {
+            if !(-half..half).contains(&value) {
+                continue; // Only admissible balanced digits belong in this oracle.
+            }
+            let mut coefficients = vec![Prime64Offset59::zero(); D];
+            coefficients[0] = Prime64Offset59::from_i64(value);
+            let poly = DensePoly::from_field_evals(7, coefficients).unwrap();
+            let actual =
+                poly.decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis);
+            let mut expected = vec![0_i32; D];
+            expected[0] = value as i32;
+            if actual.centered_coeffs_flat() != expected {
+                mismatches.push((log_basis, value, actual.centered_coeffs_flat()[0]));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "(basis, expected, actual): {mismatches:?}"
+    );
+}

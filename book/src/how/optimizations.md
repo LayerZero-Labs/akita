@@ -108,9 +108,10 @@ The implementation and its comparison with a padded-table reference are in
 
 Tile size and arithmetic traversal solve different problems.
 
-The tile size bounds temporary memory. The default CPU backend uses one 8 MiB
-sparse commitment scratch budget per worker. One-hot and signed sparse-ring
-commitments both use it. An application may choose another nonzero budget.
+The tile size bounds temporary memory. The CPU kernel computes its scratch
+budget internally as the larger of a private 8 MiB batching target and the
+estimated minimum needed for one block. The target lets small blocks share a
+matrix pass; using only the minimum would force one block per tile.
 The estimate includes sparse entries, sweep indexes, wide accumulators,
 reduced rows, and small offset arrays. In simplified form,
 
@@ -138,20 +139,18 @@ a route change is visible even when total runtime is noisy.
 
 ## CPU resource limits
 
-`CpuBackend` owns two deployment limits. The first is the largest ring switch
-operation that keeps a complete transformed matrix prefix. The second is the
-sparse commitment scratch budget for each worker. The default backend limits use `2^21` ring
-elements and 8 MiB. Applications may use `CpuBackend::with_resource_limits` to
-choose other values.
+`CpuBackend::with_ring_switch_cache_limit(expanded, schedules,
+max_cached_ring_switch_elements)` sets the largest ring switch operation that
+keeps a complete transformed matrix prefix. `CpuBackend::new` uses `2^21` ring
+elements. A zero limit streams every ring switch operation that has a streamed
+implementation. `usize::MAX` retains every supported operation.
 
-A zero ring switch limit streams every ring switch operation that has a
-streamed implementation. `usize::MAX` retains every supported operation. The
-commitment scratch budget must be nonzero. Each one-hot or sparse-ring kernel
-returns `InvalidSetup` before its tile allocation if even one block cannot fit.
+Commitment scratch sizing and sweep selection are internal kernel decisions,
+as described above. Scratch is per worker and excludes the prover's other
+resident data, so automatic sizing does not impose a total memory limit.
 
-These limits choose equivalent CPU execution paths. They do not change the
+These policies choose equivalent CPU execution paths. They do not change the
 proof schedule, transcript, setup bytes, proof bytes, or verifier behavior.
-The CPU backend still selects the private one hot arithmetic sweep.
 
 ## Wide accumulation
 

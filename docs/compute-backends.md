@@ -65,11 +65,12 @@ resources.
 
 ## CPU resource controls
 
-`CpuBackend::with_resource_limits::<Cfg>` accepts the expanded setup, trusted
-catalog, maximum cached ring-switch elements, and commitment scratch bytes per
-worker. A zero ring-switch limit streams supported operations; `usize::MAX`
-retains all supported ring-switch operations. A zero scratch budget is rejected.
-A sparse commitment operation also rejects a budget below its minimum tile.
+`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup, trusted
+catalog, and maximum cached ring-switch elements. A zero limit streams
+supported operations; `usize::MAX` retains all supported ring-switch
+operations. The CPU kernel sizes one-hot commitment scratch automatically from
+the commitment geometry; see the
+[CPU resource policy](../book/src/how/optimizations.md#cpu-resource-limits).
 
 These controls change CPU work and memory retention without changing public
 parameters or protocol messages. Ring dimensions come from validated schedule

@@ -1,4 +1,7 @@
-use super::super::coverage::{inner_coeff_linf_bounds, sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
+use super::super::coverage::{
+    cached_inner_coeff_linf_bounds, inner_coeff_linf_bounds, sis_role_cell,
+    GADGET_COEFF_LINF_ANCHORS,
+};
 use super::super::generated_sis_table::{
     sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST,
 };
@@ -248,9 +251,20 @@ pub fn ceil_supported_linf_bound(
         return None;
     }
     let bound = match role {
-        SisMatrixRole::Inner => inner_coeff_linf_bounds(sis_modulus_profile, d)
-            .into_iter()
-            .find(|&candidate| linf <= candidate)?,
+        SisMatrixRole::Inner => {
+            // Production dimensions share the cached slice across candidate lookups.
+            // Keep derivation for dimensions outside the cache; role validation below
+            // still decides whether the selected cell is supported.
+            let uncached;
+            let bounds =
+                if let Some(bounds) = cached_inner_coeff_linf_bounds(sis_modulus_profile, d) {
+                    bounds
+                } else {
+                    uncached = inner_coeff_linf_bounds(sis_modulus_profile, d);
+                    &uncached
+                };
+            *bounds.get(bounds.partition_point(|&candidate| candidate < linf))?
+        }
         SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()

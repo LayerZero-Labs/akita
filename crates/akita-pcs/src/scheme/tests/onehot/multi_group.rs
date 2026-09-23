@@ -66,14 +66,12 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let stack = CpuBackend::<ProtocolCfg>::with_resource_limits(
+    let stack = CpuBackend::<ProtocolCfg>::with_ring_switch_cache_limit(
         setup.expanded.clone(),
         scheme.schedules(),
         max_cached_ring_switch_elements,
-        CpuBackend::<ProtocolCfg>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .expect("cached backend");
-
     // Commit every precommitted group from its exact generated profile; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_commitments = Vec::new();

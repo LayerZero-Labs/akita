@@ -289,6 +289,52 @@ pub(super) fn finish_decompose_fold<const D: usize>(
 }
 
 impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
+    /// Validate a fused decompose-fold batch and lay out its sources.
+    ///
+    /// Each polynomial consumes exactly `challenges_per_poly` consecutive
+    /// challenges and must have exactly that many live blocks.
+    fn decompose_sources<'a, const D: usize>(
+        polys: &[&'a Self],
+        challenges: &[SparseChallenge],
+        challenges_per_poly: usize,
+        num_positions_per_block: usize,
+    ) -> Result<Vec<DecomposeSource<'a, F, I>>, AkitaError> {
+        if polys.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "one-hot decompose_fold requires at least one polynomial".into(),
+            ));
+        }
+        let expected = akita_error::checked::product([polys.len(), challenges_per_poly])
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("one-hot decompose_fold challenge count overflow".into())
+            })?;
+        if challenges.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: challenges.len(),
+            });
+        }
+        let mut sources = Vec::with_capacity(polys.len());
+        for (index, &poly) in polys.iter().enumerate() {
+            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block)?;
+            if num_blocks != challenges_per_poly {
+                return Err(AkitaError::InvalidSize {
+                    expected: num_blocks,
+                    actual: challenges_per_poly,
+                });
+            }
+            sources.push(DecomposeSource {
+                poly,
+                challenge_start: index * challenges_per_poly,
+                active_blocks: challenges_per_poly,
+                ring_elems,
+            });
+        }
+        Ok(sources)
+    }
+
+    /// Fused decompose-fold returning one witness per block range in
+    /// `chunk_ranges`.
     pub(super) fn decompose_fold_batched_chunked_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
@@ -296,82 +342,48 @@ impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
         chunk_ranges: &[std::ops::Range<usize>],
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Option<Vec<DecomposeFoldWitness>>
+    ) -> Result<Vec<DecomposeFoldWitness>, AkitaError>
     where
         F: Field + CanonicalEncoding,
     {
-        if challenges_per_poly == 0 {
-            return None;
-        }
-        let challenge_chunks = challenges.chunks_exact(challenges_per_poly);
-        if !challenge_chunks.remainder().is_empty() || challenge_chunks.len() != polys.len() {
-            return None;
-        }
-        let mut challenge_start = 0;
-        let mut sources = Vec::with_capacity(polys.len());
-        for &poly in polys {
-            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
-            if num_blocks != challenges_per_poly {
-                return None;
-            }
-            sources.push(DecomposeSource {
-                poly,
-                challenge_start,
-                active_blocks: challenges_per_poly,
-                ring_elems,
-            });
-            challenge_start += challenges_per_poly;
-        }
-        Some({
-            let accumulators = accumulate_indices_chunked::<F, I, D>(
-                &sources,
-                challenges,
-                chunk_ranges,
-                num_positions_per_block,
-            );
-            cfg_into_iter!(accumulators)
-                .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
-                .collect()
-        })
+        let sources = Self::decompose_sources::<D>(
+            polys,
+            challenges,
+            challenges_per_poly,
+            num_positions_per_block,
+        )?;
+        let accumulators = accumulate_indices_chunked::<F, I, D>(
+            &sources,
+            challenges,
+            chunk_ranges,
+            num_positions_per_block,
+        );
+        Ok(cfg_into_iter!(accumulators)
+            .map(|accumulator| finish_decompose_fold(accumulator, num_digits))
+            .collect())
     }
 
+    /// Fused decompose-fold of `polys`, each consuming exactly
+    /// `challenges_per_poly` consecutive challenges.
+    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
     pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         challenges_per_poly: usize,
         num_positions_per_block: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness>
+    ) -> Result<DecomposeFoldWitness, AkitaError>
     where
         F: Field + CanonicalEncoding,
     {
-        if challenges_per_poly == 0 {
-            return None;
-        }
-        let challenge_chunks = challenges.chunks_exact(challenges_per_poly);
-        if !challenge_chunks.remainder().is_empty() || challenge_chunks.len() != polys.len() {
-            return None;
-        }
-        let mut challenge_start = 0;
-        let mut sources = Vec::with_capacity(polys.len());
-        for &poly in polys {
-            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
-            if num_blocks != challenges_per_poly {
-                return None;
-            }
-            sources.push(DecomposeSource {
-                poly,
-                challenge_start,
-                active_blocks: challenges_per_poly,
-                ring_elems,
-            });
-            challenge_start += challenges_per_poly;
-        }
-        let compressed = accumulate_indices::<F, I, D>(
-            &sources,
-            &challenges[..challenge_start],
+        let sources = Self::decompose_sources::<D>(
+            polys,
+            challenges,
+            challenges_per_poly,
             num_positions_per_block,
-        );
-        Some(finish_decompose_fold(compressed, num_digits))
+        )?;
+        let compressed =
+            accumulate_indices::<F, I, D>(&sources, challenges, num_positions_per_block);
+        Ok(finish_decompose_fold(compressed, num_digits))
     }
 }

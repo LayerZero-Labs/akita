@@ -157,7 +157,6 @@ pub struct CpuBackend<Cfg: CommitmentConfig = akita_config::proof_optimized::fp1
     prepared: Option<CpuPreparedSetup<Cfg::Field>>,
     schedules: Option<TrustedScheduleCatalog<Cfg>>,
     max_cached_ring_switch_elements: usize,
-    commit_scratch_bytes_per_worker: usize,
     /// Derived setup-prefix material, memoized for the life of this backend.
     ///
     /// A prefix commitment is a pure function of the owned setup and the slot
@@ -191,34 +190,27 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     /// Default maximum cached extent for a ring-switch NTT operation.
     pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
 
-    /// Default temporary sparse commitment memory per worker.
-    pub const DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
-
     /// Own a setup and its immutable trusted configuration.
     pub fn new(
         expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
         schedules: &TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError> {
-        Self::with_resource_limits(
+        Self::with_ring_switch_cache_limit(
             expanded,
             schedules,
             Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-            Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         )
     }
 
-    /// Create a CPU backend with explicit resource limits.
-    pub fn with_resource_limits(
+    /// Create a CPU backend with a ring-switch cache limit.
+    ///
+    /// Zero streams every supported operation; `usize::MAX` retains all of
+    /// them. Commitment scratch is sized automatically for each operation.
+    pub fn with_ring_switch_cache_limit(
         expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
         schedules: &TrustedScheduleCatalog<Cfg>,
         max_cached_ring_switch_elements: usize,
-        commit_scratch_bytes_per_worker: usize,
-    ) -> Result<Self, akita_error::AkitaError> {
-        if commit_scratch_bytes_per_worker == 0 {
-            return Err(akita_error::AkitaError::InvalidSetup(
-                "CPU commitment scratch bytes per worker must be nonzero".into(),
-            ));
-        }
+    ) -> Result<Self, AkitaError> {
         expanded
             .descriptor
             .check()
@@ -230,7 +222,6 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             schedules: Some(schedules.clone()),
             max_cached_ring_switch_elements,
-            commit_scratch_bytes_per_worker,
             setup_prefix_cache: SetupPrefixCache::default(),
         })
     }
@@ -366,11 +357,6 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         self.max_cached_ring_switch_elements
     }
 
-    /// Temporary sparse commitment memory allowed per worker.
-    pub const fn commit_scratch_bytes_per_worker(&self) -> usize {
-        self.commit_scratch_bytes_per_worker
-    }
-
     #[inline]
     pub(crate) fn ntt_operation_uses_cache(
         &self,
@@ -394,25 +380,17 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
 impl CpuBackend {
     /// Unit-test arithmetic route. It cannot import sources or admit proofs.
     pub(crate) fn for_arithmetic_tests() -> Self {
-        Self::with_test_resource_limits(
-            Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-            Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-        )
-        .expect("valid arithmetic fixture")
+        Self::with_test_ring_switch_cache_limit(Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS)
+            .expect("valid arithmetic fixture")
     }
-    pub(crate) fn with_test_resource_limits(
+    pub(crate) fn with_test_ring_switch_cache_limit(
         max_cached_ring_switch_elements: usize,
-        commit_scratch_bytes_per_worker: usize,
     ) -> Result<Self, AkitaError> {
-        if commit_scratch_bytes_per_worker == 0 {
-            return Err(AkitaError::InvalidSetup("zero test scratch budget".into()));
-        }
         Ok(Self {
             identity: BackendIdentity::new([0; 32])?,
             prepared: None,
             schedules: None,
             max_cached_ring_switch_elements,
-            commit_scratch_bytes_per_worker,
             setup_prefix_cache: SetupPrefixCache::default(),
         })
     }
@@ -434,7 +412,6 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             prepared: Some(CpuPreparedSetup::new(expanded)),
             schedules: None,
             max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-            commit_scratch_bytes_per_worker: Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
             setup_prefix_cache: SetupPrefixCache::default(),
         })
     }

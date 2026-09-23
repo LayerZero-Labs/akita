@@ -401,14 +401,12 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
-    let stack = CpuBackend::<OneHotCfg>::with_resource_limits(
+    let stack = CpuBackend::<OneHotCfg>::with_ring_switch_cache_limit(
         setup.expanded.clone(),
         scheme.schedules(),
         usize::MAX,
-        CpuBackend::<OneHotCfg>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
-
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,

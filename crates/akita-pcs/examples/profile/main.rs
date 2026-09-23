@@ -125,13 +125,11 @@ fn main() {
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     tracing::info!(
         max_cached_ring_switch_elements = CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-        commit_scratch_bytes_per_worker = CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         "CPU resource policy"
     );
     eprintln!(
-        "[profile] cpu_policy: max_cached_ring_switch_elements={}, commit_scratch_bytes_per_worker={}",
+        "[profile] cpu_policy: max_cached_ring_switch_elements={}",
         CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     );
     modes::log_active_fp128_prime_probe();
 

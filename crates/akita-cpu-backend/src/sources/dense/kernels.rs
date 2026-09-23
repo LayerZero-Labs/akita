@@ -64,6 +64,22 @@ where
         source: DenseView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness, AkitaError> {
+        if plan.num_positions_per_block == 0 {
+            return Err(AkitaError::InvalidInput(
+                "num_positions_per_block must be positive".to_string(),
+            ));
+        }
+        let num_live_blocks = source
+            .poly
+            .ring_coeffs::<D>()?
+            .len()
+            .div_ceil(plan.num_positions_per_block);
+        if plan.challenges.len() != num_live_blocks {
+            return Err(AkitaError::InvalidSize {
+                expected: num_live_blocks,
+                actual: plan.challenges.len(),
+            });
+        }
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.num_positions_per_block,
