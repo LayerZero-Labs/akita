@@ -209,7 +209,7 @@ pub(super) fn terminal(
             )?,
         ),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(payload_bytes, 0, 0)?,
+        cost: NativeProofCost::new(payload_bytes, 0, 0, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
@@ -269,6 +269,7 @@ pub(super) fn prepend_fold(
         edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
+        output_witness_len,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);
@@ -337,6 +338,7 @@ pub(super) fn prepend_root(
         root_grinding_cost.native_nonce_max_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
+        output_witness_len,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);

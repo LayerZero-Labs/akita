@@ -158,7 +158,7 @@ fn setup_envelope_score(
     setup_field_elements: usize,
 ) -> usize {
     if selection_policy
-        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
     {
         akita_types::padded_setup_prefix_len(setup_field_elements)
     } else {
@@ -432,12 +432,13 @@ impl ProjectedFrontier {
         projections: &[Projection],
     ) -> ProjectionMask {
         let choices = self.by_parent_cost.get(parent_cost);
-        let keep = |projection| match projection {
+        let keep = |projection| {
+            match projection {
             Projection::FirstDirectSetup => {
                 matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
             ) && !choices.is_some_and(|choices| {
                     choices.projected(projection).iter().any(|existing| {
                         setup_primary_strictly_dominates(
@@ -461,6 +462,7 @@ impl ProjectedFrontier {
                     )
                 })
             }),
+        }
         };
         let mut retained = ProjectionMask::default();
         for &projection in projections {
@@ -637,7 +639,7 @@ fn setup_primary_strictly_dominates(
     }
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
     ) {
         return left_score.setup_field_elements <= right_score.setup_field_elements
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
@@ -679,7 +681,7 @@ fn setup_projection_dominates(
         cost_never_worse && left.context == right.context && left.descriptor <= right.descriptor;
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
     ) {
         return left.score.setup_field_elements <= right.score.setup_field_elements
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
@@ -732,7 +734,7 @@ fn payload_primary_strictly_dominates(
     left_admission.admits_every_parent_of(right_admission)
         && left_score.cost.strictly_better(right_score.cost)
         && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
             || left_score.setup_field_elements <= right_score.setup_field_elements)
 }
 
@@ -743,7 +745,7 @@ fn payload_projection_dominates(
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
         && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
             || left.score.setup_field_elements <= right.score.setup_field_elements)
         && (left.score.cost.strictly_better(right.score.cost)
             || (left.score.cost.never_worse(right.score.cost)

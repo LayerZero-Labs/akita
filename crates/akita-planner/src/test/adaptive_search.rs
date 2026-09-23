@@ -294,7 +294,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -404,7 +404,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -862,8 +862,8 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     );
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
-        selected_root.role_dims(),
-        "native grinding cost keeps the D256 A-role through the first packing fold"
+        CommitmentRingDims::uniform(64),
+        "the additive fold-work score contracts the first packing successor"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
@@ -882,21 +882,21 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
             assert_eq!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
         }
     }
-    let selected_score = (
-        estimated_first_direct_setup_capacity(&selected),
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        selected.estimate.estimated_num_setup_field_elements,
-    );
-    let rank_one_capped_score = (
-        estimated_first_direct_setup_capacity(&rank_one_capped),
-        rank_one_capped
-            .estimate
-            .estimated_proof_payload_bytes()
-            .unwrap(),
-        rank_one_capped.estimate.estimated_num_setup_field_elements,
-    );
+    let score = |schedule: &akita_types::PlannedFoldSchedule| {
+        let proof_bytes = schedule.estimate.estimated_proof_payload_bytes().unwrap();
+        let fold_work: u128 = std::iter::once(&schedule.schedule.root)
+            .chain(schedule.schedule.recursive_folds.iter())
+            .map(|fold| fold.output_witness_len as u128)
+            .sum();
+        (
+            estimated_first_direct_setup_capacity(schedule),
+            (proof_bytes as u128) * FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE + fold_work,
+            proof_bytes,
+            schedule.estimate.estimated_num_setup_field_elements,
+        )
+    };
     assert!(
-        selected_score <= rank_one_capped_score,
+        score(&selected) <= score(&rank_one_capped),
         "the expanded domain must not lose on the adaptive direct objective"
     );
 }

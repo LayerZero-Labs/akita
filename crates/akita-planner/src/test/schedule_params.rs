@@ -5,7 +5,7 @@ fn native_proof_cost_is_additive() {
     let mut costs = Vec::new();
     for payload_bytes in 0..=3 {
         for nonce_bytes in 0..=4 {
-            costs.push(NativeProofCost::new(payload_bytes, nonce_bytes, 0).unwrap());
+            costs.push(NativeProofCost::new(payload_bytes, nonce_bytes, 0, 0).unwrap());
         }
     }
 
@@ -24,27 +24,42 @@ fn native_proof_cost_is_additive() {
 }
 
 #[test]
+fn fold_work_tradeoff_preserves_order_under_a_common_parent() {
+    let cheaper_proof = NativeProofCost::new(100, 0, 0, 34_000_000).unwrap();
+    let less_work = NativeProofCost::new(101, 0, 0, 0).unwrap();
+    assert!(less_work.strictly_better(cheaper_proof));
+
+    let cheaper_proof_with_parent = cheaper_proof.checked_prepend(20, 1, 0, 0, 500).unwrap();
+    let less_work_with_parent = less_work.checked_prepend(20, 1, 0, 0, 500).unwrap();
+    assert!(less_work_with_parent.strictly_better(cheaper_proof_with_parent));
+    assert_eq!(
+        less_work_with_parent.exact_score() - less_work.exact_score(),
+        cheaper_proof_with_parent.exact_score() - cheaper_proof.exact_score(),
+    );
+}
+
+#[test]
 fn native_proof_cost_tracks_query_budget_exhaustion() {
     let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
-    let empty = NativeProofCost::new(0, 0, 0).unwrap();
+    let empty = NativeProofCost::new(0, 0, 0, 0).unwrap();
     assert!(!empty
-        .checked_prepend(0, 0, 0, limit)
+        .checked_prepend(0, 0, 0, limit, 0)
         .unwrap()
         .fits_query_limit());
 
-    let individually_valid_suffix = NativeProofCost::new(0, 0, limit - 2).unwrap();
+    let individually_valid_suffix = NativeProofCost::new(0, 0, limit - 2, 0).unwrap();
     assert!(!individually_valid_suffix
-        .checked_prepend(0, 0, 0, 2)
+        .checked_prepend(0, 0, 0, 2, 0)
         .unwrap()
         .fits_query_limit());
     assert!(matches!(
-        individually_valid_suffix.checked_prepend(0, 0, 0, u64::MAX),
+        individually_valid_suffix.checked_prepend(0, 0, 0, u64::MAX, 0),
         Err(AkitaError::InvalidSetup(_))
     ));
     assert!(matches!(
-        NativeProofCost::new(usize::MAX, 0, 0)
+        NativeProofCost::new(usize::MAX, 0, 0, 0)
             .unwrap()
-            .checked_prepend(1, 0, 0, limit),
+            .checked_prepend(1, 0, 0, limit, 0),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -52,21 +67,21 @@ fn native_proof_cost_tracks_query_budget_exhaustion() {
 #[test]
 fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
     let limit = akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT;
-    let suffix = NativeProofCost::new(0, 0, 0).unwrap();
+    let suffix = NativeProofCost::new(0, 0, 0, 0).unwrap();
     let selected = [(10, limit), (20, 1)]
         .into_iter()
         .filter_map(|(payload_bytes, queries)| {
             let cost = suffix
-                .checked_prepend(payload_bytes, 0, 0, queries)
+                .checked_prepend(payload_bytes, 0, 0, queries, 0)
                 .unwrap();
             cost.fits_query_limit().then_some(cost)
         })
         .min_by_key(|cost| cost.proof_bytes());
 
-    assert_eq!(selected, Some(NativeProofCost::new(20, 0, 1).unwrap()));
+    assert_eq!(selected, Some(NativeProofCost::new(20, 0, 1, 0).unwrap()));
     assert!([limit, limit + 1].into_iter().all(|queries| {
         !suffix
-            .checked_prepend(0, 0, 0, queries)
+            .checked_prepend(0, 0, 0, queries, 0)
             .unwrap()
             .fits_query_limit()
     }));
@@ -74,8 +89,8 @@ fn oversized_candidate_is_skipped_while_valid_alternative_is_retained() {
 
 #[test]
 fn unconstrained_native_proof_cost_dominance_ignores_queries() {
-    let smaller_proof_more_queries = NativeProofCost::new(9, 0, 11).unwrap();
-    let larger_proof_fewer_queries = NativeProofCost::new(10, 0, 10).unwrap();
+    let smaller_proof_more_queries = NativeProofCost::new(9, 0, 11, 0).unwrap();
+    let larger_proof_fewer_queries = NativeProofCost::new(10, 0, 10, 0).unwrap();
 
     assert!(smaller_proof_more_queries.never_worse(larger_proof_fewer_queries));
     assert!(smaller_proof_more_queries.strictly_better(larger_proof_fewer_queries));
@@ -141,7 +156,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_types::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,

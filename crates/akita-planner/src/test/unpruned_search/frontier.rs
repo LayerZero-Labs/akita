@@ -143,7 +143,7 @@ fn oracle_frontier_retains_lower_query_tradeoffs() -> Result<(), AkitaError> {
             Ok(ScheduleCandidate {
                 first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
                 first_direct_output_witness_len: 0,
-                cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count)?,
+                cost: NativeProofCost::new(payload_bytes, 0, expanded_query_count, 0)?,
                 setup_field_elements: 1,
                 folds: CandidateFoldChain::default(),
                 terminal: std::sync::Arc::new(CandidateTerminalResponse {

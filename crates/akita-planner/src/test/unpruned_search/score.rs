@@ -3,17 +3,20 @@ use super::*;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OracleObjective {
     Payload {
+        exact_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     SetupFirst {
         first_direct_setup_capacity: usize,
+        exact_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
+        exact_score: u128,
         proof_bytes: usize,
         first_direct_output_witness_len: usize,
     },
@@ -64,20 +67,24 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => OracleObjective::Payload {
+        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4 => OracleObjective::Payload {
+            exact_score: candidate.cost.exact_score(),
             proof_bytes: candidate.cost.proof_bytes(),
             setup_field_elements: candidate.setup_field_elements,
         },
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => OracleObjective::SetupFirst {
-            first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "unpruned setup-first candidate is missing direct setup size".into(),
-                )
-            })?,
-            proof_bytes: candidate.cost.proof_bytes(),
-            setup_field_elements: candidate.setup_field_elements,
-        },
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4 => {
+            OracleObjective::SetupFirst {
+                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unpruned setup-first candidate is missing direct setup size".into(),
+                    )
+                })?,
+                exact_score: candidate.cost.exact_score(),
+                proof_bytes: candidate.cost.proof_bytes(),
+                setup_field_elements: candidate.setup_field_elements,
+            }
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5 => {
             OracleObjective::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
@@ -86,6 +93,7 @@ pub(super) fn score(
                             .into(),
                     )
                 })?,
+                exact_score: candidate.cost.exact_score(),
                 proof_bytes: candidate.cost.proof_bytes(),
                 first_direct_output_witness_len: candidate.first_direct_output_witness_len,
             }
@@ -94,7 +102,7 @@ pub(super) fn score(
     Ok(OracleScore {
         objective,
         legacy_root_output_witness_len: (policy.selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5)
             .then(|| {
                 candidate
                     .folds

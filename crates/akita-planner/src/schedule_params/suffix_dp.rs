@@ -359,8 +359,8 @@ impl GuideScope {
         } else if incoming_setup_prefix.is_some()
             && matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
             )
         {
             Some(Self::RecursivePrefix)
@@ -511,6 +511,7 @@ fn child_choice(
         edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
+        edge.next_witness_len,
     )?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
@@ -547,10 +548,12 @@ fn direct_edge_lower_bound(
         None,
     )?
     .encoded_len()?;
+    let lower_bound_cost = NativeProofCost::new(proof_bytes, 0, 0, output_witness_len as u128)?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
         output_witness_len,
+        lower_bound_cost.exact_score(),
         proof_bytes,
         level_setup_field_elements(params)?,
     ))
@@ -562,21 +565,23 @@ fn complete_root_bound_is_strictly_worse(
     frontier: &ProjectedFrontier,
 ) -> bool {
     match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => frontier
+        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4 => frontier
             .by_parent_cost
             .values()
             .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => frontier
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4 => frontier
             .by_parent_cost
             .values()
             .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => frontier
-            .by_parent_cost
-            .values()
-            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
-            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5 => {
+            frontier
+                .by_parent_cost
+                .values()
+                .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+                .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics()))
+        }
     }
 }
 
@@ -630,8 +635,8 @@ fn candidate_traversal(
         .map(|candidate| {
             let natural_len = (matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
             ))
             .then(|| active_setup_field_len(&candidate.params, opening_layout))
             .transpose()?;
@@ -738,7 +743,7 @@ fn price_terminal_candidate(
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
         first_direct_output_witness_len: 0,
-        cost: NativeProofCost::new(total, 0, 0)?,
+        cost: NativeProofCost::new(total, 0, 0, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
