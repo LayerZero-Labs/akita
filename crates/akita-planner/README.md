@@ -27,25 +27,15 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-work score = native proof bytes + ceil(sum(fold output witness elements) / 2^18)
-
-uniform direct:  (work score, proof bytes, total setup, root output witness,
-                  descriptor)
-adaptive direct: (first-direct padded capacity, work score, proof bytes,
+uniform direct:  (proof bytes, total setup, root output witness, descriptor)
+adaptive direct: (first-direct padded capacity, proof bytes,
                   total setup, root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
-                  work score, proof bytes, first-direct output witness,
-                  descriptor)
+                  proof bytes, first-direct output witness, descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
 schedule, it is the first edge after the setup-prefix chain.
-
-The work coordinate is deliberately small but nonzero: spending one additional
-worst-case proof byte must save at least `2^18` elements of materialized fold
-witness. This prevents tiny transcript-pricing differences from selecting
-schedules with substantially larger commitment, prover, verifier, and
-prepared-cache workloads.
 
 First-direct capacity is a verifier-cost proxy, not a complete runtime model.
 Its power-of-two bucket permits proof-size improvements within a factor-two

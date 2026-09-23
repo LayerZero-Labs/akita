@@ -64,14 +64,14 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick proof-and-fold-work score, proof bytes, physical setup fields, then descriptor.
-    MinEstimatedProofAndWorkV3,
-    /// Pick first direct setup, proof-and-fold-work score, proof bytes, total
-    /// setup, then descriptor.
-    MinFirstDirectSetupThenProofAndWorkV3,
-    /// Pick power-of-two setup-envelope capacity, first direct setup,
-    /// proof-and-fold-work score, proof bytes, then descriptor.
-    MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4,
+    /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
+    MinEstimatedProofPayloadV2,
+    /// Pick first direct setup, proof bytes, total setup, root output witness,
+    /// then descriptor.
+    MinFirstDirectSetupThenPayloadV2,
+    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
+    /// bytes, first direct output witness, then descriptor.
+    MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3,
 }
 
 impl SelectionPolicyId {
@@ -81,37 +81,36 @@ impl SelectionPolicyId {
         ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
         if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
         } else if matches!(
             ring_dimension_schedule_mode,
             RingDimensionScheduleMode::AdaptiveDimension { .. }
         ) {
-            Self::MinFirstDirectSetupThenProofAndWorkV3
+            Self::MinFirstDirectSetupThenPayloadV2
         } else {
-            Self::MinEstimatedProofAndWorkV3
+            Self::MinEstimatedProofPayloadV2
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedProofAndWorkV3 => 7,
-            Self::MinFirstDirectSetupThenProofAndWorkV3 => 8,
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => 9,
+            Self::MinEstimatedProofPayloadV2 => 4,
+            Self::MinFirstDirectSetupThenPayloadV2 => 5,
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
-            // belonged to the retired setup-envelope-first policy. Tags 4--6
-            // belong to the proof-only native objectives. Never reuse an
-            // objective tag: trusted catalog admission depends on it.
+            // belonged to the retired setup-envelope-first policy. Never reuse
+            // an objective tag: trusted catalog admission depends on it.
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofAndWorkV3 => "MinEstimatedProofAndWorkV3",
-            Self::MinFirstDirectSetupThenProofAndWorkV3 => "MinFirstDirectSetupThenProofAndWorkV3",
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => {
-                "MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4"
+            Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
+            Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+                "MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3"
             }
         }
     }
@@ -854,9 +853,9 @@ pub fn materialize_candidate_schedule(
         )));
     }
     let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedProofAndWorkV3 => None,
-        SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
-        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => Some(
+        SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
         ),
     };
@@ -995,7 +994,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -1040,11 +1039,11 @@ mod tests {
         let adaptive = adaptive_policy().ring_dimension_schedule_mode;
         assert_eq!(
             SelectionPolicyId::for_policy(false, adaptive),
-            SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
         );
         assert_eq!(
             SelectionPolicyId::for_policy(true, adaptive),
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
         );
     }
 

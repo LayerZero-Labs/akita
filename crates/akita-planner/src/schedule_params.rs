@@ -8,12 +8,6 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
-pub(crate) const FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE: u128 = 1 << 18;
-
-pub(crate) fn proof_and_work_score(proof_bytes: usize, fold_work_elements: u128) -> u128 {
-    (proof_bytes as u128) + fold_work_elements.div_ceil(FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE)
-}
-
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::sis::{
@@ -326,7 +320,8 @@ impl CandidateFoldChain {
         self.head.as_deref().map(|node| &node.step)
     }
 
-    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
+    #[cfg(all(test, feature = "catalog-gen"))]
+    fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
         CandidateFoldIter {
             next: self.head.as_deref(),
             remaining: self.len,
@@ -461,7 +456,6 @@ impl NativeProofCost {
         self.proof_bytes() <= other.proof_bytes()
     }
 
-    #[cfg(test)]
     pub(crate) fn strictly_better(self, other: Self) -> bool {
         self.proof_bytes() < other.proof_bytes()
     }
@@ -490,7 +484,6 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) fold_work_elements: u128,
     pub(crate) cost: NativeProofCost,
     pub(crate) setup_field_elements: usize,
 }
@@ -498,15 +491,6 @@ pub(crate) struct CandidateMetrics {
 impl CandidateMetrics {
     pub(crate) fn proof_bytes(self) -> usize {
         self.cost.proof_bytes()
-    }
-
-    /// Proof-size objective with a small, deterministic charge for fold work.
-    ///
-    /// One objective byte represents `2^18` elements of materialized fold
-    /// witness. This prevents a negligible proof-size improvement from choosing
-    /// a substantially larger commitment and replay workload.
-    pub(crate) fn proof_and_work_score(self) -> u128 {
-        proof_and_work_score(self.proof_bytes(), self.fold_work_elements)
     }
 }
 
@@ -523,11 +507,6 @@ impl ScheduleCandidate {
                     SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
             first_direct_output_witness_len: self.first_direct_output_witness_len,
-            fold_work_elements: self
-                .folds
-                .iter()
-                .map(|fold| fold.output_witness_len as u128)
-                .sum(),
             cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
@@ -595,7 +574,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofAndWorkV3
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
         || candidates.len() <= 1
     {
         return Ok(candidates);
@@ -604,13 +583,13 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut retained = Vec::new();
     for params in candidates {
         let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3 => {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
                 padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
             }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => {
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedProofAndWorkV3 => unreachable!(),
+            crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {

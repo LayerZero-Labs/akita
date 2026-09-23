@@ -257,7 +257,7 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
 #[test]
 fn guided_early_pruning_includes_recursive_prefixes() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
     assert!(matches!(
         super::GuideScope::for_state(&policy, true, None),
         Some(super::GuideScope::CompleteRoot)
@@ -268,7 +268,7 @@ fn guided_early_pruning_includes_recursive_prefixes() {
     ));
     assert!(super::GuideScope::for_state(&policy, false, None).is_none());
 
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofAndWorkV3;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     assert!(super::GuideScope::for_state(&policy, false, Some(1)).is_none());
 }
 
@@ -371,7 +371,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofAndWorkV3;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let key = akita_types::AkitaScheduleLookupKey::single(
         akita_types::PolynomialGroupLayout::singleton(14),

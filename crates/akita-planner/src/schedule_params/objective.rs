@@ -1,16 +1,14 @@
 use akita_error::AkitaError;
 
-use super::{
-    candidate_schedule_descriptor_bytes, proof_and_work_score, CandidateMetrics, ScheduleCandidate,
-};
+use super::{candidate_schedule_descriptor_bytes, CandidateMetrics, ScheduleCandidate};
 use crate::{PlannerPolicy, SelectionPolicyId};
 
-/// Complete-schedule ordering: numeric policy coordinates, an optional root
-/// output-witness tie-break, then the canonical descriptor.
+/// Complete-schedule ordering: numeric policy coordinates, an optional legacy
+/// root output-witness tie-break, then the canonical descriptor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CompleteScheduleScore {
     objective: CompleteObjectiveBound,
-    root_output_witness_tiebreak: Option<usize>,
+    legacy_root_output_witness_len: Option<usize>,
     descriptor: Vec<u8>,
 }
 
@@ -20,20 +18,17 @@ pub(crate) struct CompleteScheduleScore {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompleteObjectiveBound {
     Direct {
-        proof_and_work_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     SetupFirst {
         first_direct_setup_capacity: usize,
-        proof_and_work_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
-        proof_and_work_score: u128,
         proof_bytes: usize,
         first_direct_output_witness_len: usize,
     },
@@ -44,30 +39,25 @@ impl CompleteObjectiveBound {
         policy: &PlannerPolicy,
         first_direct_setup_capacity: usize,
         first_direct_output_witness_len: usize,
-        fold_work_elements: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     ) -> Self {
-        let objective_score = proof_and_work_score(proof_bytes, fold_work_elements);
         match policy.selection_policy {
-            SelectionPolicyId::MinEstimatedProofAndWorkV3 => Self::Direct {
-                proof_and_work_score: objective_score,
+            SelectionPolicyId::MinEstimatedProofPayloadV2 => Self::Direct {
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3 => Self::SetupFirst {
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => Self::SetupFirst {
                 first_direct_setup_capacity,
-                proof_and_work_score: objective_score,
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => {
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
                 Self::PaddedSetupEnvelopeFirst {
                     setup_envelope_capacity: akita_types::padded_setup_prefix_len(
                         setup_field_elements,
                     ),
                     first_direct_setup_capacity,
-                    proof_and_work_score: objective_score,
                     proof_bytes,
                     first_direct_output_witness_len,
                 }
@@ -80,7 +70,6 @@ impl CompleteObjectiveBound {
             policy,
             metrics.first_direct_setup_capacity.field_elements(),
             metrics.first_direct_output_witness_len,
-            metrics.fold_work_elements,
             metrics.proof_bytes(),
             metrics.setup_field_elements,
         )
@@ -89,31 +78,23 @@ impl CompleteObjectiveBound {
     pub(crate) fn is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
         match self {
             Self::Direct {
-                proof_and_work_score,
                 proof_bytes,
                 setup_field_elements,
             } => {
-                (proof_and_work_score, proof_bytes, setup_field_elements)
-                    > (
-                        incumbent.proof_and_work_score(),
-                        incumbent.proof_bytes(),
-                        incumbent.setup_field_elements,
-                    )
+                (proof_bytes, setup_field_elements)
+                    > (incumbent.proof_bytes(), incumbent.setup_field_elements)
             }
             Self::SetupFirst {
                 first_direct_setup_capacity,
-                proof_and_work_score,
                 proof_bytes,
                 setup_field_elements,
             } => {
                 (
                     first_direct_setup_capacity,
-                    proof_and_work_score,
                     proof_bytes,
                     setup_field_elements,
                 ) > (
                     incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.proof_and_work_score(),
                     incumbent.proof_bytes(),
                     incumbent.setup_field_elements,
                 )
@@ -121,20 +102,17 @@ impl CompleteObjectiveBound {
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
-                proof_and_work_score,
                 proof_bytes,
                 first_direct_output_witness_len,
             } => {
                 (
                     setup_envelope_capacity,
                     first_direct_setup_capacity,
-                    proof_and_work_score,
                     proof_bytes,
                     first_direct_output_witness_len,
                 ) > (
                     akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
                     incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.proof_and_work_score(),
                     incumbent.proof_bytes(),
                     incumbent.first_direct_output_witness_len,
                 )
@@ -153,38 +131,29 @@ impl CompleteObjectiveBound {
         match self {
             Self::SetupFirst {
                 first_direct_setup_capacity,
-                proof_and_work_score,
                 proof_bytes,
                 ..
             } => {
-                (
-                    first_direct_setup_capacity,
-                    proof_and_work_score,
-                    proof_bytes,
-                ) > (
-                    incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.proof_and_work_score(),
-                    incumbent.proof_bytes(),
-                )
+                (first_direct_setup_capacity, proof_bytes)
+                    > (
+                        incumbent.first_direct_setup_capacity.field_elements(),
+                        incumbent.proof_bytes(),
+                    )
             }
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
-                proof_and_work_score,
                 proof_bytes,
                 first_direct_output_witness_len,
-                ..
             } => {
                 setup_envelope_capacity
                     >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
                     && (
                         first_direct_setup_capacity,
-                        proof_and_work_score,
                         proof_bytes,
                         first_direct_output_witness_len,
                     ) > (
                         incumbent.first_direct_setup_capacity.field_elements(),
-                        incumbent.proof_and_work_score(),
                         incumbent.proof_bytes(),
                         incumbent.first_direct_output_witness_len,
                     )
@@ -203,24 +172,15 @@ impl CompleteObjectiveBound {
         incumbent: CandidateMetrics,
     ) -> bool {
         match self {
-            Self::SetupFirst {
-                proof_and_work_score,
-                proof_bytes,
-                ..
-            } => {
-                (proof_and_work_score, proof_bytes)
-                    > (incumbent.proof_and_work_score(), incumbent.proof_bytes())
-            }
+            Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes(),
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
-                proof_and_work_score,
                 proof_bytes,
                 ..
             } => {
                 setup_envelope_capacity
                     >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
-                    && (proof_and_work_score, proof_bytes)
-                        > (incumbent.proof_and_work_score(), incumbent.proof_bytes())
+                    && proof_bytes > incumbent.proof_bytes()
             }
             Self::Direct { .. } => false,
         }
@@ -261,8 +221,8 @@ pub(crate) fn complete_schedule_score(
     let metrics = candidate.metrics();
     if matches!(
         policy.selection_policy,
-        SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
-            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(
@@ -271,8 +231,8 @@ pub(crate) fn complete_schedule_score(
     }
     Ok(CompleteScheduleScore {
         objective: CompleteObjectiveBound::for_candidate(policy, metrics),
-        root_output_witness_tiebreak: (policy.selection_policy
-            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4)
+        legacy_root_output_witness_len: (policy.selection_policy
+            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
             .then_some(root_output_witness_len),
         descriptor,
     })

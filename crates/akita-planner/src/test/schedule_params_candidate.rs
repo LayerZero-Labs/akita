@@ -831,7 +831,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 
     let mut policy = policy_of::<Dense>();
     policy.selection_policy =
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4;
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3;
     let dimensions = CommitmentRingDims {
         inner: 256,
         outer: 128,

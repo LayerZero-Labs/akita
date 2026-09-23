@@ -393,26 +393,20 @@ The external catalog binds:
 
 ```text
 cost model      = NativeNoncePayloadAndSetupEnvelopeV2
-uniform direct policy = MinEstimatedProofAndWorkV3
-adaptive direct policy = MinFirstDirectSetupThenProofAndWorkV3
-recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+uniform direct policy = MinEstimatedProofPayloadV2
+adaptive direct policy = MinFirstDirectSetupThenPayloadV2
+recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
-schedule mode. Uniform direct planning selects `MinEstimatedProofAndWorkV3`.
-Adaptive direct planning retains `MinFirstDirectSetupThenProofAndWorkV3`.
+schedule mode. Uniform direct planning selects `MinEstimatedProofPayloadV2`.
+Adaptive direct planning retains `MinFirstDirectSetupThenPayloadV2`.
 Recursive setup planning selects
-`MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4`. The scalar boundary
+`MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`. The scalar boundary
 disables recursive setup search but retains the adaptive objective when its
 dimension domain remains adaptive.
-
-All three objectives use a deterministic proof-and-work coordinate equal to
-native proof bytes plus `ceil(total fold-output witness elements / 2^18)`.
-Exact native proof bytes remain the next coordinate. This bounds the amount of
-materialized fold work the planner will accept for a marginal proof reduction
-without encoding a workload-specific catalog exception.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.

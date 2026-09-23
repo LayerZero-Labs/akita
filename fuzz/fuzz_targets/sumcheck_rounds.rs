@@ -2,7 +2,8 @@
 
 use akita_error::AkitaError;
 use akita_sumcheck::{
-    verify_sumcheck_rounds_native, NativeSumcheckRole, NativeSumcheckVerifierChannel,
+    verify_sumcheck_rounds_native, NativeSumcheckRole, NativeSumcheckShape,
+    NativeSumcheckVerifierChannel,
 };
 use akita_transcript::{
     native_field_challenge_bytes, native_verifier_field_challenge, new_native_verifier,
@@ -62,6 +63,9 @@ fuzz_target!(|data: &[u8]| {
     };
     let num_rounds = usize::from(rounds % 5);
     let degree_bound = usize::from(degree % 5);
+    let Ok(shape) = NativeSumcheckShape::new(num_rounds, degree_bound) else {
+        return;
+    };
     let Ok(state) = new_native_verifier(b"fuzz/sumcheck-rounds", b"fixture", data) else {
         return;
     };
@@ -73,8 +77,7 @@ fuzz_target!(|data: &[u8]| {
         &mut channel,
         0,
         F::from_u64(u64::from(*claim)),
-        num_rounds,
-        degree_bound,
+        shape,
     );
     assert!(channel.challenges <= num_rounds);
     let round_bytes = degree_bound * F::NUM_BYTES;

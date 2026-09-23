@@ -856,8 +856,8 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let setup_field_budget = if matches!(
         active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) {
         active_policy.setup_field_budget
     } else {
@@ -915,13 +915,13 @@ pub(crate) fn find_schedule_in_relation_order(
     }
     let suffix = suffix?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofAndWorkV3 => {
+        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4 => {
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
@@ -946,8 +946,8 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let first_direct_setup_field_len = if matches!(
         active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenProofAndWorkV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenProofAndWorkV4
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) {
         Some(
             best.first_direct_setup_field_len
