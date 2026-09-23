@@ -142,7 +142,6 @@ where
         plan.n_a,
         active_a_cols,
         plan.num_digits_inner,
-        backend.commit_scratch_bytes_per_worker(),
     )?;
     Ok(rows
         .into_iter()

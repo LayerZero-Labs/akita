@@ -219,3 +219,39 @@ fn batch_fold_returns_one_witness_per_chunk() {
     assert_eq!(chunks.len(), 2);
     assert_eq!(recombined, global);
 }
+
+// A +1 monomial challenge must leave every single balanced digit unchanged.
+// The expectation is the input integer itself, independent of decomposition.
+#[test]
+fn single_digit_fold_preserves_signed_i8_i16_boundaries() {
+    use akita_challenges::SparseChallenge;
+    use jolt_field::Prime64Offset59;
+    const D: usize = 128;
+    let challenge = SparseChallenge {
+        positions: vec![0].into(),
+        coeffs: vec![1].into(),
+    };
+    let mut mismatches = Vec::new();
+    for log_basis in [8_u32, 9] {
+        let half = 1_i64 << (log_basis - 1);
+        for value in [127_i64, 128, 255, -128, -129, -256] {
+            if !(-half..half).contains(&value) {
+                continue; // Only admissible balanced digits belong in this oracle.
+            }
+            let mut coefficients = vec![Prime64Offset59::zero(); D];
+            coefficients[0] = Prime64Offset59::from_i64(value);
+            let poly = DensePoly::from_field_evals(7, coefficients).unwrap();
+            let actual =
+                poly.decompose_fold::<D>(std::slice::from_ref(&challenge), 1, 1, log_basis);
+            let mut expected = vec![0_i32; D];
+            expected[0] = value as i32;
+            if actual.centered_coeffs_flat() != expected {
+                mismatches.push((log_basis, value, actual.centered_coeffs_flat()[0]));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "(basis, expected, actual): {mismatches:?}"
+    );
+}

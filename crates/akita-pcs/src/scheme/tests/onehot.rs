@@ -445,11 +445,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
-    let cached_backend = CpuBackend::with_resource_limits(
-        usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-    )
-    .unwrap();
+    let cached_backend = CpuBackend::with_ring_switch_cache_limit(usize::MAX);
     let prepared = cached_backend.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &cached_backend,
