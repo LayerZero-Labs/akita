@@ -43,6 +43,7 @@ report_matches \
     "production library sources must not discover the workspace artifact directory" \
     git grep -n -E 'artifacts/schedules|from_workspace_schedule_artifact' -- \
         crates/akita-config/src crates/akita-pcs/src crates/akita-prover/src \
+        crates/akita-cpu-backend/src \
         crates/akita-schedules/src crates/akita-setup/src crates/akita-verifier/src \
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/test_support.rs'
 

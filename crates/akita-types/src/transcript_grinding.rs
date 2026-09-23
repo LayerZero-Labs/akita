@@ -494,6 +494,10 @@ pub struct TranscriptGrindingCost {
     pub expanded_query_count: u64,
 }
 
+#[path = "transcript_grinding/sink.rs"]
+mod sink;
+pub(crate) use sink::{GrindingPlanSink, SumcheckRoundBatch};
+
 pub(crate) struct GrindingPlanAccumulator {
     nominal_capacity_bits: u32,
     run_count: u32,
@@ -516,8 +520,8 @@ impl GrindingPlanAccumulator {
         })
     }
 
-    pub(crate) fn push(&mut self, run: GrindingRun) -> Result<(), AkitaError> {
-        self.run_count = self.run_count.checked_add(1).ok_or_else(|| {
+    fn push_repeated(&mut self, run: GrindingRun, repetitions: u32) -> Result<(), AkitaError> {
+        self.run_count = self.run_count.checked_add(repetitions).ok_or_else(|| {
             AkitaError::InvalidSetup("grinding plan run count exceeds u32".into())
         })?;
         run.validate()?;
@@ -534,13 +538,20 @@ impl GrindingPlanAccumulator {
         let run_bits = usize::from(run.nonce_bits)
             .checked_mul(multiplicity)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding run bit count overflow".into()))?;
+        let repeated_bits = run_bits
+            .checked_mul(repetitions as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding run bit count overflow".into()))?;
+        let repeated_queries = run
+            .multiplicity
+            .checked_mul(u64::from(repetitions))
+            .ok_or_else(|| AkitaError::InvalidSetup("grinding query count overflow".into()))?;
         self.total_nonce_bits = self
             .total_nonce_bits
-            .checked_add(run_bits)
+            .checked_add(repeated_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
         self.expanded_query_count = self
             .expanded_query_count
-            .checked_add(run.multiplicity)
+            .checked_add(repeated_queries)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding query count overflow".into()))?;
         Ok(())
     }

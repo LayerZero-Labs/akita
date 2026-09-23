@@ -32,6 +32,7 @@ default = ["parallel", "transcript-blake2b"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-config/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
   "akita-prover/transcript-blake2b",
   "akita-planner/transcript-blake2b",
   "akita-setup/transcript-blake2b",
@@ -43,6 +44,7 @@ transcript-blake2b = [
 transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-config/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
   "akita-prover/transcript-keccak",
   "akita-planner/transcript-keccak",
   "akita-setup/transcript-keccak",
@@ -56,6 +58,7 @@ parallel = [
   "akita-algebra/parallel",
   "jolt-field/parallel",
   "akita-prover/parallel",
+  "akita-cpu-backend/parallel",
   "akita-setup/parallel",
   "akita-sumcheck/parallel",
   "akita-verifier/parallel",
@@ -84,17 +87,22 @@ profile-ci-distributed = ["profile-bench-selected"]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
 # configuration. Schedule rows remain external artifacts.
 profile-onehot-fp128 = []
-disk-persistence = ["akita-setup/disk-persistence"]
+disk-persistence = [
+  "akita-setup/disk-persistence",
+  "akita-cpu-backend/disk-persistence",
+]
 logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
+  "akita-cpu-backend/logging-transcript",
 ]
-response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
+response-model-diagnostics = ["akita-cpu-backend/response-model-diagnostics"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
   "asm",
   "solinas",
@@ -148,31 +156,11 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
-name = "ntt_matvec"
-harness = false
-
-[[bench]]
 name = "field_arith"
 harness = false
 
 [[bench]]
 name = "akita_e2e"
-harness = false
-
-[[bench]]
-name = "root_kernels"
-harness = false
-
-[[bench]]
-name = "coefficient_packing"
-harness = false
-
-[[bench]]
-name = "decompose_fold"
-harness = false
-
-[[bench]]
-name = "digit_range"
 harness = false
 
 [[bench]]

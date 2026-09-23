@@ -161,7 +161,6 @@ where
         gamma,
         RingVec::from_coeffs_with_ring_dim(row_coefficients, d_a).unwrap(),
         rhs,
-        RingVec::from_coeffs(Vec::new()),
         params.role_dims(),
     )
     .unwrap();
@@ -1230,7 +1229,6 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         fixture.relation.gamma().to_vec(),
         fixture.relation.row_coefficient_rings().clone(),
         fixture.relation.rhs().clone(),
-        fixture.relation.v().clone(),
         fixture.relation.role_dims(),
     )
     .unwrap();

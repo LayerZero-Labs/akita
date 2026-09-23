@@ -102,7 +102,7 @@ describes a separate, not-yet-implemented approach to reducing those retained
 tables.
 
 The implementation and its comparison with a padded-table reference are in
-`crates/akita-prover/src/backend/recursive/witness/tensor.rs`.
+`crates/akita-cpu-backend/src/opaque/recursive/witness/tensor.rs`.
 
 ## Tiling and sweep selection
 
@@ -139,11 +139,11 @@ a route change is visible even when total runtime is noisy.
 
 ## CPU resource limits
 
-`CpuBackend::with_ring_switch_cache_limit(max_cached_ring_switch_elements)`
-sets the largest ring switch operation that keeps a complete transformed
-matrix prefix. `CpuBackend::DEFAULT` uses `2^21` ring elements. A zero limit
-streams every ring switch operation that has a streamed implementation.
-`usize::MAX` retains every supported operation.
+`CpuBackend::with_ring_switch_cache_limit(expanded, schedules,
+max_cached_ring_switch_elements)` sets the largest ring switch operation that
+keeps a complete transformed matrix prefix. `CpuBackend::new` uses `2^21` ring
+elements. A zero limit streams every ring switch operation that has a streamed
+implementation. `usize::MAX` retains every supported operation.
 
 Commitment scratch sizing and sweep selection are internal kernel decisions,
 as described above. Scratch is per worker and excludes the prover's other
@@ -253,11 +253,11 @@ Euclidean prover's memory cost.
 
 Relevant sources:
 
-- `crates/akita-prover/src/backend/packed_digits/` owns compact signed-digit
+- `crates/akita-cpu-backend/src/sources/packed_digits/` owns compact signed-digit
   storage.
-- `crates/akita-prover/src/protocol/sumcheck/digit_range/` owns the direct and
+- `crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/` owns the direct and
   class-indexed range provers.
-- `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs` fuses the
+- `crates/akita-cpu-backend/src/opaque/sumcheck/physical_l2_norm.rs` fuses the
   physical norm with the final range leaf.
 - `crates/akita-types/src/sis/physical_l2.rs` defines the direct and limb-Gram
   plans and reconstructs the integer norm.

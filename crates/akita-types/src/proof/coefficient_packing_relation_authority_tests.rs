@@ -134,7 +134,6 @@ fn alpha_and_role_dimensions_are_bound_by_the_shared_plan() {
         fixture.relation.gamma().to_vec(),
         fixture.relation.row_coefficient_rings().clone(),
         fixture.relation.rhs().clone(),
-        RingVec::from_coeffs(Vec::new()),
         CommitmentRingDims {
             inner: fixture.params.role_dims().d_a(),
             outer: fixture.params.role_dims().d_b(),

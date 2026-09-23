@@ -1,6 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
+use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_error::AkitaError;
-use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{analyze_z_fold_golomb_encoding, golomb_rice_zigzag_width},

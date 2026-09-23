@@ -25,7 +25,8 @@ pub use single::{
     verify_eq_factored_sumcheck, verify_sumcheck, verify_sumcheck_rounds,
 };
 pub use traits::{
-    EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    EqFactoredSumcheckInstanceProver, InfallibleSumcheck, SumcheckInstanceProver,
+    SumcheckInstanceVerifier, SumcheckKernel,
 };
 pub use types::{
     uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
