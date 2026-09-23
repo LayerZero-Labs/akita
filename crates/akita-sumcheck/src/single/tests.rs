@@ -86,8 +86,12 @@ fn standard_roundtrip_and_terminal_claim_check() {
     let evaluations = (1..=16).map(F::from_u64).collect::<Vec<_>>();
     let claim = evaluations.iter().copied().fold(F::zero(), |a, b| a + b);
     let mut prover = DenseInstance::new(evaluations.clone(), 4, claim);
-    let (proof, prover_point, _) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut transcript(), sample).unwrap();
+    let (proof, prover_point, _) = prove_sumcheck::<F, _, F, _, _>(
+        &mut crate::InfallibleSumcheck(&mut prover),
+        &mut transcript(),
+        sample,
+    )
+    .unwrap();
 
     let verifier = DenseInstance::new(evaluations.clone(), 4, claim);
     assert_eq!(

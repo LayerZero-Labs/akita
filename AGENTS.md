@@ -19,6 +19,7 @@ scripts/check-rust-file-lines.sh --no-baseline
 python3 -m unittest discover -s scripts/tests -p "test_*.py"
 scripts/check-crate-deps.sh akita-verifier
 scripts/check-crate-deps.sh akita-prover
+scripts/check-crate-deps.sh akita-cpu-backend
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup

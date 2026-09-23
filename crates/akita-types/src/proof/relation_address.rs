@@ -36,7 +36,7 @@ impl RelationAddressGeometry {
             .first()
             .map(|group| group.role_dims)
             .ok_or_else(|| AkitaError::InvalidSetup("relation groups are empty".into()))?;
-        let relation_coefficient_block_len = relation_geometry.relation_coefficient_block_len()?;
+        let relation_coefficient_block_len = layout.relation_coefficient_block_len()?;
         Self::new_with_coefficient_block(
             role_dims,
             relation_coefficient_block_len,

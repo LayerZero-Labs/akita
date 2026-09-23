@@ -213,7 +213,6 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
             F::default();
             relation_rhs_coeff_len(relation_geometry.rhs_layout())?
         ]),
-        RingVec::from_coeffs(Vec::new()),
         role_dims,
     )?;
     let witness_layout = relation.segment_layout(&level_params, None)?;

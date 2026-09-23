@@ -110,8 +110,8 @@
       "description": "Setup expansion and Ajtai commitment",
       "code": [
         "crates/akita-setup/**",
-        "crates/akita-prover/src/commitment/**",
-        "crates/akita-prover/src/backend/**"
+        "crates/akita-cpu-backend/src/backend/commitment/**",
+        "crates/akita-cpu-backend/src/backend/**"
       ],
       "consider_updating": [
         "book/src/how/commitment.md",
@@ -151,7 +151,7 @@
       "id": "extension-opening",
       "description": "Extension-opening reduction prover paths",
       "code": [
-        "crates/akita-prover/src/protocol/extension_opening_reduction/**",
+        "crates/akita-cpu-backend/src/backend/cpu/recursive/opening/**",
         "crates/akita-types/src/extension_opening_reduction.rs"
       ],
       "consider_updating": [

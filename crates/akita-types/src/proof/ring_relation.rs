@@ -240,9 +240,8 @@ pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 ///
-/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
-/// closures borrow typed role-local ring rows via [`Self::v_trusted`],
-/// and [`Self::row_coefficient_rings_trusted`].
+/// Contains only public geometry, challenges, batching coefficients, and the
+/// right-hand side reconstructed from commitments and the scheduled payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingRelationInstance<F: Field> {
     group_openings: Vec<RingRelationGroupOpening<F>>,
@@ -251,7 +250,6 @@ pub struct RingRelationInstance<F: Field> {
     gamma: Vec<F>,
     row_coefficient_rings: RingVec<F>,
     rhs: RingVec<F>,
-    v: RingVec<F>,
     role_dims: CommitmentRingDims,
 }
 
@@ -267,7 +265,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         gamma: Vec<F>,
         row_coefficient_rings: RingVec<F>,
         rhs: RingVec<F>,
-        v: RingVec<F>,
         role_dims: CommitmentRingDims,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
@@ -325,12 +322,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
                 actual: row_coefficient_rings.coeff_len(),
             });
         }
-        if !v.coeffs().is_empty() && !v.can_decode_vec(role_dims.d_d()) {
-            return Err(AkitaError::InvalidSize {
-                expected: role_dims.d_d(),
-                actual: v.coeff_len(),
-            });
-        }
         for (idx, chunk) in row_coefficient_rings
             .coeffs()
             .chunks_exact(role_dims.d_a())
@@ -349,7 +340,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
             gamma,
             row_coefficient_rings,
             rhs,
-            v,
             role_dims,
         })
     }
@@ -415,11 +405,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         &self.gamma
     }
 
-    /// Public D-block rows in flat ring storage.
-    pub fn v(&self) -> &RingVec<F> {
-        &self.v
-    }
-
     /// Relation RHS rows in flat ring storage.
     pub fn rhs(&self) -> &RingVec<F> {
         &self.rhs
@@ -442,10 +427,10 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
             )));
         }
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
-        if !self.row_coefficient_rings.can_decode_vec(D) || !self.v.can_decode_vec(D) {
+        if !self.row_coefficient_rings.can_decode_vec(D) {
             return Err(AkitaError::InvalidSize {
                 expected: D,
-                actual: self.v.coeff_len(),
+                actual: self.row_coefficient_rings.coeff_len(),
             });
         }
         for opening in &self.group_openings {
@@ -472,12 +457,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         validate_role_dispatch::<D>(self.role_dims, role).map(|_| ())
     }
 
-    /// Borrow `v` rows at the D-role dimension (`d_d`).
-    pub fn v_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_role_dim::<D>(RingRole::Opening)?;
-        self.v.as_ring_slice::<D>()
-    }
-
     /// Borrow row-coefficient rings at the A-role dimension (`d_a`).
     pub fn row_coefficient_rings_trusted<const D: usize>(
         &self,
@@ -487,18 +466,21 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     }
 
     /// Validate the mandatory D-row payload shape.
-    pub fn check_v_shape_for_level(&self, lp: &CommittedGroupParams) -> Result<(), AkitaError> {
+    pub fn check_v_shape_for_level(
+        v: &RingVec<F>,
+        lp: &CommittedGroupParams,
+    ) -> Result<(), AkitaError> {
         let expected = lp.open().matrix.output_rank();
-        let d_d = self.role_dims.d_d();
-        let actual = if self.v.coeff_len() == 0 {
+        let d_d = lp.role_dims().d_d();
+        let actual = if v.coeff_len() == 0 {
             0
-        } else if !self.v.can_decode_vec(d_d) {
+        } else if !v.can_decode_vec(d_d) {
             return Err(AkitaError::InvalidSize {
                 expected: d_d,
-                actual: self.v.coeff_len(),
+                actual: v.coeff_len(),
             });
         } else {
-            self.v.coeff_len() / d_d
+            v.coeff_len() / d_d
         };
         if actual != expected {
             return Err(AkitaError::InvalidInput(

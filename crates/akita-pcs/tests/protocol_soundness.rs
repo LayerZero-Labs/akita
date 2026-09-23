@@ -1,21 +1,22 @@
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_cpu_backend::CommitmentHandle;
+use akita_cpu_backend::DensePoly;
+use akita_cpu_backend::OneHotPoly;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::DensePoly;
-use akita_prover::OneHotPoly;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
-    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningMethod,
-    OpeningScheduleSelection, PolynomialGroupClaims,
+    AkitaBatchedProof, AkitaVerifierSetup, BasisMode, CommittedGroup, CommittedGroupBatchProfile,
+    GroupBatchStatement, OpeningClaims, OpeningMethod, OpeningScheduleSelection,
+    PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
@@ -113,30 +114,27 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Field>>(
+#[allow(clippy::type_complexity)]
+fn prove_input<'a, Cfg: CommitmentConfig>(
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
-    polynomials: &'a [&'a P],
+    evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: AkitaCommitmentHint<Cfg::Field>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    akita_prover::PreparedProverGroup<'a, P>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 > {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![Cfg::ExtField::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover claims group");
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), commitment.clone())
+            .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
         vec![hint],
-        vec![polynomials],
         schedules,
     )
     .expect("valid prover opening data");
@@ -221,39 +219,31 @@ where
     purge_setup_cache(nv);
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
-    let poly_refs: [&DensePoly<FField>; 1] = [&poly];
     let commitments = [commitment];
     let selection = selection_for::<Cfg>(&commitments[0], scheme.schedules());
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 selection,
                 &pt[..],
-                &poly_refs[..],
+                &[expected_opening],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
@@ -453,7 +443,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
                 OneHotPoly::<F>::new(onehot_k, indices).unwrap()
             })
             .collect();
-        let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
+
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
@@ -471,23 +461,16 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         purge_setup_cache(NV);
 
         let setup = scheme.setup_prover(NV, 2).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         let commitments = [commitment];
@@ -495,12 +478,12 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     selection,
                     &point[..],
-                    &poly_refs[..],
+                    &openings,
                     &commitments[0],
                     hint,
                     scheme.schedules(),
@@ -651,7 +634,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
                 OneHotPoly::<F>::new(onehot_k, indices).unwrap()
             })
             .collect();
-        let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()
@@ -671,23 +653,16 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let setup = scheme
             .setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE)
             .unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         let commitments = [commitment];
@@ -697,12 +672,12 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     selection,
                     &pt[..],
-                    &poly_group[..],
+                    &openings,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                     scheme.schedules(),
@@ -786,7 +761,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
 
         let polys = [ext4_onehot_poly(0), ext4_onehot_poly(1)];
-        let poly_refs: Vec<_> = polys.iter().collect();
+
         let point = ext4_point();
         let weights = lagrange_weights::<SE>(&point).expect("extension Lagrange weights");
         let openings: Vec<SE> = polys
@@ -804,23 +779,16 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let setup = scheme
             .setup_prover(EXT4_NV, EXT4_BATCH)
             .expect("fp32 prover setup");
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
         let selection = selection_for::<Cfg>(&commitment, scheme.schedules());
@@ -831,12 +799,12 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     selection,
                     &point[..],
-                    &poly_refs[..],
+                    &openings,
                     &commitment,
                     hint,
                     scheme.schedules(),
@@ -1092,36 +1060,30 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         ];
 
         let setup = scheme.setup_prover(NV, 2).expect("setup");
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                &[poly_a.clone(), poly_b.clone()],
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack
+                    .import_source(vec![poly_a.clone(), poly_b.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
         let selection = selection_for::<Cfg>(&commitment, scheme.schedules());
-        let poly_group = [&poly_a, &poly_b];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     selection,
                     &point[..],
-                    &poly_group[..],
+                    &openings,
                     &commitment,
                     hint,
                     scheme.schedules(),
@@ -1239,7 +1201,6 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
                 OneHotPoly::<F>::new(onehot_k, indices).expect("onehot poly")
             })
             .collect();
-        let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
 
         let pt = random_point::<F>(NV);
         let openings: Vec<F> = polys
@@ -1255,35 +1216,28 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             .collect();
 
         let setup = scheme.setup_prover(NV, 2).expect("setup");
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
         let selection = selection_for::<Cfg>(&commitment, scheme.schedules());
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     selection,
                     &pt[..],
-                    &poly_group[..],
+                    &openings,
                     &commitment,
                     hint,
                     scheme.schedules(),
