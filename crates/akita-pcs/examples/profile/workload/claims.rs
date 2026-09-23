@@ -1,39 +1,36 @@
 use akita_config::CommitmentConfig;
+use akita_cpu_backend::CommitmentHandle;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{
-    AkitaCommitmentHint, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims,
+    CommittedGroup, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
+    PolynomialGroupClaims,
 };
-use jolt_field::{Field, Zero};
+use jolt_field::Field;
 
-pub(super) fn prover_claims<'a, Cfg, P>(
+#[allow(clippy::type_complexity)]
+pub(super) fn prover_claims<'a, Cfg>(
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
-    polynomials: &'a [&'a P],
+    evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: AkitaCommitmentHint<Cfg::Field>,
+    handle: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    akita_prover::PreparedProverGroup<'a, P>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 >
 where
     Cfg: CommitmentConfig,
-    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![Cfg::ExtField::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover claims group");
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), commitment.clone())
+            .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
-        vec![hint],
-        vec![polynomials],
+        vec![handle],
         schedules,
     )
     .expect("valid prover opening data");

@@ -523,18 +523,13 @@ where
             gamma,
             row_coefficient_rings,
             relation_rhs,
-            if prepared.lp.payload_mode.is_compressed() {
-                RingVec::from_coeffs(Vec::new())
-            } else {
-                prepared.opening_payload.clone()
-            },
             role_dims,
         )
         .map_err(|error| {
             AkitaError::InvalidInput(format!("relation instance failed: {error:?}"))
         })?;
         if !prepared.lp.payload_mode.is_compressed() {
-            relation_instance.check_v_shape_for_level(prepared.lp)?;
+            RingRelationInstance::check_v_shape_for_level(&prepared.opening_payload, prepared.lp)?;
         }
         (relation_rhs_layout, relation_instance)
     };

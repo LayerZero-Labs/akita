@@ -293,7 +293,7 @@ proof-byte digest for all future schedules.
   canonical serialization, and version validation.
 - `crates/akita-transcript/src/sponge.rs` owns domain separation, framing,
   and positional production replay.
-- `crates/akita-types/src/transcript_grinding_plan.rs` defines the ordered
+- `crates/akita-types/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-transcript/src/grinding.rs` defines nonce search and
   the proof-of-work predicate.
 - `crates/akita-challenges/src/sampler/xof.rs` derives the indexed sparse

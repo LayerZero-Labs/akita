@@ -12,8 +12,8 @@ use crate::common::*;
 use akita_config::{
     recursive_commitment::RecursiveScheduleConfig, CommitmentConfig, RecursiveCommitmentConfig,
 };
+use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -65,26 +65,22 @@ where
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute prefix slots"
         );
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
+        let stack = CpuBackend::<RecursiveCommitmentConfig<BaseCfg>>::new(
+            setup.expanded.clone(),
+            scheme.schedules(),
         )
-        .expect("stack");
+        .expect("backend");
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
             .collect();
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                &final_polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(final_polys.clone()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("recursive direct commit");
 
@@ -95,8 +91,7 @@ where
             .map(|poly| onehot_opening_lagrange(poly, &point))
             .collect();
 
-        let poly_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
-        let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
+        let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>>(
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 openings.clone(),
@@ -105,7 +100,6 @@ where
             .expect("prover group")])
             .expect("prover claims"),
             vec![hint],
-            vec![&poly_refs[..]],
             scheme.schedules(),
         );
         let selection = prover_data.selection();
@@ -182,34 +176,27 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
-        let poly_refs = [&poly];
+
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     &pt[..],
-                    &poly_refs[..],
+                    &[expected_opening],
                     &commitment,
                     hint,
                     scheme.schedules(),
@@ -258,34 +245,27 @@ where
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = stack
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
-        let poly_refs = [&poly];
+
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prove_input::<Cfg, _>(
+                prove_input::<Cfg>(
                     &pt[..],
-                    &poly_refs[..],
+                    &[expected_opening],
                     &commitment,
                     hint,
                     scheme.schedules(),
@@ -329,28 +309,21 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
         let pre_poly =
             DensePoly::<F>::from_field_evals(PRE_NV, &pre_evals).expect("pre dense poly");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: pre_commitment,
-            prover_state: pre_hint,
-        } = scheme
+            private_handle: pre_hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&pre_poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![pre_poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
 
@@ -360,15 +333,15 @@ where
             DensePoly::<F>::from_field_evals(final_nv, &final_evals).expect("final dense poly");
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
             .expect("nonempty precommitted groups");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
-            prover_state: final_hint,
-        } = scheme
+            private_handle: final_hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+                &stack
+                    .import_source(vec![final_poly.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");
 
@@ -410,19 +383,17 @@ where
             )
             .expect("final prover group"),
         ];
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_poly];
-        let prover_data = selected_prover_data::<Cfg, _>(
+
+        let prover_data = selected_prover_data::<Cfg>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
-            vec![&pre_refs[..], &final_refs[..]],
             scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
                 prover_data,
                 &stack,
@@ -479,40 +450,33 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: pre_commitment,
-            prover_state: pre_hint,
-        } = scheme
+            private_handle: pre_hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&pre_poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![pre_poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
 
         let final_poly = make_onehot_poly_with_k(final_nv, k, 0x0bee_f001_u64 ^ final_nv as u64);
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
             .expect("nonempty precommitted groups");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
-            prover_state: final_hint,
-        } = scheme
+            private_handle: final_hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+                &stack
+                    .import_source(vec![final_poly.clone()])
+                    .expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final commit");
 
@@ -535,19 +499,17 @@ where
             )
             .expect("final prover group"),
         ];
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_poly];
-        let prover_data = selected_prover_data::<Cfg, _>(
+
+        let prover_data = selected_prover_data::<Cfg>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
-            vec![&pre_refs[..], &final_refs[..]],
             scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
                 prover_data,
                 &stack,
