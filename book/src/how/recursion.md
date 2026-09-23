@@ -63,8 +63,8 @@ digits for polynomial-modulus quotients. Compressed payloads add the digits
 used by their compression chains, and quotient lifting also adds the
 compression quotients. A raw reduced-evaluation fold has neither kind of
 auxiliary data. The
-[physical realizations](./proving/akita-fold-realizations.md) define the exact
-segments for each admitted case.
+[complete witness layouts](./proving/ring-relation-checking.md#what-enters-the-next-witness)
+define the segments for each admitted case.
 
 Equation (3) is prover state. A nonterminal fold does not send this full
 witness to the verifier. Instead, it binds the witness and reduces its

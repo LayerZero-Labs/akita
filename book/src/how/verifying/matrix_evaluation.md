@@ -159,6 +159,53 @@ factor:
 The separately prepared compressed F/H contribution uses the same reduced
 functional and is added once.
 
+### Reduced evaluation at the final point
+
+The prover uses the public residue weights
+$\kappa_{A,\alpha}^{(d)}(j)$ derived in [Checking ring relations over a
+field](../proving/ring-relation-checking.md#quotient-free-checking-by-reduced-evaluation).
+The verifier only needs their weighted sum at the final Stage 2 point.
+It can compute that sum without constructing a kernel for every setup column.
+
+Let $r_2$ be the complete final witness point. Consider a native coefficient
+window of length $d$ beginning at physical address $o$. Its exact equality
+weights are
+
+$$
+e_j=\operatorname{eq}(r_2,o+j),\qquad 0\le j<d,
+$$
+
+where the address $o+j$ is represented in Boolean bits. For a public
+multiplier $A(X)=\sum_{k=0}^{d-1}a_kX^k$, the required contraction is
+
+$$
+\sum_j e_j\kappa_{A,\alpha}^{(d)}(j)
+=\sum_k a_k H_k,
+\qquad
+H_k=\sum_j e_j
+(-1)^{\lfloor(k+j)/d\rfloor}\alpha^{(k+j)\bmod d}.
+$$
+
+This changes the order of the two sums. The vector $H$ contains the signed
+shift weights for this window. The code calls it the **terminal residue
+kernel**; here terminal means the final sumcheck point, not the terminal fold.
+The same signed-wrap recurrence gives
+
+$$
+H_0=\sum_j e_j\alpha^j,
+\qquad
+H_{k+1}=\alpha H_k-(\alpha^d+1)e_{d-1-k},
+\quad 0\le k<d-1.
+$$
+
+Preparing $H$ takes $O(d)$ field operations and storage. The verifier reuses
+it for multipliers with the same checked coefficient window and contracts
+their coefficients during the combined A/B/D setup scan. Different windows
+can require different $H$ vectors even when their dimensions agree.
+The F/H compression maps use their separate relation evaluator with the same
+reduced semantics. This calculation does not remove the work of reading the
+active public setup coefficients.
+
 ### Structured witness terms
 
 The structured term covers the non-setup coefficients of the consistency, A,
