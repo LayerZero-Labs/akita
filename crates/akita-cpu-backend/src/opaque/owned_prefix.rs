@@ -114,7 +114,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         cached: Arc<CachedSetupPrefix<F>>,
     ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
     where
-        Cfg: CommitmentConfig<Field = F>,
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
         F: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -194,7 +194,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         id: &SetupPrefixSlotId,
     ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
     where
-        Cfg: CommitmentConfig<Field = F>,
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
         F: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -212,8 +212,6 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             + AkitaSerialize
             + 'static,
     {
-        self.validate_extension::<E>()?;
-
         // The commitment and the prefix coefficients are a pure function of the
         // owned setup and the slot id, so derive them at most once per backend.
         // Only the per-proof operation identity below is minted fresh, keeping

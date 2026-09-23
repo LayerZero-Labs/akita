@@ -60,7 +60,7 @@ where
     }
 
     pub(crate) fn binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+        self.binding.clone()
     }
 
     fn admit<B: ComputeBackendSetup<F>, const D: usize>(
@@ -111,7 +111,7 @@ where
                 rice_low_bits: plan.rice_low_bits(),
                 zigzag_width,
                 payload_bytes: plan.payload_bytes(),
-                binding: crate::opaque::OperationBinding::legacy_unscoped(),
+                binding: crate::opaque::OperationBinding::unbound(),
                 _field: PhantomData,
             },
             observed_l2_sq,
@@ -160,7 +160,7 @@ impl<F: Field> CpuAcceptedFold<F> {
     }
 
     pub(crate) fn binding(&self) -> super::OperationBinding {
-        self.binding
+        self.binding.clone()
     }
     pub(crate) fn bind(&mut self, binding: crate::opaque::OperationBinding) {
         self.binding = binding;
@@ -591,7 +591,7 @@ where
                 log_basis: plan.log_basis(),
                 num_chunks: plan.geometry().chunk_ranges().map_or(1, <[_]>::len),
             },
-            binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            binding: crate::opaque::OperationBinding::unbound(),
             _field: PhantomData,
         })
     }
@@ -624,7 +624,7 @@ where
                 log_basis: params.log_basis_inner(),
                 num_chunks,
             },
-            binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            binding: crate::opaque::OperationBinding::unbound(),
             _field: PhantomData,
         }
     }

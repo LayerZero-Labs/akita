@@ -86,6 +86,7 @@ impl<F: Field + CanonicalEncoding, E: Field> ProofAdmission<F, E> for ExternalBa
     }
     fn validate_commitment(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         handle: &Self::CommitmentHandle,
         parameters: &GroupCommitPhaseParams,
@@ -101,6 +102,7 @@ impl<F: Field + CanonicalEncoding, E: Field> ProofAdmission<F, E> for ExternalBa
 impl<F: Field + CanonicalEncoding, E: Field> OpaqueOpeningKernel<F, E> for ExternalBackend<F, E> {
     fn prepare_opening(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
         plan: &akita_prover::backend::ValidatedRecursiveGroupOpeningPlan<'_, E>,
@@ -125,6 +127,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueOpeningKernel<F, E> for Exter
 impl<F: Field + CanonicalEncoding, E: Field> OpaqueEorKernel<F, E> for ExternalBackend<F, E> {
     fn prepare_eor(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         layout: &OpeningClaimsLayout,
         groups: &[EorGroupRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
@@ -176,6 +179,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueRecursiveWitnessBuildKernel<F
 {
     fn begin_recursive_witness(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,

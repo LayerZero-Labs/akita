@@ -14,8 +14,11 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Rin
 use std::sync::Arc;
 
 /// An immutable imported source owned by one backend.
-pub struct SourceHandle<F: Field + CanonicalEncoding, E: Field, Cfg: akita_config::CommitmentConfig>
-{
+pub struct SourceHandle<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
+> {
     pub(super) owner: u64,
     pub(super) storage: Arc<dyn PrivateSource<F, E, Cfg>>,
     pub(super) metadata: SourceMetadata,
@@ -24,7 +27,7 @@ impl<F, E, Cfg> Clone for SourceHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -38,7 +41,7 @@ where
 pub struct CommitmentHandle<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     pub(super) owner: u64,
     pub(super) committed: Arc<CommittedSource<F, E, Cfg>>,
@@ -47,7 +50,7 @@ impl<F, E, Cfg> Clone for CommitmentHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -59,7 +62,7 @@ where
 pub(super) struct CommittedSource<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     pub(super) source: Arc<dyn PrivateSource<F, E, Cfg>>,
     pub(super) metadata: SourceMetadata,
@@ -72,7 +75,7 @@ pub(super) struct CommittedSource<
 pub struct CommitOutput<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     pub committed_group: CommittedGroup<F>,
     pub private_handle: CommitmentHandle<F, E, Cfg>,
@@ -81,7 +84,7 @@ impl<F, E, Cfg> CommitmentHandleMetadata for CommitmentHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn metadata(&self) -> SourceMetadata {
         self.committed.metadata
@@ -93,7 +96,7 @@ where
 pub(super) trait PrivateSource<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 >: Send + Sync
 {
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
@@ -103,7 +106,7 @@ pub(super) trait PrivateSource<
     fn opening(
         &self,
         backend: &CpuBackend<Cfg>,
-        context: &ProofContext,
+        binding: &OperationBinding,
         plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
         source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
     ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E, Cfg>>, AkitaError>;
@@ -136,7 +139,7 @@ pub(super) struct OwnedPolynomials<P> {
 
 impl<F, E, Cfg, P> PrivateSource<F, E, Cfg> for OwnedPolynomials<P>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
     F::Wide: From<F> + jolt_field::AdditiveGroup,
     E: ExtField<F>
@@ -183,7 +186,7 @@ where
     fn opening(
         &self,
         backend: &CpuBackend<Cfg>,
-        context: &ProofContext,
+        binding: &OperationBinding,
         plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
         source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
     ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E, Cfg>>, AkitaError> {
@@ -245,7 +248,7 @@ where
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     return Ok(crate::opaque::prepared_opening::coefficient_packing(
-                        backend.binding(context)?,
+                        binding.clone(),
                         source,
                         point,
                         partials,
@@ -271,7 +274,7 @@ where
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(crate::opaque::prepared_opening::evaluation_trace(
-                    backend.binding(context)?,
+                    binding.clone(),
                     source,
                     point,
                     by_claim
@@ -363,21 +366,21 @@ where
 pub trait CpuSource<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 >: SourceImport<F, E, Cfg>
 {
 }
 trait SourceImport<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 >: CommitmentSource<F> + Sized + 'static
 {
     fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E, Cfg>>;
 }
 impl<F, E, Cfg, P> SourceImport<F, E, Cfg> for P
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
     F::Wide: From<F> + jolt_field::AdditiveGroup,
     E: ExtField<F>
@@ -406,7 +409,7 @@ impl<F, E, Cfg, P> CpuSource<F, E, Cfg> for P
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     P: SourceImport<F, E, Cfg>,
 {
 }
@@ -444,7 +447,7 @@ impl<F, E, Cfg> core::fmt::Debug for SourceHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SourceHandle")
@@ -456,7 +459,7 @@ impl<F, E, Cfg> core::fmt::Debug for CommitmentHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommitmentHandle")
@@ -468,7 +471,7 @@ impl<F, E, Cfg> core::fmt::Debug for CommitOutput<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommitOutput")

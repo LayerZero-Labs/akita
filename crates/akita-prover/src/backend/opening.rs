@@ -18,10 +18,11 @@ pub struct PreparedEor<E: Field, H> {
     pub handle: H,
 }
 pub trait OpaqueOpeningKernel<F: Field + CanonicalEncoding, E: Field>:
-    ProverHandleFamily<F, E>
+    ProverHandleFamily<F, E> + super::ProofScopeConsumer
 {
     fn prepare_opening(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
         plan: &crate::backend::ValidatedRecursiveGroupOpeningPlan<'_, E>,
@@ -34,10 +35,11 @@ pub trait OpaqueOpeningKernel<F: Field + CanonicalEncoding, E: Field>:
     ) -> Result<FoldProbeOutcome<Self::AcceptedFoldHandle>, AkitaError>;
 }
 pub trait OpaqueEorKernel<F: Field + CanonicalEncoding, E: Field>:
-    ProverHandleFamily<F, E>
+    ProverHandleFamily<F, E> + super::ProofScopeConsumer
 {
     fn prepare_eor(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         layout: &OpeningClaimsLayout,
         groups: &[EorGroupRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],

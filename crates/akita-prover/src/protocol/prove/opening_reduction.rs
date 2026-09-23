@@ -8,6 +8,7 @@ pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prove_extension_opening_reduction<F, E, T, B>(
     backend: &B,
+    session: &B::ProofSessionHandle,
     context: &crate::backend::ProofContext,
     opening_batch: &OpeningClaimsLayout,
     group_inputs: &[crate::backend::EorGroupRequest<
@@ -32,7 +33,7 @@ where
         .max_num_vars()
         .checked_sub(split_bits)
         .ok_or(AkitaError::InvalidProof)?;
-    let prepared = backend.prepare_eor(context, opening_batch, group_inputs)?;
+    let prepared = backend.prepare_eor(session, context, opening_batch, group_inputs)?;
     let num_claims = opening_batch.num_total_polynomials();
     if prepared.openings != expected_openings
         || prepared.openings.len() != num_claims

@@ -2,13 +2,12 @@
 
 use crate::arithmetic::CpuPreparedSetup;
 use crate::opaque::owned_prefix::CachedSetupPrefix;
-use crate::opaque::{BackendIdentity, OperationBinding};
+use crate::opaque::{BackendIdentity, CpuProofSessionHandle, OperationBinding};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
 use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
-use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -174,19 +173,6 @@ impl<Cfg: CommitmentConfig> core::fmt::Debug for CpuBackend<Cfg> {
 }
 
 impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
-    pub(crate) fn validate_extension<E: 'static>(&self) -> Result<(), AkitaError> {
-        #[cfg(test)]
-        if self.schedules.is_none() {
-            return Ok(());
-        }
-        if TypeId::of::<E>() != TypeId::of::<Cfg::ExtField>() {
-            return Err(AkitaError::InvalidInput(
-                "proof extension field differs from backend configuration".into(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Default maximum cached extent for a ring-switch NTT operation.
     pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
 
@@ -249,12 +235,11 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             .ok_or_else(|| AkitaError::InvalidSetup("test backend has no schedule catalog".into()))
     }
 
-    pub(crate) fn validate_proof_configuration<E: 'static>(
+    pub(crate) fn validate_proof_configuration(
         &self,
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<(), AkitaError> {
-        self.validate_extension::<E>()?;
         let row = self
             .schedules()?
             .catalog()
@@ -280,30 +265,32 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     pub(crate) fn owner_id(&self) -> u64 {
         self.identity.backend_id()
     }
-    pub(crate) fn validate_context(&self, context: &ProofContext) -> Result<(), AkitaError> {
-        self.identity.validate_context(context)
+    pub(crate) fn validate_context(
+        &self,
+        session: &CpuProofSessionHandle,
+        context: &ProofContext,
+    ) -> Result<(), AkitaError> {
+        let lease = session.validate_owner(&self.identity)?;
+        lease.validate_context(context)
     }
-    pub(crate) fn binding(&self, context: &ProofContext) -> Result<OperationBinding, AkitaError> {
-        self.validate_context(context)?;
+    pub(crate) fn binding(
+        &self,
+        session: &CpuProofSessionHandle,
+        context: &ProofContext,
+    ) -> Result<OperationBinding, AkitaError> {
+        self.validate_context(session, context)?;
         Ok(OperationBinding::new(
             self.owner_id(),
             context.scope_id(),
             self.identity.setup_digest(),
             context.fold_level(),
             self.identity.next_operation_id()?,
+            session.scope_lease(),
         )
         .with_group(context.group_index()))
     }
     pub(crate) fn validate_binding(&self, binding: &OperationBinding) -> Result<(), AkitaError> {
-        self.binding_lease(binding).map(drop)
-    }
-    pub(crate) fn binding_lease(
-        &self,
-        binding: &OperationBinding,
-    ) -> Result<crate::opaque::ScopeLease, AkitaError> {
-        let lease = self.identity.scope_lease(binding.scope_id())?;
-        self.validate_leased_binding(binding, &lease)?;
-        Ok(lease)
+        self.validate_leased_binding(binding, binding.scope_lease())
     }
     pub(crate) fn validate_leased_binding(
         &self,
@@ -315,6 +302,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             self.identity.setup_digest(),
             binding.fold_level(),
         )?;
+        lease.validate_owner(&self.identity)?;
         lease.validate(
             binding.scope_id(),
             binding.fold_level(),

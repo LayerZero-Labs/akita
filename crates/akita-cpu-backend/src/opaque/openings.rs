@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub(super) enum RetainedOpeningSource<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     Commitment(Arc<CommittedSource<F, E, Cfg>>),
     Witness(Box<CpuWitnessHandle>),
@@ -20,14 +20,14 @@ pub(super) enum RetainedOpeningSource<
 pub(super) enum PreparedOpeningSource<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     Retained(RetainedOpeningSource<F, E, Cfg>),
     TerminalNative,
 }
 impl<F, E, Cfg> OpaqueOpeningKernel<F, E> for CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
@@ -47,13 +47,13 @@ where
 {
     fn prepare_opening(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         source: OpeningSource<'_, Self::CommitmentHandle, Self::WitnessHandle>,
         plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
     ) -> Result<PreparedGroupOpening<E, Self::PreparedOpeningHandle>, AkitaError> {
-        self.validate_extension::<E>()?;
-        self.validate_context(context)?;
-        let (parameters, _) = self.admitted_group(context)?;
+        let binding = self.binding(session, context)?;
+        let (parameters, _) = self.admitted_group(&binding)?;
         if plan.ring_dimension() != parameters.inner_commit_matrix_params().ring_dimension()
             || plan.positions_per_block() != parameters.num_positions_per_block()
             || plan.live_blocks() != parameters.num_live_blocks()
@@ -63,7 +63,6 @@ where
                 "opening does not match the admitted group".into(),
             ));
         }
-        let binding = self.binding(context)?;
         let opening = match source {
             OpeningSource::Commitment(handle) => {
                 if handle.owner != self.owner().backend_id() {
@@ -71,7 +70,8 @@ where
                         "commitment belongs to another backend".into(),
                     ));
                 }
-                self.owner()
+                binding
+                    .scope_lease()
                     .validate_commitment(context, handle.committed.commitment_id)?;
                 if handle.committed.parameters != parameters.profile {
                     return Err(AkitaError::InvalidProof);
@@ -86,7 +86,7 @@ where
                 }
                 handle.committed.source.opening(
                     self,
-                    context,
+                    &binding,
                     plan,
                     PreparedOpeningSource::Retained(RetainedOpeningSource::Commitment(
                         handle.committed.clone(),
@@ -96,7 +96,7 @@ where
             OpeningSource::Witness(witness) => {
                 self.validate_binding(&witness.operation_binding())?;
                 binding.validate_lineage(&witness.operation_binding())?;
-                let (schedule, _) = self.owner().proof_plan(context.scope_id())?;
+                let (schedule, _) = binding.scope_lease().proof_plan()?;
                 let parameters = if context.fold_level() == 0 {
                     &schedule.root.params
                 } else {
@@ -150,8 +150,10 @@ where
         opening: &Self::PreparedOpeningHandle,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<Self::AcceptedFoldHandle>, AkitaError> {
-        self.validate_context(context)?;
-        let (parameters, chunks) = self.admitted_group(context)?;
+        let binding = opening.operation_binding();
+        self.validate_binding(&binding)?;
+        binding.scope_lease().validate_context(context)?;
+        let (parameters, chunks) = self.admitted_group(&binding)?;
         let (negative, positive) = akita_types::sis::balanced_digit_representable_bounds(
             parameters.log_basis_open(),
             parameters.num_digits_fold(),
@@ -182,10 +184,6 @@ where
                 "fold probe does not match the admitted group policy".into(),
             ));
         }
-        let binding = opening.operation_binding();
-        self.validate_binding(&binding)?;
-        let expected = self.binding(context)?;
-        binding.validate_lineage(&expected)?;
         if context.group_index().is_some() {
             binding.validate_group(
                 context.group_index().ok_or(AkitaError::InvalidProof)?,

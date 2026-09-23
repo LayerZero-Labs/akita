@@ -50,7 +50,7 @@ pub(crate) fn begin_cpu_recursive_witness<F, E, Cfg>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
     E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let ctx = OperationCtx::new(
         backend,

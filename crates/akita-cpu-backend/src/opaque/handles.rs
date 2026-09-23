@@ -14,7 +14,7 @@ pub struct CpuWitnessBuildHandle<F: Field + CanonicalEncoding> {
 }
 
 /// Owner, proof, setup, level, and operation identity attached to CPU state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct OperationBinding {
     consumer_id: u64,
     scope_id: ProofScopeId,
@@ -22,20 +22,56 @@ pub(crate) struct OperationBinding {
     fold_level: u32,
     operation_id: u128,
     group_index: Option<usize>,
+    lease: crate::opaque::ScopeLease,
 }
 
+impl core::fmt::Debug for OperationBinding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OperationBinding")
+            .field("consumer_id", &self.consumer_id)
+            .field("scope_id", &self.scope_id)
+            .field("setup_digest", &self.setup_digest)
+            .field("fold_level", &self.fold_level)
+            .field("operation_id", &self.operation_id)
+            .field("group_index", &self.group_index)
+            .finish()
+    }
+}
+
+impl PartialEq for OperationBinding {
+    fn eq(&self, other: &Self) -> bool {
+        self.consumer_id == other.consumer_id
+            && self.scope_id == other.scope_id
+            && self.setup_digest == other.setup_digest
+            && self.fold_level == other.fold_level
+            && self.operation_id == other.operation_id
+            && self.group_index == other.group_index
+    }
+}
+
+impl Eq for OperationBinding {}
+
 impl OperationBinding {
+    pub(crate) fn unbound() -> Self {
+        Self::new(
+            0,
+            ProofScopeId::from_raw(0),
+            [0; 32],
+            0,
+            0,
+            crate::opaque::ScopeLease::unbound(),
+        )
+    }
+
     pub(crate) const fn group_index(&self) -> Option<usize> {
         self.group_index
     }
     pub(crate) const fn fold_level(&self) -> u32 {
         self.fold_level
     }
-    pub(crate) const fn with_group(self, group_index: Option<usize>) -> Self {
-        Self {
-            group_index,
-            ..self
-        }
+    pub(crate) fn with_group(mut self, group_index: Option<usize>) -> Self {
+        self.group_index = group_index;
+        self
     }
     pub(crate) fn validate_computation(&self, expected: &Self) -> Result<(), AkitaError> {
         self.validate_lineage(expected)?;
@@ -67,16 +103,13 @@ impl OperationBinding {
         }
         Ok(())
     }
-    pub(crate) const fn legacy_unscoped() -> Self {
-        Self::new(0, ProofScopeId::from_raw(0), [0; 32], 0, 0)
-    }
-
-    pub(crate) const fn new(
+    pub(crate) fn new(
         consumer_id: u64,
         scope_id: ProofScopeId,
         setup_digest: [u8; 32],
         fold_level: u32,
         operation_id: u128,
+        lease: crate::opaque::ScopeLease,
     ) -> Self {
         Self {
             consumer_id,
@@ -85,6 +118,7 @@ impl OperationBinding {
             fold_level,
             operation_id,
             group_index: None,
+            lease,
         }
     }
 
@@ -118,22 +152,26 @@ impl OperationBinding {
         Ok(())
     }
 
-    pub(crate) const fn for_operation(self, operation_id: u128) -> Self {
+    pub(crate) fn for_operation(&self, operation_id: u128) -> Self {
         Self {
             operation_id,
-            ..self
+            ..self.clone()
         }
     }
 
-    pub(crate) const fn for_level_operation(self, fold_level: u32, operation_id: u128) -> Self {
+    pub(crate) fn for_level_operation(&self, fold_level: u32, operation_id: u128) -> Self {
         Self {
             fold_level,
             operation_id,
-            ..self
+            ..self.clone()
         }
     }
 
-    pub(crate) const fn scope_id(self) -> ProofScopeId {
+    pub(crate) const fn scope_id(&self) -> ProofScopeId {
         self.scope_id
+    }
+
+    pub(crate) const fn scope_lease(&self) -> &crate::opaque::ScopeLease {
+        &self.lease
     }
 }

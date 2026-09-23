@@ -196,6 +196,7 @@ where
             }];
             let proved = prove_extension_opening_reduction::<F, E, T, B>(
                 backend,
+                session,
                 &context,
                 &opening_batch,
                 &eor_inputs,
@@ -416,6 +417,7 @@ where
         };
         let params = level_params.group_params(claims.opening_layout(), 0)?;
         materials.push(backend.validate_commitment(
+            session,
             &context.for_group(0),
             handle,
             &params.profile,

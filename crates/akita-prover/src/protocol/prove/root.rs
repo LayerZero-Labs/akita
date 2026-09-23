@@ -43,6 +43,7 @@ where
     for index in 0..layout.num_groups() {
         let group = schedule.root.params.group_params(layout, index)?;
         material.push(backend.validate_commitment(
+            session,
             &context.for_group(index),
             claims.group(index)?,
             &group.profile,

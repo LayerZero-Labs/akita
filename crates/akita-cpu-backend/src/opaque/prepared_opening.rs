@@ -15,7 +15,7 @@ pub(in crate::opaque) fn evaluation_trace<F, E, Cfg>(
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let handle = CpuPreparedOpeningHandle::evaluation_trace(
         binding,
@@ -37,7 +37,7 @@ pub(in crate::opaque) fn coefficient_packing<F, E, Cfg>(
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let handle = CpuPreparedOpeningHandle::coefficient_packing(
         binding,

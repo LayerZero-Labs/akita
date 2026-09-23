@@ -233,15 +233,22 @@ fn chunk_aggregation_sums_exactly_and_accepts_empty_chunks() {
 #[test]
 fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
     let backend = CpuBackend::for_arithmetic_tests();
-    let scope = backend.owner().begin_test_scope(vec![2, 1]).unwrap();
-    let context = ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 0)
-        .for_group(0);
-    let opening = backend.binding(&context).unwrap();
-    let second_opening = backend.binding(&context).unwrap();
+    let proof = backend.owner().begin_test_scope(vec![2, 1]).unwrap();
+    let session =
+        crate::opaque::CpuProofSessionHandle::new(std::sync::Arc::clone(backend.owner()), proof);
+    let context = ProofContext::new(
+        backend.owner_id(),
+        backend.owner().setup_digest(),
+        session.scope_id(),
+        0,
+    )
+    .for_group(0);
+    let opening = backend.binding(&session, &context).unwrap();
+    let second_opening = backend.binding(&session, &context).unwrap();
     assert!(opening.validate_lineage(&second_opening).is_ok());
     assert!(opening.validate_computation(&second_opening).is_err());
     assert!(opening
-        .validate_computation(&opening.with_group(Some(1)))
+        .validate_computation(&opening.clone().with_group(Some(1)))
         .is_err());
     assert!(opening
         .validate_lineage(&opening.for_level_operation(1, opening.operation_id()))
@@ -249,19 +256,25 @@ fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
     let foreign = CpuBackend::for_arithmetic_tests();
     assert!(foreign.validate_binding(&opening).is_err());
     let independent = backend.owner().begin_test_scope(vec![2, 1]).unwrap();
+    let independent_session = crate::opaque::CpuProofSessionHandle::new(
+        std::sync::Arc::clone(backend.owner()),
+        independent,
+    );
     let independent_context = ProofContext::new(
         backend.owner_id(),
         backend.owner().setup_digest(),
-        independent,
+        independent_session.scope_id(),
         0,
     )
     .for_group(0);
-    let independent_opening = backend.binding(&independent_context).unwrap();
+    let independent_opening = backend
+        .binding(&independent_session, &independent_context)
+        .unwrap();
     assert!(opening.validate_lineage(&independent_opening).is_err());
-    backend.owner().finish_scope(scope).unwrap();
+    backend.finish_scope(&session).unwrap();
     assert!(backend.validate_binding(&opening).is_err());
     assert!(backend.validate_binding(&independent_opening).is_ok());
-    backend.owner().abort_scope(independent);
+    backend.abort_scope_best_effort(&independent_session);
     assert!(backend.validate_binding(&independent_opening).is_err());
 }
 
@@ -269,11 +282,18 @@ fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
 fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
     let _guard = RECORDING_LOCK.lock().unwrap();
     let backend = CpuBackend::for_arithmetic_tests();
-    let scope = backend.owner().begin_test_scope(vec![1]).unwrap();
-    let context = ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 0)
-        .for_group(0);
-    let first_opening = backend.binding(&context).unwrap();
-    let other_opening = backend.binding(&context).unwrap();
+    let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
+    let session =
+        crate::opaque::CpuProofSessionHandle::new(std::sync::Arc::clone(backend.owner()), proof);
+    let context = ProofContext::new(
+        backend.owner_id(),
+        backend.owner().setup_digest(),
+        session.scope_id(),
+        0,
+    )
+    .for_group(0);
+    let first_opening = backend.binding(&session, &context).unwrap();
+    let other_opening = backend.binding(&session, &context).unwrap();
     let challenges = Challenges::from_sparse(
         vec![
             SparseChallenge {
@@ -316,7 +336,7 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
     else {
         panic!("expected accepted fold")
     };
-    fold_handle.bind(first_opening);
+    fold_handle.bind(first_opening.clone());
     fold_handle.validate_challenges(&challenges).unwrap();
     fold_handle
         .binding()
@@ -339,6 +359,6 @@ fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
     )
     .unwrap();
     assert!(fold_handle.validate_challenges(&substituted).is_err());
-    backend.owner().finish_scope(scope).unwrap();
+    backend.finish_scope(&session).unwrap();
     assert!(backend.validate_binding(&fold_handle.binding()).is_err());
 }

@@ -1,5 +1,4 @@
 use super::*;
-use crate::opaque::consumer_kernels::RelationWitnessSession;
 use crate::opaque::eor::ExtensionOpeningSession;
 use crate::opaque::{CpuBackend, RootOpeningSource, RootPolyShape};
 use crate::sources::packed_digits::PackedSignedDigits;
@@ -184,12 +183,12 @@ fn public_stage2_dispatch_rejects_exhausted_round_and_preserves_finish() {
     use crate::opaque::{OpaqueStage2Kernel, ProofContext, ProofScope};
 
     let backend = CpuBackend::for_arithmetic_tests();
-    let scope_id = backend.owner().begin_test_scope(vec![1]).unwrap();
+    let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let scope = ProofScope::admitted(
         &backend,
         crate::opaque::lifecycle::CpuProofSessionHandle::new(
             std::sync::Arc::clone(backend.owner()),
-            scope_id,
+            proof,
         ),
     );
     let context = ProofContext::new(
@@ -199,8 +198,9 @@ fn public_stage2_dispatch_rejects_exhausted_round_and_preserves_finish() {
         0,
     );
     let mut session = two_round_relation_session();
-    let binding = backend.binding(&context).unwrap();
-    session.set_operation_binding(binding, backend.binding_lease(&binding).unwrap());
+    let binding = backend.binding(scope.session(), &context).unwrap();
+    let lease = binding.scope_lease().clone();
+    session.set_operation_binding(binding, lease);
     let rounds = OpaqueStage2Kernel::<F, F>::stage2_num_rounds(&backend, &session).unwrap();
     let mut claim = OpaqueStage2Kernel::<F, F>::stage2_input_claim(&backend, &session).unwrap();
     for round in 0..rounds {
@@ -441,12 +441,12 @@ fn suffix_witness_decompose_fold_is_deterministic() {
 fn backend_rejects_foreign_and_expired_sessions_independently() {
     use crate::opaque::{OpaqueStage1Kernel, OpaqueStage2Kernel, ProofContext, ProofScope};
     let backend = CpuBackend::for_arithmetic_tests();
-    let scope_id = backend.owner().begin_test_scope(vec![1]).unwrap();
+    let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let scope = ProofScope::admitted(
         &backend,
         crate::opaque::lifecycle::CpuProofSessionHandle::new(
             std::sync::Arc::clone(backend.owner()),
-            scope_id,
+            proof,
         ),
     );
     let context = ProofContext::new(
@@ -455,10 +455,10 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         scope.session().scope_id(),
         0,
     );
-    let binding = backend.binding(&context).unwrap();
-    let lease = backend.binding_lease(&binding).unwrap();
+    let binding = backend.binding(scope.session(), &context).unwrap();
+    let lease = binding.scope_lease().clone();
     let mut stage2 = two_round_relation_session();
-    stage2.set_operation_binding(binding, lease.clone());
+    stage2.set_operation_binding(binding.clone(), lease.clone());
     let claim = OpaqueStage2Kernel::<F, F>::stage2_input_claim(&backend, &stage2).unwrap();
     assert_eq!(
         OpaqueStage2Kernel::<F, F>::stage2_num_rounds(&backend, &stage2).unwrap(),
@@ -466,12 +466,12 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
     );
 
     let foreign = CpuBackend::for_arithmetic_tests();
-    let foreign_id = foreign.owner().begin_test_scope(vec![1]).unwrap();
+    let foreign_proof = foreign.owner().begin_test_scope(vec![1]).unwrap();
     let foreign_scope = ProofScope::admitted(
         &foreign,
         crate::opaque::lifecycle::CpuProofSessionHandle::new(
             std::sync::Arc::clone(foreign.owner()),
-            foreign_id,
+            foreign_proof,
         ),
     );
     let foreign_context = ProofContext::new(
@@ -480,12 +480,12 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         foreign_scope.session().scope_id(),
         0,
     );
-    let second_id = backend.owner().begin_test_scope(vec![1]).unwrap();
+    let second_proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let second_scope = ProofScope::admitted(
         &backend,
         crate::opaque::lifecycle::CpuProofSessionHandle::new(
             std::sync::Arc::clone(backend.owner()),
-            second_id,
+            second_proof,
         ),
     );
     let second_context = ProofContext::new(
@@ -494,14 +494,18 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         second_scope.session().scope_id(),
         0,
     );
-    let second_binding = backend.binding(&second_context).unwrap();
-    let second_lease = backend.binding_lease(&second_binding).unwrap();
+    let second_binding = backend
+        .binding(second_scope.session(), &second_context)
+        .unwrap();
+    let second_lease = second_binding.scope_lease().clone();
     let mut independent = two_round_relation_session();
     independent.set_operation_binding(second_binding, second_lease);
     let invalid_bindings = [
-        foreign.binding(&foreign_context).unwrap(),
+        foreign
+            .binding(foreign_scope.session(), &foreign_context)
+            .unwrap(),
         binding.for_level_operation(99, binding.operation_id()),
-        binding.with_group(Some(1)),
+        binding.clone().with_group(Some(1)),
     ];
     for invalid in invalid_bindings {
         stage2.set_operation_binding(invalid, lease.clone());
@@ -516,7 +520,7 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         .is_err());
         assert!(stage2.pending.is_none());
     }
-    stage2.set_operation_binding(binding, lease.clone());
+    stage2.set_operation_binding(binding.clone(), lease.clone());
     OpaqueStage2Kernel::<F, F>::stage2_round_polynomial(&backend, &mut stage2, 0, claim).unwrap();
     let mut stage1 = CpuStage1SessionHandle {
         binding,

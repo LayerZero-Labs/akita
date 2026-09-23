@@ -5,7 +5,9 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
-use akita_prover::{ProofAdmission, ProofContext, ProofScope, SelectedProverOpeningData};
+use akita_prover::{
+    ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer, SelectedProverOpeningData,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -249,6 +251,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             assert!(
                 <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
                     &backend,
+                    guard_a.session(),
                     &bad,
                     &output.private_handle,
                     output.committed_group.profile(),
@@ -262,6 +265,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         assert!(
             <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
+                guard_a.session(),
                 &context,
                 &output.private_handle,
                 &changed_profile,
@@ -269,10 +273,11 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             )
             .is_err()
         );
-        drop(guard_a);
+        <CpuBackend<Cfg> as ProofScopeConsumer>::finish_scope(&backend, guard_a.session()).unwrap();
         assert!(
             <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
+                guard_a.session(),
                 &context,
                 &output.private_handle,
                 output.committed_group.profile(),
@@ -287,10 +292,11 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         )
         .unwrap()
         .for_group(0);
-        guard_b.finish().unwrap();
+        <CpuBackend<Cfg> as ProofScopeConsumer>::finish_scope(&backend, guard_b.session()).unwrap();
         assert!(
             <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
+                guard_b.session(),
                 &context_b,
                 &output.private_handle,
                 output.committed_group.profile(),
@@ -311,23 +317,24 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
 }
 
 #[test]
-fn admission_rejects_an_extension_field_outside_the_owned_configuration() {
+fn admission_uses_the_extension_field_owned_by_the_configuration() {
     common::run_on_large_stack(|| {
         type SmallCfg = akita_config::proof_optimized::fp32::OneHot;
         type SmallF = akita_config::proof_optimized::fp32::Field;
+        type SmallE = <SmallCfg as akita_config::CommitmentConfig>::ExtField;
         let scheme = common::load_workspace_scheme::<SmallCfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend =
             CpuBackend::<SmallCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
         let key = akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
-        let error = <CpuBackend<SmallCfg> as ProofAdmission<SmallF, SmallF>>::begin_proof(
+        let session = <CpuBackend<SmallCfg> as ProofAdmission<SmallF, SmallE>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
             row.schedule(),
             &key.opening_layout().unwrap(),
         )
-        .expect_err("this configuration requires its quartic extension");
-        assert!(error.to_string().contains("extension field differs"));
+        .unwrap();
+        <CpuBackend<SmallCfg> as ProofScopeConsumer>::finish_scope(&backend, &session).unwrap();
     });
 }

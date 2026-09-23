@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 impl<F, E, Cfg> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
     for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: ExtField<F>
         + jolt_field::Unreduced

@@ -169,7 +169,7 @@ pub(super) fn prepare_group_opening_witness<F, E, Cfg, const D: usize>(
 where
     F: Field + CanonicalEncoding,
     E: jolt_field::ExtField<F>,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let (opening, public) =
         handle.relation_opening::<D>(level, opening_batch, geometry, group_index, group_dims)?;

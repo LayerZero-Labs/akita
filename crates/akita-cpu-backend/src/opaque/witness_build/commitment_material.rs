@@ -38,7 +38,7 @@ impl<F: Field> CpuCommitmentMaterialHandle<F> {
         backend: &crate::opaque::CpuBackend<impl akita_config::CommitmentConfig>,
     ) -> Result<(), AkitaError> {
         backend.validate_binding(&self.binding)?;
-        let (schedule, _) = backend.owner().proof_plan(self.binding.scope_id())?;
+        let (schedule, _) = self.binding.scope_lease().proof_plan()?;
         if self.binding.fold_level() as usize != schedule.recursive_folds.len() + 1
             || self.commitment_id.is_none()
             || self.public_commitment.is_some()
@@ -75,7 +75,7 @@ impl<F: Field> CpuCommitmentMaterialHandle<F> {
     }
 
     pub(crate) fn binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+        self.binding.clone()
     }
 
     pub(crate) fn bind(&mut self, binding: crate::opaque::OperationBinding) {
@@ -117,7 +117,7 @@ where
             }
         };
         Ok(Self {
-            binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            binding: crate::opaque::OperationBinding::unbound(),
             commitment_id: None,
             public_commitment: None,
             inner,

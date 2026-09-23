@@ -64,7 +64,7 @@ pub(crate) use fold_kernels::{FoldRelationKernel, FoldRelationOutput, RelationQu
 pub use fold_kernels::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 pub(crate) use handles::{CpuWitnessBuildHandle, OperationBinding};
 use jolt_field::{CanonicalEncoding, Field};
-pub(crate) use lifecycle::{BackendIdentity, ScopeLease};
+pub(crate) use lifecycle::{BackendIdentity, CpuProofSessionHandle, ScopeLease};
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan,
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
@@ -88,7 +88,7 @@ pub(crate) use recursive::{
 pub(crate) use relation_weights::RelationWeightDescription;
 impl<F, E, Cfg> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
@@ -107,14 +107,14 @@ where
 }
 impl<F, E, Cfg> crate::opaque::OpaqueProverConsumer<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
 }
 impl<F, E, Cfg> crate::opaque::OpaqueResourceReleaseKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -149,7 +149,7 @@ where
 impl<F, E, Cfg> crate::opaque::OpaqueRecursiveWitnessBuildKernel<F, E>
     for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -173,6 +173,7 @@ where
 {
     fn begin_recursive_witness(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &crate::opaque::ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,
@@ -182,8 +183,8 @@ where
         group_commitments: &[akita_types::RingVec<F>],
     ) -> Result<crate::opaque::RecursiveWitnessBuildStart<F, E, Self::WitnessBuildHandle>, AkitaError>
     {
-        let binding = self.binding(context)?;
-        let (schedule, root_layout) = self.owner().proof_plan(context.scope_id())?;
+        let binding = self.binding(session, context)?;
+        let (schedule, root_layout) = binding.scope_lease().proof_plan()?;
         let expected = if context.fold_level() == 0 {
             &schedule.root.params
         } else {
@@ -264,7 +265,7 @@ where
         plan: &crate::opaque::ValidatedRecursiveWitnessPlan<'_, F>,
     ) -> Result<Self::WitnessHandle, AkitaError> {
         self.validate_binding(&build_handle.binding)?;
-        let parent_binding = build_handle.binding;
+        let parent_binding = build_handle.binding.clone();
         let level = build_handle.level.clone();
         for (group_index, input) in fold_inputs.iter().enumerate() {
             input
@@ -297,7 +298,7 @@ where
 
 impl<F, E, Cfg> crate::opaque::OpaqueRelationWitnessKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -324,7 +325,6 @@ where
         witness_handle: &Self::WitnessHandle,
         plan: &crate::opaque::ValidatedRelationWitnessPlan,
     ) -> Result<crate::opaque::PreparedRelationHandle<Self::RelationHandle>, AkitaError> {
-        self.validate_extension::<E>()?;
         let parent = witness_handle.operation_binding();
         self.validate_binding(&parent)?;
         let prepared = crate::opaque::consumer_kernels::RecursiveRelationWitnessKernel::prepare_relation_witness(
@@ -349,7 +349,7 @@ where
 
 impl<F, E, Cfg> crate::opaque::OpaqueStage1Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -376,11 +376,10 @@ where
         relation_handle: &Self::RelationHandle,
         plan: &crate::opaque::ValidatedStage1Plan<E>,
     ) -> Result<Self::Stage1SessionHandle, AkitaError> {
-        self.validate_extension::<E>()?;
         let parent = relation_handle.operation_binding();
         self.validate_binding(&parent)?;
         if let Some(expected) = &relation_handle.relation_plan {
-            let (schedule, _) = self.owner().proof_plan(parent.scope_id())?;
+            let (schedule, _) = parent.scope_lease().proof_plan()?;
             let level = if parent.fold_level() == 0 {
                 &schedule.root.params
             } else {
@@ -405,19 +404,9 @@ where
                 "relation handle has no admitted Stage 1 policy".into(),
             ));
         }
-        let session_state =
-            crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-                crate::opaque::CpuRelationHandle,
-                F,
-                E,
-            >::begin_stage1(self, Some(self.prepared()?), relation_handle, plan)?;
         let binding = self.next_binding(parent)?;
-        let lease = self.binding_lease(&binding)?;
-        Ok(crate::opaque::CpuStage1SessionHandle {
-            binding,
-            lease,
-            session_state,
-        })
+        let lease = binding.scope_lease().clone();
+        crate::opaque::CpuStage1SessionHandle::new(binding, lease, relation_handle, plan)
     }
 
     fn stage1_round_polynomial(
@@ -431,17 +420,9 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease(),
         )?;
-        crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-            crate::opaque::CpuRelationHandle,
-            F,
-            E,
-        >::stage1_round_polynomial(
-            self,
-            &mut session_handle.session_state,
-            step,
-            round,
-            previous_claim,
-        )
+        session_handle
+            .session_state
+            .round_polynomial(step, round, previous_claim)
     }
 
     fn bind_stage1_challenge(
@@ -455,17 +436,9 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease(),
         )?;
-        crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-            crate::opaque::CpuRelationHandle,
-            F,
-            E,
-        >::bind_stage1_challenge(
-            self,
-            &mut session_handle.session_state,
-            step,
-            round,
-            challenge,
-        )
+        session_handle
+            .session_state
+            .bind_challenge(step, round, challenge)
     }
 
     fn stage1_public_transition(
@@ -477,11 +450,7 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease(),
         )?;
-        crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-            crate::opaque::CpuRelationHandle,
-            F,
-            E,
-        >::stage1_public_transition(self, &mut session_handle.session_state, step)
+        session_handle.session_state.public_transition(step)
     }
 
     fn bind_stage1_batch_challenge(
@@ -494,16 +463,9 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease(),
         )?;
-        crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-            crate::opaque::CpuRelationHandle,
-            F,
-            E,
-        >::bind_stage1_batch_challenge(
-            self,
-            &mut session_handle.session_state,
-            transition,
-            challenge,
-        )
+        session_handle
+            .session_state
+            .bind_batch_challenge(transition, challenge)
     }
 
     fn finish_stage1(
@@ -514,17 +476,13 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease(),
         )?;
-        crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel::<
-            crate::opaque::CpuRelationHandle,
-            F,
-            E,
-        >::finish_stage1(self, session_handle.session_state)
+        session_handle.session_state.finish()
     }
 }
 
 impl<F, E, Cfg> crate::opaque::OpaqueStage2Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -551,11 +509,10 @@ where
         relation_handle: Self::RelationHandle,
         plan: crate::opaque::ValidatedRelationSessionPlan<'_, F, E>,
     ) -> Result<Self::Stage2SessionHandle, AkitaError> {
-        self.validate_extension::<E>()?;
         let parent = relation_handle.operation_binding();
         self.validate_binding(&parent)?;
         if let Some(expected) = &relation_handle.relation_plan {
-            let (schedule, _) = self.owner().proof_plan(parent.scope_id())?;
+            let (schedule, _) = parent.scope_lease().proof_plan()?;
             let parameters = if parent.fold_level() == 0 {
                 &schedule.root.params
             } else {
@@ -580,14 +537,13 @@ where
                 "relation handle has no admitted Stage 2 policy".into(),
             ));
         }
-        let mut session_handle = crate::opaque::consumer_kernels::RecursiveWitnessRelationKernel::begin_relation_session(
-            self,
-            Some(self.prepared()?),
+        let mut session_handle = crate::opaque::CpuStage2SessionHandle::new::<F>(
+            self.prepared()?,
             relation_handle,
             plan,
         )?;
         let binding = self.next_binding(parent)?;
-        let lease = self.binding_lease(&binding)?;
+        let lease = binding.scope_lease().clone();
         session_handle.set_operation_binding(binding, lease);
         Ok(session_handle)
     }
@@ -600,7 +556,7 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,
         )?;
-        Ok(crate::opaque::consumer_kernels::RelationWitnessSession::input_claim(session_handle))
+        Ok(session_handle.input_claim())
     }
 
     fn stage2_num_rounds(
@@ -611,7 +567,7 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,
         )?;
-        Ok(crate::opaque::consumer_kernels::RelationWitnessSession::num_rounds(session_handle))
+        Ok(session_handle.num_rounds())
     }
 
     fn stage2_round_polynomial(
@@ -624,11 +580,7 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,
         )?;
-        crate::opaque::consumer_kernels::RelationWitnessSession::round_polynomial(
-            session_handle,
-            round,
-            previous_claim,
-        )
+        session_handle.round_polynomial(round, previous_claim)
     }
 
     fn bind_stage2_challenge(
@@ -641,11 +593,7 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,
         )?;
-        crate::opaque::consumer_kernels::RelationWitnessSession::bind_challenge(
-            session_handle,
-            round,
-            challenge,
-        )
+        session_handle.bind_challenge(round, challenge)
     }
 
     fn finish_stage2(
@@ -656,13 +604,13 @@ where
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,
         )?;
-        crate::opaque::consumer_kernels::RelationWitnessSession::finish(session_handle)
+        session_handle.finish()
     }
 }
 
 impl<F, E, Cfg> crate::opaque::OpaqueWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -690,10 +638,9 @@ where
         plan: &crate::opaque::ValidatedRecursiveGroupOpeningPlan<'_, E>,
     ) -> Result<crate::opaque::PreparedGroupOpening<E, Self::PreparedOpeningHandle>, AkitaError>
     {
-        self.validate_extension::<E>()?;
         let parent = witness_handle.operation_binding();
         self.validate_binding(&parent)?;
-        let (schedule, _) = self.owner().proof_plan(parent.scope_id())?;
+        let (schedule, _) = parent.scope_lease().proof_plan()?;
         let terminal = &schedule.terminal;
         if parent.fold_level() as usize != schedule.recursive_folds.len() + 1
             || plan.ring_dimension() != terminal.d_a()
@@ -739,7 +686,7 @@ where
                 "opening was not prepared for terminal publication".into(),
             ));
         }
-        let (schedule, _) = self.owner().proof_plan(binding.scope_id())?;
+        let (schedule, _) = binding.scope_lease().proof_plan()?;
         if binding.fold_level() as usize != schedule.recursive_folds.len() + 1 {
             return Err(AkitaError::InvalidInput(
                 "terminal opening belongs to a nonterminal fold".into(),
@@ -751,7 +698,7 @@ where
 
 impl<F, E, Cfg> crate::opaque::OpaqueTerminalFoldKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -778,10 +725,9 @@ where
         witness_handle: &Self::WitnessHandle,
         plan: &crate::opaque::ValidatedTerminalFoldProbePlan<'_>,
     ) -> Result<crate::opaque::FoldProbeOutcome<Self::AcceptedTerminalFoldHandle>, AkitaError> {
-        self.validate_extension::<E>()?;
         let binding = witness_handle.operation_binding();
         self.validate_binding(&binding)?;
-        let (schedule, _) = self.owner().proof_plan(binding.scope_id())?;
+        let (schedule, _) = binding.scope_lease().proof_plan()?;
         let terminal = &schedule.terminal;
         let shape = terminal
             .response_shape
@@ -853,7 +799,6 @@ where
         terminal_fold_handle: Self::AcceptedTerminalFoldHandle,
         plan: &crate::opaque::ValidatedTerminalZEncodingPlan,
     ) -> Result<Vec<u8>, AkitaError> {
-        self.validate_extension::<E>()?;
         let binding = terminal_fold_handle.binding();
         self.validate_binding(&binding)?;
         akita_types::dispatch_for_field!(

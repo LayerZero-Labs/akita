@@ -10,39 +10,44 @@ static NEXT_BACKEND_ID: AtomicU64 = AtomicU64::new(1);
 /// Owning proof lifetime. Numeric scope identifiers grant no cleanup authority.
 pub struct CpuProofSessionHandle {
     owner: Arc<BackendIdentity>,
-    scope: ProofScopeId,
+    proof: ScopeLease,
 }
 
 impl CpuProofSessionHandle {
-    pub(crate) fn new(owner: Arc<BackendIdentity>, scope: ProofScopeId) -> Self {
-        Self { owner, scope }
+    pub(crate) fn new(owner: Arc<BackendIdentity>, proof: ScopeLease) -> Self {
+        Self { owner, proof }
     }
 
-    pub(crate) const fn scope_id(&self) -> ProofScopeId {
-        self.scope
+    pub(crate) fn scope_id(&self) -> ProofScopeId {
+        self.proof.scope_id()
     }
 
     pub(crate) fn validate_owner(
         &self,
         owner: &Arc<BackendIdentity>,
-    ) -> Result<ProofScopeId, AkitaError> {
+    ) -> Result<&ScopeLease, AkitaError> {
         if self.owner.backend_id() != owner.backend_id() {
             return Err(AkitaError::InvalidInput(
                 "proof session belongs to another backend".into(),
             ));
         }
-        owner.validate_scope(self.scope)?;
-        Ok(self.scope)
+        self.proof.validate_owner(owner)?;
+        self.proof.validate(self.scope_id(), 0, None)?;
+        Ok(&self.proof)
     }
 
     pub(crate) fn belongs_to(&self, owner: &Arc<BackendIdentity>) -> bool {
         self.owner.backend_id() == owner.backend_id()
     }
+
+    pub(crate) fn scope_lease(&self) -> ScopeLease {
+        self.proof.clone()
+    }
 }
 
 impl Drop for CpuProofSessionHandle {
     fn drop(&mut self) {
-        self.owner.abort_scope(self.scope);
+        self.owner.abort_scope(&self.proof);
     }
 }
 
@@ -56,18 +61,54 @@ impl core::fmt::Debug for CpuProofSessionHandle {
 /// Only the owning proof scope can invalidate this operation lease.
 #[derive(Clone)]
 pub(crate) struct ScopeLease {
-    scope: ProofScopeId,
-    state: Arc<ScopeState>,
+    state: Arc<ProofState>,
 }
 
-struct ScopeState {
+struct ProofState {
+    backend_id: u64,
+    setup_digest: [u8; 32],
+    scope: ProofScopeId,
     active: AtomicBool,
     group_counts: Arc<[usize]>,
+    commitments: Mutex<HashMap<(u32, usize), u128>>,
+    plan: Option<(
+        Arc<akita_types::FoldSchedule>,
+        akita_types::OpeningClaimsLayout,
+    )>,
 }
 
 impl ScopeLease {
+    pub(crate) fn unbound() -> Self {
+        Self {
+            state: Arc::new(ProofState {
+                backend_id: 0,
+                setup_digest: [0; 32],
+                scope: ProofScopeId::from_raw(0),
+                active: AtomicBool::new(true),
+                group_counts: vec![usize::MAX].into(),
+                commitments: Mutex::new(HashMap::new()),
+                plan: None,
+            }),
+        }
+    }
+
+    pub(crate) fn scope_id(&self) -> ProofScopeId {
+        self.state.scope
+    }
+
     pub(crate) fn is_active(&self) -> bool {
         self.state.active.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn validate_owner(&self, owner: &BackendIdentity) -> Result<(), AkitaError> {
+        if self.state.backend_id != owner.backend_id()
+            || self.state.setup_digest != owner.setup_digest()
+        {
+            return Err(AkitaError::InvalidInput(
+                "proof session belongs to another backend or setup".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn validate(
@@ -76,7 +117,7 @@ impl ScopeLease {
         fold_level: u32,
         group_index: Option<usize>,
     ) -> Result<(), AkitaError> {
-        if scope != self.scope || !self.is_active() {
+        if scope != self.scope_id() || !self.is_active() {
             return Err(AkitaError::InvalidInput("inactive proof scope".into()));
         }
         let group_count = self
@@ -93,6 +134,97 @@ impl ScopeLease {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_context(&self, context: &ProofContext) -> Result<(), AkitaError> {
+        if context.backend_id() != self.state.backend_id
+            || context.setup_digest() != self.state.setup_digest
+        {
+            return Err(AkitaError::InvalidInput(
+                "operation belongs to another backend or setup".into(),
+            ));
+        }
+        self.validate(
+            context.scope_id(),
+            context.fold_level(),
+            context.group_index(),
+        )
+    }
+
+    pub(crate) fn admit_commitment(
+        &self,
+        context: &ProofContext,
+        commitment_id: u128,
+    ) -> Result<(), AkitaError> {
+        self.validate_context(context)?;
+        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
+        let mut commitments = self
+            .state
+            .commitments
+            .lock()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let key = (context.fold_level(), group);
+        if commitments.get(&key).is_some_and(|&id| id != commitment_id) {
+            return Err(AkitaError::InvalidInput(
+                "proof group already admitted a different commitment".into(),
+            ));
+        }
+        commitments.insert(key, commitment_id);
+        Ok(())
+    }
+
+    pub(crate) fn validate_commitment(
+        &self,
+        context: &ProofContext,
+        commitment_id: u128,
+    ) -> Result<(), AkitaError> {
+        self.validate_context(context)?;
+        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
+        let commitments = self
+            .state
+            .commitments
+            .lock()
+            .map_err(|_| AkitaError::InvalidProof)?;
+        #[cfg(test)]
+        if self.state.plan.is_none() {
+            return Ok(());
+        }
+        if commitments.get(&(context.fold_level(), group)) != Some(&commitment_id) {
+            return Err(AkitaError::InvalidInput(
+                "commitment was not admitted for this proof group".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn proof_plan(
+        &self,
+    ) -> Result<
+        (
+            Arc<akita_types::FoldSchedule>,
+            akita_types::OpeningClaimsLayout,
+        ),
+        AkitaError,
+    > {
+        self.validate(self.scope_id(), 0, None)?;
+        self.state
+            .plan
+            .clone()
+            .ok_or_else(|| AkitaError::InvalidInput("proof has no admitted plan".into()))
+    }
+
+    fn finish(&self) -> Result<(), AkitaError> {
+        self.state
+            .active
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| {
+                AkitaError::InvalidInput("proof scope is unknown or already finished".into())
+            })
+    }
+
+    fn abort(&self) {
+        self.state.active.store(false, Ordering::Release);
+    }
 }
 
 pub(crate) struct BackendIdentity {
@@ -100,16 +232,6 @@ pub(crate) struct BackendIdentity {
     setup_digest: [u8; 32],
     next_scope: AtomicU64,
     next_operation: AtomicU64,
-    active: Mutex<HashMap<ProofScopeId, ActiveProof>>,
-}
-
-struct ActiveProof {
-    lease: Arc<ScopeState>,
-    commitments: HashMap<(u32, usize), u128>,
-    plan: Option<(
-        Arc<akita_types::FoldSchedule>,
-        akita_types::OpeningClaimsLayout,
-    )>,
 }
 
 impl BackendIdentity {
@@ -122,7 +244,6 @@ impl BackendIdentity {
             setup_digest,
             next_scope: AtomicU64::new(1),
             next_operation: AtomicU64::new(1),
-            active: Mutex::new(HashMap::new()),
         }))
     }
     pub(crate) const fn backend_id(&self) -> u64 {
@@ -136,7 +257,7 @@ impl BackendIdentity {
         &self,
         plan: &akita_types::FoldSchedule,
         layout: &akita_types::OpeningClaimsLayout,
-    ) -> Result<ProofScopeId, AkitaError> {
+    ) -> Result<ScopeLease, AkitaError> {
         plan.validate_structure()?;
         let mut group_counts = Vec::with_capacity(plan.recursive_folds.len() + 2);
         group_counts.push(layout.num_groups());
@@ -147,14 +268,14 @@ impl BackendIdentity {
         self.insert_scope(group_counts, Some((Arc::new(plan.clone()), layout.clone())))
     }
     #[cfg(test)]
-    fn begin_scope(&self) -> Result<ProofScopeId, AkitaError> {
+    fn begin_scope(&self) -> Result<ScopeLease, AkitaError> {
         self.insert_scope(vec![1], None)
     }
     #[cfg(test)]
     pub(crate) fn begin_test_scope(
         &self,
         group_counts: Vec<usize>,
-    ) -> Result<ProofScopeId, AkitaError> {
+    ) -> Result<ScopeLease, AkitaError> {
         self.insert_scope(group_counts, None)
     }
 
@@ -165,149 +286,32 @@ impl BackendIdentity {
             Arc<akita_types::FoldSchedule>,
             akita_types::OpeningClaimsLayout,
         )>,
-    ) -> Result<ProofScopeId, AkitaError> {
+    ) -> Result<ScopeLease, AkitaError> {
         let sequence = self
             .next_scope
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| AkitaError::InvalidInput("proof scope identity exhausted".into()))?;
         let scope =
             ProofScopeId::from_raw((u128::from(self.backend_id) << 64) | u128::from(sequence));
-        let lease = Arc::new(ScopeState {
-            active: AtomicBool::new(true),
-            group_counts: group_counts.into(),
-        });
-        self.active
-            .lock()
-            .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
-            .insert(
+        Ok(ScopeLease {
+            state: Arc::new(ProofState {
+                backend_id: self.backend_id,
+                setup_digest: self.setup_digest,
                 scope,
-                ActiveProof {
-                    lease,
-                    commitments: HashMap::new(),
-                    plan,
-                },
-            );
-        Ok(scope)
+                active: AtomicBool::new(true),
+                group_counts: group_counts.into(),
+                commitments: Mutex::new(HashMap::new()),
+                plan,
+            }),
+        })
     }
-    pub(crate) fn scope_lease(&self, scope: ProofScopeId) -> Result<ScopeLease, AkitaError> {
-        if scope.raw() >> 64 != u128::from(self.backend_id) {
-            return Err(AkitaError::InvalidInput(
-                "proof scope belongs to another backend".into(),
-            ));
-        }
-        self.active
-            .lock()
-            .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
-            .get(&scope)
-            .map(|proof| ScopeLease {
-                scope,
-                state: proof.lease.clone(),
-            })
-            .ok_or_else(|| AkitaError::InvalidInput("inactive proof scope".into()))
+    pub(crate) fn finish_scope(&self, proof: &ScopeLease) -> Result<(), AkitaError> {
+        proof.validate_owner(self)?;
+        proof.finish()
     }
-    pub(crate) fn validate_scope(&self, scope: ProofScopeId) -> Result<(), AkitaError> {
-        self.scope_lease(scope)?.validate(scope, 0, None)
-    }
-    pub(crate) fn admit_commitment(
-        &self,
-        context: &ProofContext,
-        commitment_id: u128,
-    ) -> Result<(), AkitaError> {
-        self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let mut active = self.active.lock().map_err(|_| AkitaError::InvalidProof)?;
-        let proof = active
-            .get_mut(&context.scope_id())
-            .ok_or(AkitaError::InvalidProof)?;
-        let key = (context.fold_level(), group);
-        if proof
-            .commitments
-            .get(&key)
-            .is_some_and(|&id| id != commitment_id)
-        {
-            return Err(AkitaError::InvalidInput(
-                "proof group already admitted a different commitment".into(),
-            ));
-        }
-        proof.commitments.insert(key, commitment_id);
-        Ok(())
-    }
-    pub(crate) fn validate_commitment(
-        &self,
-        context: &ProofContext,
-        commitment_id: u128,
-    ) -> Result<(), AkitaError> {
-        self.validate_context(context)?;
-        let group = context.group_index().ok_or(AkitaError::InvalidProof)?;
-        let active = self.active.lock().map_err(|_| AkitaError::InvalidProof)?;
-        let proof = active
-            .get(&context.scope_id())
-            .ok_or(AkitaError::InvalidProof)?;
-        #[cfg(test)]
-        if proof.plan.is_none() {
-            return Ok(());
-        }
-        if proof.commitments.get(&(context.fold_level(), group)) != Some(&commitment_id) {
-            return Err(AkitaError::InvalidInput(
-                "commitment was not admitted for this proof group".into(),
-            ));
-        }
-        Ok(())
-    }
-    pub(crate) fn proof_plan(
-        &self,
-        scope: ProofScopeId,
-    ) -> Result<
-        (
-            Arc<akita_types::FoldSchedule>,
-            akita_types::OpeningClaimsLayout,
-        ),
-        AkitaError,
-    > {
-        self.validate_scope(scope)?;
-        self.active
-            .lock()
-            .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
-            .get(&scope)
-            .and_then(|proof| proof.plan.clone())
-            .ok_or_else(|| AkitaError::InvalidInput("proof has no admitted plan".into()))
-    }
-    pub(crate) fn validate_context(&self, context: &ProofContext) -> Result<(), AkitaError> {
-        if context.backend_id() != self.backend_id || context.setup_digest() != self.setup_digest {
-            return Err(AkitaError::InvalidInput(
-                "operation belongs to another backend or setup".into(),
-            ));
-        }
-        self.scope_lease(context.scope_id())?.validate(
-            context.scope_id(),
-            context.fold_level(),
-            context.group_index(),
-        )
-    }
-    pub(crate) fn finish_scope(&self, scope: ProofScopeId) -> Result<(), AkitaError> {
-        if scope.raw() >> 64 != u128::from(self.backend_id) {
-            return Err(AkitaError::InvalidInput(
-                "proof scope belongs to another backend".into(),
-            ));
-        }
-        let lease = self
-            .active
-            .lock()
-            .map_err(|_| AkitaError::InvalidInput("proof scope registry unavailable".into()))?
-            .remove(&scope)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("proof scope is unknown or already finished".into())
-            })?;
-        lease.lease.active.store(false, Ordering::Release);
-        Ok(())
-    }
-    pub(crate) fn abort_scope(&self, scope: ProofScopeId) {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if let Some(proof) = active.remove(&scope) {
-            proof.lease.active.store(false, Ordering::Release);
+    pub(crate) fn abort_scope(&self, proof: &ScopeLease) {
+        if proof.validate_owner(self).is_ok() {
+            proof.abort();
         }
     }
     pub(crate) fn next_operation_id(&self) -> Result<u128, AkitaError> {
@@ -315,18 +319,6 @@ impl BackendIdentity {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map(u128::from)
             .map_err(|_| AkitaError::InvalidInput("operation identity exhausted".into()))
-    }
-}
-
-impl Drop for BackendIdentity {
-    fn drop(&mut self) {
-        let active = self
-            .active
-            .get_mut()
-            .unwrap_or_else(|poison| poison.into_inner());
-        for proof in active.values() {
-            proof.lease.active.store(false, Ordering::Release);
-        }
     }
 }
 
@@ -340,8 +332,8 @@ mod tests {
         let foreign = crate::CpuBackend::for_arithmetic_tests();
         let a = backend.owner().begin_scope().unwrap();
         let b = backend.owner().begin_scope().unwrap();
-        let lease_a = backend.owner().scope_lease(a).unwrap();
-        let lease_b = backend.owner().scope_lease(b).unwrap();
+        let lease_a = a.clone();
+        let lease_b = b.clone();
         let first = CpuProofSessionHandle::new(Arc::clone(backend.owner()), a);
         let second = CpuProofSessionHandle::new(Arc::clone(backend.owner()), b);
         assert!(foreign.finish_scope(&first).is_err());
@@ -361,61 +353,63 @@ mod tests {
         let owner = BackendIdentity::new([8; 32]).unwrap();
         let a = owner.begin_test_scope(vec![2]).unwrap();
         let b = owner.begin_test_scope(vec![2]).unwrap();
-        let context =
-            ProofContext::new(owner.backend_id(), owner.setup_digest(), a, 0).for_group(0);
-        owner.admit_commitment(&context, 7).unwrap();
-        owner.admit_commitment(&context, 7).unwrap();
-        assert!(owner.admit_commitment(&context, 8).is_err());
-        owner.admit_commitment(&context.for_group(1), 8).unwrap();
+        let context = ProofContext::new(owner.backend_id(), owner.setup_digest(), a.scope_id(), 0)
+            .for_group(0);
+        a.admit_commitment(&context, 7).unwrap();
+        a.admit_commitment(&context, 7).unwrap();
+        assert!(a.admit_commitment(&context, 8).is_err());
+        a.admit_commitment(&context.for_group(1), 8).unwrap();
         let independent =
-            ProofContext::new(owner.backend_id(), owner.setup_digest(), b, 0).for_group(0);
-        owner.admit_commitment(&independent, 8).unwrap();
-        owner.finish_scope(a).unwrap();
-        assert!(owner.admit_commitment(&context, 7).is_err());
-        owner.admit_commitment(&independent, 8).unwrap();
+            ProofContext::new(owner.backend_id(), owner.setup_digest(), b.scope_id(), 0)
+                .for_group(0);
+        b.admit_commitment(&independent, 8).unwrap();
+        owner.finish_scope(&a).unwrap();
+        assert!(a.admit_commitment(&context, 7).is_err());
+        b.admit_commitment(&independent, 8).unwrap();
     }
     #[test]
     fn independent_scopes_survive_completion_and_abort() {
         let owner = BackendIdentity::new([7; 32]).unwrap();
         let a = owner.begin_scope().unwrap();
         let b = owner.begin_scope().unwrap();
-        let lease_a = owner.scope_lease(a).unwrap();
-        let lease_b = owner.scope_lease(b).unwrap();
-        owner.finish_scope(a).unwrap();
-        assert!(!lease_a.is_active());
-        assert!(lease_b.is_active());
-        assert!(owner.finish_scope(a).is_err());
-        owner.abort_scope(b);
-        assert!(!lease_b.is_active());
+        owner.finish_scope(&a).unwrap();
+        assert!(!a.is_active());
+        assert!(b.is_active());
+        assert!(owner.finish_scope(&a).is_err());
+        owner.abort_scope(&b);
+        assert!(!b.is_active());
     }
     #[test]
     fn foreign_owner_and_setup_cannot_authorize_context() {
         let a = BackendIdentity::new([3; 32]).unwrap();
         let b = BackendIdentity::new([3; 32]).unwrap();
-        let scope = a.begin_scope().unwrap();
-        let context = ProofContext::new(a.backend_id(), a.setup_digest(), scope, 0);
-        assert!(a.validate_context(&context).is_ok());
-        assert!(b.validate_context(&context).is_err());
-        assert!(a
-            .validate_context(&ProofContext::new(a.backend_id(), [9; 32], scope, 0))
+        let proof = a.begin_scope().unwrap();
+        let context = ProofContext::new(a.backend_id(), a.setup_digest(), proof.scope_id(), 0);
+        assert!(proof.validate_owner(&a).is_ok());
+        assert!(proof.validate_owner(&b).is_err());
+        assert!(proof.validate_context(&context).is_ok());
+        assert!(proof
+            .validate_context(&ProofContext::new(
+                a.backend_id(),
+                [9; 32],
+                proof.scope_id(),
+                0,
+            ))
             .is_err());
-        a.abort_scope(scope);
-        assert!(a.validate_context(&context).is_err());
+        a.abort_scope(&proof);
+        assert!(proof.validate_context(&context).is_err());
     }
     #[test]
     fn independent_proofs_can_finish_on_different_threads() {
         let owner = BackendIdentity::new([4; 32]).unwrap();
-        let scopes = (0..4)
+        let proofs = (0..4)
             .map(|_| owner.begin_scope().unwrap())
             .collect::<Vec<_>>();
-        let leases = scopes
-            .iter()
-            .map(|&scope| owner.scope_lease(scope).unwrap())
-            .collect::<Vec<_>>();
+        let leases = proofs.clone();
         std::thread::scope(|threads| {
-            for scope in scopes {
+            for proof in proofs {
                 let owner = &owner;
-                threads.spawn(move || owner.finish_scope(scope).unwrap());
+                threads.spawn(move || owner.finish_scope(&proof).unwrap());
             }
         });
         assert!(leases.iter().all(|lease| !lease.is_active()));

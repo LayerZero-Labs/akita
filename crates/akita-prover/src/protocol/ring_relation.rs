@@ -224,6 +224,7 @@ impl RingRelationProver {
         let build_start =
             crate::backend::OpaqueRecursiveWitnessBuildKernel::begin_recursive_witness(
                 consumer,
+                opening_ctx.proof_session(),
                 opening_ctx.proof_context(),
                 &prepared_opening_handles,
                 commitment_material,

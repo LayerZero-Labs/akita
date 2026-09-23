@@ -20,7 +20,7 @@ enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
 pub struct CpuPreparedOpeningHandle<
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 > {
     binding: crate::opaque::OperationBinding,
     kind: OpaquePreparedGroupOpeningKind<F, E>,
@@ -34,7 +34,7 @@ impl<F, E, Cfg> CpuPreparedOpeningHandle<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     pub(crate) const fn is_terminal_native(&self) -> bool {
         matches!(
@@ -118,8 +118,8 @@ where
         &self.scalar_openings
     }
 
-    pub(crate) const fn operation_binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+    pub(crate) fn operation_binding(&self) -> crate::opaque::OperationBinding {
+        self.binding.clone()
     }
 
     pub(crate) fn relation_opening<const D: usize>(
@@ -227,7 +227,7 @@ impl CpuWitnessHandle {
             pending_successor: self.pending_successor,
             relation_plan: self.relation_plan.clone(),
             manifest: self.manifest,
-            binding: self.binding,
+            binding: self.binding.clone(),
             logical: self.logical.clone(),
             committed: self.committed.clone(),
         }
@@ -240,8 +240,8 @@ impl CpuWitnessHandle {
         )
     }
 
-    pub(crate) const fn operation_binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+    pub(crate) fn operation_binding(&self) -> crate::opaque::OperationBinding {
+        self.binding.clone()
     }
 
     pub(crate) fn set_operation_binding(&mut self, binding: crate::opaque::OperationBinding) {
@@ -313,10 +313,10 @@ pub(crate) type ConsumerRelationWitness = CpuRelationHandle;
 macro_rules! impl_bound_handle {
     ($handle:ident $(<$field:ident>)?) => {
         impl$(<$field: Field>)? $handle$(<$field>)? {
-            pub(crate) const fn operation_binding(
+            pub(crate) fn operation_binding(
                 &self,
             ) -> crate::opaque::OperationBinding {
-                self.binding
+                self.binding.clone()
             }
 
             pub(crate) fn set_operation_binding(

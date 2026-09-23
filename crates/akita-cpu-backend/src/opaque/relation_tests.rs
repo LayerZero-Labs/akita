@@ -113,7 +113,7 @@ fn witness_relation_plan_is_initialized_once_from_canonical_relation() {
     let mut witness = CpuWitnessHandle::from_cpu(
         RecursiveWitnessFlat::from_i8_digits(vec![0; logical_len]),
         REDUCED_D,
-        crate::opaque::OperationBinding::legacy_unscoped(),
+        crate::opaque::OperationBinding::unbound(),
     )
     .expect("witness handle");
 
@@ -458,7 +458,7 @@ fn build_reduced_without_quotients(
         ctx,
         params,
         params.inner().matrix.ring_dimension(),
-        crate::opaque::OperationBinding::legacy_unscoped(),
+        crate::opaque::OperationBinding::unbound(),
     )
     .expect("valid reduced-evaluation witness");
     assert_eq!(multi_group_quotient_calls(), 0);
@@ -638,7 +638,7 @@ fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
             ctx,
             &params,
             params.inner().matrix.ring_dimension(),
-            crate::opaque::OperationBinding::legacy_unscoped(),
+            crate::opaque::OperationBinding::unbound(),
         )
         .is_err());
         assert_eq!(multi_group_quotient_calls(), 0);

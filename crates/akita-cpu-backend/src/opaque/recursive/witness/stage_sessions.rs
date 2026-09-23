@@ -20,7 +20,7 @@ impl<E: Field> CpuStage2SessionHandle<E> {
         claim: E,
     ) -> Self {
         Self {
-            binding: crate::opaque::OperationBinding::legacy_unscoped(),
+            binding: crate::opaque::OperationBinding::unbound(),
             lease: None,
             prover,
             claim,
@@ -47,8 +47,8 @@ pub(crate) struct CpuExtensionOpeningSession<E: Field> {
 pub(crate) type ConsumerStage2Session<E> = CpuStage2SessionHandle<E>;
 
 impl<E: Field> CpuStage1SessionHandle<E> {
-    pub(crate) const fn operation_binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+    pub(crate) fn operation_binding(&self) -> crate::opaque::OperationBinding {
+        self.binding.clone()
     }
 
     pub(crate) const fn scope_lease(&self) -> &crate::opaque::ScopeLease {
@@ -56,8 +56,8 @@ impl<E: Field> CpuStage1SessionHandle<E> {
     }
 }
 impl<E: Field> CpuStage2SessionHandle<E> {
-    pub(crate) const fn operation_binding(&self) -> crate::opaque::OperationBinding {
-        self.binding
+    pub(crate) fn operation_binding(&self) -> crate::opaque::OperationBinding {
+        self.binding.clone()
     }
 
     pub(crate) fn set_operation_binding(
@@ -248,19 +248,19 @@ where
     }
 }
 
-impl<E> crate::opaque::consumer_kernels::RelationWitnessSession<E> for ConsumerStage2Session<E>
+impl<E> ConsumerStage2Session<E>
 where
     E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
 {
-    fn num_rounds(&self) -> usize {
+    pub(crate) fn num_rounds(&self) -> usize {
         akita_sumcheck::SumcheckInstanceProver::num_rounds(&self.prover)
     }
 
-    fn input_claim(&self) -> E {
+    pub(crate) fn input_claim(&self) -> E {
         self.claim
     }
 
-    fn round_polynomial(
+    pub(crate) fn round_polynomial(
         &mut self,
         round: usize,
         previous_claim: E,
@@ -290,7 +290,7 @@ where
         Ok(polynomial)
     }
 
-    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+    pub(crate) fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
         if round != self.next_round || round >= self.num_rounds() {
             return Err(AkitaError::InvalidInput(
                 "relation session challenge order mismatch".into(),
@@ -309,7 +309,9 @@ where
         Ok(())
     }
 
-    fn finish(mut self) -> Result<crate::opaque::RelationWitnessFinalClaims<E>, AkitaError> {
+    pub(crate) fn finish(
+        mut self,
+    ) -> Result<crate::opaque::RelationWitnessFinalClaims<E>, AkitaError> {
         if self.pending.is_some() || self.next_round != self.num_rounds() {
             return Err(AkitaError::InvalidInput(
                 "relation session finished before all rounds".into(),
@@ -328,40 +330,26 @@ where
     }
 }
 
-impl<F, E, B>
-    crate::opaque::consumer_kernels::RecursiveWitnessRelationKernel<ConsumerRelationWitness, F, E>
-    for B
+impl<E> ConsumerStage2Session<E>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: Field
-        + Ring
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + akita_types::FpExtEncoding<F>
-        + jolt_field::MulBaseUnreduced<F>
-        + 'static,
-    B: crate::opaque::ComputeBackendSetup<F>,
+    E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
 {
-    type Session = ConsumerStage2Session<E>;
-
-    fn begin_relation_session(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
+    pub(crate) fn new<F>(
+        prepared: &crate::opaque::CpuPreparedSetup<F>,
         witness: ConsumerRelationWitness,
         plan: crate::opaque::ValidatedRelationSessionPlan<'_, F, E>,
-    ) -> Result<Self::Session, AkitaError> {
-        let prepared = prepared.ok_or_else(|| {
-            AkitaError::InvalidInput("Stage 2 requires prepared backend state".into())
-        })?;
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+        E: akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
+    {
         if witness.packed.len() != plan.witness_len() {
             return Err(AkitaError::InvalidInput(
                 "Stage 2 plan disagrees with its witness manifest".into(),
             ));
         }
-        let weights = crate::opaque::relation_weights::compile_stage2_weights(
-            self.prepared_expanded_setup(prepared),
-            &plan,
-        )?;
+        let weights =
+            crate::opaque::relation_weights::compile_stage2_weights(&prepared.expanded, &plan)?;
         let additional = (!weights.linear.is_empty() || !weights.binary_intervals.is_empty())
             .then(|| {
                 relation_range_image::AdditionalRelationTerms::new(
@@ -443,7 +431,7 @@ where
             additional,
         )?;
         let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
-        Ok(ConsumerStage2Session {
+        Ok(Self {
             binding: witness.binding.for_operation(0),
             lease: None,
             prover,
@@ -454,31 +442,22 @@ where
     }
 }
 
-impl<F, E, B>
-    crate::opaque::consumer_kernels::RecursiveWitnessStage1Kernel<ConsumerRelationWitness, F, E>
-    for B
+impl<E> CpuStage1SessionHandle<E>
 where
-    F: Field + CanonicalEncoding,
     E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
-    B: crate::opaque::ComputeBackendSetup<F>,
 {
-    type Session = digit_range::DigitRangeSession<E>;
-
-    fn begin_stage1(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
+    pub(crate) fn new(
+        binding: crate::opaque::OperationBinding,
+        lease: crate::opaque::ScopeLease,
         witness: &ConsumerRelationWitness,
         plan: &crate::opaque::ValidatedStage1Plan<E>,
-    ) -> Result<Self::Session, AkitaError> {
-        prepared.ok_or_else(|| {
-            AkitaError::InvalidInput("Stage 1 requires prepared backend state".into())
-        })?;
+    ) -> Result<Self, AkitaError> {
         if witness.len() != plan.witness_len() || plan.domain().live_len() != witness.len() {
             return Err(AkitaError::InvalidInput(
                 "Stage 1 plan disagrees with its witness or operation context".into(),
             ));
         }
-        digit_range::DigitRangeSession::new(
+        let session_state = digit_range::DigitRangeSession::new(
             DigitRangeProver::from_packed_digits(
                 witness.packed.clone(),
                 plan.digit_range(),
@@ -486,50 +465,11 @@ where
                 plan.equality(),
             )?,
             plan.physical(),
-        )
-    }
-
-    fn stage1_round_polynomial(
-        &self,
-        session: &mut Self::Session,
-        step: crate::opaque::Stage1Step,
-        round: usize,
-        previous_local_claim: E,
-    ) -> Result<crate::opaque::Stage1RoundPolynomial<E>, AkitaError> {
-        session.round_polynomial(step, round, previous_local_claim)
-    }
-
-    fn bind_stage1_challenge(
-        &self,
-        session: &mut Self::Session,
-        step: crate::opaque::Stage1Step,
-        round: usize,
-        challenge: E,
-    ) -> Result<(), AkitaError> {
-        session.bind_challenge(step, round, challenge)
-    }
-
-    fn stage1_public_transition(
-        &self,
-        session: &mut Self::Session,
-        step: crate::opaque::Stage1Step,
-    ) -> Result<crate::opaque::Stage1PublicTransition<E>, AkitaError> {
-        session.public_transition(step)
-    }
-
-    fn bind_stage1_batch_challenge(
-        &self,
-        session: &mut Self::Session,
-        transition: crate::opaque::Stage1Transition,
-        challenge: E,
-    ) -> Result<(), AkitaError> {
-        session.bind_batch_challenge(transition, challenge)
-    }
-
-    fn finish_stage1(
-        &self,
-        session: Self::Session,
-    ) -> Result<crate::opaque::Stage1FinalClaims<E>, AkitaError> {
-        session.finish()
+        )?;
+        Ok(Self {
+            binding,
+            lease,
+            session_state,
+        })
     }
 }

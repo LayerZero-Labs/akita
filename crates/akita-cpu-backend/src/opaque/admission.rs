@@ -16,12 +16,12 @@ impl<Cfg: akita_config::CommitmentConfig> akita_prover::backend::ProofScopeConsu
     type ProofSessionHandle = CpuProofSessionHandle;
 
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
-        let scope = session.validate_owner(self.owner())?;
-        self.owner().finish_scope(scope)
+        let proof = session.validate_owner(self.owner())?;
+        self.owner().finish_scope(proof)
     }
     fn abort_scope_best_effort(&self, session: &Self::ProofSessionHandle) {
         if session.belongs_to(self.owner()) {
-            self.owner().abort_scope(session.scope_id());
+            self.owner().abort_scope(&session.scope_lease());
         }
     }
 }
@@ -29,20 +29,20 @@ impl<Cfg: akita_config::CommitmentConfig> akita_prover::backend::ProofScopeConsu
 impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     pub(crate) fn admitted_group(
         &self,
-        context: &ProofContext,
+        binding: &crate::opaque::OperationBinding,
     ) -> Result<(akita_types::GroupOpenPhaseParams, usize), AkitaError> {
-        self.validate_context(context)?;
-        let (schedule, _) = self.owner().proof_plan(context.scope_id())?;
-        let level = if context.fold_level() == 0 {
+        self.validate_binding(binding)?;
+        let (schedule, _) = binding.scope_lease().proof_plan()?;
+        let level = if binding.fold_level() == 0 {
             &schedule.root.params
         } else {
             &schedule
                 .recursive_folds
-                .get(context.fold_level() as usize - 1)
+                .get(binding.fold_level() as usize - 1)
                 .ok_or(AkitaError::InvalidProof)?
                 .params
         };
-        let index = context.group_index().ok_or(AkitaError::InvalidProof)?;
+        let index = binding.group_index().ok_or(AkitaError::InvalidProof)?;
         Ok((
             *level.groups().get(index).ok_or(AkitaError::InvalidProof)?,
             level.witness_chunk.num_chunks,
@@ -52,7 +52,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
 
 impl<F, E, Cfg> ProofAdmission<F, E> for CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + Send + Sync + 'static,
     E: Field + jolt_field::ExtField<F> + Send + Sync + 'static,
 {
@@ -71,7 +71,7 @@ where
                 "proof setup differs from backend setup".into(),
             ));
         }
-        self.validate_proof_configuration::<E>(plan, layout)?;
+        self.validate_proof_configuration(plan, layout)?;
         plan.validate_structure()?;
         plan.validate_nonterminal_opening_execution(E::DEGREE)?;
         plan.root.params.validate_opening_batch(layout)?;
@@ -100,10 +100,10 @@ where
                 Ok::<(), AkitaError>(())
             }
         )?;
-        let scope = self.owner().begin_proof(plan, layout)?;
+        let proof = self.owner().begin_proof(plan, layout)?;
         Ok(CpuProofSessionHandle::new(
             std::sync::Arc::clone(self.owner()),
-            scope,
+            proof,
         ))
     }
 
@@ -112,20 +112,26 @@ where
         session: &Self::ProofSessionHandle,
         level: u32,
     ) -> Result<ProofContext, AkitaError> {
-        let scope = session.validate_owner(self.owner())?;
-        let context = ProofContext::new(self.owner_id(), self.owner().setup_digest(), scope, level);
-        self.validate_context(&context)?;
+        session.validate_owner(self.owner())?;
+        let context = ProofContext::new(
+            self.owner_id(),
+            self.owner().setup_digest(),
+            session.scope_id(),
+            level,
+        );
+        self.validate_context(session, &context)?;
         Ok(context)
     }
 
     fn validate_commitment(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         handle: &Self::CommitmentHandle,
         parameters: &GroupCommitPhaseParams,
         commitment: &Commitment<F>,
     ) -> Result<Self::CommitmentMaterialHandle, AkitaError> {
-        self.validate_context(context)?;
+        let binding = self.binding(session, context)?;
         if handle.owner != self.owner_id()
             || handle.committed.parameters != *parameters
             || handle.committed.public.0.coeffs() != commitment.0.coeffs()
@@ -139,7 +145,7 @@ where
         let group_index = context.group_index().ok_or_else(|| {
             AkitaError::InvalidInput("commitment admission requires an ordered group".into())
         })?;
-        let (schedule, root_layout) = self.owner().proof_plan(context.scope_id())?;
+        let (schedule, root_layout) = binding.scope_lease().proof_plan()?;
         let (level, layout) = if context.fold_level() == 0 {
             (&schedule.root.params, root_layout)
         } else {
@@ -177,12 +183,13 @@ where
             &plan,
             parameters.group.num_polynomials(),
         )?;
-        material.bind(self.binding(context)?);
+        material.bind(binding.clone());
         material.bind_commitment(
             handle.committed.commitment_id,
             Some(handle.committed.public.0.clone()),
         );
-        self.owner()
+        binding
+            .scope_lease()
             .admit_commitment(context, handle.committed.commitment_id)?;
         Ok(material)
     }

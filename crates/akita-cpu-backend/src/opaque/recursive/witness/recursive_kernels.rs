@@ -114,7 +114,7 @@ where
         + 'static,
     <F as jolt_field::Unreduced>::Wide: From<F> + jolt_field::AdditiveGroup,
     E: akita_types::FpExtEncoding<F> + ExtField<F> + akita_serialization::AkitaSerialize,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     crate::opaque::CpuBackend<Cfg>: crate::opaque::ComputeBackendSetup<F, PreparedSetup = crate::opaque::CpuPreparedSetup<F>>
         + crate::opaque::DigitRowsComputeBackend<F>
         + for<'a> crate::opaque::OpeningFoldKernel<SuffixWitnessView<'a, F, D>, F, D>

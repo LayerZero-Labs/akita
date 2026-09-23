@@ -23,6 +23,7 @@ pub trait ProofAdmission<F: Field + CanonicalEncoding, E: Field>:
     /// Validate retained source, exact public commitment and parameters together.
     fn validate_commitment(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         handle: &Self::CommitmentHandle,
         parameters: &GroupCommitPhaseParams,

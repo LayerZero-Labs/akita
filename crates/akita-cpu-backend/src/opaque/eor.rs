@@ -24,7 +24,7 @@ struct PreparedGroup<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     source: RetainedOpeningSource<F, E, Cfg>,
     point: Vec<E>,
@@ -36,7 +36,7 @@ pub struct CpuEorPreparation<F, E, Cfg>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     binding: OperationBinding,
     layout: OpeningClaimsLayout,
@@ -68,7 +68,7 @@ pub struct CpuEorSession<E: Field> {
 }
 impl<F, E, Cfg> OpaqueEorKernel<F, E> for CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
@@ -88,13 +88,13 @@ where
 {
     fn prepare_eor(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &ProofContext,
         layout: &OpeningClaimsLayout,
         groups: &[EorGroupRequest<'_, E, Self::CommitmentHandle, Self::WitnessHandle>],
     ) -> Result<PreparedEor<E, Self::EorPreparationHandle>, AkitaError> {
-        self.validate_extension::<E>()?;
-        self.validate_context(context)?;
-        match self.owner().proof_plan(context.scope_id()) {
+        let binding = self.binding(session, context)?;
+        match binding.scope_lease().proof_plan() {
             Ok((schedule, root_layout)) => {
                 let expected = if context.fold_level() == 0 {
                     root_layout
@@ -139,7 +139,7 @@ where
             }
             let (source, prepared, witness_opening) = match &group.source {
                 OpeningSource::Commitment(handle) => {
-                    self.owner().validate_commitment(
+                    binding.scope_lease().validate_commitment(
                         &context.for_group(index),
                         handle.committed.commitment_id,
                     )?;
@@ -163,8 +163,7 @@ where
                 }
                 OpeningSource::Witness(witness) => {
                     self.validate_binding(&witness.operation_binding())?;
-                    self.binding(context)?
-                        .validate_lineage(&witness.operation_binding())?;
+                    binding.validate_lineage(&witness.operation_binding())?;
                     witness
                         .operation_binding()
                         .validate_group(index, layout.num_groups())?;
@@ -215,7 +214,7 @@ where
             openings,
             proof_partials,
             handle: CpuEorPreparation {
-                binding: self.binding(context)?,
+                binding,
                 layout: layout.clone(),
                 groups: retained,
             },
@@ -293,7 +292,7 @@ where
             claims.push(claim);
         }
         let claim = claims.iter().copied().fold(E::zero(), |sum, c| sum + c);
-        let lease = self.binding_lease(&preparation.binding)?;
+        let lease = preparation.binding.scope_lease().clone();
         Ok((
             claim,
             CpuEorSession {

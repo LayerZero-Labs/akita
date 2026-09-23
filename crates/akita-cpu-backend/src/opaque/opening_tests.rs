@@ -1,4 +1,4 @@
-use crate::opaque::CpuBackend;
+use crate::opaque::CpuBackend as GenericCpuBackend;
 use crate::opaque::RecursiveWitnessFlat;
 use akita_config::proof_optimized::fp128::OneHot;
 use akita_error::AkitaError;
@@ -12,6 +12,49 @@ use std::sync::Arc;
 type F = Prime128OffsetA7F7;
 type E = Ext2<F>;
 
+#[derive(Clone)]
+struct ExtensionTestConfig;
+
+impl akita_config::CommitmentConfig for ExtensionTestConfig {
+    type Field = F;
+    type ExtField = E;
+
+    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
+        <OneHot as akita_config::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+
+    fn decomposition() -> DecompositionParams {
+        <OneHot as akita_config::CommitmentConfig>::decomposition()
+    }
+
+    fn ring_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        <OneHot as akita_config::CommitmentConfig>::ring_challenge_config(d)
+    }
+
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        <OneHot as akita_config::CommitmentConfig>::sis_modulus_profile()
+    }
+
+    fn opening_basis_range() -> (u32, u32) {
+        <OneHot as akita_config::CommitmentConfig>::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        <OneHot as akita_config::CommitmentConfig>::inner_basis_range()
+    }
+
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        <OneHot as akita_config::CommitmentConfig>::committed_source_class()
+    }
+
+    fn schedule_family_name() -> &'static str {
+        "test_fp128_extension"
+    }
+}
+
+type CpuBackend = GenericCpuBackend<ExtensionTestConfig>;
+
 fn backend() -> CpuBackend {
     let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
         9,
@@ -23,19 +66,33 @@ fn backend() -> CpuBackend {
     .unwrap();
     CpuBackend::for_test_setup(setup.expanded.clone()).unwrap()
 }
-fn context(backend: &CpuBackend) -> ProofContext {
-    let scope = backend.owner().begin_test_scope(vec![3, 3]).unwrap();
-    ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 1)
+struct TestProof {
+    session: crate::opaque::CpuProofSessionHandle,
+    context: ProofContext,
+}
+fn proof(backend: &CpuBackend) -> TestProof {
+    let lease = backend.owner().begin_test_scope(vec![3, 3]).unwrap();
+    let context = ProofContext::new(
+        backend.owner_id(),
+        backend.owner().setup_digest(),
+        lease.scope_id(),
+        1,
+    );
+    TestProof {
+        session: crate::opaque::CpuProofSessionHandle::new(Arc::clone(backend.owner()), lease),
+        context,
+    }
 }
 fn witness(
     backend: &CpuBackend,
+    session: &crate::opaque::CpuProofSessionHandle,
     context: &ProofContext,
     digits: Vec<i8>,
 ) -> crate::opaque::CpuWitnessHandle {
     crate::opaque::CpuWitnessHandle::from_cpu(
         RecursiveWitnessFlat::from_i8_digits(digits),
         64,
-        backend.binding(context).unwrap(),
+        backend.binding(session, context).unwrap(),
     )
     .unwrap()
 }
@@ -80,18 +137,20 @@ impl SumcheckKernel<E> for EorDriver<'_> {
 }
 fn prove_eor<T: ProverTranscriptGrinding<F>>(
     backend: &CpuBackend,
+    session: &crate::opaque::CpuProofSessionHandle,
     context: &ProofContext,
     layout: &OpeningClaimsLayout,
     groups: &[EorGroupRequest<
         '_,
         E,
-        super::CommitmentHandle<F, E, OneHot>,
+        super::CommitmentHandle<F, E, ExtensionTestConfig>,
         crate::opaque::CpuWitnessHandle,
     >],
     transcript: &mut T,
 ) -> Result<ProvedReduction, AkitaError> {
-    let prepared =
-        <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(backend, context, layout, groups)?;
+    let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
+        backend, session, context, layout, groups,
+    )?;
     append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
     for partial in &prepared.proof_partials {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
@@ -250,11 +309,12 @@ where
 #[test]
 fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
     let backend = backend();
-    let context = context(&backend);
-    let short = witness(&backend, &context.for_group(0), vec![1; 64]);
+    let proof = proof(&backend);
+    let context = &proof.context;
+    let short = witness(&backend, &proof.session, &context.for_group(0), vec![1; 64]);
     let mut digits = vec![0; 192];
     digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
-    let long = witness(&backend, &context.for_group(1), digits);
+    let long = witness(&backend, &proof.session, &context.for_group(1), digits);
     let short_point = (0..6)
         .map(|i| E::new(F::from_u64(i + 2), F::from_u64(i + 11)))
         .collect::<Vec<_>>();
@@ -281,13 +341,21 @@ fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
     let mut transcript = AkitaTranscript::<F>::new(b"test/aggregate-padding");
     let plan = eor_test_plan(7, true);
     let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
-    let proved = prove_eor(&backend, &context, &layout, &groups, &mut transcript).unwrap();
+    let proved = prove_eor(
+        &backend,
+        &proof.session,
+        context,
+        &layout,
+        &groups,
+        &mut transcript,
+    )
+    .unwrap();
     transcript.finish().unwrap();
     assert_eq!(proved.proof.num_rounds(), 7);
     assert_eq!(proved.proof.partials.len(), 4);
     assert_eq!(proved.proof.final_claims.len(), 2);
     assert_eq!(proved.rho.len(), 7);
-    backend.owner().finish_scope(context.scope_id()).unwrap();
+    backend.finish_scope(&proof.session).unwrap();
 }
 
 #[test]
@@ -359,7 +427,8 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 ),
             );
             let backend = CpuBackend::for_test_setup(expanded).unwrap();
-            let context = context(&backend);
+            let proof = proof(&backend);
+            let context = &proof.context;
             let prefix = backend
                 .prepare_setup_prefix::<F, E>(&SetupPrefixSlotId {
                     natural_len: 400,
@@ -378,12 +447,17 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 .copied()
                 .map(F::from_i8)
                 .collect::<Vec<_>>();
-            let long = witness(&backend, &context.for_group(1), long_digits)
+            let long = witness(&backend, &proof.session, &context.for_group(1), long_digits)
                 .align_for_commitment_ring_dim(D)
                 .unwrap();
-            let short = witness(&backend, &context.for_group(2), short_digits)
-                .align_for_commitment_ring_dim(D)
-                .unwrap();
+            let short = witness(
+                &backend,
+                &proof.session,
+                &context.for_group(2),
+                short_digits,
+            )
+            .align_for_commitment_ring_dim(D)
+            .unwrap();
             let long_point = (0..9)
                 .map(|i| E::new(F::from_u64(i + 2), F::from_u64(2 * i + 3)))
                 .collect::<Vec<_>>();
@@ -416,7 +490,15 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             let mut transcript = AkitaTranscript::<F>::new(b"test/mixed-eor-dense-oracle");
             let plan = eor_test_plan(8, true);
             let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
-            let proved = prove_eor(&backend, &context, &layout, &groups, &mut transcript).unwrap();
+            let proved = prove_eor(
+                &backend,
+                &proof.session,
+                context,
+                &layout,
+                &groups,
+                &mut transcript,
+            )
+            .unwrap();
             let nonces = transcript.finish().unwrap();
             let tables = [
                 (&setup_evals, &long_point),
@@ -507,18 +589,13 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     .zip(&coefficients)
                     .fold(E::zero(), |sum, (v, c)| sum + *v * *c)
             );
-            backend.owner().finish_scope(context.scope_id()).unwrap();
+            backend.finish_scope(&proof.session).unwrap();
 
             // The same immutable committed prefix serves independent simultaneous proofs.
             let shared_layout = OpeningClaimsLayout::new(9, 1).unwrap();
-            let run = |context: ProofContext| {
-                let guard = ProofScope::admitted(
-                    &backend,
-                    crate::opaque::lifecycle::CpuProofSessionHandle::new(
-                        Arc::clone(backend.owner()),
-                        context.scope_id(),
-                    ),
-                );
+            let run = |proof: TestProof| {
+                let TestProof { session, context } = proof;
+                let guard = ProofScope::admitted(&backend, session);
                 let requests = [EorGroupRequest {
                     source: OpeningSource::Commitment(&prefix.commitment_handle),
                     point: &long_point,
@@ -529,6 +606,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
                 let proved = prove_eor(
                     &backend,
+                    guard.session(),
                     &context,
                     &shared_layout,
                     &requests,
@@ -539,16 +617,16 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 guard.finish().unwrap();
                 (proved.proof.partials, proved.proof.final_claims, proved.rho)
             };
-            let first_context = super::opening_tests::context(&backend);
-            let second_context = super::opening_tests::context(&backend);
+            let first_proof = super::opening_tests::proof(&backend);
+            let second_proof = super::opening_tests::proof(&backend);
             let (first, second) = std::thread::scope(|threads| {
-                let first = threads.spawn(|| run(first_context));
-                let second = threads.spawn(|| run(second_context));
+                let first = threads.spawn(|| run(first_proof));
+                let second = threads.spawn(|| run(second_proof));
                 (first.join().unwrap(), second.join().unwrap())
             });
             assert_eq!(first, second);
             // Completing both scopes does not consume the reusable commitment.
-            assert_eq!(first, run(super::opening_tests::context(&backend)));
+            assert_eq!(first, run(super::opening_tests::proof(&backend)));
         })
         .unwrap()
         .join()
@@ -594,9 +672,10 @@ fn proof_schedule_from_layout_includes_entire_batch() {
 fn eor_rejects_substituted_witness_and_disagreeing_point() {
     use crate::opaque::consumer_kernels::CpuWitnessOpeningKernel;
     let backend = backend();
-    let context = context(&backend);
-    let first = witness(&backend, &context, vec![1; 64]);
-    let second = witness(&backend, &context, vec![2; 64]);
+    let proof = proof(&backend);
+    let context = &proof.context;
+    let first = witness(&backend, &proof.session, context, vec![1; 64]);
+    let second = witness(&backend, &proof.session, context, vec![2; 64]);
     let point = vec![E::zero(); 6];
     let coefficients = [E::one()];
     let eta = [E::one()];
@@ -631,14 +710,15 @@ fn eor_rejects_substituted_witness_and_disagreeing_point() {
         );
         assert!(result.is_err());
     }
-    backend.owner().finish_scope(context.scope_id()).unwrap();
+    backend.finish_scope(&proof.session).unwrap();
 }
 
 #[test]
 fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
     let backend = backend();
-    let context = context(&backend);
-    let witness = witness(&backend, &context, vec![1; 64]);
+    let proof = proof(&backend);
+    let context = &proof.context;
+    let witness = witness(&backend, &proof.session, context, vec![1; 64]);
     let point = vec![E::one(); 6];
     let layout = OpeningClaimsLayout::new(6, 1).unwrap();
     let groups = [EorGroupRequest {
@@ -647,13 +727,22 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
         ring_dimension: 64,
     }];
     let other = CpuBackend::for_test_setup(backend.prepared().unwrap().expanded.clone()).unwrap();
-    assert!(
-        <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(&other, &context, &layout, &groups)
-            .is_err()
-    );
-    let preparation =
-        <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(&backend, &context, &layout, &groups)
-            .unwrap();
+    assert!(<CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
+        &other,
+        &proof.session,
+        context,
+        &layout,
+        &groups,
+    )
+    .is_err());
+    let preparation = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
+        &backend,
+        &proof.session,
+        context,
+        &layout,
+        &groups,
+    )
+    .unwrap();
     let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
         &backend,
         preparation.handle,
@@ -685,9 +774,13 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
     )
     .is_err());
     assert!(<CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(&backend, session).is_err());
-    backend.owner().finish_scope(context.scope_id()).unwrap();
+    backend.finish_scope(&proof.session).unwrap();
     assert!(<CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
-        &backend, &context, &layout, &groups
+        &backend,
+        &proof.session,
+        context,
+        &layout,
+        &groups
     )
     .is_err());
 }
@@ -696,36 +789,24 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
 #[test]
 fn diagnostics_validate_independent_proof_lifetimes() {
     let backend = backend();
-    let a = context(&backend);
-    let b = context(&backend);
-    let first = witness(&backend, &a, vec![-3, 2, 0, 1]);
-    let second = witness(&backend, &b, vec![1, 0, 2, -1]);
+    let a = proof(&backend);
+    let b = proof(&backend);
+    let first = witness(&backend, &a.session, &a.context, vec![-3, 2, 0, 1]);
+    let second = witness(&backend, &b.session, &b.context, vec![1, 0, 2, -1]);
     assert_eq!(backend.witness_source_l2_sq::<F>(&first).unwrap(), Some(14));
     assert_eq!(backend.witness_source_l2_sq::<F>(&second).unwrap(), Some(6));
-    let guard = ProofScope::admitted(
-        &backend,
-        crate::opaque::lifecycle::CpuProofSessionHandle::new(
-            Arc::clone(backend.owner()),
-            a.scope_id(),
-        ),
-    );
-    guard.finish().unwrap();
+    backend.finish_scope(&a.session).unwrap();
     assert!(backend.witness_source_l2_sq::<F>(&first).is_err());
     assert_eq!(backend.witness_source_l2_sq::<F>(&second).unwrap(), Some(6));
-    drop(ProofScope::admitted(
-        &backend,
-        crate::opaque::lifecycle::CpuProofSessionHandle::new(
-            Arc::clone(backend.owner()),
-            b.scope_id(),
-        ),
-    ));
+    drop(b.session);
     assert!(backend.witness_source_l2_sq::<F>(&second).is_err());
 }
 
 #[test]
 fn nonterminal_opening_cannot_publish_terminal_rows() {
     let backend = backend();
-    let context = context(&backend).for_group(0);
+    let proof = proof(&backend);
+    let context = proof.context.for_group(0);
     let outer = ring_opening_point_from_field::<F>(&[], 1, 1, BasisMode::Lagrange).unwrap();
     let point = PreparedOpeningPoint::<F, E>::from_parts(
         Vec::new(),
@@ -733,10 +814,11 @@ fn nonterminal_opening_cannot_publish_terminal_rows() {
         akita_algebra::CyclotomicRing::<F, 64>::one(),
     );
     let prepared = crate::opaque::prepared_opening::evaluation_trace(
-        backend.binding(&context).unwrap(),
+        backend.binding(&proof.session, &context).unwrap(),
         crate::opaque::openings::PreparedOpeningSource::Retained(
             crate::opaque::openings::RetainedOpeningSource::Witness(Box::new(witness(
                 &backend,
+                &proof.session,
                 &context,
                 vec![1],
             ))),
@@ -760,9 +842,15 @@ fn nonterminal_opening_cannot_publish_terminal_rows() {
 #[test]
 fn witness_level_transition_requires_one_successor_commitment() {
     let backend = backend();
-    let scope = backend.owner().begin_test_scope(vec![1, 1, 1]).unwrap();
-    let context = ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 0);
-    let mut witness = witness(&backend, &context, vec![1, -1, 0, 1]);
+    let lease = backend.owner().begin_test_scope(vec![1, 1, 1]).unwrap();
+    let session = crate::opaque::CpuProofSessionHandle::new(Arc::clone(backend.owner()), lease);
+    let context = ProofContext::new(
+        backend.owner_id(),
+        backend.owner().setup_digest(),
+        session.scope_id(),
+        0,
+    );
+    let mut witness = witness(&backend, &session, &context, vec![1, -1, 0, 1]);
     assert!(
         <CpuBackend as OpaqueWitnessCommitKernel<F, E>>::advance_witness_level(
             &backend,
@@ -784,32 +872,4 @@ fn witness_level_transition_requires_one_successor_commitment() {
         .is_err()
     );
     assert_eq!(witness.operation_binding().fold_level(), 1);
-}
-
-#[test]
-fn erased_witness_rejects_another_extension_field() {
-    let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
-        9,
-        3,
-        SetupMatrixCapacity {
-            num_field_elements: 4096,
-        },
-    )
-    .unwrap();
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>().unwrap();
-    let backend = CpuBackend::<OneHot>::new(setup.expanded.clone(), &catalog).unwrap();
-    backend.validate_extension::<F>().unwrap();
-    let scope = backend.owner().begin_test_scope(vec![1, 1]).unwrap();
-    let context = ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 0);
-    let mut witness = witness(&backend, &context, vec![1, 0, -1, 1]);
-    witness.pending_successor = Some(1);
-    let error = <CpuBackend as OpaqueWitnessCommitKernel<F, E>>::advance_witness_level(
-        &backend,
-        &mut witness,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("extension field differs"));
-    assert_eq!(witness.operation_binding().fold_level(), 0);
-    <CpuBackend as OpaqueWitnessCommitKernel<F, F>>::advance_witness_level(&backend, &mut witness)
-        .unwrap();
 }

@@ -12,7 +12,10 @@ fn proof_scope<Cfg: akita_config::CommitmentConfig>(
     )
 }
 
-fn session(backend: &CpuBackend, scope: crate::opaque::ProofScopeId) -> CpuStage3Session<F, F> {
+fn session(
+    backend: &CpuBackend,
+    proof: &crate::opaque::CpuProofSessionHandle,
+) -> CpuStage3Session<F, F> {
     let setup = RectangularSetupProductTerm::new(
         SetupProductSource::Table((1..=4).map(F::from_u64).collect()),
         2,
@@ -21,16 +24,20 @@ fn session(backend: &CpuBackend, scope: crate::opaque::ProofScopeId) -> CpuStage
     )
     .unwrap();
     let binding = backend
-        .binding(&ProofContext::new(
-            backend.owner_id(),
-            backend.owner().setup_digest(),
-            scope,
-            0,
-        ))
+        .binding(
+            proof,
+            &ProofContext::new(
+                backend.owner_id(),
+                backend.owner().setup_digest(),
+                proof.scope_id(),
+                0,
+            ),
+        )
         .unwrap();
+    let lease = binding.scope_lease().clone();
     CpuStage3Session {
         binding,
-        lease: backend.binding_lease(&binding).unwrap(),
+        lease,
         claim: setup.input_claim(),
         setup,
         round: 0,
@@ -43,9 +50,9 @@ fn stage3_enforces_round_bind_and_completion_order() {
     let backend = CpuBackend::for_arithmetic_tests();
     let scope = proof_scope(&backend);
     assert!(backend
-        .finish_stage3(session(&backend, scope.session().scope_id()))
+        .finish_stage3(session(&backend, scope.session()))
         .is_err());
-    let mut state = session(&backend, scope.session().scope_id());
+    let mut state = session(&backend, scope.session());
     assert!(backend
         .bind_stage3_challenge(&mut state, 0, F::one())
         .is_err());
@@ -98,8 +105,8 @@ fn stage3_scopes_are_independent_and_owner_bound() {
     let foreign = CpuBackend::for_arithmetic_tests();
     let first = proof_scope(&backend);
     let second = proof_scope(&backend);
-    let mut a = session(&backend, first.session().scope_id());
-    let mut b = session(&backend, second.session().scope_id());
+    let mut a = session(&backend, first.session());
+    let mut b = session(&backend, second.session());
     let claim = a.claim;
     assert!(foreign.stage3_round_polynomial(&mut a, 0, claim).is_err());
     drop(first);
@@ -113,6 +120,8 @@ fn stage3_scopes_are_independent_and_owner_bound() {
 fn stage3_retains_setup_across_cache_eviction() {
     use crate::opaque::ComputeBackendSetup;
     type Base = jolt_field::Prime64Offset59;
+    type Config = akita_config::proof_optimized::fp64::OneHot;
+    type Extension = <Config as akita_config::CommitmentConfig>::ExtField;
     let setup = crate::AkitaProverSetup::<Base>::generate_with_capacity(
         2,
         1,
@@ -123,29 +132,30 @@ fn stage3_retains_setup_across_cache_eviction() {
     .unwrap();
     let expected = setup.expanded.shared_matrix().as_field_slice()[..4].to_vec();
     let allocation = std::sync::Arc::downgrade(&setup.expanded);
-    let backend = CpuBackend::<akita_config::proof_optimized::fp64::OneHot>::for_test_setup(
-        setup.expanded.clone(),
-    )
-    .unwrap();
+    let backend = CpuBackend::<Config>::for_test_setup(setup.expanded.clone()).unwrap();
     let scope = proof_scope(&backend);
     let product = RectangularSetupProductTerm::new(
         SetupProductSource::Expanded(setup.expanded.clone()),
         2,
-        vec![Base::one(); 2],
-        vec![Base::one(); 2],
+        vec![Extension::one(); 2],
+        vec![Extension::one(); 2],
     )
     .unwrap();
     let binding = backend
-        .binding(&ProofContext::new(
-            backend.owner_id(),
-            backend.owner().setup_digest(),
-            scope.session().scope_id(),
-            0,
-        ))
+        .binding(
+            scope.session(),
+            &ProofContext::new(
+                backend.owner_id(),
+                backend.owner().setup_digest(),
+                scope.session().scope_id(),
+                0,
+            ),
+        )
         .unwrap();
+    let lease = binding.scope_lease().clone();
     let mut state = CpuStage3Session {
         binding,
-        lease: backend.binding_lease(&binding).unwrap(),
+        lease,
         claim: product.input_claim(),
         setup: product,
         round: 0,
@@ -162,7 +172,10 @@ fn stage3_retains_setup_across_cache_eviction() {
             },
         )
         .unwrap();
-    let challenges = [Base::from_u64(3), Base::from_u64(5)];
+    let challenges = [
+        Extension::lift_base(Base::from_u64(3)),
+        Extension::lift_base(Base::from_u64(5)),
+    ];
     for (round, challenge) in challenges.into_iter().enumerate() {
         let claim = state.claim;
         backend
@@ -179,7 +192,14 @@ fn stage3_retains_setup_across_cache_eviction() {
     }
     assert_eq!(
         backend.finish_stage3(state).unwrap(),
-        akita_algebra::poly::multilinear_eval(&expected, &challenges).unwrap()
+        akita_algebra::poly::multilinear_eval(
+            &expected
+                .into_iter()
+                .map(Extension::lift_base)
+                .collect::<Vec<_>>(),
+            &challenges,
+        )
+        .unwrap()
     );
     scope.finish().unwrap();
     drop(backend);

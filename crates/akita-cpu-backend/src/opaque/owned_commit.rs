@@ -17,7 +17,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         foreign: &CommitmentHandle<Cfg::Field, Cfg::ExtField, ForeignCfg>,
     ) -> Result<CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
     where
-        ForeignCfg: CommitmentConfig<Field = Cfg::Field>,
+        ForeignCfg: CommitmentConfig<Field = Cfg::Field, ExtField = Cfg::ExtField>,
         Cfg::Field: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -34,7 +34,6 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             + AkitaSerialize
             + 'static,
     {
-        self.validate_extension::<Cfg::ExtField>()?;
         let prepared = self.prepared()?;
         let committed = &foreign.committed;
         let source = self.import_source(committed.source.dense_polynomials()?)?;

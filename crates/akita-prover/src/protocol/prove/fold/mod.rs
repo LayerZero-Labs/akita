@@ -110,6 +110,7 @@ where
             .collect::<Vec<_>>();
         let reduced = prove_extension_opening_reduction::<F, E, T, B>(
             backend,
+            session,
             &context,
             trace_opening_batch,
             &groups,
@@ -130,7 +131,7 @@ where
         )
     };
 
-    let opening = &OperationCtx::new(backend, context);
+    let opening = &OperationCtx::new(backend, session, context);
     // A-role operation: prepare each group at its native A dimension,
     // fold-evaluate its claim polynomials, and derive scalar openings before
     // leaving the typed dispatch arm. Typed fold outputs cross the boundary
@@ -194,6 +195,7 @@ where
             logical_len,
         );
         let prepared = backend.prepare_opening(
+            opening.proof_session(),
             opening.for_group(group_index).proof_context(),
             source,
             &plan,
@@ -602,7 +604,11 @@ where
     let fold_level = u32::try_from(level)
         .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let consumer = backend;
-    let consumer_ctx = OperationCtx::new(backend, backend.proof_context(session, fold_level)?);
+    let consumer_ctx = OperationCtx::new(
+        backend,
+        session,
+        backend.proof_context(session, fold_level)?,
+    );
     let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
     let ring_switch = ring_switch_finalize::<F, E, T, B>(
         &consumer_ctx,

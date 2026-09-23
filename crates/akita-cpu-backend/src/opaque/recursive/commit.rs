@@ -131,7 +131,7 @@ impl<F: Field> crate::commitment::CommitmentSource<F> for RecursiveCommitSource<
 
 impl<F, E, Cfg> crate::opaque::OpaqueWitnessCommitKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -152,7 +152,6 @@ where
         >,
         AkitaError,
     > {
-        self.validate_extension::<E>()?;
         let parent = witness.operation_binding();
         self.validate_binding(&parent)?;
         if witness.pending_successor.is_some() {
@@ -160,7 +159,7 @@ where
                 "witness already committed for its next level".into(),
             ));
         }
-        let (schedule, _) = self.owner().proof_plan(parent.scope_id())?;
+        let (schedule, _) = parent.scope_lease().proof_plan()?;
         let matches_schedule = match plan.parameters() {
             crate::opaque::WitnessCommitmentParameters::Recursive(parameters) => schedule
                 .recursive_folds
@@ -258,8 +257,8 @@ where
             }
         };
         let mut material = crate::opaque::CpuCommitmentMaterial::from_state(state, &execution, 1)?;
-        let successor = self.next_level_binding(parent)?;
-        material.bind(successor);
+        let successor = self.next_level_binding(parent.clone())?;
+        material.bind(successor.clone());
         material.bind_commitment(successor.operation_id(), public.clone());
         let binding = match (public, plan.binding()) {
             (Some(public), akita_types::NextWitnessBindingPolicy::OuterPayload) => {
@@ -282,7 +281,6 @@ where
         ))
     }
     fn advance_witness_level(&self, witness: &mut Self::WitnessHandle) -> Result<(), AkitaError> {
-        self.validate_extension::<E>()?;
         let parent = witness.operation_binding();
         self.validate_binding(&parent)?;
         let next = parent

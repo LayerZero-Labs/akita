@@ -62,6 +62,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn begin_recursive_witness(
         &self,
+        session: &Self::ProofSessionHandle,
         context: &super::ProofContext,
         prepared_opening_handles: &[Self::PreparedOpeningHandle],
         commitment_material_handles: Vec<Self::CommitmentMaterialHandle>,

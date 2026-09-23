@@ -39,7 +39,7 @@ pub struct CpuStage3Session<F: Field, E: Field> {
 
 impl<F, E, Cfg> OpaqueStage3Kernel<F, E> for CpuBackend<Cfg>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + 'static,
     E: Field
         + Ring
@@ -55,17 +55,17 @@ where
         &self,
         request: Stage3Request<'_, F, E, Self::ProofSessionHandle>,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError> {
-        self.validate_extension::<E>()?;
-        let scope = request.session.validate_owner(self.owner())?;
+        let proof = request.session.validate_owner(self.owner())?;
+        let scope = proof.scope_id();
         let context = crate::opaque::ProofContext::new(
             self.owner_id(),
             self.owner().setup_digest(),
             scope,
             request.level,
         );
-        let binding = self.binding(&context)?;
-        let lease = self.binding_lease(&binding)?;
-        let (schedule, _) = self.owner().proof_plan(scope)?;
+        let binding = self.binding(request.session, &context)?;
+        let lease = binding.scope_lease().clone();
+        let (schedule, _) = proof.proof_plan()?;
         let parameters = if request.level == 0 {
             &schedule.root.params
         } else {
