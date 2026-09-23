@@ -8,8 +8,26 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
-/// One modeled proof byte has the same weight as this many folded witness elements.
-pub(crate) const FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE: u128 = 1 << 18;
+/// One modeled proof byte has the same weight as this many units of protocol work.
+pub(crate) const WORK_ELEMENTS_PER_OBJECTIVE_BYTE: u128 = 1 << 18;
+
+/// Charge the direct verifier for both scanning field elements and processing
+/// each common-base setup ring. Offloaded edges do not incur this work.
+pub(crate) fn direct_setup_scan_work_elements(
+    natural_field_len: usize,
+    base_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    let rings = akita_error::checked::div_ceil(natural_field_len, base_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan ring count overflow".into()))?;
+    natural_field_len
+        .checked_mul(2)
+        .and_then(|fields| {
+            rings
+                .checked_mul(64)
+                .and_then(|overhead| fields.checked_add(overhead))
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
+}
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -382,7 +400,7 @@ pub(crate) struct NativeProofCost {
     native_nonce_bytes: usize,
     nonce_bits: usize,
     expanded_query_count: u64,
-    fold_work_elements: u128,
+    work_elements: u128,
 }
 
 impl NativeProofCost {
@@ -390,14 +408,14 @@ impl NativeProofCost {
         payload_bytes: usize,
         native_nonce_bytes: usize,
         expanded_query_count: u64,
-        fold_work_elements: u128,
+        work_elements: u128,
     ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
             native_nonce_bytes,
             nonce_bits: 0,
             expanded_query_count,
-            fold_work_elements,
+            work_elements,
         };
         cost.validate_objective()?;
         Ok(cost)
@@ -419,7 +437,7 @@ impl NativeProofCost {
         native_nonce_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
-        fold_work_elements: usize,
+        work_elements: usize,
     ) -> Result<Self, AkitaError> {
         let payload_bytes = self
             .payload_bytes
@@ -436,16 +454,16 @@ impl NativeProofCost {
             .expanded_query_count
             .checked_add(expanded_query_count)
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        let fold_work_elements = self
-            .fold_work_elements
-            .checked_add(fold_work_elements as u128)
-            .ok_or_else(|| AkitaError::InvalidSetup("candidate fold work overflow".into()))?;
+        let work_elements = self
+            .work_elements
+            .checked_add(work_elements as u128)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate work overflow".into()))?;
         let cost = Self {
             payload_bytes,
             native_nonce_bytes,
             nonce_bits,
             expanded_query_count,
-            fold_work_elements,
+            work_elements,
         };
         cost.validate_objective()?;
         Ok(cost)
@@ -483,8 +501,8 @@ impl NativeProofCost {
 
     fn checked_exact_score(self) -> Option<u128> {
         (self.checked_proof_bytes()? as u128)
-            .checked_mul(FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE)?
-            .checked_add(self.fold_work_elements)
+            .checked_mul(WORK_ELEMENTS_PER_OBJECTIVE_BYTE)?
+            .checked_add(self.work_elements)
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
@@ -601,7 +619,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
         || candidates.len() <= 1
     {
         return Ok(candidates);
@@ -610,13 +628,13 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut retained = Vec::new();
     for params in candidates {
         let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4 => {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
                 padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
             }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5 => {
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4 => unreachable!(),
+            crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {

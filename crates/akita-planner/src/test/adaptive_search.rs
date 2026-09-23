@@ -294,7 +294,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -404,7 +404,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -852,18 +852,11 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     )
     .expect("rank-one-capped nv36 planner");
     let selected_root = &selected.schedule.root.params;
-    assert_eq!(
-        selected_root.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 64,
-            opening: 64,
-        }
-    );
+    assert_eq!(selected_root.role_dims(), d256_mixed);
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
-        CommitmentRingDims::uniform(64),
-        "the additive fold-work score contracts the first packing successor"
+        d128_mixed,
+        "the additive work score prices the first packing successor's setup scan"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
@@ -884,13 +877,30 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     }
     let score = |schedule: &akita_types::PlannedFoldSchedule| {
         let proof_bytes = schedule.estimate.estimated_proof_payload_bytes().unwrap();
-        let fold_work: u128 = std::iter::once(&schedule.schedule.root)
+        let root_layout = akita_types::AkitaScheduleLookupKey::single(onehot_group(36, 1))
+            .opening_layout()
+            .unwrap();
+        let work: u128 = std::iter::once(&schedule.schedule.root)
             .chain(schedule.schedule.recursive_folds.iter())
-            .map(|fold| fold.output_witness_len as u128)
+            .enumerate()
+            .map(|(level, fold)| {
+                let layout = if level == 0 {
+                    root_layout.clone()
+                } else {
+                    suffix_opening_layout(fold.input_witness_len, None).unwrap()
+                };
+                let natural = akita_types::active_setup_field_len(&fold.params, &layout).unwrap();
+                let scan = direct_setup_scan_work_elements(
+                    natural,
+                    fold.params.role_dims().common_relation_coeff_count(),
+                )
+                .unwrap();
+                (fold.output_witness_len + scan) as u128
+            })
             .sum();
         (
             estimated_first_direct_setup_capacity(schedule),
-            (proof_bytes as u128) * FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE + fold_work,
+            (proof_bytes as u128) * WORK_ELEMENTS_PER_OBJECTIVE_BYTE + work,
             proof_bytes,
             schedule.estimate.estimated_num_setup_field_elements,
         )

@@ -3,9 +3,11 @@
 The `akita-planner` crate computes the parameters of each fold level in the
 Akita PCS. Within their setup-priority buckets, schedules minimize an exact
 additive score: `2^18 × modeled proof bytes + sum of fold output-witness
-elements`. Proof bytes, setup, witness length, and the canonical descriptor
-break remaining ties. This trades one modeled proof byte for up to 262,144
-intermediate witness elements without changing proof accounting.
+elements + sum of direct setup-scan work`. Each direct scan costs twice its
+natural field-element length plus 64 units per common-base ring; offloaded
+folds have no direct-scan charge. Proof bytes, setup, witness length, and the
+canonical descriptor break remaining ties. This keeps proof accounting exact
+while pricing the repeated setup work that the verifier actually performs.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -41,7 +43,8 @@ schedule, it is the first edge after the setup-prefix chain.
 First-direct capacity is a verifier-cost proxy, not a complete runtime model.
 Its power-of-two bucket permits proof-size improvements within a factor-two
 setup-scan bound and avoids letting a later, unusually large suffix matrix
-control the leading direct objective. The
+control the leading direct objective. The additive scan term prices direct
+work at every fold within that bucket. The
 [planner rationale](../../specs/setup-offloading-planner.md#why-adaptive-direct-planning-starts-with-first-direct-capacity)
 defines the related setup quantities and records the limitations of this design
 choice.

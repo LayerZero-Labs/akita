@@ -18,8 +18,7 @@ fn direct(
 ) -> CompleteScheduleScore {
     score(
         CompleteObjectiveBound::Direct {
-            exact_score: (proof_bytes as u128)
-                * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+            exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
             setup_field_elements,
         },
@@ -36,8 +35,7 @@ fn setup_first(
     score(
         CompleteObjectiveBound::SetupFirst {
             first_direct_setup_capacity,
-            exact_score: (proof_bytes as u128)
-                * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+            exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
             setup_field_elements,
         },
@@ -56,8 +54,7 @@ fn padded_setup_envelope_first(
         objective: CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
-            exact_score: (proof_bytes as u128)
-                * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+            exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
             first_direct_output_witness_len,
         },
@@ -121,7 +118,7 @@ fn padded_setup_envelope_uses_descriptor_after_output() {
 #[test]
 fn output_witness_precedes_the_canonical_descriptor() {
     let objective = CompleteObjectiveBound::Direct {
-        exact_score: 100 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 100 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 100,
         setup_field_elements: 1_000,
     };
@@ -161,42 +158,42 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     };
     assert!(CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 16,
-        exact_score: 21 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
         setup_field_elements: 0,
     }
     .is_strictly_worse_than(incumbent));
     assert!(!CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 8,
-        exact_score: (usize::MAX as u128) * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: (usize::MAX as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: usize::MAX,
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_than(incumbent));
     assert!(!CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 16,
-        exact_score: 20 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 20 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 20,
         setup_field_elements: 31,
     }
     .is_strictly_worse_for_recursive_parent(incumbent));
     assert!(CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 16,
-        exact_score: 21 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
         setup_field_elements: 0,
     }
     .is_strictly_worse_for_recursive_parent(incumbent));
     assert!(!CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 16,
-        exact_score: 20 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 20 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 20,
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_for_recursive_payload(incumbent));
     assert!(CompleteObjectiveBound::SetupFirst {
         first_direct_setup_capacity: 0,
-        exact_score: 21 * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+        exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
         setup_field_elements: 0,
     }
@@ -205,8 +202,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
-            exact_score: (proof_bytes as u128)
-                * super::super::FOLD_WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
+            exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
             first_direct_output_witness_len: 1_000,
         }
@@ -285,7 +281,7 @@ fn complete_candidate(
 #[test]
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     let contractive = complete_candidate(101, 64, 1_000);
     let noncontractive = complete_candidate(100, 64, 12_000);
     let input_bits = 256 * policy.decomposition.field_bits() as usize;
@@ -323,7 +319,7 @@ fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
 #[test]
 fn exact_proof_tie_selects_the_smaller_setup_envelope() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     let larger_setup = complete_candidate(100, 65, 1_000);
     let smaller_setup = complete_candidate(100, 64, 1_000);
 
@@ -341,7 +337,7 @@ fn exact_proof_tie_selects_the_smaller_setup_envelope() {
 #[test]
 fn exact_numeric_tie_selects_the_smaller_root_output_witness() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     let larger_output = complete_candidate(100, 64, 1_001);
     let smaller_output = complete_candidate(100, 64, 1_000);
 

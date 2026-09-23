@@ -264,20 +264,26 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
+    let natural_setup_field_len = akita_types::active_setup_field_len(params, &opening_layout)?;
+    let scan_work = crate::schedule_params::direct_setup_scan_work_elements(
+        natural_setup_field_len,
+        relation_geometry.relation_coefficient_block_len(),
+    )?;
+    let work = output_witness_len
+        .checked_add(scan_work)
+        .ok_or_else(|| AkitaError::InvalidSetup("unpruned fold work overflow".into()))?;
     let cost = child.cost.checked_prepend(
         direct_bytes,
         edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
-        output_witness_len,
+        work,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);
     }
     Ok(Some(ScheduleCandidate {
-        first_direct_setup_field_len: std::num::NonZeroUsize::new(
-            akita_types::active_setup_field_len(params, &opening_layout)?,
-        ),
+        first_direct_setup_field_len: std::num::NonZeroUsize::new(natural_setup_field_len),
         first_direct_output_witness_len: output_witness_len,
         cost,
         setup_field_elements: reference_setup_field_elements(params)?
@@ -333,12 +339,19 @@ pub(super) fn prepend_root(
         policy.claim_ext_degree,
         0,
     )?;
+    let scan_work = crate::schedule_params::direct_setup_scan_work_elements(
+        first_direct_setup_field_len.get(),
+        relation_geometry.relation_coefficient_block_len(),
+    )?;
+    let work = output_witness_len
+        .checked_add(scan_work)
+        .ok_or_else(|| AkitaError::InvalidSetup("unpruned root work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         root_bytes,
         root_grinding_cost.native_nonce_max_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
-        output_witness_len,
+        work,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);

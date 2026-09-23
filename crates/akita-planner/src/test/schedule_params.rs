@@ -24,7 +24,7 @@ fn native_proof_cost_is_additive() {
 }
 
 #[test]
-fn fold_work_tradeoff_preserves_order_under_a_common_parent() {
+fn proof_and_work_tradeoff_preserves_order_under_a_common_parent() {
     let cheaper_proof = NativeProofCost::new(100, 0, 0, 34_000_000).unwrap();
     let less_work = NativeProofCost::new(101, 0, 0, 0).unwrap();
     assert!(less_work.strictly_better(cheaper_proof));
@@ -36,6 +36,14 @@ fn fold_work_tradeoff_preserves_order_under_a_common_parent() {
         less_work_with_parent.exact_score() - less_work.exact_score(),
         cheaper_proof_with_parent.exact_score() - cheaper_proof.exact_score(),
     );
+}
+
+#[test]
+fn direct_setup_scan_work_prices_fields_and_ring_count() {
+    assert_eq!(direct_setup_scan_work_elements(4096, 64).unwrap(), 12_288);
+    assert_eq!(direct_setup_scan_work_elements(4096, 128).unwrap(), 10_240);
+    assert!(direct_setup_scan_work_elements(4096, 0).is_err());
+    assert!(direct_setup_scan_work_elements(usize::MAX, 64).is_err());
 }
 
 #[test]
@@ -156,7 +164,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_types::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,

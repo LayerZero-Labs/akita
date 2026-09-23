@@ -364,8 +364,8 @@ fn catalog_row_metrics(
         .num_field_elements;
     let first_direct_setup_capacity = (matches!(
         spec.policy.selection_policy,
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
-            | akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ))
     .then(|| {
         akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(

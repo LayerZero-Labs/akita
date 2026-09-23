@@ -47,18 +47,18 @@ impl CompleteObjectiveBound {
         setup_field_elements: usize,
     ) -> Self {
         match policy.selection_policy {
-            SelectionPolicyId::MinEstimatedExactProofAndWorkV4 => Self::Direct {
+            SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => Self::Direct {
                 exact_score,
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4 => Self::SetupFirst {
+            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => Self::SetupFirst {
                 first_direct_setup_capacity,
                 exact_score,
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5 => {
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 Self::PaddedSetupEnvelopeFirst {
                     setup_envelope_capacity: akita_types::padded_setup_prefix_len(
                         setup_field_elements,
@@ -253,8 +253,8 @@ pub(crate) fn complete_schedule_score(
     let metrics = candidate.metrics();
     if matches!(
         policy.selection_policy,
-        SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
-            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
+        SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(
@@ -264,7 +264,7 @@ pub(crate) fn complete_schedule_score(
     Ok(CompleteScheduleScore {
         objective: CompleteObjectiveBound::for_candidate(policy, metrics),
         legacy_root_output_witness_len: (policy.selection_policy
-            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5)
+            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
             .then_some(root_output_witness_len),
         descriptor,
     })

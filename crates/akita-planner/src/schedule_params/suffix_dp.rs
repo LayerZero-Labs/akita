@@ -359,8 +359,8 @@ impl GuideScope {
         } else if incoming_setup_prefix.is_some()
             && matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
+                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
             )
         {
             Some(Self::RecursivePrefix)
@@ -506,12 +506,26 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
+    let direct_scan_elements = if edge.offloaded {
+        0
+    } else {
+        super::direct_setup_scan_work_elements(
+            edge.natural_setup_field_len,
+            edge_price
+                .relation_geometry
+                .relation_coefficient_block_len(),
+        )?
+    };
+    let work_elements = edge
+        .next_witness_len
+        .checked_add(direct_scan_elements)
+        .ok_or_else(|| AkitaError::InvalidSetup("edge work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         edge_payload_bytes,
         edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
-        edge.next_witness_len,
+        work_elements,
     )?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
@@ -565,17 +579,17 @@ fn complete_root_bound_is_strictly_worse(
     frontier: &ProjectedFrontier,
 ) -> bool {
     match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV4 => frontier
+        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => frontier
             .by_parent_cost
             .values()
             .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4 => frontier
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => frontier
             .by_parent_cost
             .values()
             .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5 => {
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
             frontier
                 .by_parent_cost
                 .values()
@@ -635,8 +649,8 @@ fn candidate_traversal(
         .map(|candidate| {
             let natural_len = (matches!(
                 policy.selection_policy,
-                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV4
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
+                crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
             ))
             .then(|| active_setup_field_len(&candidate.params, opening_layout))
             .transpose()?;

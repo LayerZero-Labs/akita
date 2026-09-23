@@ -1259,14 +1259,18 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV4`:
-first-direct padded setup capacity, exact additive proof-and-fold-work score,
-native proof bytes, exact total setup field
-elements, root output-witness length, and the canonical descriptor. Recursive
-catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5`, which first compares
+Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
+first-direct padded setup capacity, exact additive proof-and-work score,
+native proof bytes, exact total setup field elements, root output-witness
+length, and the canonical descriptor.
+
+The additive work term includes each fold's outgoing witness and, for a direct
+edge, twice the natural setup-scan length plus 64 units per common-base ring.
+Offloaded edges have no direct-scan charge. Recursive catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
 the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, the proof-and-fold-work score, native proof bytes, and first-direct
+before comparing first-direct capacity, the proof-and-work score, native proof bytes, and first-direct
 output-witness length. A numeric tie then goes
 directly to the canonical descriptor. No direct objective component for `s`,
 `d_A`, rank, fold count, or measured wall-clock time is added.
@@ -1506,9 +1510,9 @@ The planner MUST keep the search bounded in the following ways.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
 - [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
-      proof-and-fold-work score, proof bytes, exact total setup, root output-witness length, and the canonical
+      proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
       descriptor. Recursive catalogs minimize padded total setup-envelope
-      capacity, first-direct setup capacity, the exact proof-and-fold-work score,
+      capacity, first-direct setup capacity, the exact proof-and-work score,
       proof bytes, first-direct
       output-witness length, and then the canonical descriptor. The objective has no
       explicit `s`, `d_A`, or fold-count component.

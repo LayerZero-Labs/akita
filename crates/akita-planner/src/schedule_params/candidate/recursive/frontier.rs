@@ -98,7 +98,7 @@ pub(super) fn derive_fold_candidate_frontier(
     if !request.opening.is_coefficient_packing() {
         let l2_seeds = if matches!(
             request.policy.selection_policy,
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV5
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         ) {
             &all_modeled
         } else {
