@@ -173,13 +173,14 @@ where
     Ok(opening)
 }
 
-fn materialize_schedule_setup_prefix_slots<FF>(
-    setup: &mut AkitaProverSetup<FF>,
-    backend: &CpuBackend,
+fn materialize_schedule_setup_prefix_slots<C>(
+    setup: &mut AkitaProverSetup<C::Field>,
+    backend: &CpuBackend<C>,
     schedule: &akita_types::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    FF: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
+    C: CommitmentConfig,
+    C::Field: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
     let mut ids = Vec::new();
     for setup_prefix in schedule
@@ -195,7 +196,7 @@ where
         }
         ids.push(slot_id);
     }
-    for (_, slot) in backend.export_setup_prefixes::<FF>(&ids)?.iter() {
+    for (_, slot) in backend.export_setup_prefixes::<C::Field>(&ids)?.iter() {
         setup.prefix_slots.insert(slot.clone())?;
     }
     Ok(())
