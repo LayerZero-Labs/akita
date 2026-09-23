@@ -1,10 +1,10 @@
 //! Consumer-owned D-role rows for ring-relation witness construction.
 
+use crate::opaque::DigitRowsComputeBackend;
 use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{
     OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel, RingSwitchRelationPlan,
 };
-use crate::opaque::DigitRowsComputeBackend;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{DigitBlocks, RingRelationMode};
@@ -119,8 +119,9 @@ mod tests {
         let prepared = CpuBackend::for_arithmetic_tests()
             .prepare_expanded(setup.expanded.clone())
             .unwrap();
-        let arithmetic_backend=CpuBackend::for_arithmetic_tests();
-        let ctx=OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
+        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let ctx =
+            OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let e_hat = DigitBlocks::new(vec![-1; 2 * D], vec![2], D).unwrap();
 
         let rows = compute_relation_d_rows::<F, CpuBackend, D>(

@@ -315,12 +315,12 @@ pub(super) fn prove_input<'a, Cfg>(
     point: &'a [Cfg::ExtField],
     evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 >
 where
@@ -337,12 +337,12 @@ where
 #[allow(clippy::type_complexity)]
 pub(super) fn selected_prover_data<'a, Cfg>(
     claims: OpeningClaims<'a, Cfg::ExtField, CommittedGroup<Cfg::Field>>,
-    hints: Vec<CommitmentHandle<Cfg::Field, Cfg::ExtField>>,
+    hints: Vec<CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 >
 where
@@ -607,7 +607,7 @@ fn verifier_setup_with_alternate_full_prefix(
         prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
     };
     let scheme = load_workspace_scheme::<DenseCfg>().expect("dense catalog");
-    let backend = CpuBackend::new::<DenseCfg>(altered_setup.expanded.clone(), scheme.schedules())
+    let backend = CpuBackend::<DenseCfg>::new(altered_setup.expanded.clone(), scheme.schedules())
         .expect("altered setup backend");
     let artifacts = backend
         .export_setup_prefixes::<F>(std::slice::from_ref(slot_id))

@@ -119,8 +119,12 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
     })
 }
 
-pub(crate) fn relation_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
-    backend: &CpuBackend,
+pub(crate) fn relation_b_a_rows<
+    F: Field + CanonicalEncoding,
+    Cfg: akita_config::CommitmentConfig,
+    const D: usize,
+>(
+    backend: &CpuBackend<Cfg>,
     prepared: &CpuPreparedSetup<F>,
     t_hat: &[[i8; D]],
     z: &[[i32; D]],
@@ -152,8 +156,10 @@ pub(crate) fn relation_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
     )
 }
 
-impl<F, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D>
+    for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn relation_rows(

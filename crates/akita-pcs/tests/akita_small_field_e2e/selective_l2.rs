@@ -110,16 +110,14 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         let opening = onehot_opening_lagrange(&poly, &point);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("L2 prover setup");
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(vec![poly.clone()])
-                    .expect("source"),
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("L2 commitment");
@@ -269,7 +267,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .setup_prover(NUM_VARS, 1)
             .expect("terminal L2 prover setup");
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme
             .setup_verifier(&setup)
             .expect("terminal L2 verifier setup");
@@ -277,10 +275,8 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(vec![poly.clone()])
-                    .expect("source"),
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("terminal L2 commitment");

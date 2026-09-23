@@ -85,7 +85,7 @@ fn prove_eor<T: ProverTranscriptGrinding<F>>(
     groups: &[EorGroupRequest<
         '_,
         E,
-        super::CommitmentHandle<F, E>,
+        super::CommitmentHandle<F, E, OneHot>,
         crate::opaque::CpuWitnessHandle,
     >],
     transcript: &mut T,
@@ -603,7 +603,7 @@ fn eor_rejects_substituted_witness_and_disagreeing_point() {
     for substitute_witness in [true, false] {
         let opening = <CpuBackend as CpuWitnessOpeningKernel<F, E>>::prepare_witness_opening(
             &backend,
-            Some(backend.prepared::<F>().unwrap()),
+            Some(backend.prepared().unwrap()),
             &first,
             &crate::opaque::ValidatedWitnessOpeningPlan::new(&point, 64, 64),
         )
@@ -624,7 +624,7 @@ fn eor_rejects_substituted_witness_and_disagreeing_point() {
         );
         let result = <CpuBackend as CpuWitnessOpeningKernel<F, E>>::begin_witness_eor(
             &backend,
-            Some(backend.prepared::<F>().unwrap()),
+            Some(backend.prepared().unwrap()),
             if substitute_witness { &second } else { &first },
             opening,
             &plan,
@@ -646,8 +646,7 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
         point: &point,
         ring_dimension: 64,
     }];
-    let other =
-        CpuBackend::for_test_setup(backend.prepared::<F>().unwrap().expanded.clone()).unwrap();
+    let other = CpuBackend::for_test_setup(backend.prepared().unwrap().expanded.clone()).unwrap();
     assert!(
         <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(&other, &context, &layout, &groups)
             .is_err()
@@ -733,17 +732,21 @@ fn nonterminal_opening_cannot_publish_terminal_rows() {
         RingMultiplierOpeningPoint::from_base(&outer),
         akita_algebra::CyclotomicRing::<F, 64>::one(),
     );
-    let prepared = crate::opaque::PreparedGroupOpeningKernel::retain_evaluation_trace_opening(
-        &backend,
-        Some(&context),
-        None,
+    let prepared = crate::opaque::prepared_opening::evaluation_trace(
+        backend.binding(&context).unwrap(),
+        crate::opaque::openings::PreparedOpeningSource::Retained(
+            crate::opaque::openings::RetainedOpeningSource::Witness(Box::new(witness(
+                &backend,
+                &context,
+                vec![1],
+            ))),
+        ),
         point,
         vec![RingVec::from_ring_elems(&[
             akita_algebra::CyclotomicRing::<F, 64>::one(),
         ])],
         vec![E::one()],
-    )
-    .unwrap();
+    );
     let error = <CpuBackend as OpaqueWitnessOpeningKernel<F, E>>::terminal_native_witness_opening(
         &backend,
         prepared.into_parts().1,
@@ -794,7 +797,7 @@ fn erased_witness_rejects_another_extension_field() {
     )
     .unwrap();
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>().unwrap();
-    let backend = CpuBackend::new::<OneHot>(setup.expanded.clone(), &catalog).unwrap();
+    let backend = CpuBackend::<OneHot>::new(setup.expanded.clone(), &catalog).unwrap();
     backend.validate_extension::<F>().unwrap();
     let scope = backend.owner().begin_test_scope(vec![1, 1]).unwrap();
     let context = ProofContext::new(backend.owner_id(), backend.owner().setup_digest(), scope, 0);

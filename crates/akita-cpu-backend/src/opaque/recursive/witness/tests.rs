@@ -1,7 +1,11 @@
 use super::*;
 use crate::opaque::consumer_kernels::RelationWitnessSession;
 use crate::opaque::eor::ExtensionOpeningSession;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use crate::opaque::{CpuBackend, RootOpeningSource, RootPolyShape};
+use crate::sources::packed_digits::PackedSignedDigits;
+use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
+use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
 #[test]
 fn suffix_batch_fold_rejects_mixed_extents_and_count_mismatch() {
@@ -139,14 +143,8 @@ fn two_round_relation_session() -> ConsumerStage2Session<F> {
         1,
     )
     .unwrap();
-    ConsumerStage2Session {
-        binding: crate::opaque::OperationBinding::legacy_unscoped(),
-        lease: None,
-        claim: akita_sumcheck::SumcheckInstanceProver::input_claim(&prover),
-        prover,
-        next_round: 0,
-        pending: None,
-    }
+    let claim = akita_sumcheck::SumcheckInstanceProver::input_claim(&prover);
+    ConsumerStage2Session::for_test(prover, claim)
 }
 
 #[test]

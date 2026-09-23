@@ -1,3 +1,26 @@
+use super::assembly::GroupFoldedOpening;
+use super::compression_witness::{CompressionSourceId, CompressionWitnessMaterialization};
+use super::relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
+use crate::kernels::linear::decompose_commit_blocks_into;
+use crate::opaque::RecursiveWitnessFlat;
+use crate::opaque::{OperationCtx, RuntimeRingSwitchProveBackend};
+use crate::protocol::validate_chunked_witness_cfg;
+use crate::sources::packed_digits::PackedSignedDigitWriter;
+#[cfg(feature = "response-model-diagnostics")]
+use crate::sources::packed_digits::PackedSignedDigits;
+use crate::validation::validate_i8_setup_log_basis;
+use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
+use akita_types::{
+    dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, r_decomp_levels,
+    CommitmentRingDims, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
+    PackedNegativeBinary, RingRelationInstance, RingRole, RingVec, WitnessLayout,
+    WitnessUnitLayout,
+};
+use jolt_field::{CanonicalEncoding, Field, Ring};
+
 /// Consumer-owned per-group inputs retained for recursive witness construction.
 pub(crate) struct RingRelationGroupWitness<F: Field + CanonicalEncoding> {
     fold: crate::opaque::CpuAcceptedFold<F>,
@@ -102,7 +125,7 @@ impl<F: Field + CanonicalEncoding> RingRelationWitness<F> {
     }
 }
 
-pub(super) struct CpuRecursiveWitnessBuilder(PackedSignedDigitWriter);
+pub(crate) struct CpuRecursiveWitnessBuilder(PackedSignedDigitWriter);
 
 impl CpuRecursiveWitnessBuilder {
     fn new(len: usize, width: u8) -> Result<Self, AkitaError> {
@@ -128,7 +151,7 @@ impl core::ops::DerefMut for CpuRecursiveWitnessBuilder {
     }
 }
 
-pub(super) struct CpuRecursiveWitnessUnitPlan<'a> {
+pub(crate) struct CpuRecursiveWitnessUnitPlan<'a> {
     unit: &'a WitnessUnitLayout,
     num_positions_per_block: usize,
     num_digits_inner: usize,
@@ -166,25 +189,25 @@ impl<'a> CpuRecursiveWitnessUnitPlan<'a> {
         })
     }
 
-    pub(super) fn chunk_index(&self) -> usize {
+    pub(in crate::opaque) fn chunk_index(&self) -> usize {
         self.unit.chunk_index()
     }
-    pub(super) fn range(&self) -> core::ops::Range<usize> {
+    pub(in crate::opaque) fn range(&self) -> core::ops::Range<usize> {
         self.unit.z_range()
     }
-    pub(super) fn num_positions_per_block(&self) -> usize {
+    pub(in crate::opaque) fn num_positions_per_block(&self) -> usize {
         self.num_positions_per_block
     }
-    pub(super) fn num_digits_inner(&self) -> usize {
+    pub(in crate::opaque) fn num_digits_inner(&self) -> usize {
         self.num_digits_inner
     }
-    pub(super) fn num_digits_fold(&self) -> usize {
+    pub(in crate::opaque) fn num_digits_fold(&self) -> usize {
         self.num_digits_fold
     }
-    pub(super) fn log_basis_open(&self) -> u32 {
+    pub(in crate::opaque) fn log_basis_open(&self) -> u32 {
         self.log_basis_open
     }
-    pub(super) fn expected_chunks(&self) -> usize {
+    pub(in crate::opaque) fn expected_chunks(&self) -> usize {
         self.expected_chunks
     }
 }
@@ -474,10 +497,7 @@ where
     F: Field + CanonicalEncoding + Ring + AkitaSerialize,
     O: RuntimeRingSwitchProveBackend<F>
         + crate::opaque::RuntimeFoldRelationBackend<F>
-        + crate::opaque::FoldHandleBackend<
-            F,
-            AcceptedFold = crate::opaque::CpuAcceptedFold<F>,
-        >,
+        + crate::opaque::FoldHandleBackend<F, AcceptedFold = crate::opaque::CpuAcceptedFold<F>>,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();

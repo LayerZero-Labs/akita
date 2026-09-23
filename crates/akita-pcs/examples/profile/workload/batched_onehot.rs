@@ -73,14 +73,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let setup = scheme.setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend = CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
         if let Some(schedule) = plan {
             backend
-                .prewarm::<FF>(schedule)
+                .prewarm(schedule)
                 .expect("prewarm profile execution");
         }
         let prepared_ntt_metrics = backend
-            .shared_ntt_cache_metrics::<FF>()
+            .shared_ntt_cache_metrics()
             .expect("prepared setup NTT cache metrics");
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
@@ -95,16 +95,16 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_crt_profile(
             label,
             backend
-                .shared_ntt_profile::<FF>(layout.d_a())
+                .shared_ntt_profile(layout.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let t0 = Instant::now();
-        let source = backend.import_source::<Cfg, _>(polys).unwrap();
+        let source = backend.import_source(polys).unwrap();
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = backend
-            .commit::<Cfg>(
+            .commit(
                 &source,
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -147,7 +147,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = backend
-            .shared_ntt_cache_metrics::<FF>()
+            .shared_ntt_cache_metrics()
             .expect("post-execution setup NTT cache metrics");
         assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
         (commitments, proof, setup)

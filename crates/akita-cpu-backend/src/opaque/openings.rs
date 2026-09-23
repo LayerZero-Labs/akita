@@ -8,12 +8,26 @@ use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 use std::sync::Arc;
 
-pub(super) enum RetainedOpeningSource<F: Field + CanonicalEncoding, E: Field> {
-    Commitment(Arc<CommittedSource<F, E>>),
+pub(super) enum RetainedOpeningSource<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+> {
+    Commitment(Arc<CommittedSource<F, E, Cfg>>),
     Witness(Box<CpuWitnessHandle>),
 }
-impl<F, E> OpaqueOpeningKernel<F, E> for CpuBackend
+
+pub(super) enum PreparedOpeningSource<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+> {
+    Retained(RetainedOpeningSource<F, E, Cfg>),
+    TerminalNative,
+}
+impl<F, E, Cfg> OpaqueOpeningKernel<F, E> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
@@ -50,7 +64,7 @@ where
             ));
         }
         let binding = self.binding(context)?;
-        let (opening, source) = match source {
+        let opening = match source {
             OpeningSource::Commitment(handle) => {
                 if handle.owner != self.owner().backend_id() {
                     return Err(AkitaError::InvalidInput(
@@ -70,10 +84,14 @@ where
                         "commitment and opening geometry disagree".into(),
                     ));
                 }
-                (
-                    handle.committed.source.opening(self, context, plan)?,
-                    RetainedOpeningSource::Commitment(handle.committed.clone()),
-                )
+                handle.committed.source.opening(
+                    self,
+                    context,
+                    plan,
+                    PreparedOpeningSource::Retained(RetainedOpeningSource::Commitment(
+                        handle.committed.clone(),
+                    )),
+                )?
             }
             OpeningSource::Witness(witness) => {
                 self.validate_binding(&witness.operation_binding())?;
@@ -92,36 +110,38 @@ where
                     context.group_index().ok_or(AkitaError::InvalidProof)?,
                     parameters.groups().len(),
                 )?;
-                let opening = dispatch_for_field!(
+                dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
                     F,
                     plan.ring_dimension(),
                     |D| {
-                        crate::opaque::prepare_recursive_witness_opening::<F, E, Self, D>(
+                        crate::opaque::prepare_recursive_witness_opening::<F, E, Cfg, D>(
                             self,
-                            Some(self.prepared::<F>()?),
+                            Some(self.prepared()?),
+                            binding,
+                            PreparedOpeningSource::Retained(RetainedOpeningSource::Witness(
+                                Box::new(witness.snapshot()),
+                            )),
                             witness,
                             plan,
                         )
                     }
-                )?;
-                (
-                    opening,
-                    RetainedOpeningSource::Witness(Box::new(witness.snapshot())),
-                )
+                )?
             }
         };
-        let (messages, mut opening) = opening.into_parts();
-        opening.set_operation_binding(binding);
+        let (messages, opening) = opening.into_parts();
         #[cfg(feature = "response-model-diagnostics")]
-        if crate::opaque::fold::response_model_diagnostics_enabled() {
-            let source_l2_sq = match &source {
-                RetainedOpeningSource::Commitment(source) => source.source.source_l2_sq(),
-                RetainedOpeningSource::Witness(witness) => witness.source_l2_sq::<F>(),
-            };
-            opening.set_source_l2_sq(source_l2_sq);
-        }
-        opening.retain_source(source);
+        let opening = {
+            let mut opening = opening;
+            if crate::opaque::fold::response_model_diagnostics_enabled() {
+                let source_l2_sq = match opening.source()? {
+                    RetainedOpeningSource::Commitment(source) => source.source.source_l2_sq(),
+                    RetainedOpeningSource::Witness(witness) => witness.source_l2_sq::<F>(),
+                };
+                opening.set_source_l2_sq(source_l2_sq);
+            }
+            opening
+        };
         Ok(PreparedGroupOpening::new(messages, opening))
     }
     fn probe_opening_fold(
@@ -172,14 +192,14 @@ where
                 usize::MAX,
             )?;
         }
-        let outcome = match opening.source::<RetainedOpeningSource<F, E>>()? {
+        let outcome = match opening.source()? {
             RetainedOpeningSource::Commitment(source) => source.source.probe(self, plan)?,
             RetainedOpeningSource::Witness(witness) => dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 F,
                 plan.ring_dimension(),
                 |D| {
-                    crate::opaque::consumer_kernels::RecursiveWitnessFoldKernel::<_,F,D>::probe_recursive_witness(self, Some(self.prepared::<F>()?), witness, plan)
+                    crate::opaque::consumer_kernels::RecursiveWitnessFoldKernel::<_,F,D>::probe_recursive_witness(self, Some(self.prepared()?), witness, plan)
                 }
             )?,
         };

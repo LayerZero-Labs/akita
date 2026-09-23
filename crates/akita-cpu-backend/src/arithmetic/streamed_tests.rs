@@ -46,16 +46,16 @@ fn cpu_resource_limits_have_checked_defaults_and_boundaries() {
     let default = CpuBackend::for_arithmetic_tests();
     assert_eq!(
         default.max_cached_ring_switch_elements(),
-        CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
     );
     assert_eq!(
         default.commit_scratch_bytes_per_worker(),
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER
     );
 
     let stream_all = CpuBackend::with_test_resource_limits(
         0,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     assert!(!stream_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, 1));
@@ -63,7 +63,7 @@ fn cpu_resource_limits_have_checked_defaults_and_boundaries() {
 
     let retain_all = CpuBackend::with_test_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     assert!(retain_all.ntt_operation_uses_cache(NttOperationCluster::RingSwitch, usize::MAX));
@@ -75,12 +75,12 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     let cached_backend = CpuBackend::with_test_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let streamed_backend = CpuBackend::with_test_resource_limits(
         0,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
@@ -123,12 +123,12 @@ fn configured_ring_switch_routes_reject_malformed_active_roles() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     let cached_backend = CpuBackend::with_test_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let streamed_backend = CpuBackend::with_test_resource_limits(
         0,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
@@ -218,12 +218,12 @@ fn cached_and_streamed_routes_share_acceptance_across_crt_bounds() {
     .unwrap();
     let streamed_backend = CpuBackend::with_test_resource_limits(
         0,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let cached_backend = CpuBackend::with_test_resource_limits(
         usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
     let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();

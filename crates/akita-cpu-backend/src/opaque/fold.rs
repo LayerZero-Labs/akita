@@ -260,7 +260,7 @@ impl<F: Field> CpuAcceptedFold<F> {
 
     pub(crate) fn a_relation_quotients<const D: usize>(
         &self,
-        backend: &crate::opaque::CpuBackend,
+        backend: &crate::opaque::CpuBackend<impl akita_config::CommitmentConfig>,
         prepared: &crate::opaque::CpuPreparedSetup<F>,
         n_a: usize,
         log_basis_open: u32,
@@ -347,8 +347,10 @@ where
     }
 }
 
-impl<F, const D: usize> FoldRelationKernel<CpuAcceptedFold<F>, F, D> for crate::opaque::CpuBackend
+impl<F, Cfg, const D: usize> FoldRelationKernel<CpuAcceptedFold<F>, F, D>
+    for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring,
 {
     fn a_relation_from_fold(
@@ -794,10 +796,12 @@ where
     })
 }
 
-impl<S, F, const D: usize> TerminalFoldResponseKernel<S, F, D> for crate::opaque::CpuBackend
+impl<S, F, Cfg, const D: usize> TerminalFoldResponseKernel<S, F, D>
+    for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
-    crate::opaque::CpuBackend: OpeningBatchKernel<S, F, D>,
+    crate::opaque::CpuBackend<Cfg>: OpeningBatchKernel<S, F, D>,
 {
     fn probe_terminal(
         &self,
@@ -818,10 +822,11 @@ where
     }
 }
 
-impl<S, F, const D: usize> FoldResponseKernel<S, F, D> for crate::opaque::CpuBackend
+impl<S, F, Cfg, const D: usize> FoldResponseKernel<S, F, D> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring + 'static,
-    crate::opaque::CpuBackend: OpeningBatchKernel<S, F, D>,
+    crate::opaque::CpuBackend<Cfg>: OpeningBatchKernel<S, F, D>,
 {
     fn probe(
         &self,
@@ -833,8 +838,9 @@ where
     }
 }
 
-impl<F> FoldHandleBackend<F> for crate::opaque::CpuBackend
+impl<F, Cfg> FoldHandleBackend<F> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     type AcceptedFold = CpuAcceptedFold<F>;

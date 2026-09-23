@@ -71,10 +71,9 @@ pub use operation_plans::{
 };
 pub(crate) use operation_plans::{RingSwitchRelationPlan, ValidatedFoldRelationPlan};
 pub use owned::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
-pub(crate) use prepared_opening::PreparedGroupOpeningKernel;
 pub(crate) use recursive::OpaqueRecursiveWitness;
 pub(crate) use recursive::{build_w_evals_compact, PreparedProverLinearTerms};
-pub(crate) use recursive::{
+pub(in crate::opaque) use recursive::{
     cpu_extension_opening_session_from_witnesses, prepare_recursive_witness_opening,
 };
 #[cfg(test)]
@@ -87,15 +86,16 @@ pub(crate) use recursive::{
     CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,
 };
 pub(crate) use relation_weights::RelationWeightDescription;
-impl<F, E> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
-    type CommitmentHandle = CommitmentHandle<F, E>;
-    type EorPreparationHandle = eor::CpuEorPreparation<F, E>;
+    type CommitmentHandle = CommitmentHandle<F, E, Cfg>;
+    type EorPreparationHandle = eor::CpuEorPreparation<F, E, Cfg>;
     type EorSessionHandle = eor::CpuEorSession<E>;
-    type PreparedOpeningHandle = crate::opaque::CpuPreparedOpeningHandle<F, E>;
+    type PreparedOpeningHandle = crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>;
     type CommitmentMaterialHandle = CpuCommitmentMaterialHandle<F>;
     type AcceptedFoldHandle = CpuAcceptedFoldHandle<F>;
     type AcceptedTerminalFoldHandle = CpuAcceptedTerminalFoldHandle<F>;
@@ -105,14 +105,16 @@ where
     type Stage1SessionHandle = crate::opaque::CpuStage1SessionHandle<E>;
     type Stage2SessionHandle = crate::opaque::CpuStage2SessionHandle<E>;
 }
-impl<F, E> crate::opaque::OpaqueProverConsumer<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueProverConsumer<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
 }
-impl<F, E> crate::opaque::OpaqueResourceReleaseKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueResourceReleaseKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -144,8 +146,10 @@ where
     }
 }
 
-impl<F, E> crate::opaque::OpaqueRecursiveWitnessBuildKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueRecursiveWitnessBuildKernel<F, E>
+    for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -215,7 +219,7 @@ where
                     .get(group_index)
                     .ok_or(AkitaError::InvalidProof)?,
             )?;
-            let committed_id = match opening.source::<openings::RetainedOpeningSource<F, E>>()? {
+            let committed_id = match opening.source()? {
                 openings::RetainedOpeningSource::Commitment(committed) => committed.commitment_id,
                 openings::RetainedOpeningSource::Witness(witness) => {
                     witness.operation_binding().operation_id()
@@ -240,7 +244,7 @@ where
             .collect();
         crate::opaque::witness_build::begin_cpu_recursive_witness(
             self,
-            self.prepared::<F>()?,
+            self.prepared()?,
             binding,
             opening_bindings,
             prepared_opening_handles,
@@ -280,7 +284,7 @@ where
         }
         let output = crate::opaque::witness_build::finish_cpu_recursive_witness(
             self,
-            self.prepared::<F>()?,
+            self.prepared()?,
             build_handle,
             fold_inputs,
             public_inputs,
@@ -311,8 +315,9 @@ where
     }
 }
 
-impl<F, E> crate::opaque::OpaqueRelationWitnessKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueRelationWitnessKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -344,7 +349,7 @@ where
         self.validate_binding(&parent)?;
         let prepared = crate::opaque::consumer_kernels::RecursiveRelationWitnessKernel::prepare_relation_witness(
             self,
-            Some(self.prepared::<F>()?),
+            Some(self.prepared()?),
             witness_handle,
             plan,
         )?;
@@ -363,8 +368,9 @@ where
     }
 }
 
-impl<F, E> crate::opaque::OpaqueStage1Kernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueStage1Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -425,7 +431,7 @@ where
                 crate::opaque::CpuRelationHandle,
                 F,
                 E,
-            >::begin_stage1(self, Some(self.prepared::<F>()?), relation_handle, plan)?;
+            >::begin_stage1(self, Some(self.prepared()?), relation_handle, plan)?;
         let binding = self.next_binding(parent)?;
         let lease = self.binding_lease(&binding)?;
         Ok(crate::opaque::CpuStage1SessionHandle {
@@ -537,8 +543,9 @@ where
     }
 }
 
-impl<F, E> crate::opaque::OpaqueStage2Kernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueStage2Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -596,7 +603,7 @@ where
         }
         let mut session_handle = crate::opaque::consumer_kernels::RecursiveWitnessRelationKernel::begin_relation_session(
             self,
-            Some(self.prepared::<F>()?),
+            Some(self.prepared()?),
             relation_handle,
             plan,
         )?;
@@ -674,8 +681,9 @@ where
     }
 }
 
-impl<F, E> crate::opaque::OpaqueWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -718,22 +726,23 @@ where
                 "native terminal opening differs from the admitted terminal fold".into(),
             ));
         }
+        let binding = self.next_binding(parent)?;
         let opening = akita_types::dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
-                crate::opaque::prepare_recursive_witness_opening::<F, E, crate::opaque::CpuBackend, D>(
+                crate::opaque::prepare_recursive_witness_opening::<F, E, Cfg, D>(
                     self,
-                    Some(self.prepared::<F>()?),
+                    Some(self.prepared()?),
+                    binding,
+                    openings::PreparedOpeningSource::TerminalNative,
                     witness_handle,
                     plan,
                 )
             }
         )?;
-        let (scalar_openings, mut opening_handle) = opening.into_parts();
-        opening_handle.set_operation_binding(self.next_binding(parent)?);
-        opening_handle.mark_terminal_native();
+        let (scalar_openings, opening_handle) = opening.into_parts();
         Ok(crate::opaque::PreparedGroupOpening::new(
             scalar_openings,
             opening_handle,
@@ -757,16 +766,13 @@ where
                 "terminal opening belongs to a nonterminal fold".into(),
             ));
         }
-        crate::opaque::PreparedGroupOpeningKernel::terminal_evaluation_trace_opening(
-            self,
-            Some(self.prepared::<F>()?),
-            opening_handle,
-        )
+        opening_handle.into_terminal_evaluation_rows()
     }
 }
 
-impl<F, E> crate::opaque::OpaqueTerminalFoldKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueTerminalFoldKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -834,7 +840,7 @@ where
                     D,
                 >::probe_terminal_recursive_witness(
                     self,
-                    Some(self.prepared::<F>()?),
+                    Some(self.prepared()?),
                     witness_handle,
                     plan,
                 )?;
@@ -878,7 +884,7 @@ where
             |D| {
                 crate::opaque::consumer_kernels::RecursiveWitnessTerminalFoldKernel::<_, F, D>::encode_terminal_recursive_witness(
                     self,
-                    Some(self.prepared::<F>()?),
+                    Some(self.prepared()?),
                     &terminal_fold_handle,
                     plan,
                 )
@@ -892,7 +898,7 @@ pub(crate) use witness_build::CpuCommitmentMaterialHandle;
 pub(crate) use witness_build::{
     balanced_decompose_centered_i32_i8_into, CpuCommitmentMaterial,
     CpuRecursiveWitnessAssemblyState, OpaqueCompressionState, OpaqueInnerRelationState,
-    PreparedOpeningWitness, PreparedRingSwitchGroup, PublicPreparedRelationOpening,
+    PreparedOpeningWitness, PublicPreparedRelationOpening,
 };
 #[cfg(test)]
 pub(crate) use witness_build::{cpu_recursive_witness_build, RingRelationWitness};

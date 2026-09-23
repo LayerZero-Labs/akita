@@ -13,16 +13,14 @@ fn batched_commit_matches_individual_commits() {
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, &evals_b).unwrap();
     let setup = scheme.setup_prover(num_vars, 2).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
     let (batched_commitments, _batched_handles): (Vec<_>, Vec<_>) = poly_groups
         .iter()
         .map(|group| {
-            stack.commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(group.to_vec())
-                    .expect("source"),
+            stack.commit(
+                &stack.import_source(group.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
         })
@@ -35,10 +33,8 @@ fn batched_commit_matches_individual_commits() {
         committed_group: commitment_a,
         private_handle: _hint_a,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly_a.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly_a.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -46,10 +42,8 @@ fn batched_commit_matches_individual_commits() {
         committed_group: commitment_b,
         private_handle: _hint_b,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly_b.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly_b.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -69,13 +63,13 @@ fn commit_rejects_mixed_group_arity() {
     let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, &smaller_evals).unwrap();
     let setup = scheme.setup_prover(num_vars, 2).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
 
     // An empty precommitted group prefix is unrepresentable, so no grouped context
     // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
     // `precommitted_group_profiles_reject_an_empty_prefix`.
     let error = stack
-        .import_source::<Cfg, _>(vec![poly, smaller])
+        .import_source(vec![poly, smaller])
         .expect_err("one imported group must be homogeneous");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
 }

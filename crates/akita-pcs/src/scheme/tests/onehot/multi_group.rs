@@ -66,11 +66,11 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let stack = CpuBackend::with_resource_limits::<ProtocolCfg>(
+    let stack = CpuBackend::<ProtocolCfg>::with_resource_limits(
         setup.expanded.clone(),
         scheme.schedules(),
         max_cached_ring_switch_elements,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<ProtocolCfg>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .expect("cached backend");
 
@@ -95,10 +95,8 @@ where
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<ProtocolCfg>(
-                &stack
-                    .import_source::<ProtocolCfg, _>(polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
@@ -170,10 +168,8 @@ where
         committed_group: final_commitment,
         private_handle: final_hint,
     } = stack
-        .commit::<ProtocolCfg>(
-            &stack
-                .import_source::<ProtocolCfg, _>(final_polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");

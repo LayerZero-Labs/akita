@@ -16,15 +16,13 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
     let stack =
-        CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
@@ -68,7 +66,7 @@ fn with_precommit_stack<R>(
         .setup_prover(max_num_vars, max_num_polys)
         .expect("setup");
     let stack =
-        CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     run(&setup, &stack)
 }
 
@@ -97,10 +95,8 @@ fn profile_native_commit_group_allows_independent_groups() {
             committed_group: pre_a_commitment,
             private_handle: _pre_a_hint,
         } = stack
-            .commit::<OneHotCfg>(
-                &stack
-                    .import_source::<OneHotCfg, _>(pre_a_polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(pre_a_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit A");
@@ -108,10 +104,8 @@ fn profile_native_commit_group_allows_independent_groups() {
             committed_group: pre_b_commitment,
             private_handle: _pre_b_hint,
         } = stack
-            .commit::<OneHotCfg>(
-                &stack
-                    .import_source::<OneHotCfg, _>(pre_b_polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(pre_b_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit B");
@@ -215,15 +209,13 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
     let stack =
-        CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: pre_a_commitment,
         private_handle: _pre_a_hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(pre_a_polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(pre_a_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit A");
@@ -231,10 +223,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         committed_group: pre_b_commitment,
         private_handle: _pre_b_hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(pre_b_polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(pre_b_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit B");
@@ -268,18 +258,14 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         committed_group: final_commitment,
         private_handle: final_hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(final_polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
     let explicit_output = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(final_polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::explicit(&main_params.own_group().profile),
         )
         .expect("explicit final multi-group commitment");
@@ -338,15 +324,13 @@ fn commit_group_returns_frozen_exact_layout() {
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
     let stack =
-        CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit group");
@@ -417,11 +401,11 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
-    let stack = CpuBackend::with_resource_limits::<OneHotCfg>(
+    let stack = CpuBackend::<OneHotCfg>::with_resource_limits(
         setup.expanded.clone(),
         scheme.schedules(),
         usize::MAX,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        CpuBackend::<OneHotCfg>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .unwrap();
 
@@ -430,10 +414,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<OneHotCfg>(
-            &stack
-                .import_source::<OneHotCfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");

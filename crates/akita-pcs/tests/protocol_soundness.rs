@@ -120,12 +120,12 @@ fn prove_input<'a, Cfg: CommitmentConfig>(
     point: &'a [Cfg::ExtField],
     evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     Cfg::Field,
 > {
     let group =
@@ -220,16 +220,14 @@ where
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
@@ -464,16 +462,14 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let setup = scheme.setup_prover(NV, 2).unwrap();
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
@@ -658,16 +654,14 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             .setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE)
             .unwrap();
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
@@ -786,16 +780,14 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             .setup_prover(EXT4_NV, EXT4_BATCH)
             .expect("fp32 prover setup");
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -1069,15 +1061,15 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
 
         let setup = scheme.setup_prover(NV, 2).expect("setup");
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
+            .commit(
                 &stack
-                    .import_source::<Cfg, _>(vec![poly_a.clone(), poly_b.clone()])
+                    .import_source(vec![poly_a.clone(), poly_b.clone()])
                     .expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -1225,16 +1217,14 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
 
         let setup = scheme.setup_prover(NV, 2).expect("setup");
         let stack =
-            CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<Cfg>(
-                &stack
-                    .import_source::<Cfg, _>(polys.to_vec())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");

@@ -53,7 +53,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute setup-prefix slots for the generated profile"
         );
-        let stack = CpuBackend::new::<RecursiveCommitmentConfig<BaseCfg>>(
+        let stack = CpuBackend::<RecursiveCommitmentConfig<BaseCfg>>::new(
             setup.expanded.clone(),
             recursive_scheme.schedules(),
         )
@@ -69,10 +69,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
                 committed_group: commitment,
                 private_handle: hint,
             } = stack
-                .commit::<RecursiveCommitmentConfig<BaseCfg>>(
-                    &stack
-                        .import_source::<RecursiveCommitmentConfig<BaseCfg>, _>(vec![poly.clone()])
-                        .expect("source"),
+                .commit(
+                    &stack.import_source(vec![poly.clone()]).expect("source"),
                     akita_cpu_backend::GroupContext::explicit(&pre_frozen),
                 )
                 .expect("precommit group");
@@ -92,10 +90,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             committed_group: final_commitment,
             private_handle: final_hint,
         } = stack
-            .commit::<RecursiveCommitmentConfig<BaseCfg>>(
-                &stack
-                    .import_source::<RecursiveCommitmentConfig<BaseCfg>, _>(final_polys.clone())
-                    .expect("source"),
+            .commit(
+                &stack.import_source(final_polys.clone()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
             .expect("final generated-profile commitment");

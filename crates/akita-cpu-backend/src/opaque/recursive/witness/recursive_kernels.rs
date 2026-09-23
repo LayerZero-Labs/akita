@@ -1,10 +1,22 @@
-use super::*;
+use super::{
+    OpaqueRecursiveWitness, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
+};
+use crate::opaque::{RootOpeningSource, RootPolyMeta, RootPolyShape};
+use akita_error::AkitaError;
+use akita_types::RingVec;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use std::marker::PhantomData;
 
 macro_rules! impl_cpu_recursive_fold_kernels {
     ($backend:ty) => {
-        impl<F, const D: usize>
-            crate::opaque::consumer_kernels::RecursiveWitnessFoldKernel<OpaqueRecursiveWitness, F, D> for $backend
+        impl<F, Cfg, const D: usize>
+            crate::opaque::consumer_kernels::RecursiveWitnessFoldKernel<
+                OpaqueRecursiveWitness,
+                F,
+                D,
+            > for $backend
         where
+            Cfg: akita_config::CommitmentConfig<Field = F>,
             F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + 'static,
             $backend: crate::opaque::ComputeBackendSetup<F>
                 + for<'a> crate::opaque::FoldResponseKernel<
@@ -31,10 +43,14 @@ macro_rules! impl_cpu_recursive_fold_kernels {
             }
         }
 
-        impl<F, const D: usize>
-            crate::opaque::consumer_kernels::RecursiveWitnessTerminalFoldKernel<OpaqueRecursiveWitness, F, D>
-            for $backend
+        impl<F, Cfg, const D: usize>
+            crate::opaque::consumer_kernels::RecursiveWitnessTerminalFoldKernel<
+                OpaqueRecursiveWitness,
+                F,
+                D,
+            > for $backend
         where
+            Cfg: akita_config::CommitmentConfig<Field = F>,
             F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + 'static,
             $backend: crate::opaque::ComputeBackendSetup<F>
                 + for<'a> crate::opaque::TerminalFoldResponseKernel<
@@ -50,9 +66,7 @@ macro_rules! impl_cpu_recursive_fold_kernels {
                 witness: &OpaqueRecursiveWitness,
                 plan: &crate::opaque::ValidatedTerminalFoldProbePlan<'_>,
             ) -> Result<
-                crate::opaque::FoldProbeOutcome<
-                    crate::opaque::CpuAcceptedTerminalFold<F>,
-                >,
+                crate::opaque::FoldProbeOutcome<crate::opaque::CpuAcceptedTerminalFold<F>>,
                 AkitaError,
             > {
                 let source = SuffixWitnessBatchView {
@@ -78,18 +92,17 @@ macro_rules! impl_cpu_recursive_fold_kernels {
     };
 }
 
-impl_cpu_recursive_fold_kernels!(crate::opaque::CpuBackend);
+impl_cpu_recursive_fold_kernels!(crate::opaque::CpuBackend<Cfg>);
 
-pub(crate) fn prepare_recursive_witness_opening<F, E, B, const D: usize>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
+pub(in crate::opaque) fn prepare_recursive_witness_opening<F, E, Cfg, const D: usize>(
+    backend: &crate::opaque::CpuBackend<Cfg>,
+    prepared: Option<&crate::opaque::CpuPreparedSetup<F>>,
+    binding: crate::opaque::OperationBinding,
+    opening_source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
     witness: &OpaqueRecursiveWitness,
     plan: &crate::opaque::ValidatedRecursiveGroupOpeningPlan<'_, E>,
 ) -> Result<
-    crate::opaque::PreparedGroupOpening<
-        E,
-        <B as akita_prover::ProverHandleFamily<F, E>>::PreparedOpeningHandle,
-    >,
+    crate::opaque::PreparedGroupOpening<E, crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>>,
     AkitaError,
 >
 where
@@ -101,9 +114,9 @@ where
         + 'static,
     <F as jolt_field::Unreduced>::Wide: From<F> + jolt_field::AdditiveGroup,
     E: akita_types::FpExtEncoding<F> + ExtField<F> + akita_serialization::AkitaSerialize,
-    B: crate::opaque::ComputeBackendSetup<F>
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+    crate::opaque::CpuBackend<Cfg>: crate::opaque::ComputeBackendSetup<F, PreparedSetup = crate::opaque::CpuPreparedSetup<F>>
         + crate::opaque::DigitRowsComputeBackend<F>
-        + crate::opaque::PreparedGroupOpeningKernel<F, E>
         + for<'a> crate::opaque::OpeningFoldKernel<SuffixWitnessView<'a, F, D>, F, D>
         + for<'a> crate::opaque::SubringCoefficientPackingBatchKernel<
             SuffixWitnessBatchView<'a, F, D>,
@@ -116,9 +129,7 @@ where
         AkitaError::InvalidInput("recursive opening requires prepared backend state".into())
     })?;
     let source = witness.committed.as_ref().unwrap_or(&witness.logical);
-    if plan.ring_dimension() != D
-        || plan.witness_len() != source.live_coeff_len()
-    {
+    if plan.ring_dimension() != D || plan.witness_len() != source.live_coeff_len() {
         return Err(AkitaError::InvalidInput(
             "recursive opening plan disagrees with its witness or operation context".into(),
         ));
@@ -173,14 +184,13 @@ where
             point.live_block_weights(),
             point.tail_weights(),
         )?;
-        return crate::opaque::PreparedGroupOpeningKernel::retain_coefficient_packing_opening(
-            backend,
-            None,
-            Some(prepared),
+        return Ok(crate::opaque::prepared_opening::coefficient_packing(
+            binding,
+            opening_source,
             point,
             partials_by_claim,
             vec![scalar],
-        );
+        ));
     }
 
     let point = akita_types::prepare_opening_point::<F, E, D>(
@@ -249,12 +259,11 @@ where
         )?;
         akita_types::recover_ring_subfield_inner_product::<F, E, D>(&eval, &packed)?
     };
-    crate::opaque::PreparedGroupOpeningKernel::retain_evaluation_trace_opening(
-        backend,
-        None,
-        Some(prepared),
+    Ok(crate::opaque::prepared_opening::evaluation_trace(
+        binding,
+        opening_source,
         point,
         vec![RingVec::from_ring_elems(&folded).into_compact()],
         vec![scalar],
-    )
+    ))
 }

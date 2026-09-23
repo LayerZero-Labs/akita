@@ -79,7 +79,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     reduced_scheme.setup_prover(full_num_vars, 1)
                 }
                 .expect("cross-mode setup");
-            let stack = CpuBackend::new::<Cfg>(setup.expanded.clone(), quotient_scheme.schedules())
+            let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), quotient_scheme.schedules())
                 .expect("backend");
             let verifier_setup = quotient_scheme
                 .setup_verifier(&setup)
@@ -88,10 +88,8 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 committed_group: commitment,
                 private_handle: hint,
             } = stack
-                .commit::<Cfg>(
-                    &stack
-                        .import_source::<Cfg, _>(vec![poly.clone()])
-                        .expect("source"),
+                .commit(
+                    &stack.import_source(vec![poly.clone()]).expect("source"),
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("cross-mode commitment");
@@ -108,7 +106,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     sum + coefficient * weight
                 });
 
-            let prove = |scheme: &Scheme, backend: &CpuBackend, handle| {
+            let prove = |scheme: &Scheme, backend: &CpuBackend<Cfg>, handle| {
                 let group =
                     PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone())
                         .expect("cross-mode prover group");
@@ -128,7 +126,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
             };
             let quotient_proof = prove(&quotient_scheme, &stack, hint.clone());
             let reduced_backend =
-                CpuBackend::new::<Cfg>(setup.expanded.clone(), reduced_scheme.schedules())
+                CpuBackend::<Cfg>::new(setup.expanded.clone(), reduced_scheme.schedules())
                     .expect("reduced backend");
             let reduced_handle = reduced_backend
                 .import_commitment(&hint)

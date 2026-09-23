@@ -119,15 +119,16 @@ where
     }
 }
 
-pub(crate) fn commit_onehot_sources<F, const D: usize, I>(
-    backend: &CpuBackend,
-    prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+pub(crate) fn commit_onehot_sources<F, const D: usize, I, Cfg>(
+    backend: &CpuBackend<Cfg>,
+    prepared: &<CpuBackend<Cfg> as ComputeBackendSetup<F>>::PreparedSetup,
     sources: &[OneHotSource<'_, I>],
     plan: CommitInnerPlan,
 ) -> Result<Vec<akita_types::RingVec<F>>, AkitaError>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
+    Cfg: akita_config::CommitmentConfig,
 {
     let active_a_cols = plan
         .num_positions_per_block
@@ -148,8 +149,9 @@ where
     Ok(rows.into_iter().map(crate::typed_inner_rows).collect())
 }
 
-impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
@@ -200,8 +202,10 @@ where
     }
 }
 
-impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D>
+    for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
@@ -466,9 +470,10 @@ where
         .collect()
 }
 
-impl<F, E, const D: usize, I>
-    SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
+impl<F, E, Cfg, const D: usize, I>
+    SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,

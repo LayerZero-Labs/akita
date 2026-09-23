@@ -129,8 +129,9 @@ impl<F: Field> crate::commitment::CommitmentSource<F> for RecursiveCommitSource<
     }
 }
 
-impl<F, E> crate::opaque::OpaqueWitnessCommitKernel<F, E> for crate::opaque::CpuBackend
+impl<F, E, Cfg> crate::opaque::OpaqueWitnessCommitKernel<F, E> for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -231,7 +232,7 @@ where
                 |D| witness.tensor_pack::<F, E, D>()
             )?;
         }
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         let executor = CommitmentExecutor::cpu(
             self,
             prepared,

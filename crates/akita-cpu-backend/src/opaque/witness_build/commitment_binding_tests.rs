@@ -1,5 +1,6 @@
-use super::*;
-use jolt_field::{One, Prime128Offset275 as F, Zero};
+use super::CpuCommitmentMaterialHandle;
+use akita_types::RingVec;
+use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
 #[test]
 fn retained_material_rejects_substituted_public_rows() {
@@ -12,12 +13,8 @@ fn retained_material_rejects_substituted_public_rows() {
         log_basis_inner: 1,
     };
     let rows = RingVec::from_coeffs_with_ring_dim(vec![F::one(); 4], 4).unwrap();
-    let inner = crate::commitment::InnerRelationStateMaterial::new(
-        &plan,
-        1,
-        vec![rows.clone()],
-    )
-    .unwrap();
+    let inner =
+        crate::commitment::InnerRelationStateMaterial::new(&plan, 1, vec![rows.clone()]).unwrap();
     let mut material = CpuCommitmentMaterialHandle {
         binding: crate::opaque::OperationBinding::legacy_unscoped(),
         inner,

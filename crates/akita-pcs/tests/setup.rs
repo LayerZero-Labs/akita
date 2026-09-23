@@ -134,7 +134,7 @@ where
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -180,10 +180,8 @@ where
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -270,7 +268,7 @@ where
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -303,10 +301,8 @@ where
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
@@ -447,17 +443,15 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched commit");
@@ -555,17 +549,15 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");

@@ -22,9 +22,9 @@ const DOMAIN: &[u8] = b"akita/owning-backend-contract";
 
 fn claims(
     commitment: &CommittedGroup<F>,
-    handle: CommitmentHandle<F, F>,
+    handle: CommitmentHandle<F, F, Cfg>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
-) -> SelectedProverOpeningData<'static, F, CommitmentHandle<F, F>, F> {
+) -> SelectedProverOpeningData<'static, F, CommitmentHandle<F, F, Cfg>, F> {
     SelectedProverOpeningData::from_committed_claims::<Cfg>(
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             vec![F::from_u64(2); NV],
@@ -45,23 +45,23 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend =
-            Arc::new(CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap());
+            Arc::new(CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap());
         let source = backend
-            .import_source::<Cfg, _>(vec![DensePoly::from_field_evals(
+            .import_source(vec![DensePoly::from_field_evals(
                 NV,
                 vec![F::one(); 1 << NV],
             )
             .unwrap()])
             .unwrap();
         let output = backend
-            .commit::<Cfg>(
+            .commit(
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         drop(source);
 
-        let foreign = CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let foreign = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
         assert!(scheme
             .batched_prove(
                 &setup,
@@ -183,16 +183,16 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
     common::run_on_large_stack(|| {
         let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
         let source = backend
-            .import_source::<Cfg, _>(vec![DensePoly::from_field_evals(
+            .import_source(vec![DensePoly::from_field_evals(
                 NV,
                 vec![F::one(); 1 << NV],
             )
             .unwrap()])
             .unwrap();
         let output = backend
-            .commit::<Cfg>(
+            .commit(
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -206,7 +206,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             .validate_structure()
             .expect("the altered public plan is structurally valid");
         assert!(matches!(
-            <CpuBackend as ProofAdmission<F, F>>::begin_proof(
+            <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
                 &backend,
                 setup.expanded.descriptor(),
                 &absent_schedule,
@@ -214,14 +214,14 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             ),
             Err(akita_pcs::AkitaError::UnsupportedSchedule(_)),
         ));
-        let a = <CpuBackend as ProofAdmission<F, F>>::begin_proof(
+        let a = <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
             schedule,
             &layout,
         )
         .unwrap();
-        let b = <CpuBackend as ProofAdmission<F, F>>::begin_proof(
+        let b = <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
             schedule,
@@ -230,11 +230,14 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         .unwrap();
         let guard_a = ProofScope::admitted(&backend, a);
         let guard_b = ProofScope::admitted(&backend, b);
-        let context =
-            <CpuBackend as ProofAdmission<F, F>>::proof_context(&backend, guard_a.session(), 0)
-                .unwrap()
-                .for_group(0);
-        assert!(<CpuBackend as ProofAdmission<F, F>>::proof_context(
+        let context = <CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
+            &backend,
+            guard_a.session(),
+            0,
+        )
+        .unwrap()
+        .for_group(0);
+        assert!(<CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
             &backend,
             guard_a.session(),
             u32::MAX
@@ -243,50 +246,61 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         let wrong_setup =
             ProofContext::new(context.backend_id(), [0; 32], context.scope_id(), 0).for_group(0);
         for bad in [wrong_setup, context.for_group(1)] {
-            assert!(<CpuBackend as ProofAdmission<F, F>>::validate_commitment(
+            assert!(
+                <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+                    &backend,
+                    &bad,
+                    &output.private_handle,
+                    output.committed_group.profile(),
+                    output.committed_group.commitment(),
+                )
+                .is_err()
+            );
+        }
+        let mut changed_profile = *output.committed_group.profile();
+        changed_profile.group = PolynomialGroupLayout::new(NV, 2);
+        assert!(
+            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
-                &bad,
+                &context,
+                &output.private_handle,
+                &changed_profile,
+                output.committed_group.commitment(),
+            )
+            .is_err()
+        );
+        drop(guard_a);
+        assert!(
+            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+                &backend,
+                &context,
                 &output.private_handle,
                 output.committed_group.profile(),
                 output.committed_group.commitment(),
             )
-            .is_err());
-        }
-        let mut changed_profile = *output.committed_group.profile();
-        changed_profile.group = PolynomialGroupLayout::new(NV, 2);
-        assert!(<CpuBackend as ProofAdmission<F, F>>::validate_commitment(
+            .is_err()
+        );
+        let context_b = <CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
             &backend,
-            &context,
-            &output.private_handle,
-            &changed_profile,
-            output.committed_group.commitment(),
+            guard_b.session(),
+            0,
         )
-        .is_err());
-        drop(guard_a);
-        assert!(<CpuBackend as ProofAdmission<F, F>>::validate_commitment(
-            &backend,
-            &context,
-            &output.private_handle,
-            output.committed_group.profile(),
-            output.committed_group.commitment(),
-        )
-        .is_err());
-        let context_b =
-            <CpuBackend as ProofAdmission<F, F>>::proof_context(&backend, guard_b.session(), 0)
-                .unwrap()
-                .for_group(0);
+        .unwrap()
+        .for_group(0);
         guard_b.finish().unwrap();
-        assert!(<CpuBackend as ProofAdmission<F, F>>::validate_commitment(
-            &backend,
-            &context_b,
-            &output.private_handle,
-            output.committed_group.profile(),
-            output.committed_group.commitment(),
-        )
-        .is_err());
+        assert!(
+            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+                &backend,
+                &context_b,
+                &output.private_handle,
+                output.committed_group.profile(),
+                output.committed_group.commitment(),
+            )
+            .is_err()
+        );
         let mut changed_setup = setup.expanded.descriptor().clone();
         changed_setup.setup_seed = [9; 32].into();
-        assert!(<CpuBackend as ProofAdmission<F, F>>::begin_proof(
+        assert!(<CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             &changed_setup,
             schedule,
@@ -304,10 +318,10 @@ fn admission_rejects_an_extension_field_outside_the_owned_configuration() {
         let scheme = common::load_workspace_scheme::<SmallCfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
         let backend =
-            CpuBackend::new::<SmallCfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+            CpuBackend::<SmallCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
         let key = akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
-        let error = <CpuBackend as ProofAdmission<SmallF, SmallF>>::begin_proof(
+        let error = <CpuBackend<SmallCfg> as ProofAdmission<SmallF, SmallF>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
             row.schedule(),

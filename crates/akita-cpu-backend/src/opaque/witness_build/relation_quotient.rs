@@ -1,11 +1,10 @@
 //! Consumer-owned construction of the ring-relation quotient witness R.
 
 use super::compression_witness::{CompressionSourceId, CompressionWitnessMaterialization};
-use super::*;
-use crate::opaque::PreparedRingSwitchGroup;
+use super::finalize::PreparedRingSwitchGroup;
+use crate::commitment::for_each_outer_slice_input;
 use crate::opaque::RelationQuotientRow;
 use crate::opaque::RingSwitchRelationView;
-use crate::commitment::for_each_outer_slice_input;
 use crate::opaque::{
     OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel, RingSwitchRelationPlan,
     RuntimeRingSwitchProveBackend,
@@ -13,10 +12,12 @@ use crate::opaque::{
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_error::AkitaError;
 use akita_types::{
     CommittedGroupParams, OpeningFamily, RelationRowGeometry, RingRelationGroupOpening, RingVec,
 };
 use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 #[cfg(test)]
 std::thread_local! {
@@ -313,10 +314,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     O: RuntimeRingSwitchProveBackend<F>
         + crate::opaque::RuntimeFoldRelationBackend<F>
-        + crate::opaque::FoldHandleBackend<
-            F,
-            AcceptedFold = crate::opaque::CpuAcceptedFold<F>,
-        >,
+        + crate::opaque::FoldHandleBackend<F, AcceptedFold = crate::opaque::CpuAcceptedFold<F>>,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     #[cfg(test)]

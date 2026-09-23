@@ -23,13 +23,22 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-fn materialize_schedule_setup_prefix_slots<F>(
-    setup: &mut AkitaProverSetup<F>,
-    backend: &CpuBackend,
+fn materialize_schedule_setup_prefix_slots<Cfg>(
+    setup: &mut AkitaProverSetup<Cfg::Field>,
+    backend: &CpuBackend<Cfg>,
     schedule: &FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
+    Cfg: CommitmentConfig,
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Ring
+        + Unreduced
+        + WithCommitAccumulator
+        + Valid
+        + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
 {
     let ids = schedule
         .recursive_folds
@@ -38,7 +47,7 @@ where
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
         .filter(|id| setup.prefix_slots.get(id).is_none())
         .collect::<Vec<_>>();
-    let artifacts = backend.export_setup_prefixes::<F>(&ids)?;
+    let artifacts = backend.export_setup_prefixes::<Cfg::Field>(&ids)?;
     for (_, slot) in artifacts.iter() {
         setup.prefix_slots.insert(slot.clone())?;
     }
@@ -208,20 +217,20 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let backend =
-            CpuBackend::new::<ProofCfg>(setup.expanded.clone(), proof_scheme.schedules()).unwrap();
+            CpuBackend::<ProofCfg>::new(setup.expanded.clone(), proof_scheme.schedules()).unwrap();
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
             akita_config::required_setup_prefix_slot_ids_for_schedule(&schedule, &opening_layout)
                 .expect("resolve schedule setup-prefix slots");
         backend
-            .import_setup_prefixes::<ProofCfg>(&setup.prefix_slots, &required_prefix_ids)
+            .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
             .expect("prewarm schedule setup-prefix slots");
         backend
-            .prewarm::<FF>(&schedule)
+            .prewarm(&schedule)
             .expect("prewarm profile execution");
         let prepared_ntt_metrics = backend
-            .shared_ntt_cache_metrics::<FF>()
+            .shared_ntt_cache_metrics()
             .expect("prepared setup NTT cache metrics");
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
@@ -236,7 +245,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_crt_profile(
             label,
             backend
-                .shared_ntt_profile::<FF>(schedule.root.params.d_a())
+                .shared_ntt_profile(schedule.root.params.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);
@@ -255,13 +264,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let source = backend
-                .import_source::<ProofCfg, _>(polys)
+                .import_source(polys)
                 .expect("import precommit sources");
             let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
                 private_handle: hint,
             } = backend
-                .commit::<ProofCfg>(
+                .commit(
                     &source,
                     akita_cpu_backend::GroupContext::explicit(&pre_descriptor),
                 )
@@ -288,13 +297,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
                 .expect("nonempty precommitted groups");
         let source = backend
-            .import_source::<ProofCfg, _>(final_polys)
+            .import_source(final_polys)
             .expect("import final sources");
         let akita_cpu_backend::CommitOutput {
             committed_group: final_commitment,
             private_handle: final_hint,
         } = backend
-            .commit::<ProofCfg>(
+            .commit(
                 &source,
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
@@ -349,7 +358,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = backend
-            .shared_ntt_cache_metrics::<FF>()
+            .shared_ntt_cache_metrics()
             .expect("post-execution setup NTT cache metrics");
         assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
         (

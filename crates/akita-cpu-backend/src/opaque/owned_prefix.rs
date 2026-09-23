@@ -18,20 +18,21 @@ use std::sync::Arc;
 /// Both members depend only on the owned setup and the slot id. The retained
 /// source is shared by `Arc`, so the prefix coefficients and their digit-plane
 /// cache survive across proofs instead of being rebuilt per prove call.
-struct CachedSetupPrefix<F: Field> {
+pub(super) struct CachedSetupPrefix<F: Field> {
     artifact: crate::commitment::SetupPrefixSlot<F>,
     source: Arc<OwnedPolynomials<DensePoly<F>>>,
 }
 
-impl CpuBackend {
+impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     fn setup_prefix_source<F>(
         &self,
         id: &SetupPrefixSlotId,
     ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field + CanonicalEncoding + 'static,
     {
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         let coefficients = prepared
             .expanded
             .shared_matrix()
@@ -59,9 +60,10 @@ impl CpuBackend {
         id: &SetupPrefixSlotId,
     ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
     {
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         let validated =
             crate::setup::setup_prefix::validate_setup_prefix_commitment(&prepared.expanded, id)?;
         self.memoized_setup_prefix(id, || {
@@ -90,9 +92,10 @@ impl CpuBackend {
         artifact: &crate::commitment::SetupPrefixSlot<F>,
     ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field + CanonicalEncoding + 'static,
     {
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         crate::setup::setup_prefix::validate_setup_prefix_commitment(
             &prepared.expanded,
             &artifact.id,
@@ -109,8 +112,9 @@ impl CpuBackend {
         &self,
         id: &SetupPrefixSlotId,
         cached: Arc<CachedSetupPrefix<F>>,
-    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError>
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -161,9 +165,10 @@ impl CpuBackend {
         ids: &[SetupPrefixSlotId],
     ) -> Result<crate::commitment::SetupPrefixProverRegistry<F>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
     {
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         let mut artifacts = crate::commitment::SetupPrefixProverRegistry::new(
             prepared.expanded.descriptor().setup_seed.clone(),
         );
@@ -187,8 +192,9 @@ impl CpuBackend {
     pub fn prepare_setup_prefix<F, E>(
         &self,
         id: &SetupPrefixSlotId,
-    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError>
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
     where
+        Cfg: CommitmentConfig<Field = F>,
         F: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -222,16 +228,15 @@ impl CpuBackend {
     /// Every retained image and public commitment is checked against recomputed
     /// prefix material. Serialized backend identifiers never grant authority.
     #[allow(clippy::type_complexity)] // Retain the concrete backend handle family in the public result.
-    pub fn import_setup_prefixes<Cfg>(
+    pub fn import_setup_prefixes(
         &self,
         artifacts: &crate::commitment::SetupPrefixProverRegistry<Cfg::Field>,
         required_ids: &[SetupPrefixSlotId],
     ) -> Result<
-        SetupPrefixProverRegistry<Cfg::Field, CommitmentHandle<Cfg::Field, Cfg::ExtField>>,
+        SetupPrefixProverRegistry<Cfg::Field, CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>>,
         AkitaError,
     >
     where
-        Cfg: CommitmentConfig + 'static,
         Cfg::Field: CanonicalEncoding
             + AkitaSerialize
             + Valid
@@ -247,8 +252,7 @@ impl CpuBackend {
             + AkitaSerialize
             + 'static,
     {
-        self.validate_config::<Cfg>()?;
-        let prepared = self.prepared::<Cfg::Field>()?;
+        let prepared = self.prepared()?;
         if artifacts.setup_seed() != &prepared.expanded.descriptor().setup_seed {
             return Err(AkitaError::InvalidSetup(
                 "setup prefix artifacts belong to another setup".into(),
@@ -329,7 +333,7 @@ mod tests {
                 let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
                     .slot_id()
                     .unwrap();
-                let first = CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
+                let first = CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
                 for offset in 1..=32 {
                     let mut invalid = id.clone();
                     invalid.natural_len = invalid.natural_len.checked_add(offset).unwrap();
@@ -344,7 +348,7 @@ mod tests {
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 1);
                 assert!(artifacts.is_backend_validated());
                 let cached_after_export = first
-                    .memoized_setup_prefix::<CachedSetupPrefix<F>, _>(&id, || {
+                    .memoized_setup_prefix(&id, || {
                         panic!("export must seed the setup-prefix cache")
                     })
                     .unwrap();
@@ -364,12 +368,12 @@ mod tests {
                     .unwrap();
                 assert_eq!(decoded, artifacts);
                 assert!(!decoded.is_backend_validated());
-                let second = CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
+                let second = CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
                 let imported_first = first
-                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();
                 let imported_second = second
-                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();
                 let a = &imported_first.get(&id).unwrap().commitment_handle;
                 let b = &imported_second.get(&id).unwrap().commitment_handle;
@@ -379,7 +383,7 @@ mod tests {
                 assert_eq!(a.committed.public, b.committed.public);
 
                 let imported_again = first
-                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();
                 let a_again = &imported_again.get(&id).unwrap().commitment_handle;
                 assert_ne!(
@@ -399,18 +403,18 @@ mod tests {
                     crate::commitment::SetupPrefixProverRegistry::new(decoded.setup_seed().clone());
                 changed.insert(slot).unwrap();
                 assert!(second
-                    .import_setup_prefixes::<Cfg>(&changed, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&changed, std::slice::from_ref(&id))
                     .is_err());
                 let wrong_setup =
                     crate::commitment::SetupPrefixProverRegistry::<F>::new([99; 32].into());
                 assert!(second
-                    .import_setup_prefixes::<Cfg>(&wrong_setup, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&wrong_setup, std::slice::from_ref(&id))
                     .is_err());
                 assert!(second
-                    .import_setup_prefixes::<Cfg>(&decoded, std::slice::from_ref(&id))
+                    .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .is_ok());
                 assert!(second
-                    .import_setup_prefixes::<Cfg>(&decoded, &[])
+                    .import_setup_prefixes(&decoded, &[])
                     .unwrap()
                     .is_empty());
             })
@@ -436,29 +440,26 @@ mod tests {
             .slot_id()
             .unwrap();
 
-        let failed = CpuBackend::for_arithmetic_tests();
+        let failed = super::super::backend::SetupPrefixCache::<u64>::default();
         for offset in 0..32 {
             let mut failed_id = id.clone();
             failed_id.natural_len = failed_id.natural_len.checked_add(offset).unwrap();
             assert!(failed
-                .memoized_setup_prefix::<u64, _>(&failed_id, || {
+                .memoized(&failed_id, || {
                     Err(AkitaError::InvalidSetup("injected prefix failure".into()))
                 })
                 .is_err());
         }
-        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 0);
+        assert_eq!(failed.len().unwrap(), 0);
 
         assert!(failed
-            .memoized_setup_prefix::<u64, _>(&id, || {
+            .memoized(&id, || {
                 Err(AkitaError::InvalidSetup("injected prefix failure".into()))
             })
             .is_err());
-        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 0);
-        assert_eq!(
-            *failed.memoized_setup_prefix(&id, || Ok(17u64)).unwrap(),
-            17
-        );
-        assert_eq!(failed.setup_prefix_cache_len().unwrap(), 1);
+        assert_eq!(failed.len().unwrap(), 0);
+        assert_eq!(*failed.memoized(&id, || Ok(17u64)).unwrap(), 17);
+        assert_eq!(failed.len().unwrap(), 1);
     }
 
     #[test]
@@ -482,7 +483,7 @@ mod tests {
             .slot_id()
             .unwrap();
 
-        let backend = Arc::new(CpuBackend::for_arithmetic_tests());
+        let backend = Arc::new(super::super::backend::SetupPrefixCache::<u64>::default());
         let start = Arc::new(Barrier::new(WORKERS));
         let attempts = Arc::new(AtomicUsize::new(0));
         let outcomes = Arc::new(Mutex::new(Vec::with_capacity(WORKERS)));
@@ -495,7 +496,7 @@ mod tests {
                 let id = id.clone();
                 scope.spawn(move || {
                     start.wait();
-                    let result = backend.memoized_setup_prefix::<u64, _>(&id, || {
+                    let result = backend.memoized(&id, || {
                         if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                             Err(AkitaError::InvalidSetup("injected prefix failure".into()))
                         } else {
@@ -517,12 +518,10 @@ mod tests {
             WORKERS - 1
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
-        assert_eq!(backend.setup_prefix_cache_len().unwrap(), 1);
+        assert_eq!(backend.len().unwrap(), 1);
         assert_eq!(
             *backend
-                .memoized_setup_prefix::<u64, _>(&id, || {
-                    panic!("successful retry must remain cached")
-                })
+                .memoized(&id, || { panic!("successful retry must remain cached") })
                 .unwrap(),
             23
         );

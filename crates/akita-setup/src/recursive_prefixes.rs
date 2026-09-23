@@ -34,7 +34,7 @@ where
     if required_ids.is_empty() {
         return Ok(());
     }
-    let backend = CpuBackend::new::<Cfg>(setup.expanded.clone(), schedules)?;
+    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), schedules)?;
     setup.prefix_slots = backend.export_setup_prefixes(required_ids)?;
     validate_prefix_registry_complete(&setup.prefix_slots, required_ids)?;
     tracing::info!(

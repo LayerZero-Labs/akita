@@ -14,12 +14,18 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Rin
 use std::sync::Arc;
 
 /// An immutable imported source owned by one backend.
-pub struct SourceHandle<F: Field + CanonicalEncoding, E: Field> {
+pub struct SourceHandle<F: Field + CanonicalEncoding, E: Field, Cfg: akita_config::CommitmentConfig>
+{
     pub(super) owner: u64,
-    pub(super) storage: Arc<dyn PrivateSource<F, E>>,
+    pub(super) storage: Arc<dyn PrivateSource<F, E, Cfg>>,
     pub(super) metadata: SourceMetadata,
 }
-impl<F: Field + CanonicalEncoding, E: Field> Clone for SourceHandle<F, E> {
+impl<F, E, Cfg> Clone for SourceHandle<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn clone(&self) -> Self {
         Self {
             owner: self.owner,
@@ -29,11 +35,20 @@ impl<F: Field + CanonicalEncoding, E: Field> Clone for SourceHandle<F, E> {
     }
 }
 /// A reusable commitment retaining the exact source and parameters it committed.
-pub struct CommitmentHandle<F: Field + CanonicalEncoding, E: Field> {
+pub struct CommitmentHandle<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+> {
     pub(super) owner: u64,
-    pub(super) committed: Arc<CommittedSource<F, E>>,
+    pub(super) committed: Arc<CommittedSource<F, E, Cfg>>,
 }
-impl<F: Field + CanonicalEncoding, E: Field> Clone for CommitmentHandle<F, E> {
+impl<F, E, Cfg> Clone for CommitmentHandle<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn clone(&self) -> Self {
         Self {
             owner: self.owner,
@@ -41,8 +56,12 @@ impl<F: Field + CanonicalEncoding, E: Field> Clone for CommitmentHandle<F, E> {
         }
     }
 }
-pub(super) struct CommittedSource<F: Field + CanonicalEncoding, E: Field> {
-    pub(super) source: Arc<dyn PrivateSource<F, E>>,
+pub(super) struct CommittedSource<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+> {
+    pub(super) source: Arc<dyn PrivateSource<F, E, Cfg>>,
     pub(super) metadata: SourceMetadata,
     pub(super) commitment_id: u128,
     pub(super) parameters: GroupCommitPhaseParams,
@@ -50,11 +69,20 @@ pub(super) struct CommittedSource<F: Field + CanonicalEncoding, E: Field> {
     pub(super) retained: crate::commitment::PortableCommitmentHandle<F>,
 }
 /// Public commitment and the reusable private handle used for proving.
-pub struct CommitOutput<F: Field + CanonicalEncoding, E: Field> {
+pub struct CommitOutput<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+> {
     pub committed_group: CommittedGroup<F>,
-    pub private_handle: CommitmentHandle<F, E>,
+    pub private_handle: CommitmentHandle<F, E, Cfg>,
 }
-impl<F: Field + CanonicalEncoding, E: Field> CommitmentHandleMetadata for CommitmentHandle<F, E> {
+impl<F, E, Cfg> CommitmentHandleMetadata for CommitmentHandle<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn metadata(&self) -> SourceMetadata {
         self.committed.metadata
     }
@@ -62,31 +90,38 @@ impl<F: Field + CanonicalEncoding, E: Field> CommitmentHandleMetadata for Commit
 
 // This object-safe interface never leaves the CPU crate. It retains one whole
 // homogeneous group while allowing different representations in one proof.
-pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + Sync {
+pub(super) trait PrivateSource<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+>: Send + Sync
+{
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
+    fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError>;
     #[cfg(feature = "response-model-diagnostics")]
     fn source_l2_sq(&self) -> Option<u128>;
     fn opening(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         context: &ProofContext,
         plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
-    ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E>>, AkitaError>;
+        source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+    ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E, Cfg>>, AkitaError>;
     fn probe(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<super::CpuAcceptedFoldHandle<F>>, AkitaError>;
     fn extension(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         ring_dimension: usize,
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>;
     #[allow(clippy::too_many_arguments)]
     fn begin_eor(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         ring_dimension: usize,
         coefficients: &[E],
         tail: &[E],
@@ -99,8 +134,9 @@ pub(super) struct OwnedPolynomials<P> {
     pub(super) polynomials: Vec<P>,
 }
 
-impl<F, E, P> PrivateSource<F, E> for OwnedPolynomials<P>
+impl<F, E, Cfg, P> PrivateSource<F, E, Cfg> for OwnedPolynomials<P>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
     F::Wide: From<F> + jolt_field::AdditiveGroup,
     E: ExtField<F>
@@ -116,7 +152,7 @@ where
         + Send
         + Sync
         + 'static,
-    CpuBackend: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
+    CpuBackend<Cfg>: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
         + FoldHandleBackend<F, AcceptedFold = super::CpuAcceptedFoldHandle<F>>
         + RuntimeOpeningProveBackendFor<F, P>
         + RuntimeCoefficientPackingBackendFor<F, P, E>,
@@ -133,19 +169,31 @@ where
             .map(|p| p as &dyn CommitmentSource<F>)
             .collect()
     }
+    fn dense_polynomials(&self) -> Result<Vec<crate::DensePoly<F>>, AkitaError> {
+        self.polynomials
+            .iter()
+            .map(|polynomial| {
+                crate::DensePoly::from_field_evals(
+                    RootPolyMeta::num_vars(polynomial),
+                    polynomial.source_coefficients()?.into_owned(),
+                )
+            })
+            .collect()
+    }
     fn opening(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         context: &ProofContext,
         plan: &ValidatedRecursiveGroupOpeningPlan<'_, E>,
-    ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E>>, AkitaError> {
+        source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+    ) -> Result<PreparedGroupOpening<E, CpuPreparedOpeningHandle<F, E, Cfg>>, AkitaError> {
         let polys = self.polynomials.iter().collect::<Vec<_>>();
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             plan.ring_dimension(),
             |D| {
-                let prepared = Some(backend.prepared::<F>()?);
+                let prepared = Some(backend.prepared()?);
                 if let OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } = plan.opening_method()
@@ -196,10 +244,16 @@ where
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    return crate::opaque::PreparedGroupOpeningKernel::retain_coefficient_packing_opening(backend, Some(context), prepared, point, partials, openings);
+                    return Ok(crate::opaque::prepared_opening::coefficient_packing(
+                        backend.binding(context)?,
+                        source,
+                        point,
+                        partials,
+                        openings,
+                    ));
                 }
                 let (point, (folded, by_claim)) =
-                    prepare_and_evaluate_opening_group::<F, E, P, CpuBackend, D>(
+                    prepare_and_evaluate_opening_group::<F, E, P, CpuBackend<Cfg>, D>(
                         backend,
                         prepared,
                         &polys,
@@ -216,23 +270,22 @@ where
                         scalar_opening_from_folded_ring::<F, E, D>(row, &point, inner, plan.basis())
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                crate::opaque::PreparedGroupOpeningKernel::retain_evaluation_trace_opening(
-                    backend,
-                    Some(context),
-                    prepared,
+                Ok(crate::opaque::prepared_opening::evaluation_trace(
+                    backend.binding(context)?,
+                    source,
                     point,
                     by_claim
                         .iter()
                         .map(|row| RingVec::from_ring_elems(row).into_compact())
                         .collect(),
                     openings,
-                )
+                ))
             }
         )
     }
     fn probe(
         &self,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         plan: &ValidatedFoldProbePlan<'_>,
     ) -> Result<FoldProbeOutcome<super::CpuAcceptedFoldHandle<F>>, AkitaError> {
         let polys = self.polynomials.iter().collect::<Vec<_>>();
@@ -242,13 +295,13 @@ where
             plan.ring_dimension(),
             |D| {
                 let batch = <P as RootOpeningSource<F, D>>::opening_batch(&polys)?;
-                FoldResponseKernel::probe(backend, Some(backend.prepared::<F>()?), batch, plan)
+                FoldResponseKernel::probe(backend, Some(backend.prepared()?), batch, plan)
             }
         )
     }
     fn extension(
         &self,
-        _backend: &CpuBackend,
+        _backend: &CpuBackend<Cfg>,
         _ring_dimension: usize,
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError> {
@@ -276,7 +329,7 @@ where
     }
     fn begin_eor(
         &self,
-        _backend: &CpuBackend,
+        _backend: &CpuBackend<Cfg>,
         _ring_dimension: usize,
         coefficients: &[E],
         tail: &[E],
@@ -307,14 +360,24 @@ where
 
 /// CPU-supported owned source representation. Import consumes the entire group.
 #[allow(private_bounds)]
-pub trait CpuSource<F: Field + CanonicalEncoding, E: Field>: SourceImport<F, E> {}
-trait SourceImport<F: Field + CanonicalEncoding, E: Field>:
-    CommitmentSource<F> + Sized + 'static
+pub trait CpuSource<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+>: SourceImport<F, E, Cfg>
 {
-    fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E>>;
 }
-impl<F, E, P> SourceImport<F, E> for P
+trait SourceImport<
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+>: CommitmentSource<F> + Sized + 'static
+{
+    fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E, Cfg>>;
+}
+impl<F, E, Cfg, P> SourceImport<F, E, Cfg> for P
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
     F::Wide: From<F> + jolt_field::AdditiveGroup,
     E: ExtField<F>
@@ -330,25 +393,31 @@ where
         + Send
         + Sync
         + 'static,
-    CpuBackend: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
+    CpuBackend<Cfg>: ComputeBackendSetup<F, PreparedSetup = CpuPreparedSetup<F>>
         + FoldHandleBackend<F, AcceptedFold = super::CpuAcceptedFoldHandle<F>>
         + RuntimeOpeningProveBackendFor<F, P>
         + RuntimeCoefficientPackingBackendFor<F, P, E>,
 {
-    fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E>> {
+    fn retain_owned(polynomials: Vec<Self>) -> Arc<dyn PrivateSource<F, E, Cfg>> {
         Arc::new(OwnedPolynomials { polynomials })
     }
 }
-impl<F: Field + CanonicalEncoding, E: Field, P: SourceImport<F, E>> CpuSource<F, E> for P {}
+impl<F, E, Cfg, P> CpuSource<F, E, Cfg> for P
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+    P: SourceImport<F, E, Cfg>,
+{
+}
 
-impl CpuBackend {
+impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     /// Consume a homogeneous source group without exposing its storage to proving.
-    pub fn import_source<Cfg, P>(
+    pub fn import_source<P>(
         &self,
         polynomials: Vec<P>,
-    ) -> Result<SourceHandle<Cfg::Field, Cfg::ExtField>, AkitaError>
+    ) -> Result<SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
     where
-        Cfg: akita_config::CommitmentConfig + 'static,
         Cfg::Field: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
         Cfg::ExtField: FpExtEncoding<Cfg::Field>
@@ -357,10 +426,9 @@ impl CpuBackend {
             + Fold
             + AkitaSerialize
             + 'static,
-        P: CpuSource<Cfg::Field, Cfg::ExtField>,
+        P: CpuSource<Cfg::Field, Cfg::ExtField, Cfg>,
     {
-        self.validate_config::<Cfg>()?;
-        let prepared = self.prepared::<Cfg::Field>()?;
+        let prepared = self.prepared()?;
         let layout =
             crate::commitment::resolve_polynomial_group_layout(&polynomials, &prepared.expanded)?;
         let metadata = SourceMetadata::try_new(layout.num_polynomials(), layout.num_vars())?;
@@ -372,21 +440,36 @@ impl CpuBackend {
     }
 }
 
-impl<F: Field + CanonicalEncoding, E: Field> core::fmt::Debug for SourceHandle<F, E> {
+impl<F, E, Cfg> core::fmt::Debug for SourceHandle<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SourceHandle")
             .field("metadata", &self.metadata)
             .finish_non_exhaustive()
     }
 }
-impl<F: Field + CanonicalEncoding, E: Field> core::fmt::Debug for CommitmentHandle<F, E> {
+impl<F, E, Cfg> core::fmt::Debug for CommitmentHandle<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommitmentHandle")
             .field("metadata", &self.committed.metadata)
             .finish_non_exhaustive()
     }
 }
-impl<F: Field + CanonicalEncoding, E: Field> core::fmt::Debug for CommitOutput<F, E> {
+impl<F, E, Cfg> core::fmt::Debug for CommitOutput<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommitOutput")
             .field("private_handle", &self.private_handle)
@@ -395,7 +478,7 @@ impl<F: Field + CanonicalEncoding, E: Field> core::fmt::Debug for CommitOutput<F
 }
 
 #[cfg(feature = "response-model-diagnostics")]
-impl CpuBackend {
+impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     /// Application-only source energy diagnostic; it is never a proving message.
     pub fn witness_source_l2_sq<F: Field>(
         &self,
@@ -405,9 +488,9 @@ impl CpuBackend {
         Ok(witness.source_l2_sq::<F>())
     }
     /// Application-only source energy diagnostic; it is never a proving message.
-    pub fn source_l2_sq<F: Field + CanonicalEncoding, E: Field>(
+    pub fn source_l2_sq(
         &self,
-        source: &SourceHandle<F, E>,
+        source: &SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     ) -> Result<Option<u128>, AkitaError> {
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(

@@ -198,7 +198,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 "the prefix dispatcher must use its frozen A-ring dimension"
             );
             let prefix_backend =
-                CpuBackend::new::<PackingCfg>(setup.expanded.clone(), scheme.schedules()).unwrap();
+                CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
             let artifacts = prefix_backend
                 .export_setup_prefixes::<PackingField>(std::slice::from_ref(&setup_prefix))
                 .unwrap();
@@ -206,16 +206,16 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .prefix_slots
                 .insert(artifacts.get(&setup_prefix).unwrap().clone())
                 .unwrap();
-            let stack = CpuBackend::new::<PackingCfg>(setup.expanded.clone(), scheme.schedules())
+            let stack = CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules())
                 .expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_cpu_backend::CommitOutput {
                 committed_group,
                 private_handle: hint,
             } = stack
-                .commit::<PackingCfg>(
+                .commit(
                     &stack
-                        .import_source::<PackingCfg, _>(vec![polynomial.clone()])
+                        .import_source(vec![polynomial.clone()])
                         .expect("source"),
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )

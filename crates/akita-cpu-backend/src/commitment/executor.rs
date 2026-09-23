@@ -101,8 +101,8 @@ where
     SP: CommitmentStatePolicy<F>,
 {
     /// Build a CPU executor with an explicit standard-representation registry.
-    pub(crate) fn cpu(
-        backend: &'a CpuBackend,
+    pub(crate) fn cpu<Cfg: akita_config::CommitmentConfig>(
+        backend: &'a CpuBackend<Cfg>,
         prepared: &'a CpuPreparedSetup<F>,
         expanded: &AkitaExpandedSetup<F>,
         standard_types: Vec<PolynomialType>,

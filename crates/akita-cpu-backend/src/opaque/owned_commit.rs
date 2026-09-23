@@ -9,21 +9,36 @@ use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
-impl CpuBackend {
+impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     /// Import a retained commitment from another backend after validating its
     /// source and complete commitment material against this backend's setup.
-    pub fn import_commitment<F, E>(
+    pub fn import_commitment<ForeignCfg>(
         &self,
-        foreign: &CommitmentHandle<F, E>,
-    ) -> Result<CommitmentHandle<F, E>, AkitaError>
+        foreign: &CommitmentHandle<Cfg::Field, Cfg::ExtField, ForeignCfg>,
+    ) -> Result<CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
     where
-        F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
-        E: Field + 'static,
+        ForeignCfg: CommitmentConfig<Field = Cfg::Field>,
+        Cfg::Field: Field
+            + CanonicalEncoding
+            + AkitaSerialize
+            + jolt_field::Ring
+            + Unreduced
+            + WithCommitAccumulator
+            + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+        Cfg::ExtField: jolt_field::ExtField<Cfg::Field>
+            + FpExtEncoding<Cfg::Field>
+            + jolt_field::MulBaseUnreduced<Cfg::Field>
+            + Unreduced
+            + jolt_field::Fold
+            + AkitaSerialize
+            + 'static,
     {
-        self.validate_extension::<E>()?;
-        let prepared = self.prepared::<F>()?;
+        self.validate_extension::<Cfg::ExtField>()?;
+        let prepared = self.prepared()?;
         let committed = &foreign.committed;
-        let sources = committed.source.commitment_sources();
+        let source = self.import_source(committed.source.dense_polynomials()?)?;
+        let sources = source.storage.commitment_sources();
         let layout =
             crate::commitment::resolve_polynomial_group_layout(&sources, &prepared.expanded)?;
         if layout != committed.parameters.group {
@@ -51,7 +66,7 @@ impl CpuBackend {
             owner: self.owner_id(),
             committed: Arc::new(CommittedSource {
                 commitment_id: self.owner().next_operation_id()?,
-                source: committed.source.clone(),
+                source: source.storage,
                 metadata: committed.metadata,
                 parameters: committed.parameters,
                 public: committed.public.clone(),
@@ -61,13 +76,12 @@ impl CpuBackend {
     }
 
     /// Commit an imported immutable source and retain its exact source and parameters.
-    pub fn commit<Cfg>(
+    pub fn commit(
         &self,
-        source: &SourceHandle<Cfg::Field, Cfg::ExtField>,
+        source: &SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>,
         context: GroupContext<'_>,
-    ) -> Result<CommitOutput<Cfg::Field, Cfg::ExtField>, AkitaError>
+    ) -> Result<CommitOutput<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
     where
-        Cfg: CommitmentConfig + 'static,
         Cfg::Field: Field
             + CanonicalEncoding
             + AkitaSerialize
@@ -77,13 +91,12 @@ impl CpuBackend {
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
         Cfg::ExtField: FpExtEncoding<Cfg::Field> + 'static,
     {
-        self.validate_config::<Cfg>()?;
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(
                 "source belongs to another backend".into(),
             ));
         }
-        let prepared = self.prepared::<Cfg::Field>()?;
+        let prepared = self.prepared()?;
         let executor = CommitmentExecutor::cpu(
             self,
             prepared,
@@ -95,7 +108,7 @@ impl CpuBackend {
         let output = crate::commitment::commit::<Cfg, _, _>(
             &sources,
             &prepared.expanded,
-            self.schedules::<Cfg>()?,
+            self.schedules()?,
             &executor,
             context,
         )?;

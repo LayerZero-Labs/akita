@@ -91,17 +91,15 @@ fn verify_rejects_wrong_opening() {
 
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();

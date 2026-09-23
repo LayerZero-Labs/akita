@@ -26,6 +26,6 @@ pub(crate) use witness::{
     CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,
 };
 
-pub(crate) use witness::prepare_recursive_witness_opening;
+pub(in crate::opaque) use witness::prepare_recursive_witness_opening;
 
 pub(crate) use witness::suffix_witness_coefficient_packing_partials;

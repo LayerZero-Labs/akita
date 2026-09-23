@@ -363,7 +363,7 @@ macro_rules! generate_scalar_case {
         let mut prover_setup = scheme
             .setup_prover(num_vars, 1)
             .map_err(|err| format!("{} prover setup: {err}", case))?;
-        let backend = CpuBackend::new::<ScalarCfg>(prover_setup.expanded.clone(), scheme.schedules())
+        let backend = CpuBackend::<ScalarCfg>::new(prover_setup.expanded.clone(), scheme.schedules())
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
         if $recursive {
             materialize_schedule_setup_prefix_slots(
@@ -383,12 +383,12 @@ macro_rules! generate_scalar_case {
             &opening_point,
         )?];
         let t0 = Instant::now();
-        let source = backend.import_source::<ScalarCfg, _>(vec![poly])
+        let source = backend.import_source(vec![poly])
             .map_err(|err| format!("{} source import: {err}", case))?;
         let CommitOutput {
             committed_group: commitment,
             private_handle: hint,
-        } = backend.commit::<ScalarCfg>(&source,
+        } = backend.commit(&source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
         .map_err(|err| format!("{} commit: {err}", case))?;
@@ -663,7 +663,7 @@ fn run() -> Result<(), String> {
     let mut prover_setup = scheme
         .setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let backend = CpuBackend::new::<Cfg>(prover_setup.expanded.clone(), scheme.schedules())
+    let backend = CpuBackend::<Cfg>::new(prover_setup.expanded.clone(), scheme.schedules())
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     materialize_schedule_setup_prefix_slots(
         &mut prover_setup,
@@ -686,12 +686,12 @@ fn run() -> Result<(), String> {
             0x0bee_fcaf_2100_0000 + group_idx as u64,
         )?];
         let openings = vec![onehot_opening(&polys[0], pre_point)?];
-        let source = backend.import_source::<Cfg, _>(polys)
+        let source = backend.import_source(polys)
             .map_err(|err| format!("precommit source import: {err}"))?;
         let CommitOutput {
             committed_group,
             private_handle: hint,
-        } = backend.commit::<Cfg>(&source,
+        } = backend.commit(&source,
                 GroupContext::explicit(&pre_descriptor),
             )
             .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
@@ -709,12 +709,12 @@ fn run() -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()?;
     let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
         .map_err(|err| format!("precommitted profile list: {err}"))?;
-    let source = backend.import_source::<Cfg, _>(final_polys)
+    let source = backend.import_source(final_polys)
         .map_err(|err| format!("final source import: {err}"))?;
     let CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,
-    } = backend.commit::<Cfg>(&source,
+    } = backend.commit(&source,
             GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .map_err(|err| format!("final multi-group commit failed: {err}"))?;

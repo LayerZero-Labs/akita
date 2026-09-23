@@ -37,8 +37,9 @@ pub struct CpuStage3Session<F: Field, E: Field> {
     claim: E,
 }
 
-impl<F, E> OpaqueStage3Kernel<F, E> for CpuBackend
+impl<F, E, Cfg> OpaqueStage3Kernel<F, E> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + AkitaSerialize + 'static,
     E: Field
         + Ring
@@ -84,7 +85,7 @@ where
                 "Stage 3 parameters differ from the admitted proof".into(),
             ));
         }
-        let expanded = Arc::clone(&self.prepared::<F>()?.expanded);
+        let expanded = Arc::clone(&self.prepared()?.expanded);
         let setup_coefficient_bits = request
             .address_geometry
             .relation_coefficient_variable_count();

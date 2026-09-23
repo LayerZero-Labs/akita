@@ -130,7 +130,7 @@ fn run_custom_commit_source_contract() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
     let expanded = setup.expanded.as_ref();
-    let backend = CpuBackend::new::<Cfg>(setup.expanded.clone(), &schedules).unwrap();
+    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
     let prepared = backend.prepare_setup(&setup).expect("prepared");
     let portable_executor = CommitmentExecutor::cpu(
         &backend,

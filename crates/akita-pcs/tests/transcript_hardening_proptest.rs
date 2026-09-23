@@ -51,17 +51,15 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
 
     let setup = scheme.setup_prover(num_vars, total_claims).unwrap();
     let stack =
-        CpuBackend::new::<DenseCfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<DenseCfg>(
-            &stack
-                .import_source::<DenseCfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");

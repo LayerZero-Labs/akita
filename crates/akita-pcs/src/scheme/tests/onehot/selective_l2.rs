@@ -29,16 +29,14 @@ fn selective_l2_proof_rejects_transcript_mutations() {
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
     let stack =
-        CpuBackend::new::<L2Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<L2Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<L2Cfg>(
-            &stack
-                .import_source::<L2Cfg, _>(polys.to_vec())
-                .expect("source"),
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("L2 commitment");

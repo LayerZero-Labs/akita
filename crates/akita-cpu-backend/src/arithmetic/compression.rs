@@ -8,8 +8,9 @@ use crate::opaque::{CompressionComputeBackend, CompressionRowsProducts};
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
-impl<F> CompressionComputeBackend<F> for CpuBackend
+impl<F, Cfg> CompressionComputeBackend<F> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {

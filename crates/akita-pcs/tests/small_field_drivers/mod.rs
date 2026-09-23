@@ -74,24 +74,22 @@ where
         + AkitaSerialize
         + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
-    P: akita_cpu_backend::CpuSource<Cfg::Field, Cfg::ExtField> + Clone,
+    P: akita_cpu_backend::CpuSource<Cfg::Field, Cfg::ExtField, Cfg> + Clone,
     Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field>,
     <Cfg::Field as Unreduced>::Wide: jolt_field::AdditiveGroup,
 {
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
     let stack =
-        CpuBackend::new::<Cfg>(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
-        .commit::<Cfg>(
-            &stack
-                .import_source::<Cfg, _>(vec![poly.clone()])
-                .expect("source"),
+        .commit(
+            &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");

@@ -131,10 +131,10 @@ where
         opening: SelectedProverOpeningData<
             'a,
             Cfg::ExtField,
-            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
             Cfg::Field,
         >,
-        backend: &CpuBackend,
+        backend: &CpuBackend<Cfg>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -143,10 +143,10 @@ where
         Cfg::Field: WithCommitAccumulator + 'static,
         Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        CpuBackend: ProverBackend<
+        CpuBackend<Cfg>: ProverBackend<
             Cfg::Field,
             Cfg::ExtField,
-            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
         >,
     {
         let t_prove_total = Instant::now();
@@ -156,8 +156,8 @@ where
             opening.opening_layout(),
         )?;
         let prefix_slots =
-            backend.import_setup_prefixes::<Cfg>(&setup.prefix_slots, &required_prefix_ids)?;
-        let proof = akita_prover::batched_prove::<Cfg, T, CpuBackend>(
+            backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
+        let proof = akita_prover::batched_prove::<Cfg, T, CpuBackend<Cfg>>(
             setup.expanded.descriptor(),
             &prefix_slots,
             &self.schedules,

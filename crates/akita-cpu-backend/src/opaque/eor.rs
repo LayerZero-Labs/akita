@@ -20,17 +20,27 @@ pub(crate) trait ExtensionOpeningSession<E: Field>: Send {
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
     fn finish(self: Box<Self>) -> Result<Vec<(E, E, E)>, AkitaError>;
 }
-struct PreparedGroup<F: Field + CanonicalEncoding, E: Field> {
-    source: RetainedOpeningSource<F, E>,
+struct PreparedGroup<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
+    source: RetainedOpeningSource<F, E, Cfg>,
     point: Vec<E>,
     ring_dimension: usize,
     rows: Vec<Vec<E>>,
     witness_opening: Option<crate::opaque::CpuWitnessOpeningHandle<E>>,
 }
-pub struct CpuEorPreparation<F: Field + CanonicalEncoding, E: Field> {
+pub struct CpuEorPreparation<F, E, Cfg>
+where
+    F: Field + CanonicalEncoding,
+    E: Field,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+{
     binding: OperationBinding,
     layout: OpeningClaimsLayout,
-    groups: Vec<PreparedGroup<F, E>>,
+    groups: Vec<PreparedGroup<F, E, Cfg>>,
 }
 pub struct CpuEorSession<E: Field> {
     binding: OperationBinding,
@@ -56,8 +66,9 @@ pub struct CpuEorSession<E: Field> {
     group_pending: Vec<UniPoly<E>>,
     challenges: Vec<E>,
 }
-impl<F, E> OpaqueEorKernel<F, E> for CpuBackend
+impl<F, E, Cfg> OpaqueEorKernel<F, E> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
@@ -168,7 +179,7 @@ where
                         group.ring_dimension,
                         witness.manifest().logical_len(),
                     );
-                    let prepared=crate::opaque::consumer_kernels::CpuWitnessOpeningKernel::<F,E>::prepare_witness_opening(self,Some(self.prepared::<F>()?),witness,&plan)?;
+                    let prepared=crate::opaque::consumer_kernels::CpuWitnessOpeningKernel::<F,E>::prepare_witness_opening(self,Some(self.prepared()?),witness,&plan)?;
                     let (openings, proof_partials, handle) = prepared.into_parts();
                     let rows = proof_partials
                         .chunks_exact(width)
@@ -271,7 +282,7 @@ where
                         claim,
                         group.ring_dimension,
                     );
-                    let handle=crate::opaque::consumer_kernels::CpuWitnessOpeningKernel::<F,E>::begin_witness_eor(self,Some(self.prepared::<F>()?),&witness,group.witness_opening.ok_or(AkitaError::InvalidProof)?,&plan)?;
+                    let handle=crate::opaque::consumer_kernels::CpuWitnessOpeningKernel::<F,E>::begin_witness_eor(self,Some(self.prepared()?),&witness,group.witness_opening.ok_or(AkitaError::InvalidProof)?,&plan)?;
                     Box::new(handle) as Box<dyn ExtensionOpeningSession<E>>
                 }
             };

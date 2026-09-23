@@ -10,7 +10,9 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-impl akita_prover::backend::ProofScopeConsumer for CpuBackend {
+impl<Cfg: akita_config::CommitmentConfig> akita_prover::backend::ProofScopeConsumer
+    for CpuBackend<Cfg>
+{
     type ProofSessionHandle = CpuProofSessionHandle;
 
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
@@ -24,7 +26,7 @@ impl akita_prover::backend::ProofScopeConsumer for CpuBackend {
     }
 }
 
-impl CpuBackend {
+impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     pub(crate) fn admitted_group(
         &self,
         context: &ProofContext,
@@ -48,8 +50,9 @@ impl CpuBackend {
     }
 }
 
-impl<F, E> ProofAdmission<F, E> for CpuBackend
+impl<F, E, Cfg> ProofAdmission<F, E> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Send + Sync + 'static,
     E: Field + jolt_field::ExtField<F> + Send + Sync + 'static,
 {
@@ -59,7 +62,7 @@ where
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<Self::ProofSessionHandle, AkitaError> {
-        let prepared = self.prepared::<F>()?;
+        let prepared = self.prepared()?;
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;

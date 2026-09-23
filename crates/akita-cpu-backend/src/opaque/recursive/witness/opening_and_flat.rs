@@ -1,5 +1,22 @@
-impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend
+use super::handles_and_relation::{
+    OpaqueRecursiveWitness, OpaqueWitnessOpeningState, RecursiveWitnessFlat,
+};
+use super::stage_sessions::{cpu_witness_eor_session_from_witnesses, CpuExtensionOpeningSession};
+use crate::opaque::{CpuBackend, DecomposeFoldWitness};
+use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
+use crate::sources::poly_helpers::packed_tight_digit_fold_partitioned;
+use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
+use akita_types::WitnessLayout;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
+use std::marker::PhantomData;
+
+impl<F, E, Cfg> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
+    for crate::opaque::CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: ExtField<F>
         + jolt_field::Unreduced
@@ -8,7 +25,6 @@ where
         + Send
         + Sync
         + 'static,
-
 {
     type WitnessOpeningHandle = crate::opaque::CpuWitnessOpeningHandle<E>;
     type WitnessEorSessionHandle = CpuExtensionOpeningSession<E>;
@@ -68,9 +84,11 @@ where
                 "recursive witness EOR plan disagrees with its opening geometry".into(),
             ));
         }
-        let (split_bits,_)=akita_types::tensor_opening_split::<F,E>()?;
-        if opening_handle.point.get(split_bits..)!=Some(plan.tail_point()) {
-            return Err(AkitaError::InvalidInput("EOR point differs from the retained opening".into()));
+        let (split_bits, _) = akita_types::tensor_opening_split::<F, E>()?;
+        if opening_handle.point.get(split_bits..) != Some(plan.tail_point()) {
+            return Err(AkitaError::InvalidInput(
+                "EOR point differs from the retained opening".into(),
+            ));
         }
         let [coefficient] = plan.claim_coefficients() else {
             return Err(AkitaError::InvalidSize {
@@ -240,11 +258,11 @@ impl RecursiveWitnessFlat {
 /// D-specific view over a packed recursive witness digit buffer.
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixWitnessView<'a, F: Field, const D: usize> {
-    digits: PackedSignedDigitView<'a>,
-    live_coeff_len: usize,
-    live_ring_elems: usize,
-    padded_ring_elems: usize,
-    _marker: PhantomData<F>,
+    pub(super) digits: PackedSignedDigitView<'a>,
+    pub(super) live_coeff_len: usize,
+    pub(super) live_ring_elems: usize,
+    pub(super) padded_ring_elems: usize,
+    pub(super) _marker: PhantomData<F>,
 }
 
 impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
@@ -269,7 +287,7 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
     }
 
     #[inline]
-    fn block_elem(
+    pub(super) fn block_elem(
         &self,
         block_idx: usize,
         col_idx: usize,
@@ -282,20 +300,22 @@ impl<'a, F: Field, const D: usize> SuffixWitnessView<'a, F, D> {
     }
 
     #[inline]
-    fn ring_elem(&self, index: usize) -> Option<[i8; D]> {
+    pub(super) fn ring_elem(&self, index: usize) -> Option<[i8; D]> {
         (index < self.padded_ring_elems)
             .then(|| self.digits.decode_array(index * D).ok())
             .flatten()
     }
 
     #[inline]
-    fn digit(&self, index: usize) -> Option<i8> {
+    pub(super) fn digit(&self, index: usize) -> Option<i8> {
         self.digits.get(index)
     }
 
-
     #[inline]
-    fn num_live_blocks(&self, num_positions_per_block: usize) -> Result<usize, AkitaError> {
+    pub(super) fn num_live_blocks(
+        &self,
+        num_positions_per_block: usize,
+    ) -> Result<usize, AkitaError> {
         if num_positions_per_block == 0 || self.digits.len() == 0 {
             return Err(AkitaError::InvalidInput(
                 "recursive witness requires positive exact block geometry".into(),
@@ -509,14 +529,14 @@ where
                     .checked_mul(num_positions_per_block)
                     .ok_or(AkitaError::InvalidProof)?
                     .min(self.live_ring_elems);
-                let digit_start = ring_start
-                    .checked_mul(D)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let digit_start = ring_start.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
                 let digit_end = ring_end.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
                 let coefficients = packed_tight_digit_fold_partitioned::<F, D>(
                     self.digits.slice(digit_start..digit_end)?,
                     ring_end - ring_start,
-                    challenges.get(range.clone()).ok_or(AkitaError::InvalidProof)?,
+                    challenges
+                        .get(range.clone())
+                        .ok_or(AkitaError::InvalidProof)?,
                     num_positions_per_block,
                 );
                 Ok(DecomposeFoldWitness::from_centered_rows(coefficients))
@@ -529,17 +549,12 @@ where
 // Source-typed prove views + CpuBackend kernels for [`RecursiveWitnessFlat`].
 // ===========================================================================
 
-use crate::arithmetic::coefficient_packing::{
-    coefficient_packing_partials_from_position_source, FusedPackingWeights,
-};
 use crate::opaque::aggregate_decompose_fold_witnesses;
-use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 use crate::opaque::{
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan, RootOpeningSource, RootPolyMeta,
-    RootPolyShape, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    RootPolyShape,
 };
-use jolt_field::MulBaseUnreduced;
+use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 
 fn padded_ring_elems_for_live_len<const D: usize>(live_coeff_len: usize) -> usize {
     live_coeff_len.div_ceil(D).next_power_of_two().max(1)
@@ -548,8 +563,8 @@ fn padded_ring_elems_for_live_len<const D: usize>(live_coeff_len: usize) -> usiz
 /// Same-point batch view over several [`RecursiveWitnessFlat`] suffix witnesses.
 #[derive(Clone)]
 pub(crate) struct SuffixWitnessBatchView<'a, F: Field, const D: usize> {
-    polys: Vec<&'a RecursiveWitnessFlat>,
-    _marker: PhantomData<F>,
+    pub(super) polys: Vec<&'a RecursiveWitnessFlat>,
+    pub(super) _marker: PhantomData<F>,
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for RecursiveWitnessFlat
@@ -656,8 +671,10 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D>
+    for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
@@ -707,8 +724,10 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D>
+    for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
@@ -722,15 +741,14 @@ where
             RootPolyShape::<F, D>::num_live_ring_elems(*poly).div_ceil(num_positions_per_block)
         }))?;
         match plan {
-            DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
-                Ok(crate::opaque::CpuFoldResponses::sparse(
-                    aggregate_decompose_fold_witnesses::<D>(
-                        source
-                            .polys
-                            .iter()
-                            .zip(challenges.chunks_exact(challenges_per_poly))
-                            .map(|(poly, poly_challenges)| {
-                                <Self as OpeningFoldKernel<
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => Ok(
+                crate::opaque::CpuFoldResponses::sparse(aggregate_decompose_fold_witnesses::<D>(
+                    source
+                        .polys
+                        .iter()
+                        .zip(challenges.chunks_exact(challenges_per_poly))
+                        .map(|(poly, poly_challenges)| {
+                            <Self as OpeningFoldKernel<
                                     SuffixWitnessView<'_, F, D>, F, D,
                                 >>::decompose_fold(
                                     self,
@@ -743,10 +761,9 @@ where
                                         log_basis,
                                     },
                                 )
-                            }),
-                    )?,
-                ))
-            }
+                        }),
+                )?),
+            ),
             DecomposeFoldBatchPlan::SparseChunked {
                 challenges,
                 chunk_ranges,

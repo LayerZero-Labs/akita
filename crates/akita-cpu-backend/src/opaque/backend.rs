@@ -1,31 +1,29 @@
 //! CPU backend ownership, setup identity, and proof-session lifecycle.
 
 use crate::arithmetic::CpuPreparedSetup;
+use crate::opaque::owned_prefix::CachedSetupPrefix;
 use crate::opaque::{BackendIdentity, OperationBinding};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
 use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
-use jolt_field::{CanonicalEncoding, Field};
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex};
 
-type SetupPrefixCacheValue = Arc<dyn Any + Send + Sync>;
-
-enum SetupPrefixCacheState {
+enum SetupPrefixCacheState<T> {
     Computing,
-    Ready(SetupPrefixCacheValue),
+    Ready(Arc<T>),
     Failed,
 }
 
-struct SetupPrefixCacheCell {
-    state: Mutex<SetupPrefixCacheState>,
+struct SetupPrefixCacheCell<T> {
+    state: Mutex<SetupPrefixCacheState<T>>,
     ready: Condvar,
 }
 
-impl SetupPrefixCacheCell {
+impl<T> SetupPrefixCacheCell<T> {
     fn computing() -> Self {
         Self {
             state: Mutex::new(SetupPrefixCacheState::Computing),
@@ -34,176 +32,31 @@ impl SetupPrefixCacheCell {
     }
 }
 
-/// Reusable owner of CPU setup resources and independent proof scopes.
-///
-/// Prepared-opening handles are linear protocol capabilities and cannot be
-/// cloned, even though their immutable backing allocations may be shared
-/// internally.
-///
-/// ```compile_fail
-/// use akita_cpu_backend::CpuBackend;
-/// use akita_prover::ProverHandleFamily;
-/// use jolt_field::Prime128OffsetA7F7;
-///
-/// type Opening = <CpuBackend as ProverHandleFamily<
-///     Prime128OffsetA7F7,
-///     Prime128OffsetA7F7,
-/// >>::PreparedOpeningHandle;
-///
-/// fn require_clone<T: Clone>() {}
-/// require_clone::<Opening>();
-/// ```
-pub struct CpuBackend {
-    identity: Arc<BackendIdentity>,
-    prepared: Box<dyn CpuSetupResources>,
-    configuration: TypeId,
-    schedules: Box<dyn CpuConfiguration>,
-    max_cached_ring_switch_elements: usize,
-    commit_scratch_bytes_per_worker: usize,
-    /// Derived setup-prefix material, memoized for the life of this backend.
-    ///
-    /// A prefix commitment is a pure function of the owned setup and the slot
-    /// id, both of which are fixed here, so deriving it more than once is
-    /// wasted work. Values are type-erased because the backend is erased over
-    /// its field; `validate_config` has already pinned the field before any
-    /// lookup, so the downcast is exact.
-    setup_prefix_cache: Mutex<BTreeMap<SetupPrefixSlotId, Arc<SetupPrefixCacheCell>>>,
+pub(super) struct SetupPrefixCache<T> {
+    entries: Mutex<BTreeMap<SetupPrefixSlotId, Arc<SetupPrefixCacheCell<T>>>>,
 }
 
-trait CpuSetupResources: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn trim_caches(&self) -> Result<usize, AkitaError>;
-}
-
-trait CpuConfiguration: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn validate_extension(&self, extension: TypeId) -> Result<(), AkitaError>;
-    fn validate_schedule(
-        &self,
-        extension: TypeId,
-        plan: &FoldSchedule,
-        layout: &OpeningClaimsLayout,
-    ) -> Result<(), AkitaError>;
-}
-
-impl<Cfg: CommitmentConfig> CpuConfiguration for TrustedScheduleCatalog<Cfg> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn validate_extension(&self, extension: TypeId) -> Result<(), AkitaError> {
-        if extension != TypeId::of::<Cfg::ExtField>() {
-            return Err(AkitaError::InvalidInput(
-                "proof extension field differs from backend configuration".into(),
-            ));
+impl<T> Default for SetupPrefixCache<T> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(BTreeMap::new()),
         }
-        Ok(())
-    }
-
-    fn validate_schedule(
-        &self,
-        extension: TypeId,
-        plan: &FoldSchedule,
-        layout: &OpeningClaimsLayout,
-    ) -> Result<(), AkitaError> {
-        self.validate_extension(extension)?;
-        let row = self
-            .catalog()
-            .rows()
-            .find(|row| row.schedule() == plan)
-            .ok_or_else(|| {
-                AkitaError::UnsupportedSchedule(
-                    "proof schedule is absent from the backend's trusted catalog".into(),
-                )
-            })?;
-        row.validate_opening_layout(layout)
     }
 }
 
-impl<F: Field + CanonicalEncoding> CpuSetupResources for CpuPreparedSetup<F> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn trim_caches(&self) -> Result<usize, AkitaError> {
-        self.drop_built_ntt_slots()
-    }
-}
-
-impl core::fmt::Debug for CpuBackend {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CpuBackend")
-            .field("backend_id", &self.identity.backend_id())
-            .finish_non_exhaustive()
-    }
-}
-
-impl CpuBackend {
-    pub(crate) fn validate_extension<E: 'static>(&self) -> Result<(), AkitaError> {
-        self.schedules.validate_extension(TypeId::of::<E>())
-    }
-
-    /// Default maximum cached extent for a ring-switch NTT operation.
-    pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
-
-    /// Default temporary sparse commitment memory per worker.
-    pub const DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
-
-    /// Own a setup and its immutable trusted configuration.
-    pub fn new<Cfg: CommitmentConfig>(
-        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
-        schedules: &TrustedScheduleCatalog<Cfg>,
-    ) -> Result<Self, AkitaError> {
-        Self::with_resource_limits::<Cfg>(
-            expanded,
-            schedules,
-            Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-            Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-        )
-    }
-
-    /// Create a CPU backend with explicit resource limits.
-    pub fn with_resource_limits<Cfg: CommitmentConfig>(
-        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
-        schedules: &TrustedScheduleCatalog<Cfg>,
-        max_cached_ring_switch_elements: usize,
-        commit_scratch_bytes_per_worker: usize,
-    ) -> Result<Self, akita_error::AkitaError> {
-        if commit_scratch_bytes_per_worker == 0 {
-            return Err(akita_error::AkitaError::InvalidSetup(
-                "CPU commitment scratch bytes per worker must be nonzero".into(),
-            ));
-        }
-        expanded
-            .descriptor
-            .check()
-            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        let digest = akita_types::setup_seed_digest(&expanded.descriptor.setup_seed)
-            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        Ok(Self {
-            identity: BackendIdentity::new(digest)?,
-            prepared: Box::new(CpuPreparedSetup::new(expanded)),
-            configuration: TypeId::of::<Cfg>(),
-            schedules: Box::new(schedules.clone()),
-            max_cached_ring_switch_elements,
-            commit_scratch_bytes_per_worker,
-            setup_prefix_cache: Mutex::new(BTreeMap::new()),
-        })
-    }
-
-    /// Return memoized setup-prefix material, deriving it once per slot.
-    pub(crate) fn memoized_setup_prefix<T, Derive>(
+impl<T: Send + Sync> SetupPrefixCache<T> {
+    pub(super) fn memoized<Derive>(
         &self,
         id: &SetupPrefixSlotId,
         derive: Derive,
     ) -> Result<Arc<T>, AkitaError>
     where
-        T: Any + Send + Sync,
         Derive: FnOnce() -> Result<T, AkitaError>,
     {
         let mut derive = Some(derive);
         loop {
             let (cell, derive_here) = {
-                let mut cache = self.setup_prefix_cache.lock().map_err(|_| {
+                let mut cache = self.entries.lock().map_err(|_| {
                     AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
                 })?;
                 match cache.get(id) {
@@ -225,11 +78,10 @@ impl CpuBackend {
                 match derive() {
                     Ok(value) => {
                         let value = Arc::new(value);
-                        let erased: SetupPrefixCacheValue = value.clone();
                         let mut state = cell.state.lock().map_err(|_| {
                             AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
                         })?;
-                        *state = SetupPrefixCacheState::Ready(erased);
+                        *state = SetupPrefixCacheState::Ready(Arc::clone(&value));
                         cell.ready.notify_all();
                         return Ok(value);
                     }
@@ -238,7 +90,7 @@ impl CpuBackend {
                             AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
                         })?;
                         *state = SetupPrefixCacheState::Failed;
-                        let mut cache = self.setup_prefix_cache.lock().map_err(|_| {
+                        let mut cache = self.entries.lock().map_err(|_| {
                             AkitaError::InvalidSetup("setup prefix cache lock poisoned".into())
                         })?;
                         if cache
@@ -264,13 +116,7 @@ impl CpuBackend {
                             AkitaError::InvalidSetup("setup prefix slot lock poisoned".into())
                         })?;
                     }
-                    SetupPrefixCacheState::Ready(value) => {
-                        return Arc::clone(value).downcast::<T>().map_err(|_| {
-                            AkitaError::InvalidInput(
-                                "setup prefix material belongs to another field".into(),
-                            )
-                        });
-                    }
+                    SetupPrefixCacheState::Ready(value) => return Ok(Arc::clone(value)),
                     SetupPrefixCacheState::Failed => break,
                 }
             }
@@ -278,30 +124,138 @@ impl CpuBackend {
     }
 
     #[cfg(test)]
-    pub(crate) fn setup_prefix_cache_len(&self) -> Result<usize, AkitaError> {
-        self.setup_prefix_cache
+    pub(super) fn len(&self) -> Result<usize, AkitaError> {
+        self.entries
             .lock()
             .map(|cache| cache.len())
             .map_err(|_| AkitaError::InvalidSetup("setup prefix cache lock poisoned".into()))
     }
+}
 
-    pub(crate) fn validate_config<Cfg: CommitmentConfig>(&self) -> Result<(), AkitaError> {
-        if self.configuration != TypeId::of::<Cfg>() {
+/// Reusable owner of CPU setup resources and independent proof scopes.
+///
+/// Prepared-opening handles are linear protocol capabilities and cannot be
+/// cloned, even though their immutable backing allocations may be shared
+/// internally.
+///
+/// ```compile_fail
+/// use akita_config::proof_optimized::fp128;
+/// use akita_cpu_backend::CpuBackend;
+/// use akita_prover::ProverHandleFamily;
+/// use jolt_field::Prime128OffsetA7F7;
+///
+/// type Opening = <CpuBackend<fp128::Dense> as ProverHandleFamily<
+///     Prime128OffsetA7F7,
+///     Prime128OffsetA7F7,
+/// >>::PreparedOpeningHandle;
+///
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<Opening>();
+/// ```
+pub struct CpuBackend<Cfg: CommitmentConfig = akita_config::proof_optimized::fp128::OneHot> {
+    identity: Arc<BackendIdentity>,
+    prepared: Option<CpuPreparedSetup<Cfg::Field>>,
+    schedules: Option<TrustedScheduleCatalog<Cfg>>,
+    max_cached_ring_switch_elements: usize,
+    commit_scratch_bytes_per_worker: usize,
+    /// Derived setup-prefix material, memoized for the life of this backend.
+    ///
+    /// A prefix commitment is a pure function of the owned setup and the slot
+    /// id, both of which are fixed here, so deriving it more than once is
+    /// wasted work.
+    setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<Cfg::Field>>,
+}
+
+impl<Cfg: CommitmentConfig> core::fmt::Debug for CpuBackend<Cfg> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CpuBackend")
+            .field("backend_id", &self.identity.backend_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+    pub(crate) fn validate_extension<E: 'static>(&self) -> Result<(), AkitaError> {
+        #[cfg(test)]
+        if self.schedules.is_none() {
+            return Ok(());
+        }
+        if TypeId::of::<E>() != TypeId::of::<Cfg::ExtField>() {
             return Err(AkitaError::InvalidInput(
-                "configuration belongs to another backend".into(),
+                "proof extension field differs from backend configuration".into(),
             ));
         }
         Ok(())
     }
 
-    pub(crate) fn schedules<Cfg: CommitmentConfig>(
+    /// Default maximum cached extent for a ring-switch NTT operation.
+    pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
+
+    /// Default temporary sparse commitment memory per worker.
+    pub const DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER: usize = 8 << 20;
+
+    /// Own a setup and its immutable trusted configuration.
+    pub fn new(
+        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
+        schedules: &TrustedScheduleCatalog<Cfg>,
+    ) -> Result<Self, AkitaError> {
+        Self::with_resource_limits(
+            expanded,
+            schedules,
+            Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+            Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        )
+    }
+
+    /// Create a CPU backend with explicit resource limits.
+    pub fn with_resource_limits(
+        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
+        schedules: &TrustedScheduleCatalog<Cfg>,
+        max_cached_ring_switch_elements: usize,
+        commit_scratch_bytes_per_worker: usize,
+    ) -> Result<Self, akita_error::AkitaError> {
+        if commit_scratch_bytes_per_worker == 0 {
+            return Err(akita_error::AkitaError::InvalidSetup(
+                "CPU commitment scratch bytes per worker must be nonzero".into(),
+            ));
+        }
+        expanded
+            .descriptor
+            .check()
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        let digest = akita_types::setup_seed_digest(&expanded.descriptor.setup_seed)
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        Ok(Self {
+            identity: BackendIdentity::new(digest)?,
+            prepared: Some(CpuPreparedSetup::new(expanded)),
+            schedules: Some(schedules.clone()),
+            max_cached_ring_switch_elements,
+            commit_scratch_bytes_per_worker,
+            setup_prefix_cache: SetupPrefixCache::default(),
+        })
+    }
+
+    /// Return memoized setup-prefix material, deriving it once per slot.
+    pub(super) fn memoized_setup_prefix<Derive>(
         &self,
-    ) -> Result<&TrustedScheduleCatalog<Cfg>, AkitaError> {
-        self.validate_config::<Cfg>()?;
+        id: &SetupPrefixSlotId,
+        derive: Derive,
+    ) -> Result<Arc<CachedSetupPrefix<Cfg::Field>>, AkitaError>
+    where
+        Derive: FnOnce() -> Result<CachedSetupPrefix<Cfg::Field>, AkitaError>,
+    {
+        self.setup_prefix_cache.memoized(id, derive)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn setup_prefix_cache_len(&self) -> Result<usize, AkitaError> {
+        self.setup_prefix_cache.len()
+    }
+
+    pub(crate) fn schedules(&self) -> Result<&TrustedScheduleCatalog<Cfg>, AkitaError> {
         self.schedules
-            .as_any()
-            .downcast_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("backend configuration type mismatch".into()))
+            .as_ref()
+            .ok_or_else(|| AkitaError::InvalidSetup("test backend has no schedule catalog".into()))
     }
 
     pub(crate) fn validate_proof_configuration<E: 'static>(
@@ -309,16 +263,24 @@ impl CpuBackend {
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<(), AkitaError> {
-        self.schedules
-            .validate_schedule(TypeId::of::<E>(), plan, layout)
+        self.validate_extension::<E>()?;
+        let row = self
+            .schedules()?
+            .catalog()
+            .rows()
+            .find(|row| row.schedule() == plan)
+            .ok_or_else(|| {
+                AkitaError::UnsupportedSchedule(
+                    "proof schedule is absent from the backend's trusted catalog".into(),
+                )
+            })?;
+        row.validate_opening_layout(layout)
     }
 
-    pub(crate) fn prepared<F: Field + CanonicalEncoding>(
-        &self,
-    ) -> Result<&CpuPreparedSetup<F>, AkitaError> {
-        self.prepared.as_any().downcast_ref().ok_or_else(|| {
-            AkitaError::InvalidInput("field belongs to another backend configuration".into())
-        })
+    pub(crate) fn prepared(&self) -> Result<&CpuPreparedSetup<Cfg::Field>, AkitaError> {
+        self.prepared
+            .as_ref()
+            .ok_or_else(|| AkitaError::InvalidSetup("test backend has no owned setup".into()))
     }
 
     pub(crate) fn owner(&self) -> &Arc<BackendIdentity> {
@@ -392,7 +354,11 @@ impl CpuBackend {
     }
     /// Release idle shared setup transforms. Active operations retain their resources.
     pub fn trim_caches(&self) -> Result<usize, AkitaError> {
-        self.prepared.trim_caches()
+        #[cfg(test)]
+        if self.prepared.is_none() {
+            return Ok(0);
+        }
+        self.prepared()?.drop_built_ntt_slots()
     }
 
     /// Largest ring-switch operation extent retained as an NTT cache.
@@ -425,36 +391,6 @@ impl CpuBackend {
 }
 
 #[cfg(test)]
-struct ArithmeticTestResources;
-#[cfg(test)]
-impl CpuConfiguration for () {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn validate_extension(&self, _: TypeId) -> Result<(), AkitaError> {
-        Ok(())
-    }
-    fn validate_schedule(
-        &self,
-        _: TypeId,
-        _: &FoldSchedule,
-        _: &OpeningClaimsLayout,
-    ) -> Result<(), AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "arithmetic fixture has no trusted proof configuration".into(),
-        ))
-    }
-}
-#[cfg(test)]
-impl CpuSetupResources for ArithmeticTestResources {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn trim_caches(&self) -> Result<usize, AkitaError> {
-        Ok(0)
-    }
-}
-#[cfg(test)]
 impl CpuBackend {
     /// Unit-test arithmetic route. It cannot import sources or admit proofs.
     pub(crate) fn for_arithmetic_tests() -> Self {
@@ -473,16 +409,19 @@ impl CpuBackend {
         }
         Ok(Self {
             identity: BackendIdentity::new([0; 32])?,
-            prepared: Box::new(ArithmeticTestResources),
-            configuration: TypeId::of::<()>(),
-            schedules: Box::new(()),
+            prepared: None,
+            schedules: None,
             max_cached_ring_switch_elements,
             commit_scratch_bytes_per_worker,
-            setup_prefix_cache: Mutex::new(BTreeMap::new()),
+            setup_prefix_cache: SetupPrefixCache::default(),
         })
     }
-    pub(crate) fn for_test_setup<F: Field + CanonicalEncoding>(
-        expanded: Arc<AkitaExpandedSetup<F>>,
+}
+
+#[cfg(test)]
+impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+    pub(crate) fn for_test_setup(
+        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
     ) -> Result<Self, AkitaError> {
         expanded
             .descriptor
@@ -492,12 +431,11 @@ impl CpuBackend {
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         Ok(Self {
             identity: BackendIdentity::new(digest)?,
-            prepared: Box::new(CpuPreparedSetup::new(expanded)),
-            configuration: TypeId::of::<()>(),
-            schedules: Box::new(()),
+            prepared: Some(CpuPreparedSetup::new(expanded)),
+            schedules: None,
             max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
             commit_scratch_bytes_per_worker: Self::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-            setup_prefix_cache: Mutex::new(BTreeMap::new()),
+            setup_prefix_cache: SetupPrefixCache::default(),
         })
     }
 }

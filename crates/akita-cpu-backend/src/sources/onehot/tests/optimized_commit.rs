@@ -38,7 +38,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
-        crate::opaque::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        crate::opaque::CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Bucketed,
     )
     .unwrap();
@@ -48,7 +48,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
-        crate::opaque::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+        crate::opaque::CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Merge,
     )
     .unwrap();
@@ -98,7 +98,7 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
     .unwrap();
     let default_backend = CpuBackend::for_arithmetic_tests();
     let prepared = default_backend.prepare_setup(&setup).unwrap();
-    let default = commit_onehot_sources::<F, D, u8>(
+    let default = commit_onehot_sources::<F, D, u8, _>(
         &default_backend,
         &prepared,
         &[poly.commitment_source()],
@@ -106,7 +106,7 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
     )
     .unwrap();
     let constrained_backend = CpuBackend::with_test_resource_limits(usize::MAX, 1 << 20).unwrap();
-    let constrained = commit_onehot_sources::<F, D, u8>(
+    let constrained = commit_onehot_sources::<F, D, u8, _>(
         &constrained_backend,
         &prepared,
         &[poly.commitment_source()],
@@ -120,7 +120,7 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
 
     let too_small_backend = CpuBackend::with_test_resource_limits(usize::MAX, 1).unwrap();
     assert!(matches!(
-        commit_onehot_sources::<F, D, u8>(
+        commit_onehot_sources::<F, D, u8, _>(
             &too_small_backend,
             &prepared,
             &[poly.commitment_source()],
@@ -172,7 +172,7 @@ fn every_stored_index_width_reaches_the_same_commitment_sweep() {
                     .collect(),
             )
             .unwrap();
-            commit_onehot_sources::<F, D, $index>(
+            commit_onehot_sources::<F, D, $index, _>(
                 &backend,
                 &prepared,
                 &[poly.commitment_source()],
@@ -265,7 +265,7 @@ where
                 n_a,
                 active_a_cols,
                 1,
-                crate::opaque::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+                crate::opaque::CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
                 sweep,
             )
             .unwrap(),

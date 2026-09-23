@@ -30,7 +30,7 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::array::from_fn;
 
-impl CpuBackend {
+impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     /// Execute the standard CPU inner stage over request-compiled sources.
     ///
     /// Every source has the same request-compiled representation. Results
@@ -84,7 +84,7 @@ impl CpuBackend {
                         })
                     })
                     .collect::<Result<Vec<_>, AkitaError>>()?;
-                commit_onehot_sources::<F, D, _>(self, prepared, &group, plan)
+                commit_onehot_sources::<F, D, _, Cfg>(self, prepared, &group, plan)
             }};
         }
 

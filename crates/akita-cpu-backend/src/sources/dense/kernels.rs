@@ -15,8 +15,9 @@ use crate::opaque::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
-impl<F, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
@@ -72,8 +73,9 @@ where
     }
 }
 
-impl<F, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> for CpuBackend
+impl<F, Cfg, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
@@ -182,9 +184,10 @@ where
         .collect()
 }
 
-impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
-    for CpuBackend
+impl<F, E, Cfg, const D: usize>
+    SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D> for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {

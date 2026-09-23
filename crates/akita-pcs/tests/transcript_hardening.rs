@@ -69,17 +69,15 @@ fn event_stream_equality_small() {
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
             .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<OneHotCfg>(
-                &stack
-                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
-                    .expect("source"),
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -328,17 +326,15 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
             .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<OneHotCfg>(
-                &stack
-                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
-                    .expect("source"),
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
@@ -413,16 +409,14 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let point = random_point(num_vars, 0x6161);
 
         let setup = scheme.setup_prover(num_vars, 1).unwrap();
-        let stack = CpuBackend::new::<OneHotCfg>(setup.expanded.clone(), scheme.schedules())
+        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
             .expect("backend");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
-            .commit::<OneHotCfg>(
-                &stack
-                    .import_source::<OneHotCfg, _>(vec![poly.clone()])
-                    .expect("source"),
+            .commit(
+                &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");

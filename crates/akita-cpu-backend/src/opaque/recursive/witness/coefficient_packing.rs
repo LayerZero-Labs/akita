@@ -1,4 +1,13 @@
-use super::*;
+use super::{RecursiveWitnessFlat, SuffixWitnessBatchView};
+use crate::arithmetic::coefficient_packing::{
+    coefficient_packing_partials_from_position_source, FusedPackingWeights,
+};
+use crate::opaque::{
+    CpuBackend, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan,
+};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 pub(crate) fn suffix_witness_coefficient_packing_partials<F, E, const D: usize>(
     witness: &RecursiveWitnessFlat,
@@ -32,9 +41,11 @@ where
     SubringCoefficientPackingPartials::new(point.geometry(), point.num_live_blocks(), coordinates)
 }
 
-impl<F, E, const D: usize>
-    SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D> for CpuBackend
+impl<F, E, Cfg, const D: usize>
+    SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
+    for CpuBackend<Cfg>
 where
+    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {

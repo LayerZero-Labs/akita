@@ -1,8 +1,10 @@
 use super::*;
 use crate::opaque::{ProofContext, ProofScope};
-use jolt_field::{One, Prime128Offset275 as F, Zero};
+use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
-fn proof_scope(backend: &CpuBackend) -> ProofScope<'_, CpuBackend> {
+fn proof_scope<Cfg: akita_config::CommitmentConfig>(
+    backend: &CpuBackend<Cfg>,
+) -> ProofScope<'_, CpuBackend<Cfg>> {
     let scope = backend.owner().begin_test_scope(vec![1]).unwrap();
     ProofScope::admitted(
         backend,
@@ -121,7 +123,10 @@ fn stage3_retains_setup_across_cache_eviction() {
     .unwrap();
     let expected = setup.expanded.shared_matrix().as_field_slice()[..4].to_vec();
     let allocation = std::sync::Arc::downgrade(&setup.expanded);
-    let backend = CpuBackend::for_test_setup(setup.expanded.clone()).unwrap();
+    let backend = CpuBackend::<akita_config::proof_optimized::fp64::OneHot>::for_test_setup(
+        setup.expanded.clone(),
+    )
+    .unwrap();
     let scope = proof_scope(&backend);
     let product = RectangularSetupProductTerm::new(
         SetupProductSource::Expanded(setup.expanded.clone()),
@@ -149,7 +154,7 @@ fn stage3_retains_setup_across_cache_eviction() {
     drop(setup);
     backend
         .ensure_ntt_slot(
-            backend.prepared::<Base>().unwrap(),
+            backend.prepared().unwrap(),
             akita_types::NttCacheKey {
                 ring_d: 64,
                 num_ring_elements: 1,

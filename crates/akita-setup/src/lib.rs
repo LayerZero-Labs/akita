@@ -772,7 +772,7 @@ mod tests {
                     SetupRequirements::from_catalog::<Cfg>(&catalog, MAX_VARS, 1).unwrap();
                 requirements.prefix_slot_ids = vec![id.clone()];
                 let backend =
-                    akita_cpu_backend::CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog)
+                    akita_cpu_backend::CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog)
                         .unwrap();
                 setup.prefix_slots = backend.export_setup_prefixes(&[id]).unwrap();
                 save_prover_setup::<TestF>(&setup, &schedules(), MAX_VARS, 1).unwrap();
@@ -1010,11 +1010,10 @@ mod tests {
                         .unwrap();
                         let commit_payload = |setup: &AkitaProverSetup<TestF>| {
                             let backend =
-                                CpuBackend::new::<Cfg>(setup.expanded.clone(), &catalog).unwrap();
-                            let source =
-                                backend.import_source::<Cfg, _>(vec![poly.clone()]).unwrap();
+                                CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
+                            let source = backend.import_source(vec![poly.clone()]).unwrap();
                             backend
-                                .commit::<Cfg>(
+                                .commit(
                                     &source,
                                     GroupContext::scheduler_without_precommitted_groups(),
                                 )

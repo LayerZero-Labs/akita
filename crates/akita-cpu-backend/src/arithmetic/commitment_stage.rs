@@ -256,15 +256,19 @@ impl<F: Field + 'static> InnerImageExportOperation<F> for CpuInnerImageExporter<
 }
 
 /// CPU inner-stage operation whose returned state directly owns its witnesses.
-pub(crate) struct CpuInnerCommitOperation<'a, F: Field> {
-    backend: &'a CpuBackend,
+pub(crate) struct CpuInnerCommitOperation<
+    'a,
+    F: Field,
+    Cfg: akita_config::CommitmentConfig = akita_config::proof_optimized::fp128::OneHot,
+> {
+    backend: &'a CpuBackend<Cfg>,
     prepared: &'a CpuPreparedSetup<F>,
     storage: CpuInnerImageStore<F>,
 }
 
-impl<'a, F: Field> CpuInnerCommitOperation<'a, F> {
+impl<'a, F: Field, Cfg: akita_config::CommitmentConfig> CpuInnerCommitOperation<'a, F, Cfg> {
     /// Construct a CPU inner operation for a custom commitment executor.
-    pub(crate) fn new(backend: &'a CpuBackend, prepared: &'a CpuPreparedSetup<F>) -> Self {
+    pub(crate) fn new(backend: &'a CpuBackend<Cfg>, prepared: &'a CpuPreparedSetup<F>) -> Self {
         Self {
             backend,
             prepared,
@@ -291,9 +295,10 @@ impl<'a, F: Field> CpuInnerCommitOperation<'a, F> {
     }
 }
 
-impl<F> InnerCommitOperation<F> for CpuInnerCommitOperation<'_, F>
+impl<F, Cfg> InnerCommitOperation<F> for CpuInnerCommitOperation<'_, F, Cfg>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+    Cfg: akita_config::CommitmentConfig,
 {
     fn commit_inner(
         &self,
@@ -371,9 +376,10 @@ where
     }
 }
 
-impl<F> InnerImageExportOperation<F> for CpuInnerCommitOperation<'_, F>
+impl<F, Cfg> InnerImageExportOperation<F> for CpuInnerCommitOperation<'_, F, Cfg>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+    Cfg: akita_config::CommitmentConfig,
 {
     fn export_inner_rows(
         &self,
@@ -393,18 +399,22 @@ where
 }
 
 /// CPU outer-stage operation over resident or explicitly exported inner rows.
-pub(crate) struct CpuOuterCommitOperation<'a, F: Field> {
-    backend: &'a CpuBackend,
+pub(crate) struct CpuOuterCommitOperation<
+    'a,
+    F: Field,
+    Cfg: akita_config::CommitmentConfig = akita_config::proof_optimized::fp128::OneHot,
+> {
+    backend: &'a CpuBackend<Cfg>,
     prepared: &'a CpuPreparedSetup<F>,
     inner_storage: CpuInnerImageStore<F>,
 }
 
-impl<'a, F: Field> CpuOuterCommitOperation<'a, F> {
+impl<'a, F: Field, Cfg: akita_config::CommitmentConfig> CpuOuterCommitOperation<'a, F, Cfg> {
     /// Construct a CPU outer operation for a custom commitment executor.
     pub(crate) fn new(
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<Cfg>,
         prepared: &'a CpuPreparedSetup<F>,
-        inner: &CpuInnerCommitOperation<'a, F>,
+        inner: &CpuInnerCommitOperation<'a, F, Cfg>,
     ) -> Self {
         Self {
             backend,
@@ -430,7 +440,7 @@ impl<'a, F: Field> CpuOuterCommitOperation<'a, F> {
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
                 F,
                 outer_plan.ring_dimension(),
-                |D_B| compute_outer_commitment_from_rows::<F, CpuBackend, D_A, D_B>(
+                |D_B| compute_outer_commitment_from_rows::<F, CpuBackend<Cfg>, D_A, D_B>(
                     self.backend,
                     self.prepared,
                     rows,
@@ -442,9 +452,10 @@ impl<'a, F: Field> CpuOuterCommitOperation<'a, F> {
     }
 }
 
-impl<F> OuterCommitOperation<F> for CpuOuterCommitOperation<'_, F>
+impl<F, Cfg> OuterCommitOperation<F> for CpuOuterCommitOperation<'_, F, Cfg>
 where
     F: Field + CanonicalEncoding + 'static,
+    Cfg: akita_config::CommitmentConfig,
 {
     fn commit_outer(
         &self,
