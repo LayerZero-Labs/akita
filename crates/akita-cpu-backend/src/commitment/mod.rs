@@ -9,6 +9,7 @@ mod builder;
 mod capabilities;
 mod executor;
 mod external;
+mod imported_outer;
 mod outer_slices;
 mod plan;
 mod prepared;
@@ -18,9 +19,12 @@ mod source;
 mod stages;
 mod state_policy;
 
+#[cfg(test)]
+pub(crate) use api::commit;
 pub use api::GroupContext;
-pub(crate) use api::{commit, resolve_polynomial_group_layout};
+pub(crate) use api::{resolve_commit_params, resolve_polynomial_group_layout};
 pub(crate) use outer_slices::for_each_outer_slice_input;
+pub use state_policy::PortableCompressionState;
 
 pub(crate) use builder::CommitmentExecutorBuilder;
 pub(crate) use capabilities::{
@@ -65,8 +69,8 @@ pub(crate) use state_policy::{
     CommitmentExecutionOutput, CommitmentStateComponents, CommitmentStatePolicy,
     InnerRelationMaterial, InnerRelationState, InnerRelationStateMaterial,
     IntoPortableCommitmentState, OuterCompressionMaterial, OuterCompressionState,
-    PortableCompressionState, PortableCompressionStateExport, PortableStatePolicy,
-    ResidentStatePolicy, TerminalTFieldsMessage,
+    PortableCompressionStateExport, PortableStatePolicy, ResidentStatePolicy,
+    TerminalTFieldsMessage,
 };
 
 mod portable;

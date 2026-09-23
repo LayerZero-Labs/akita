@@ -17,7 +17,9 @@ use akita_types::RingVec;
 use jolt_field::Field;
 
 pub(crate) use akita_prover::protocol;
-pub use commitment::{GroupContext, SetupPrefixProverRegistry, SetupPrefixSlot};
+pub use commitment::{
+    GroupContext, PortableCompressionState, SetupPrefixProverRegistry, SetupPrefixSlot,
+};
 pub use opaque::standalone;
 pub use opaque::{
     evaluate_root_polynomial, CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric,

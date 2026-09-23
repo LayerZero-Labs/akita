@@ -10,7 +10,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     CommittedSourceEncoding, CompressionChainPlan, GroupCommitPhaseParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,
+    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
     SetupMatrixCapacity, SisModulusProfileId,
 };
 use jolt_field::Fp64;
@@ -495,4 +495,118 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         extension_degree: 2,
     };
     assert!(GroupCommitPhaseParams::try_from_params(group, &tensor).is_err());
+}
+
+#[test]
+fn imported_root_outer_image_matches_full_cpu_commitment() {
+    type ImportedCfg = akita_config::proof_optimized::fp32::Dense;
+    type ImportedF = akita_config::proof_optimized::fp32::Field;
+    const NUM_VARS: usize = 10;
+    let setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
+        NUM_VARS,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 2_000_000,
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::<ImportedCfg>::for_test_setup(setup.expanded.clone()).unwrap();
+    let prepared = backend.prepared().unwrap();
+    let executor = CommitmentExecutor::cpu(
+        &backend,
+        prepared,
+        setup.expanded.as_ref(),
+        Vec::new(),
+        PortableStatePolicy,
+    )
+    .unwrap();
+    let evals = (0..1usize << NUM_VARS)
+        .map(|index| ImportedF::from_u64(index as u64 + 1))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<ImportedF>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let sources: [&dyn CommitmentSource<ImportedF>; 1] = [&poly];
+
+    for slice_count in [
+        akita_types::CommitmentSliceCount::ONE,
+        akita_types::CommitmentSliceCount::FOUR,
+    ] {
+        let params = commitment_params_for_slice_count(slice_count);
+        let profile = GroupCommitPhaseParams::try_from_params(params.group(), &params).unwrap();
+        let execution = CommitmentExecutionPlan::for_root(&profile).unwrap();
+        let plan = execution.compression().unwrap();
+
+        let (normal_payload, normal_state) = executor
+            .execute_full(&execution, &sources)
+            .unwrap()
+            .into_parts();
+        let normal_group = CommittedGroup::new(profile, Commitment::new(normal_payload));
+        let (_, outer_image) = executor
+            .execute_uncompressed_stages(&execution, &sources)
+            .unwrap()
+            .into_parts();
+        let (imported_group, compression_state) = backend
+            .compress_root_outer_image(profile, outer_image.clone())
+            .unwrap();
+
+        assert_eq!(imported_group, normal_group);
+        assert_eq!(imported_group.rows(), normal_group.rows());
+        assert_eq!(
+            compression_state.witness(),
+            &normal_state.outer_compression_witness(plan).unwrap()
+        );
+        assert_eq!(
+            compression_state.quotients(),
+            Some(
+                normal_state
+                    .outer_compression_quotients(plan)
+                    .unwrap()
+                    .as_slice()
+            )
+        );
+        assert_eq!(
+            compression_state.relation_mode(),
+            execution.relation_mode().unwrap()
+        );
+
+        let short_image = RingVec::from_coeffs_with_ring_dim(
+            outer_image.coeffs()[..outer_image.coeff_len() - D].to_vec(),
+            outer_image.ring_dim(),
+        )
+        .unwrap();
+        assert!(backend
+            .compress_root_outer_image(profile, short_image)
+            .is_err());
+        let wrong_dimension = RingVec::from_coeffs_with_ring_dim(
+            outer_image.coeffs().to_vec(),
+            outer_image.ring_dim() / 2,
+        )
+        .unwrap();
+        assert!(backend
+            .compress_root_outer_image(profile, wrong_dimension)
+            .is_err());
+
+        let other_slice_count = if slice_count == akita_types::CommitmentSliceCount::ONE {
+            akita_types::CommitmentSliceCount::FOUR
+        } else {
+            akita_types::CommitmentSliceCount::ONE
+        };
+        let other_params = commitment_params_for_slice_count(other_slice_count);
+        let other_profile =
+            GroupCommitPhaseParams::try_from_params(other_params.group(), &other_params).unwrap();
+        assert!(backend
+            .compress_root_outer_image(other_profile, outer_image.clone())
+            .is_err());
+
+        let small_setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
+            NUM_VARS,
+            1,
+            SetupMatrixCapacity::minimum(),
+        )
+        .unwrap();
+        let small_backend =
+            CpuBackend::<ImportedCfg>::for_test_setup(small_setup.expanded).unwrap();
+        assert!(small_backend
+            .compress_root_outer_image(profile, outer_image)
+            .is_err());
+    }
 }

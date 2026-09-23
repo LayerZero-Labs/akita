@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 /// Canonical shared host material exported from one retained compression state.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PortableCompressionState<F: Field> {
+pub struct PortableCompressionState<F: Field> {
     material: Arc<PortableCompressionMaterial<F>>,
 }
 
@@ -56,7 +56,7 @@ impl<F: Field> PortableCompressionState<F> {
     }
 
     /// Borrow the checked compression-chain witness.
-    pub(crate) fn witness(&self) -> &CompressionChainWitness {
+    pub fn witness(&self) -> &CompressionChainWitness {
         match self.material.as_ref() {
             PortableCompressionMaterial::QuotientLift { witness, .. }
             | PortableCompressionMaterial::ReducedEvaluation { witness } => witness,
@@ -64,10 +64,20 @@ impl<F: Field> PortableCompressionState<F> {
     }
 
     /// Borrow quotient rows when the material uses quotient-lift relations.
-    pub(crate) fn quotients(&self) -> Option<&[RingVec<F>]> {
+    pub fn quotients(&self) -> Option<&[RingVec<F>]> {
         match self.material.as_ref() {
             PortableCompressionMaterial::QuotientLift { quotients, .. } => Some(quotients),
             PortableCompressionMaterial::ReducedEvaluation { .. } => None,
+        }
+    }
+
+    /// Relation mode represented by this checked compression material.
+    pub fn relation_mode(&self) -> RingRelationMode {
+        match self.material.as_ref() {
+            PortableCompressionMaterial::QuotientLift { .. } => RingRelationMode::QuotientLift,
+            PortableCompressionMaterial::ReducedEvaluation { .. } => {
+                RingRelationMode::ReducedEvaluation
+            }
         }
     }
 
@@ -250,7 +260,7 @@ fn into_portable<F: Field>(
     assemble_portable_hint(binding, mode, rows, compression)
 }
 
-fn assemble_portable_hint<F: Field>(
+pub(super) fn assemble_portable_hint<F: Field>(
     binding: CommitmentStateBinding,
     mode: CommitmentExecutionMode,
     rows: Vec<RingVec<F>>,

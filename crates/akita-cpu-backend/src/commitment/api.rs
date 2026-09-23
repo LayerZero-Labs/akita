@@ -1,8 +1,9 @@
 //! Top-level prover commitment API.
 
-use crate::commitment::PortableCommitmentHandle;
+use crate::commitment::CommitmentSource;
+#[cfg(test)]
 use crate::commitment::{
-    CommitmentExecutionPlan, CommitmentExecutor, CommitmentSource, CommitmentStatePolicy,
+    CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy, PortableCommitmentHandle,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -15,10 +16,13 @@ use akita_types::sis::CommittedSourceContract;
 use akita_types::CommittedGroupParams;
 use akita_types::{
     validate_role_dims, validate_role_dims_for_field, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommitmentRingDims, CommittedGroup, FpExtEncoding, GadgetDigits,
-    GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    CommitmentRingDims, GadgetDigits, GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
-use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
+#[cfg(test)]
+use akita_types::{Commitment, CommittedGroup, FpExtEncoding};
+use jolt_field::{CanonicalEncoding, Field};
+#[cfg(test)]
+use jolt_field::{Ring, Unreduced};
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +96,7 @@ impl<'a> GroupContext<'a> {
 
 /// Result of committing one polynomial group with policy-selected private state.
 #[derive(Debug)]
+#[cfg(test)]
 pub(crate) struct CommitOutput<F: Field, S = PortableCommitmentHandle<F>> {
     /// Self-describing committed group.
     pub committed_group: CommittedGroup<F>,
@@ -99,7 +104,7 @@ pub(crate) struct CommitOutput<F: Field, S = PortableCommitmentHandle<F>> {
     pub prover_state: S,
 }
 
-fn validate_commitment_geometry<F>(
+pub(super) fn validate_commitment_geometry<F>(
     profile: &GroupCommitPhaseParams,
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
@@ -339,7 +344,7 @@ where
 }
 
 /// Resolve the frozen commit params of one root commitment and admit its sources.
-fn resolve_commit_params<Cfg, P>(
+pub(crate) fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
@@ -424,6 +429,7 @@ where
 ///
 /// Returns an error for an empty or mixed-arity group, unsupported role
 /// parameters, insufficient setup, or commitment execution failure.
+#[cfg(test)]
 pub(crate) fn commit<Cfg, P, SP>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,

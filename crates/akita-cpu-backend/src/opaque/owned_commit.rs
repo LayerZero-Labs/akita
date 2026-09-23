@@ -53,11 +53,9 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             Vec::new(),
             PortableStatePolicy,
         )?;
-        let plan = crate::commitment::CommitmentExecutionPlan::for_root(&committed.parameters)?;
-        let (payload, retained) = executor.execute_full(&plan, &sources)?.into_parts();
-        if akita_types::Commitment::new(payload) != committed.public
-            || retained != committed.retained
-        {
+        let (recomputed, retained) =
+            executor.execute_full_via_outer_image(self, committed.parameters, &sources)?;
+        if recomputed.commitment != committed.public || retained != committed.retained {
             return Err(AkitaError::InvalidInput(
                 "transferred commitment does not match backend setup".into(),
             ));
@@ -105,27 +103,103 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
             PortableStatePolicy,
         )?;
         let sources = source.storage.commitment_sources();
-        let output = crate::commitment::commit::<Cfg, _, _>(
+        executor.validate_setup(&prepared.expanded)?;
+        let profile = crate::commitment::resolve_commit_params::<Cfg, _>(
             &sources,
             &prepared.expanded,
             self.schedules()?,
-            &executor,
             context,
         )?;
+        let (committed_group, prover_state) =
+            executor.execute_full_via_outer_image(self, profile, &sources)?;
         let private_handle = CommitmentHandle {
             owner: source.owner,
             committed: Arc::new(CommittedSource {
                 commitment_id: self.owner().next_operation_id()?,
                 source: source.storage.clone(),
                 metadata: source.metadata,
-                parameters: *output.committed_group.profile(),
-                public: output.committed_group.commitment().clone(),
-                retained: output.prover_state,
+                parameters: *committed_group.profile(),
+                public: committed_group.commitment().clone(),
+                retained: prover_state,
             }),
         };
         Ok(CommitOutput {
-            committed_group: output.committed_group,
+            committed_group,
             private_handle,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AkitaProverSetup, DensePoly};
+    use akita_config::proof_optimized::fp64;
+    use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout};
+    use jolt_field::Ring;
+
+    type Cfg = fp64::Dense;
+    type F = <Cfg as CommitmentConfig>::Field;
+
+    #[test]
+    fn cpu_commit_matches_full_executor_state_after_outer_image_completion() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                const NUM_VARS: usize = 14;
+                let schedules =
+                    akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
+                let layout = OpeningClaimsLayout::new(NUM_VARS, 1).unwrap();
+                let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout().unwrap());
+                let profile = schedules.resolve_key(&key).unwrap().profiles().final_group;
+                let capacity =
+                    akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NUM_VARS, 1)
+                        .unwrap()
+                        .matrix_capacity;
+                let setup =
+                    AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, capacity).unwrap();
+                let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
+                let prepared = backend.prepared().unwrap();
+                let executor = CommitmentExecutor::cpu(
+                    &backend,
+                    prepared,
+                    setup.expanded.as_ref(),
+                    Vec::new(),
+                    PortableStatePolicy,
+                )
+                .unwrap();
+                let evals = (0..1usize << NUM_VARS)
+                    .map(|index| F::from_u64(index as u64 + 1))
+                    .collect::<Vec<_>>();
+                let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).unwrap();
+                let expected = crate::commitment::commit::<Cfg, _, _>(
+                    std::slice::from_ref(&poly),
+                    setup.expanded.as_ref(),
+                    &schedules,
+                    &executor,
+                    GroupContext::explicit(&profile),
+                )
+                .unwrap();
+                let source = backend.import_source(vec![poly]).unwrap();
+                let actual = backend
+                    .commit(&source, GroupContext::explicit(&profile))
+                    .unwrap();
+
+                assert_eq!(actual.committed_group, expected.committed_group);
+                assert_eq!(
+                    actual.private_handle.committed.retained,
+                    expected.prover_state
+                );
+
+                let receiving_backend =
+                    CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
+                let transferred = receiving_backend
+                    .import_commitment(&actual.private_handle)
+                    .unwrap();
+                assert_eq!(transferred.committed.retained, expected.prover_state);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

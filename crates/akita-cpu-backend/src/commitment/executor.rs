@@ -7,12 +7,13 @@ use super::{
     PreparedInnerCommitment, PreparedOuterCommitment, ResidentStatePolicy,
     StageDimensionCapabilities, StageResources, UncompressedCommitmentOutput,
 };
+use super::{InnerRelationStateMaterial, PortableCommitmentHandle, PortableStatePolicy};
 use crate::opaque::{
     ComputeBackendSetup, CpuBackend, CpuCompressionOperation, CpuInnerCommitOperation,
     CpuOuterCommitOperation, CpuPreparedSetup,
 };
 use akita_error::AkitaError;
-use akita_types::AkitaExpandedSetup;
+use akita_types::{AkitaExpandedSetup, CommittedGroup, GroupCommitPhaseParams};
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
@@ -671,6 +672,44 @@ where
             )));
         }
         Ok(())
+    }
+}
+
+impl<'a, F> CommitmentExecutor<'a, F, PortableStatePolicy>
+where
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + 'static,
+{
+    /// Complete a CPU root through the public outer-image compression route,
+    /// retaining the A-stage rows required by later proving stages.
+    pub(crate) fn execute_full_via_outer_image<Cfg>(
+        &self,
+        backend: &CpuBackend<Cfg>,
+        profile: GroupCommitPhaseParams,
+        sources: &[&dyn CommitmentSource<F>],
+    ) -> Result<(CommittedGroup<F>, PortableCommitmentHandle<F>), AkitaError>
+    where
+        Cfg: akita_config::CommitmentConfig<Field = F>,
+    {
+        let plan = CommitmentExecutionPlan::for_root(&profile)?;
+        self.trace_route(plan.mode());
+        let (image, outer_image) = self
+            .execute_uncompressed_stages(&plan, sources)?
+            .into_parts();
+        let binding = image.binding().clone();
+        let exporter = self.state_exporters(&plan)?.inner.ok_or_else(|| {
+            AkitaError::InvalidInput("CPU commitment route has no inner-image exporter".into())
+        })?;
+        let rows = exporter.consume_inner_rows(binding.inner_plan(), image)?;
+        let rows = InnerRelationStateMaterial::from_binding(&binding, rows)?.into_rows();
+        let (committed_group, compression_state) =
+            backend.compress_root_outer_image(profile, outer_image)?;
+        let retained = super::state_policy::assemble_portable_hint(
+            binding,
+            super::CommitmentExecutionMode::Full,
+            rows,
+            Some(compression_state),
+        )?;
+        Ok((committed_group, retained))
     }
 }
 
