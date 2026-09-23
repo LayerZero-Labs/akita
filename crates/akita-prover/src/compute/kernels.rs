@@ -8,15 +8,52 @@ use crate::DecomposeFoldWitness;
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
-/// Outcome of a batched decompose-fold kernel invocation.
-#[derive(Debug)]
-pub enum BatchDecomposeFoldOutcome<F: Field, const D: usize> {
-    /// Fused batched witness produced by the kernel.
-    Fused(DecomposeFoldWitness<F>),
-    /// No fused path; caller should decompose-fold each polynomial and aggregate.
-    FallbackPerPoly,
-    /// Batch shape or challenge plan is not supported.
-    Unsupported,
+/// Checked aggregation for batch kernels that fold their sources individually.
+pub fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
+    witnesses: impl IntoIterator<Item = Result<DecomposeFoldWitness<F>, AkitaError>>,
+) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+    let mut witnesses = witnesses.into_iter();
+    let Some(first) = witnesses.next() else {
+        return Err(AkitaError::InvalidInput(
+            "batched decompose_fold requires at least one witness".to_string(),
+        ));
+    };
+    let first = first?;
+    first.ensure_ring_dim::<D>()?;
+    let row_count = first.row_count();
+    let (z_folded_rings, mut centered_coeffs) = first.into_owned_flat_parts();
+    let mut z_folded_coeffs = z_folded_rings.into_coeffs();
+
+    for witness in witnesses {
+        let witness = witness?;
+        witness.ensure_ring_dim::<D>()?;
+        if witness.row_count() != row_count {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold witness length mismatch".to_string(),
+            ));
+        }
+        for (dst, src) in z_folded_coeffs
+            .iter_mut()
+            .zip(witness.z_folded_rings.coeffs())
+        {
+            *dst += *src;
+        }
+        for (dst, src) in centered_coeffs
+            .iter_mut()
+            .zip(witness.centered_coeffs_flat())
+        {
+            *dst = dst.checked_add(*src).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "batched decompose_fold centered coefficient overflow".to_string(),
+                )
+            })?;
+        }
+    }
+
+    DecomposeFoldWitness::from_owned_flat_parts::<D>(
+        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
+        centered_coeffs,
+    )
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
@@ -59,17 +96,21 @@ where
 }
 
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
+///
+/// Implementations return one aggregate witness per requested block window. A
+/// backend without a fused path folds its source polynomials individually and
+/// aggregates them within each window before returning.
 pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: Field + CanonicalEncoding,
 {
-    /// Fused batched decompose-fold at one opening point.
+    /// Batched decompose-fold at one opening point, in chunk order.
     fn decompose_fold_batch(
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError>;
+    ) -> Result<Vec<DecomposeFoldWitness<F>>, AkitaError>;
 }
 
 /// Tensor projection kernel over a borrowed tensor view `S` for opening at an

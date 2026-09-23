@@ -146,3 +146,8 @@ Mixed-dimension malformed proof rejection is covered by
 | `TrustedScheduleCatalog<Cfg>` | Config-bound trusted parameter passed to setup, prover, and verifier APIs |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |
+
+Opening batch kernels validate one authoritative challenge partition against every
+source and return one aggregate witness per requested chunk. The protocol combines
+their `z` values into the global fold witness; non-fused backends reuse the public
+checked aggregator within each chunk.
