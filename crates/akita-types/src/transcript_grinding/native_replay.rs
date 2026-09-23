@@ -306,6 +306,15 @@ impl<'plan> NativeProverGrinding<'plan> {
             .serialized_nonce_bytes
             .checked_add(native_nonce_encoded_len(counter))
             .ok_or(AkitaError::InvalidProof)?;
+        tracing::info!(
+            role = "prover",
+            level = site.level(),
+            accepted_nonce = counter,
+            rejected_attempts = counter,
+            attempts = u64::from(counter) + 1,
+            encoded_bytes = native_nonce_encoded_len(counter),
+            "native fold response nonce"
+        );
         Ok(())
     }
 

@@ -684,10 +684,18 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     if summary.get("proof_encoding") == "spongefish_native":
         for key in (
             "native_nonce_bytes_actual",
+            "native_non_nonce_bytes",
             "native_nonce_max_bytes",
+            "native_terminal_response_bytes",
+            "native_terminal_response_max_bytes",
+            "native_fold_response_retries",
         ):
             if summary.get(key) is None:
                 missing.append(key)
+        retries = summary.get("native_fold_response_retries")
+        levels = summary.get("akita_levels")
+        if isinstance(retries, list) and levels is not None and len(retries) != int(levels):
+            missing.append("complete_native_fold_response_retries")
     else:
         if summary.get("accounted_bytes") is None:
             missing.append("accounted_bytes")
@@ -872,6 +880,7 @@ def extract_summary(
     planned_groups: dict[int, list[dict[str, object]]] = {}
     terminal_plan: dict[str, object] | None = None
     proof_levels: dict[int, dict[str, object]] = {}
+    native_fold_response_nonces: dict[int, int] = {}
     grinding_plan_summary: dict[str, object] | None = None
     grinding_plan_runs: list[dict[str, object]] = []
     onehot_commit_schedules: list[dict[str, object]] = []
@@ -970,6 +979,20 @@ def extract_summary(
             summary[key] = float(kvs["elapsed_s"])
         elif "native proof nonce bytes" in line and kvs.get("role") == "prover":
             summary["native_nonce_bytes_actual"] = int(kvs["native_nonce_bytes_actual"])
+        elif "native fold response nonce" in line and kvs.get("role") == "prover":
+            level = int(kvs["level"])
+            accepted_nonce = int(kvs["accepted_nonce"])
+            rejected_attempts = int(kvs["rejected_attempts"])
+            attempts = int(kvs["attempts"])
+            if rejected_attempts != accepted_nonce or attempts != accepted_nonce + 1:
+                raise ValueError(
+                    "native fold response retry accounting is inconsistent: "
+                    f"level={level}, nonce={accepted_nonce}, "
+                    f"rejected={rejected_attempts}, attempts={attempts}"
+                )
+            if level in native_fold_response_nonces:
+                raise ValueError(f"duplicate native fold response nonce for level {level}")
+            native_fold_response_nonces[level] = accepted_nonce
         elif "verify single threaded OK" in line and kvs.get("label") == mode:
             summary["verify_single_total_s"] = float(kvs["elapsed_s"])
         elif (
@@ -990,6 +1013,20 @@ def extract_summary(
             )
             summary["native_non_nonce_bytes_observed"] = int(
                 kvs["native_non_nonce_bytes_observed"]
+            )
+        elif "native terminal response bytes" in line:
+            field_bytes = {"fp32": 4, "fp64": 8, "fp128": 16}[
+                metadata.field_family
+            ]
+            z_bytes = int(kvs["native_terminal_z_bytes"])
+            e_elements = int(kvs["native_terminal_e_field_elements"])
+            t_elements = int(kvs["native_terminal_t_field_elements"])
+            summary["native_terminal_response_bytes"] = (
+                4 + z_bytes + (e_elements + t_elements) * field_bytes
+            )
+        elif "native terminal response plan" in line and kvs.get("label") == mode:
+            summary["native_terminal_response_max_bytes"] = int(
+                kvs["planned_terminal_response_bytes"]
             )
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
@@ -1522,6 +1559,19 @@ def extract_summary(
             summary["grind_nonces"] = ",".join(
                 str(level["grind_nonce_val"]) for level in grind_rows
             )
+    if native_fold_response_nonces:
+        ordered_nonces = [
+            native_fold_response_nonces[level]
+            for level in sorted(native_fold_response_nonces)
+        ]
+        summary["native_fold_response_retries"] = [
+            {"level": level, "retries": [native_fold_response_nonces[level]]}
+            for level in sorted(native_fold_response_nonces)
+        ]
+        summary["grind_levels"] = len(ordered_nonces)
+        summary["grind_nonce_max"] = max(ordered_nonces)
+        summary["grind_attempts_sum"] = sum(nonce + 1 for nonce in ordered_nonces)
+        summary["grind_nonces"] = ",".join(str(nonce) for nonce in ordered_nonces)
     if relation_phase_timings:
         summary["relation_phase_timings"] = relation_phase_timings
     if grinding_plan_summary is not None:
@@ -1557,6 +1607,19 @@ def extract_summary(
         raise ValueError("grinding plan runs were emitted without a plan summary")
     if onehot_commit_schedules:
         summary["onehot_commit_schedules"] = onehot_commit_schedules
+
+    if summary.get("proof_encoding") == "spongefish_native":
+        proof_size = summary.get("proof_size_bytes")
+        nonce_bytes = summary.get("native_nonce_bytes_actual")
+        if proof_size is not None and nonce_bytes is not None:
+            proof_size = int(proof_size)
+            nonce_bytes = int(nonce_bytes)
+            if nonce_bytes > proof_size:
+                raise ValueError(
+                    "native nonce bytes exceed the complete proof: "
+                    f"actual={nonce_bytes}, proof_size_bytes={proof_size}"
+                )
+            summary["native_non_nonce_bytes"] = proof_size - nonce_bytes
 
     return summary
 
@@ -1832,7 +1895,10 @@ SUMMARY_CSV_COLUMNS = (
     "native_non_nonce_bytes_observed",
     "native_nonce_bytes_observed",
     "native_nonce_bytes_actual",
+    "native_non_nonce_bytes",
     "native_nonce_max_bytes",
+    "native_terminal_response_bytes",
+    "native_terminal_response_max_bytes",
     "akita_fold_bytes",
     "packed_nonce_estimate_bytes",
     "nonce_stream_bits",
@@ -2897,6 +2963,18 @@ def grind_retries_by_level(summary: dict[str, object]) -> dict[int, list[int]] |
             result[int(observation["level"])] = [int(value) for value in retries]
         return result
 
+    native_observations = summary.get("native_fold_response_retries")
+    if isinstance(native_observations, list):
+        result = {}
+        for observation in native_observations:
+            if not isinstance(observation, dict):
+                continue
+            retries = observation.get("retries")
+            if not isinstance(retries, list):
+                continue
+            result[int(observation["level"])] = [int(value) for value in retries]
+        return result
+
     proof_levels = summary.get("proof_levels")
     if not isinstance(proof_levels, list):
         return None
@@ -2941,10 +3019,72 @@ def grinding_retries_metric_value(
     return exact_choice(current_value, render(baseline_levels))
 
 
+def native_metric_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    key: str,
+    formatter: callable,
+    unit: str,
+    compare_to_baseline: bool,
+) -> str:
+    value = current.get(key)
+    if value is None:
+        return "n/a"
+    rendered = f"{formatter(float(value))}{unit}"
+    if not compare_to_baseline:
+        return rendered
+    if baseline is None:
+        return f"{rendered}<br><sub>no matching merge-base case</sub>"
+    if baseline.get("proof_encoding") != "spongefish_native" or baseline.get(key) is None:
+        return f"{rendered}<br><sub>legacy proof format; no native delta</sub>"
+    return value_with_baseline_delta(
+        value,
+        baseline[key],
+        formatter,
+        unit,
+        True,
+        "",
+    )
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
 ) -> None:
+    proof_shape_metrics = [Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes)]
+    if any(case.get("akita_fold_bytes") is not None for case in current_cases):
+        proof_shape_metrics.append(
+            Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes)
+        )
+    if any(case.get("tail_bytes") is not None for case in current_cases):
+        proof_shape_metrics.append(
+            Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes)
+        )
+    if any(
+        case.get("native_terminal_response_bytes") is not None
+        for case in current_cases
+    ):
+        proof_shape_metrics.append(
+            Metric(
+                "native_terminal_response_bytes",
+                "Terminal response",
+                " bytes",
+                fmt_bytes,
+            )
+        )
+    if any(
+        case.get("native_terminal_response_max_bytes") is not None
+        for case in current_cases
+    ):
+        proof_shape_metrics.append(
+            Metric(
+                "native_terminal_response_max_bytes",
+                "Terminal response planned maximum",
+                " bytes",
+                fmt_bytes,
+            )
+        )
+    proof_shape_metrics.append(Metric("akita_levels", "Fold levels", "", fmt_count))
     tables = [
         (
             "Phase time",
@@ -2969,19 +3109,14 @@ def render_matrix_summary(
         ),
         (
             "Proof size and protocol shape",
-            [
-                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
-                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
-                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
-                Metric("akita_levels", "Fold levels", "", fmt_count),
-            ],
+            proof_shape_metrics,
             True,
         ),
         (
             "Native proof accounting",
             [
                 Metric(
-                    "native_non_nonce_bytes_observed",
+                    "native_non_nonce_bytes",
                     "Non-nonce proof",
                     " bytes",
                     fmt_bytes,
@@ -3064,6 +3199,23 @@ def render_matrix_summary(
                             main_baseline is not None,
                         )
                     )
+                elif metric.key in {
+                    "native_non_nonce_bytes",
+                    "native_nonce_bytes_actual",
+                    "native_nonce_max_bytes",
+                    "native_terminal_response_bytes",
+                    "native_terminal_response_max_bytes",
+                }:
+                    row.append(
+                        native_metric_value(
+                            current,
+                            baseline,
+                            metric.key,
+                            metric.value_formatter,
+                            metric.unit,
+                            main_baseline is not None,
+                        )
+                    )
                 else:
                     row.append(
                         optional_value_with_baseline_delta(
@@ -3138,9 +3290,12 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             f"proof_size_bytes={proof_size}, accounted_bytes={accounted}"
         )
     actual_nonce = summary.get("native_nonce_bytes_actual")
+    actual_non_nonce = summary.get("native_non_nonce_bytes")
     observed_nonce = summary.get("native_nonce_bytes_observed")
     observed_non_nonce = summary.get("native_non_nonce_bytes_observed")
     nonce_max = summary.get("native_nonce_max_bytes")
+    terminal_response = summary.get("native_terminal_response_bytes")
+    terminal_response_max = summary.get("native_terminal_response_max_bytes")
     if proof_size is not None and actual_nonce is not None and int(actual_nonce) > int(proof_size):
         raise ValueError(
             "native nonce bytes exceed the complete proof: "
@@ -3151,6 +3306,22 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             "native nonce bytes exceed their schedule maximum: "
             f"actual={actual_nonce}, maximum={nonce_max}"
         )
+    if (
+        terminal_response is not None
+        and terminal_response_max is not None
+        and int(terminal_response) > int(terminal_response_max)
+    ):
+        raise ValueError(
+            "native terminal response exceeds its planned maximum: "
+            f"actual={terminal_response}, maximum={terminal_response_max}"
+        )
+    if proof_size is not None and actual_nonce is not None and actual_non_nonce is not None:
+        component_total = int(actual_nonce) + int(actual_non_nonce)
+        if component_total != int(proof_size):
+            raise ValueError(
+                "native proof component mismatch: "
+                f"proof_size_bytes={proof_size}, actual_component_total={component_total}"
+            )
     if actual_nonce is not None and observed_nonce is not None and int(actual_nonce) != int(observed_nonce):
         raise ValueError(
             "native nonce instrumentation mismatch: "

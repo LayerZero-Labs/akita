@@ -908,9 +908,12 @@ def render_fold_details(
     print()
     print("#### Fold by fold")
     print()
-    headers = ["Fold", "Step", "Fold parameters", "Input and output", "Proof bytes"]
+    show_proof_bytes = bool(proof)
+    headers = ["Fold", "Step", "Fold parameters", "Input and output"]
+    if show_proof_bytes:
+        headers.append("Proof bytes")
     print("| " + " | ".join(headers) + " |")
-    print("| --- | --- | --- | --- | --- |")
+    print("| " + " | ".join("---" for _ in headers) + " |")
 
     for level_index in level_indices:
         schedule = planned.get(level_index)
@@ -983,27 +986,38 @@ def render_fold_details(
                 f"{detail_block(f'Output to L{level_index + 1}', [exact_choice(next_w, baseline_next_w)])}"
             )
 
-        proof_bytes = "n/a"
-        if proof_level is not None:
-            proof_bytes = proof_cost_summary(
-                proof_level,
-                baseline_proof_level,
-                schedule,
-                baseline_schedule,
-            )
-        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
+        row = [f"L{level_index}", step, schedule_choice, work]
+        if show_proof_bytes:
+            proof_bytes = "—"
+            if proof_level is not None:
+                proof_bytes = proof_cost_summary(
+                    proof_level,
+                    baseline_proof_level,
+                    schedule,
+                    baseline_schedule,
+                )
+            row.append(proof_bytes)
         print("| " + " | ".join(row) + " |")
 
     print()
-    print(
+    explanation = (
         "Each row shows the matrices and challenge used at that fold. Output to the "
         "next level becomes the input shown on the next row. Each group has z, e, and "
         "t segments. Quotient-lift rows also have one shared r segment; reduced-evaluation rows "
-        "have no r segment. The terminal fold uses only A and "
-        "sends the clear z, e, and t response shown in the terminal response section. "
-        "Proof groups with zero bytes are omitted. The terminal response bytes are not "
-        "part of the terminal fold byte total."
+        "have no r segment. The terminal fold uses only A and sends the clear z, e, and t "
+        "response."
     )
+    if show_proof_bytes:
+        explanation += (
+            " Proof groups with zero bytes are omitted. The terminal response bytes are not "
+            "part of the terminal fold byte total."
+        )
+    else:
+        explanation += (
+            " Native Spongefish proofs are one positional byte stream, so legacy structured "
+            "per-fold serialization totals are not reported."
+        )
+    print(explanation)
     render_grinding_plan_details(
         grinding_plan,
         baseline_grinding_plan,

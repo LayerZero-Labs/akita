@@ -1353,8 +1353,16 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         log = "\n".join(
             [
                 "INFO native proof nonce bytes role=prover native_nonce_bytes_actual=6",
+                "INFO native fold response nonce role=prover level=0 accepted_nonce=0 "
+                "rejected_attempts=0 attempts=1 encoded_bytes=1",
+                "INFO native fold response nonce role=prover level=1 accepted_nonce=2 "
+                "rejected_attempts=2 attempts=3 encoded_bytes=1",
                 "INFO native proof summary label=onehot_fp128 levels=2 "
                 "proof_size_bytes=101 native_nonce_max_bytes=9",
+                "INFO native terminal response plan label=onehot_fp128 "
+                "planned_terminal_response_bytes=40",
+                "INFO native terminal response bytes native_terminal_z_bytes=3 "
+                "native_terminal_e_field_elements=1 native_terminal_t_field_elements=1",
                 "INFO native proof byte accounting label=onehot_fp128 accounted_bytes=101 "
                 "native_nonce_bytes_observed=6 native_non_nonce_bytes_observed=95",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
@@ -1372,8 +1380,18 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["accounted_bytes"], 101)
         self.assertEqual(summary["proof_encoding"], "spongefish_native")
         self.assertEqual(summary["native_nonce_bytes_actual"], 6)
+        self.assertEqual(summary["native_non_nonce_bytes"], 95)
         self.assertEqual(summary["native_non_nonce_bytes_observed"], 95)
         self.assertEqual(summary["native_nonce_max_bytes"], 9)
+        self.assertEqual(summary["native_terminal_response_bytes"], 39)
+        self.assertEqual(summary["native_terminal_response_max_bytes"], 40)
+        self.assertEqual(
+            summary["native_fold_response_retries"],
+            [
+                {"level": 0, "retries": [0]},
+                {"level": 1, "retries": [2]},
+            ],
+        )
         self.assertEqual(summary["nonce_stream_bits"], 54)
         self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
         self.assertEqual(summary["grinding_plan"]["native_nonce_max_bytes"], 9)
@@ -1627,6 +1645,60 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertNotIn("Setup Mode", report)
         table_lines = [line for line in report.splitlines() if line.startswith("|")]
         self.assertLessEqual(max(line.count("|") for line in table_lines), 8)
+
+    def test_native_matrix_omits_legacy_columns_and_labels_legacy_baseline(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
+
+        current = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "setup_s": 1.0,
+                "commit_s": 2.0,
+                "prove_total_s": 3.0,
+                "verify_total_s": 0.004,
+                "verify_single_total_s": 0.005,
+                "setup_vector_bytes": 1024,
+                "setup_ntt_cache_bytes": 2048,
+                "verifier_ntt_cache_bytes": 512,
+                "max_rss_kib": 4096,
+                "proof_encoding": "spongefish_native",
+                "proof_size_bytes": 100,
+                "native_non_nonce_bytes": 94,
+                "native_nonce_bytes_actual": 6,
+                "native_nonce_max_bytes": 9,
+                "native_terminal_response_bytes": 39,
+                "native_terminal_response_max_bytes": 40,
+                "akita_levels": 2,
+                "planned_levels": [
+                    {"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}
+                ],
+                "grind_retry_observations": [
+                    {"level": 0, "retries": [0, 2, 1]}
+                ],
+            }
+        )
+        baseline = dict(current)
+        baseline.pop("proof_encoding")
+        baseline.pop("native_non_nonce_bytes")
+        baseline.pop("native_nonce_bytes_actual")
+        baseline.pop("native_nonce_max_bytes")
+        baseline.pop("native_terminal_response_bytes")
+        baseline.pop("native_terminal_response_max_bytes")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_matrix_summary([current], {str(current["case_id"]): baseline})
+        report = output.getvalue()
+
+        self.assertNotIn("Fold payload", report)
+        self.assertIn("| Terminal response |", report)
+        self.assertIn("Terminal response planned maximum", report)
+        self.assertIn("legacy proof format; no native delta", report)
+        self.assertNotIn("n/a", report)
+
     def test_fold_dimension_schedule_collapses_uniform_suffix(self) -> None:
         from scripts.profile_bench_report import fold_dimension_schedule
 
