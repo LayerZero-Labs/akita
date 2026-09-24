@@ -5,11 +5,11 @@ mod subfield;
 
 use crate::{
     basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    BasisMode, CommittedGroupParams, FpExtEncoding, RingVec,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    CommittedGroupParams, FpExtEncoding, RingVec,
 };
 use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
 pub use ring_multiplier::{PreparedRingMultiplier, RingMultiplierOpeningPoint};
@@ -53,11 +53,6 @@ impl<F: Field, E: Field> PreparedOpeningPoint<F, E> {
         self.ring_dim
     }
 
-    /// ψ-packed inner opening weight in flat ring storage.
-    pub fn packed_inner(&self) -> &RingVec<F> {
-        &self.packed_inner_point
-    }
-
     /// # Errors
     ///
     /// Returns an error if the requested ring dimension does not match storage.
@@ -82,12 +77,6 @@ impl<F: Field, E: Field> PreparedOpeningPoint<F, E> {
     ) -> Result<&CyclotomicRing<F, D>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
         self.packed_inner_point.as_single_ring::<D>()
-    }
-
-    /// Owned copy of the ψ-packed inner ring after [`Self::ensure_ring_dim`].
-    pub fn packed_inner_owned<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        self.packed_inner_point.try_to_single::<D>()
     }
 }
 
@@ -131,81 +120,6 @@ where
     );
     SubfieldMultiplierOpeningPoint::new::<E, D>(&position_weights, &live_block_weights, error)
         .map(RingMultiplierOpeningPoint::Subfield)
-}
-
-/// Sum claim-group sizes with overflow checking.
-///
-/// # Errors
-///
-/// Returns an error if the total claim count overflows `usize`.
-pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
-    checked::sum(group_sizes.iter().copied())
-        .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
-}
-
-/// Validate common batched prove/verify input shape constraints.
-///
-/// # Errors
-///
-/// Returns an error if the group-local opening point exceeds setup capacity, the
-/// payload is empty, or the claim count exceeds setup capacity.
-pub fn validate_batched_inputs<F, E>(
-    setup: &AkitaExpandedSetup<F>,
-    point: &[E],
-    group_sizes: &[usize],
-    for_prover: bool,
-) -> Result<(), AkitaError>
-where
-    F: Field,
-{
-    let label = if for_prover {
-        "batched_prove"
-    } else {
-        "batched_verify"
-    };
-    let shape_error = |message| {
-        if for_prover {
-            AkitaError::InvalidInput(message)
-        } else {
-            AkitaError::InvalidProof
-        }
-    };
-
-    let num_vars = point.len();
-    if num_vars > setup.descriptor().max_num_vars {
-        return Err(AkitaError::InvalidInput(format!(
-            "{label} received opening points with {} variables but setup supports at most {}",
-            num_vars,
-            setup.descriptor().max_num_vars
-        )));
-    }
-    if group_sizes.is_empty() {
-        return Err(shape_error(format!(
-            "{label} requires at least one commitment group",
-        )));
-    }
-    if group_sizes.contains(&0) {
-        return Err(shape_error(format!(
-            "{label} commitment groups must be nonempty",
-        )));
-    }
-    let num_claims = checked_total_claims(group_sizes, label)?;
-    if num_claims == 0 {
-        return Err(shape_error(format!(
-            "{label} requires at least one claimed opening",
-        )));
-    }
-    if num_claims > setup.descriptor().max_num_batched_polys {
-        if for_prover {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.descriptor().max_num_batched_polys
-            )));
-        }
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
 }
 
 /// Prepare a recursive opening point whose coordinates may live in the proof

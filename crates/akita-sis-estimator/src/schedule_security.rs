@@ -5,7 +5,7 @@ pub use akita_types::{ScheduleSisBound, ScheduleSisRole};
 
 use crate::{
     estimate, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide, CostValue, EstimateConfig,
-    EstimatorError, LatticeCost, Result, SisNorm,
+    EstimatorError, LatticeCost, Result,
 };
 
 /// Direct estimator result for one schedule-derived SIS instance.
@@ -38,15 +38,6 @@ impl ScheduleSisInstanceEstimate {
     #[must_use]
     pub fn security_bits(&self) -> f64 {
         cost_security_bits(self.cost.rop)
-    }
-
-    /// Return the norm family used by this instance.
-    #[must_use]
-    pub const fn norm(&self) -> SisNorm {
-        match self.bound {
-            ScheduleSisBound::Linf(_) => SisNorm::Infinity,
-            ScheduleSisBound::L2Squared(_) => SisNorm::Euclidean,
-        }
     }
 }
 

@@ -365,27 +365,11 @@ impl<W: PrimeWidth> NttPrime<W> {
         }
     }
 
-    /// In-place Montgomery scaling by a constant.
-    #[inline]
-    pub fn scale_in_place(self, coeffs: &mut [MontCoeff<W>], scalar: MontCoeff<W>) {
-        for c in coeffs {
-            *c = self.mul(*c, scalar);
-        }
-    }
-
     /// In-place range reduction on a coefficient slice.
     #[inline]
     pub fn reduce_range_in_place(self, coeffs: &mut [MontCoeff<W>]) {
         for c in coeffs {
             *c = self.reduce_range(*c);
-        }
-    }
-
-    /// In-place centering of canonical values to `[-p/2, p/2)`.
-    #[inline]
-    pub fn center_slice(self, coeffs: &mut [W]) {
-        for c in coeffs {
-            *c = self.center(*c);
         }
     }
 }

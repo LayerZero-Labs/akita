@@ -2,11 +2,10 @@
 
 use akita_error::AkitaError;
 use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
-    FoldSchedule, FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
+    ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams, FoldParams, FoldSchedule,
+    FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
-    MAX_I8_LOG_BASIS,
+    TerminalResponseShape, WitnessLayout, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
 
@@ -203,29 +202,6 @@ pub enum RingDimensionScheduleMode {
 /// Number of leading fold levels covered by the audited adaptive search.
 pub const ADAPTIVE_SEARCH_LEVELS: usize = 2;
 
-impl RingDimensionScheduleMode {
-    #[must_use]
-    pub const fn uniform_dimensions(self) -> Option<CommitmentRingDims> {
-        match self {
-            Self::UniformDimension { ring_dimension } => {
-                Some(CommitmentRingDims::uniform(ring_dimension))
-            }
-            Self::AdaptiveDimension { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn potential_a_dimensions(self) -> &'static [usize] {
-        match self {
-            Self::UniformDimension { .. } => &[],
-            Self::AdaptiveDimension {
-                potential_a_dimensions,
-                ..
-            } => potential_a_dimensions,
-        }
-    }
-}
-
 /// Runtime schedule validation policy.
 ///
 /// The compatibility name stays `PlannerPolicy` during the migration because
@@ -258,9 +234,6 @@ pub struct PlannerPolicy {
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
-
-/// Preferred public name for runtime callers.
-pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
     /// Number of physical witness chunks active at one fold level.
@@ -983,14 +956,10 @@ pub fn planned_next_witness_len(
     ))
 }
 
-/// Convenience policy used by config adapters.
-pub fn default_sis_security_policy() -> SisSecurityPolicyId {
-    DEFAULT_SIS_SECURITY_POLICY
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_types::DEFAULT_SIS_SECURITY_POLICY;
 
     const A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER: &[usize] = &[64, 512];
     const SUFFIX_DIMENSIONS: &[usize] = &[64];

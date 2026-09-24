@@ -18,17 +18,6 @@ pub use profiles::{
 pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
-/// Public inputs that deterministically select one level's active Akita params.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AkitaScheduleInputs {
-    /// Root polynomial variable count.
-    pub num_vars: usize,
-    /// Fold level, where `0` is the original polynomial.
-    pub level: usize,
-    /// Current witness length in field elements before this level runs.
-    pub input_witness_len: usize,
-}
-
 /// Transcript binding used for one fold's outgoing witness state.
 ///
 /// This is schedule-owned because the same intermediate proof body may either
@@ -365,10 +354,6 @@ impl FoldSchedule {
 
     pub fn root_fold(&self) -> &FoldParams {
         &self.root
-    }
-
-    pub fn root_fold_mut(&mut self) -> &mut FoldParams {
-        &mut self.root
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {

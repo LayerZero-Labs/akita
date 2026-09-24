@@ -106,18 +106,6 @@ impl Default for NumericConfig {
     }
 }
 
-/// Trust status for a golden cell.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GoldenTrust {
-    /// The upstream reference cell is stable enough for exact parity tests.
-    Trusted,
-    /// The upstream reference cell is recorded but excluded from hard parity.
-    Fragile {
-        /// Reason the cell is excluded.
-        reason: String,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

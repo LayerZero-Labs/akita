@@ -441,19 +441,6 @@ impl<F: Field> CoefficientPackingFoldProduct<F> {
     pub fn quotient_high_half_base_field_coordinates(&self) -> &[F] {
         &self.quotient_high_half_base_field_coordinates
     }
-
-    /// Consume the paired reduction and positive high half without separating
-    /// their construction authority.
-    #[must_use]
-    pub fn into_geometry_and_base_field_coordinates(
-        self,
-    ) -> (SubringCoefficientPackingGeometry, Vec<F>, Vec<F>) {
-        (
-            self.geometry,
-            self.reduced_base_field_coordinates,
-            self.quotient_high_half_base_field_coordinates,
-        )
-    }
 }
 
 fn accumulate_small_signed_product<F: Field + Ring>(

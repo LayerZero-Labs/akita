@@ -98,11 +98,6 @@ impl OpeningClaimsLayout {
         Self::from_groups(groups)
     }
 
-    /// Worst-case setup-capacity request as a one-group layout.
-    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError> {
-        Self::new(seed.max_num_vars, seed.max_num_batched_polys)
-    }
-
     /// Validate layout count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
         if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
@@ -162,14 +157,6 @@ impl OpeningClaimsLayout {
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
         checked::sum(self.groups.iter().map(|group| group.num_polynomials()))
             .ok_or(AkitaError::InvalidProof)
-    }
-
-    /// Number of polynomials in each group.
-    pub fn group_sizes(&self) -> Vec<usize> {
-        self.groups
-            .iter()
-            .map(|group| group.num_polynomials())
-            .collect()
     }
 
     /// Borrow one group layout by index.
@@ -494,14 +481,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         self.groups.len()
     }
 
-    /// Total polynomials opened across all groups.
-    pub fn num_total_polynomials(&self) -> usize {
-        self.groups
-            .iter()
-            .map(|group| group.evaluations.len())
-            .sum()
-    }
-
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
         checked::sum(
             self.groups
@@ -509,14 +488,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 .map(PolynomialGroupClaims::num_evaluations),
         )
         .ok_or(AkitaError::InvalidProof)
-    }
-
-    /// Number of polynomials/evaluations in each group.
-    pub fn group_sizes(&self) -> Vec<usize> {
-        self.groups
-            .iter()
-            .map(PolynomialGroupClaims::num_evaluations)
-            .collect()
     }
 
     /// Borrow one group's evaluations.
@@ -572,16 +543,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .iter()
             .flat_map(|group| group.evaluations.iter().cloned())
             .collect()
-    }
-}
-
-impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
-    /// Return the only commitment when the current single-group path applies.
-    pub fn single_group_commitment(&self) -> Option<&C> {
-        self.groups
-            .first()
-            .filter(|_| self.groups.len() == 1)
-            .map(PolynomialGroupClaims::commitment)
     }
 }
 

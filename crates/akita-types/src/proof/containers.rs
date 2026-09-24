@@ -38,14 +38,6 @@ impl<F: Field> RingVec<F> {
         }
     }
 
-    /// Consume typed coefficient rows without copying their elements.
-    pub fn from_coefficient_rows<const D: usize>(coeffs: Vec<[F; D]>) -> Self {
-        Self {
-            coeffs: coeffs.into_flattened(),
-            ring_dim: D,
-        }
-    }
-
     /// Construct from raw field coefficients in compact mode (`ring_dim = 0`).
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
         Self {
@@ -67,11 +59,6 @@ impl<F: Field> RingVec<F> {
             ));
         }
         Ok(Self { coeffs, ring_dim })
-    }
-
-    /// Wrap a `RingCommitment`.
-    pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
-        Self::from_ring_elems(&c.u)
     }
 
     /// Ring dimension (number of field-element coefficients per ring element),
@@ -123,24 +110,6 @@ impl<F: Field> RingVec<F> {
             coeffs: self.coeffs,
             ring_dim: 0,
         }
-    }
-
-    /// Reconstruct a single ring element.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `D != ring_dim` (when ring_dim is known) or
-    /// `coeffs.len() != D`.
-    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        if self.ring_dim > 0 {
-            assert_eq!(D, self.ring_dim, "D mismatch in to_single");
-        }
-        assert_eq!(
-            self.coeffs.len(),
-            D,
-            "expected exactly one ring element of dimension {D}"
-        );
-        CyclotomicRing::from_slice(&self.coeffs)
     }
 
     /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
@@ -382,21 +351,9 @@ impl<F: Field> RingVec<F> {
     ///
     /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` (compact mode)
     /// or if `coeffs.len()` is not a multiple of `ring_dim`. Compact-mode
-    /// vectors must use [`view_as`](Self::view_as) instead.
+    /// vectors must build a [`RingView`] with an explicit ring dimension.
     pub fn view(&self) -> Result<RingView<'_, F>, AkitaError> {
         RingView::new(&self.coeffs, self.ring_dim)
-    }
-
-    /// Borrow this `RingVec` as a [`RingView`] under an externally supplied
-    /// `ring_dim` (e.g. from the schedule). Use this for compact-mode vectors
-    /// where `ring_dim` was not stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
-    /// `coeffs.len()` is not a multiple of `ring_dim`.
-    pub fn view_as(&self, ring_dim: usize) -> Result<RingView<'_, F>, AkitaError> {
-        RingView::new(&self.coeffs, ring_dim)
     }
 }
 
@@ -496,39 +453,6 @@ impl DigitBlocks {
         })
     }
 
-    /// Flatten a block-owned plane representation into canonical storage at the
-    /// given per-plane stride.
-    ///
-    /// Every plane must have exactly `digit_stride` digits.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any plane width differs from `digit_stride`.
-    pub fn from_blocks(blocks: Vec<Vec<Vec<i8>>>, digit_stride: usize) -> Result<Self, AkitaError> {
-        let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
-        let total_planes = total_planes(&block_sizes)?;
-        let total_digits = total_planes
-            .checked_mul(digit_stride)
-            .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
-        let mut digits = Vec::with_capacity(total_digits);
-        for block in blocks {
-            for plane in block {
-                if plane.len() != digit_stride {
-                    return Err(AkitaError::InvalidSize {
-                        expected: digit_stride,
-                        actual: plane.len(),
-                    });
-                }
-                digits.extend_from_slice(&plane);
-            }
-        }
-        Ok(Self {
-            digits,
-            block_sizes,
-            digit_stride,
-        })
-    }
-
     /// Number of signed digits per plane (the former ring dimension `D`).
     pub fn digit_stride(&self) -> usize {
         self.digit_stride
@@ -564,31 +488,12 @@ impl DigitBlocks {
         &self.digits
     }
 
-    /// Mutable flat digit stream in plane-major block order.
-    pub fn digits_mut(&mut self) -> &mut [i8] {
-        &mut self.digits
-    }
-
     /// Borrow the digit slice for plane index `plane`
     /// (`digit_stride` digits), or `None` if out of range.
     pub fn plane(&self, plane: usize) -> Option<&[i8]> {
         let start = plane.checked_mul(self.digit_stride)?;
         let end = start.checked_add(self.digit_stride)?;
         self.digits.get(start..end)
-    }
-
-    /// Split the flat digit stream into disjoint mutable per-block slices
-    /// (each `block_size * digit_stride` digits long).
-    pub fn split_blocks_mut(&mut self) -> Vec<&mut [i8]> {
-        let stride = self.digit_stride;
-        let mut blocks = Vec::with_capacity(self.block_sizes.len());
-        let mut tail = self.digits.as_mut_slice();
-        for &block_size in &self.block_sizes {
-            let (head, rest) = tail.split_at_mut(block_size * stride);
-            blocks.push(head);
-            tail = rest;
-        }
-        blocks
     }
 
     /// Iterate over blocks as flat digit slices into the digit stream.
@@ -604,56 +509,6 @@ impl DigitBlocks {
     /// Iterate over logical blocks.
     pub fn iter(&self) -> DigitBlockIter<'_> {
         self.iter_blocks()
-    }
-
-    /// Append the flat digit stream to `dst`.
-    pub fn extend_digits(&self, dst: &mut Vec<i8>) {
-        dst.extend_from_slice(&self.digits);
-    }
-
-    /// Truncate every block to at most `max_planes_per_block` digit planes.
-    pub fn truncate_each_block(&mut self, max_planes_per_block: usize) {
-        if self
-            .block_sizes
-            .iter()
-            .all(|&size| size <= max_planes_per_block)
-        {
-            return;
-        }
-        let stride = self.digit_stride;
-        let total_planes: usize = self
-            .block_sizes
-            .iter()
-            .map(|&size| size.min(max_planes_per_block))
-            .sum();
-        let mut new_digits = Vec::with_capacity(total_planes * stride);
-        let mut offset_planes = 0usize;
-        for size in &mut self.block_sizes {
-            let keep = (*size).min(max_planes_per_block);
-            let start = offset_planes * stride;
-            new_digits.extend_from_slice(&self.digits[start..start + keep * stride]);
-            offset_planes += *size;
-            *size = keep;
-        }
-        self.digits = new_digits;
-    }
-
-    /// Consume the storage and rebuild owned blocks of planes (each plane a
-    /// `Vec<i8>` of length `digit_stride`).
-    pub fn into_blocks(self) -> Vec<Vec<Vec<i8>>> {
-        let stride = self.digit_stride;
-        let mut blocks = Vec::with_capacity(self.block_sizes.len());
-        let mut offset_planes = 0usize;
-        for size in self.block_sizes {
-            let mut block = Vec::with_capacity(size);
-            for plane in 0..size {
-                let start = (offset_planes + plane) * stride;
-                block.push(self.digits[start..start + stride].to_vec());
-            }
-            blocks.push(block);
-            offset_planes += size;
-        }
-        blocks
     }
 
     /// Consume into the flat digits, block sizes, and per-plane stride.
@@ -739,22 +594,6 @@ impl DigitBlocks {
             ));
         }
         Ok(blocks)
-    }
-
-    /// Construct from typed `[i8; D]` planes and explicit block sizes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the block sizes do not sum to the plane count.
-    pub fn from_typed_planes<const D: usize>(
-        flat_planes: Vec<[i8; D]>,
-        block_sizes: Vec<usize>,
-    ) -> Result<Self, AkitaError> {
-        let mut digits = Vec::with_capacity(flat_planes.len() * D);
-        for plane in &flat_planes {
-            digits.extend_from_slice(plane);
-        }
-        Self::new(digits, block_sizes, D)
     }
 }
 

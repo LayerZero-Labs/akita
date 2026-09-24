@@ -191,13 +191,6 @@ impl GroupCommitPhaseParams {
         self.inner.digits
     }
 
-    /// The B-role gadget decomposition.
-    #[inline]
-    #[must_use]
-    pub fn outer_digits(&self) -> crate::GadgetDigits {
-        self.outer.digits
-    }
-
     /// Canonical versioned bytes used for catalog and schedule-key identity.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();

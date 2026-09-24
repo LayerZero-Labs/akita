@@ -678,24 +678,6 @@ impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
         self.output_rank.checked_mul(self.ring_dimension())
     }
 
-    #[must_use]
-    pub fn max_secure_collision_linf(&self) -> Option<u128> {
-        inner_coeff_linf_bounds(
-            self.sis_table_key.modulus_profile,
-            self.sis_table_key.ring_dimension,
-        )
-        .into_iter()
-        .take_while(|&bound| {
-            let key = SisTableKey {
-                coeff_linf_bound: bound,
-                ..self.sis_table_key
-            };
-            min_secure_rank(key, self.input_width as u64)
-                .is_some_and(|rank| rank <= self.output_rank)
-        })
-        .last()
-    }
-
     /// Byte-identical to the two macro expansions it replaces.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));

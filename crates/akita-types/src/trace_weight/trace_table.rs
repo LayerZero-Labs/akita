@@ -1,19 +1,10 @@
 //! Prover-side trace table: sparse columns for `K = 1`, dense flat slice for `K > 1`.
 
-use akita_error::AkitaError;
-
 use jolt_field::Field;
 
 #[inline]
 fn fold_pair<E: Field>(a: E, b: E, r: E) -> E {
     a + r * (b - a)
-}
-
-#[inline]
-fn fold_quad<E: Field>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
-    let x0 = fold_pair(v00, v10, r0);
-    let x1 = fold_pair(v01, v11, r0);
-    fold_pair(x0, x1, r1)
 }
 
 /// One active opening-digit column of a sparse (`K = 1`) trace table.
@@ -66,38 +57,6 @@ impl<E: Field> TraceSparseTable<E> {
                 .unwrap_or_else(E::zero),
             Err(_) => E::zero(),
         }
-    }
-
-    fn fold_y(&mut self, r: E) {
-        for column in &mut self.columns {
-            let half = column.values.len() / 2;
-            for i in 0..half {
-                let a = column.values[2 * i];
-                let b = column.values[2 * i + 1];
-                column.values[i] = fold_pair(a, b, r);
-            }
-            column.values.truncate(half);
-        }
-        self.y_len /= 2;
-    }
-
-    fn fold_y2(&mut self, r0: E, r1: E) {
-        let next_y_len = self.y_len >> 2;
-        for column in &mut self.columns {
-            for quad_y in 0..next_y_len {
-                let base = 4 * quad_y;
-                column.values[quad_y] = fold_quad(
-                    column.values[base],
-                    column.values[base + 1],
-                    column.values[base + 2],
-                    column.values[base + 3],
-                    r0,
-                    r1,
-                );
-            }
-            column.values.truncate(next_y_len);
-        }
-        self.y_len = next_y_len;
     }
 
     fn fold_x(&mut self, r: E) {
@@ -155,18 +114,6 @@ impl<E: Field> TraceTable<E> {
         Self::RingDense(dense)
     }
 
-    /// Extract the flat `col ⊗ ring` table backing a dense trace table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] for a sparse (`K = 1`) table.
-    pub fn into_ring_dense(self) -> Result<Vec<E>, AkitaError> {
-        match self {
-            Self::RingDense(dense) => Ok(dense),
-            Self::FieldSparse(_) => Err(AkitaError::InvalidProof),
-        }
-    }
-
     pub fn materialize_dense(&self, live_x_cols: usize, y_len: usize) -> Vec<E> {
         match self {
             Self::FieldSparse(table) => {
@@ -185,101 +132,6 @@ impl<E: Field> TraceTable<E> {
             Self::FieldSparse(table) => {
                 debug_assert_eq!(table.y_len, y_len);
                 table.get(x, y)
-            }
-        }
-    }
-
-    #[inline]
-    pub fn pair_at_columns(&self, x0: usize, x1: usize, y: usize, y_len: usize) -> (E, E) {
-        (self.get(x0, y, y_len), self.get(x1, y, y_len))
-    }
-
-    #[inline]
-    pub fn pair_flat(&self, idx0: usize, idx1: usize, y_len: usize) -> (E, E) {
-        (
-            self.get(idx0 / y_len, idx0 % y_len, y_len),
-            self.get(idx1 / y_len, idx1 % y_len, y_len),
-        )
-    }
-
-    pub fn quad_at(&self, x: usize, base: usize, y_len: usize) -> [E; 4] {
-        std::array::from_fn(|offset| self.get(x, base + offset, y_len))
-    }
-
-    pub fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
-        match self {
-            Self::RingDense(dense) => {
-                if dense.len() != witness_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: witness_len,
-                        actual: dense.len(),
-                    });
-                }
-            }
-            Self::FieldSparse(table) => {
-                if table.live_x_cols * table.y_len > witness_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: witness_len,
-                        actual: table.live_x_cols * table.y_len,
-                    });
-                }
-                for column in &table.columns {
-                    if column.col >= table.live_x_cols {
-                        return Err(AkitaError::InvalidInput(
-                            "sparse trace column index out of live range".to_string(),
-                        ));
-                    }
-                    if column.values.len() != table.y_len {
-                        return Err(AkitaError::InvalidSize {
-                            expected: table.y_len,
-                            actual: column.values.len(),
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn fold_y(&mut self, r: E) {
-        match self {
-            Self::RingDense(dense) => {
-                let half = dense.len() / 2;
-                for i in 0..half {
-                    dense[i] = fold_pair(dense[2 * i], dense[2 * i + 1], r);
-                }
-                dense.truncate(half);
-            }
-            Self::FieldSparse(table) => table.fold_y(r),
-        }
-    }
-
-    pub fn fold_y2(&mut self, live_x_cols: usize, y_len: usize, r0: E, r1: E) {
-        match self {
-            Self::RingDense(dense) => {
-                let next_y_len = y_len >> 2;
-                let mut out = vec![E::zero(); live_x_cols * next_y_len];
-                for x in 0..live_x_cols {
-                    let src_start = x * y_len;
-                    let dst_start = x * next_y_len;
-                    for quad_y in 0..next_y_len {
-                        let base = src_start + 4 * quad_y;
-                        out[dst_start + quad_y] = fold_quad(
-                            dense[base],
-                            dense[base + 1],
-                            dense[base + 2],
-                            dense[base + 3],
-                            r0,
-                            r1,
-                        );
-                    }
-                }
-                *dense = out;
-            }
-            Self::FieldSparse(table) => {
-                debug_assert_eq!(table.live_x_cols, live_x_cols);
-                debug_assert_eq!(table.y_len, y_len);
-                table.fold_y2(r0, r1);
             }
         }
     }
@@ -311,20 +163,6 @@ impl<E: Field> TraceTable<E> {
                 debug_assert_eq!(table.y_len, y_len);
                 table.fold_x(r);
             }
-        }
-    }
-
-    pub fn fold_for_w_update(
-        &mut self,
-        live_x_cols: usize,
-        y_len: usize,
-        r: E,
-        folding_x_round: bool,
-    ) {
-        if folding_x_round {
-            self.fold_x(live_x_cols, y_len, r);
-        } else {
-            self.fold_y(r);
         }
     }
 }

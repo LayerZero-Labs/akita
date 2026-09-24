@@ -121,25 +121,6 @@ impl TailSegmentLayout {
             total.saturating_add(group.z_payload_bytes)
         })
     }
-
-    #[must_use]
-    pub fn admits_realized(&self, realized: &Self) -> bool {
-        self.ring_dimension == realized.ring_dimension
-            && self.logical_num_elems == realized.logical_num_elems
-            && self.groups.len() == realized.groups.len()
-            && self
-                .groups
-                .iter()
-                .zip(&realized.groups)
-                .all(|(scheduled, realized)| {
-                    scheduled.z_coords == realized.z_coords
-                        && scheduled.e_field_elems == realized.e_field_elems
-                        && scheduled.t_field_elems == realized.t_field_elems
-                        && scheduled.z_linf_cap == realized.z_linf_cap
-                        && scheduled.z_rice_low_bits == realized.z_rice_low_bits
-                        && realized.z_payload_bytes <= scheduled.z_payload_bytes
-                })
-    }
 }
 
 impl Valid for TailSegmentLayout {
@@ -453,11 +434,6 @@ impl<F: Field> TerminalResponse<F> {
             layout: self.layout.clone(),
         }
     }
-
-    /// Number of logical field elements carried by this witness.
-    pub fn num_elems(&self) -> usize {
-        self.layout.logical_num_elems
-    }
 }
 
 impl TerminalResponseShape {
@@ -465,12 +441,6 @@ impl TerminalResponseShape {
     #[must_use]
     pub fn logical_num_elems(&self) -> usize {
         self.layout.logical_num_elems
-    }
-
-    /// Whether a realized terminal layout fits this scheduled upper bound.
-    #[must_use]
-    pub fn admits_realized(&self, realized: &Self) -> bool {
-        self.layout.admits_realized(&realized.layout)
     }
 }
 
@@ -799,69 +769,6 @@ impl TerminalResponseShape {
     }
 }
 
-/// Recover tail multiplicities from a committed [`TailSegmentLayout`].
-///
-/// # Errors
-///
-/// Returns an error when the layout is inconsistent with `lp`.
-pub fn tail_segment_multiplicities_from_layout(
-    lp: &CommittedGroupParams,
-    layout: &TailSegmentLayout,
-    group_index: usize,
-) -> Result<(usize, usize, usize), AkitaError> {
-    tail_segment_multiplicities_from_layout_for_params(
-        &lp.final_group_scalar()?,
-        lp.d_a(),
-        layout,
-        group_index,
-    )
-}
-
-pub fn tail_segment_multiplicities_from_layout_for_params(
-    params: &crate::GroupOpenPhaseParams,
-    ring_dimension: usize,
-    layout: &TailSegmentLayout,
-    group_index: usize,
-) -> Result<(usize, usize, usize), AkitaError> {
-    let d = layout.ring_dimension;
-    if d == 0 || d != ring_dimension || params.num_live_blocks() == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "tail segment layout has zero ring dimension or block count".to_string(),
-        ));
-    }
-    let group = layout
-        .groups
-        .get(group_index)
-        .ok_or(AkitaError::InvalidProof)?;
-    let e_unit = d
-        .checked_mul(params.num_live_blocks())
-        .ok_or_else(|| AkitaError::InvalidSetup("tail e unit overflow".to_string()))?;
-    if !group.e_field_elems.is_multiple_of(e_unit) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_w_vectors = group.e_field_elems / e_unit;
-
-    let t_unit = e_unit
-        .checked_mul(params.a_rows_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("tail t unit overflow".to_string()))?;
-    if !group.t_field_elems.is_multiple_of(t_unit) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_t_vectors = group.t_field_elems / t_unit;
-
-    let z_unit = params
-        .num_positions_per_block()
-        .checked_mul(params.num_digits_inner())
-        .and_then(|n| n.checked_mul(d))
-        .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
-    if !group.z_coords.is_multiple_of(z_unit) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_z_segments = group.z_coords / z_unit;
-
-    Ok((num_w_vectors, num_t_vectors, num_z_segments))
-}
-
 /// Planner byte budget for the Golomb-coded terminal `z` segment.
 ///
 /// Uses cap-derived low bits plus the average-case `cap_rice_low_bits + 2` bits/coord model so schedules
@@ -995,66 +902,6 @@ where
     Ok(witness)
 }
 
-/// Build the scalar raw terminal response selected by the typed terminal
-/// schedule. Neither `e` nor `t` is gadget decomposed.
-pub fn build_terminal_response<F>(
-    params: &TerminalFoldParams,
-    scheduled_shape: &TerminalResponseShape,
-    e_folded: &RingVec<F>,
-    t_fields: RingVec<F>,
-    z_folded_centered_flat: &[i32],
-) -> Result<TerminalResponse<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-{
-    let group = scheduled_shape
-        .layout
-        .groups
-        .first()
-        .ok_or(AkitaError::InvalidProof)?;
-    if scheduled_shape.layout.groups.len() != 1
-        || e_folded.coeff_len() != group.e_field_elems
-        || z_folded_centered_flat.len() != group.z_coords
-    {
-        return Err(AkitaError::InvalidInput(
-            "terminal response segment length mismatch".into(),
-        ));
-    }
-    params.validate_terminal_linf_cap(group.z_linf_cap)?;
-    let z_values = z_folded_centered_flat
-        .iter()
-        .map(|value| i64::from(*value))
-        .collect::<Vec<_>>();
-    if let Some(cap) = group.z_linf_cap {
-        golomb_rice_values_within_cap(&z_values, cap).map_err(|_| {
-            AkitaError::InvalidInput("terminal response exceeds its scheduled Linf cap".into())
-        })?;
-    }
-    let zigzag_width = golomb_rice_zigzag_width(group.z_linf_cap.unwrap_or(i16::MAX as u128));
-    let z_payload = golomb_rice_encode_vec(&z_values, group.z_rice_low_bits, zigzag_width)?;
-    if z_payload.len() > group.z_payload_bytes {
-        return Err(AkitaError::InvalidInput(
-            "terminal response exceeds its scheduled payload budget".into(),
-        ));
-    }
-    if !t_fields.can_decode_vec(params.d_a()) {
-        return Err(AkitaError::InvalidInput(
-            "terminal t state is not inner-ring aligned".into(),
-        ));
-    }
-    if t_fields.coeff_len() != group.t_field_elems {
-        return Err(AkitaError::InvalidInput(
-            "terminal t segment length mismatch".into(),
-        ));
-    }
-    Ok(TerminalResponse {
-        layout: scheduled_shape.layout.clone(),
-        z_payloads: vec![z_payload],
-        e_fields: e_folded.clone().into_compact(),
-        t_fields: t_fields.into_compact(),
-    })
-}
-
 /// Build a terminal response from an opaque backend-produced canonical Z payload.
 pub fn build_terminal_response_from_payload<F>(
     params: &TerminalFoldParams,
@@ -1087,34 +934,6 @@ where
         z_payloads: vec![z_payload],
         e_fields: e_folded.clone().into_compact(),
         t_fields: t_fields.into_compact(),
-    })
-}
-
-/// Check a segment witness `z` payload against the schedule-bound byte budget and public
-/// Golomb admissibility.
-///
-/// # Errors
-///
-/// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
-pub fn validate_terminal_response_z_payload<F: Field>(
-    witness: &TerminalResponse<F>,
-) -> Result<(), AkitaError> {
-    let group = witness
-        .layout
-        .groups
-        .first()
-        .ok_or(AkitaError::InvalidProof)?;
-    decode_terminal_z_golomb_payload(
-        witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
-        group,
-    )
-    .map(|_| ())
-    .map_err(|err| match err {
-        AkitaError::InvalidProof => AkitaError::InvalidInput(format!(
-            "terminal z payload {} bytes is inadmissible or exceeds its schedule budget",
-            witness.z_payloads.first().map_or(0, Vec::len)
-        )),
-        other => other,
     })
 }
 

@@ -4,11 +4,10 @@
 //! `F_{q^k}` to `R_q` reduction. They are intentionally standalone so the
 //! mathematical contract can be tested independently of the prover API.
 
-use crate::dispatch_for_field;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_serialization::Valid;
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
+use jolt_field::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 use std::array::from_fn;
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
@@ -129,12 +128,6 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
         }
 
         Ok(Self { _private: () })
-    }
-
-    /// Extension degree `K`.
-    #[inline]
-    pub const fn extension_degree(&self) -> usize {
-        K
     }
 
     /// Automorphism exponents generating `H`, modulo `2D`.
@@ -350,34 +343,6 @@ where
         8 => arm!(8),
         _ => Err(error),
     }
-}
-
-/// Runtime-dimension form of [`embed_ring_subfield_scalar`]: returns the
-/// embedded element as `ring_d` flat coefficients.
-///
-/// # Errors
-///
-/// Returns an error if `ring_d` is unsupported, the extension degree is
-/// unsupported, or the scalar does not expose exactly `K = [E:F]`
-/// ring-subfield coordinates.
-pub fn embed_ring_subfield_scalar_flat<F, E>(
-    ring_d: usize,
-    value: E,
-    error: AkitaError,
-) -> Result<Vec<F>, AkitaError>
-where
-    F: Field + Ring + CanonicalEncoding,
-    E: FpExtEncoding<F>,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        ring_d,
-        |D| {
-            embed_ring_subfield_scalar::<F, E, D>(value, error.clone())
-                .map(|ring| ring.coefficients().to_vec())
-        }
-    )
 }
 
 /// Pack a base-field digit evaluation table into the canonical tensor

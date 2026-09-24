@@ -674,13 +674,6 @@ impl WitnessLayout {
         &self.units
     }
 
-    pub fn first_group_index(&self) -> Result<usize, AkitaError> {
-        self.units
-            .first()
-            .map(WitnessUnitLayout::group_index)
-            .ok_or_else(|| AkitaError::InvalidSetup("witness layout has no units".into()))
-    }
-
     pub fn num_groups(&self) -> usize {
         self.units
             .iter()
