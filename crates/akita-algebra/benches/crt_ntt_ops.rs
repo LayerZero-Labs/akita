@@ -6,7 +6,9 @@ use akita_algebra::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
     Q64_PRIMES,
 };
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, NttKernelPlan, NttPrime};
+use akita_algebra::{
+    CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff, NttKernelPlan, NttPrime,
+};
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 fn input<const K: usize, const D: usize>(
@@ -127,6 +129,72 @@ fn bench_i16_tail<const D: usize>(c: &mut Criterion) {
     group.finish();
 }
 
+/// Number of prepared inputs cycled through by the three-prime forward
+/// scenarios, so each iteration transforms a different input.
+const FORWARD_INPUT_POOL: usize = 128;
+
+/// Three-prime (q64) forward negacyclic NTT from signed i8 digits and from
+/// general Montgomery limbs in `(-p, p)`.
+fn bench_q64_forward_inputs<const D: usize>(c: &mut Criterion) {
+    let params = CrtNttParamSet::<_, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let lut = DigitMontLut::new_with_digit_bound(&params, 128);
+    let mut state = 0x39128fa024ce7u64;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let signed: Vec<[i8; D]> = (0..FORWARD_INPUT_POOL)
+        .map(|_| std::array::from_fn(|_| next() as i8))
+        .collect();
+    let general: Vec<[[MontCoeff<i32>; D]; Q64_NUM_PRIMES]> = (0..FORWARD_INPUT_POOL)
+        .map(|_| {
+            std::array::from_fn(|k| {
+                let p = i64::from(params.primes[k].p);
+                std::array::from_fn(|_| {
+                    MontCoeff::from_raw(((next() % (2 * p - 1) as u64) as i64 - p + 1) as i32)
+                })
+            })
+        })
+        .collect();
+    let mut group = c.benchmark_group("q64_forward_ntt_three_primes");
+
+    group.bench_with_input(BenchmarkId::new("signed_i8", D), &D, |b, _| {
+        let mut index = 0usize;
+        b.iter(|| {
+            index = (index + 1) % FORWARD_INPUT_POOL;
+            black_box(CyclotomicCrtNtt::from_i8_with_lut(
+                black_box(&signed[index]),
+                &params,
+                &lut,
+            ))
+        })
+    });
+    group.bench_with_input(BenchmarkId::new("general_montgomery", D), &D, |b, _| {
+        let mut index = 0usize;
+        b.iter_batched(
+            || {
+                index = (index + 1) % FORWARD_INPUT_POOL;
+                general[index]
+            },
+            |mut limbs| {
+                for (k, limb) in limbs.iter_mut().enumerate() {
+                    forward_ntt(
+                        limb,
+                        params.primes[k],
+                        &params.twiddles[k],
+                        params.kernel_plan(),
+                    );
+                }
+                black_box(limbs)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench_profile::<Q32_NUM_PRIMES, 64>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 128>(c, "q32", Q32_PRIMES);
@@ -145,6 +213,11 @@ fn benches(c: &mut Criterion) {
     bench_profile::<Q128_NUM_PRIMES, 128>(c, "q128", q128);
     bench_profile::<Q128_NUM_PRIMES, 256>(c, "q128", q128);
     bench_profile::<Q128_NUM_PRIMES, 512>(c, "q128", q128);
+
+    bench_q64_forward_inputs::<128>(c);
+    bench_q64_forward_inputs::<256>(c);
+    bench_q64_forward_inputs::<512>(c);
+    bench_q64_forward_inputs::<1024>(c);
 
     bench_i16_tail::<64>(c);
     bench_i16_tail::<128>(c);
