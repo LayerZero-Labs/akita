@@ -469,11 +469,6 @@ impl AkitaScheduleLookupKey {
         OpeningClaimsLayout::from_groups(groups)
     }
 
-    /// Number of commitment groups in this schedule key.
-    pub fn num_commitment_groups(&self) -> usize {
-        self.precommitteds.len() + 1
-    }
-
     /// Maximum opening arity across the final and precommitted groups.
     ///
     /// This is the maximum group-local opening/EOR domain. It is intentionally

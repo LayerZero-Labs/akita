@@ -164,8 +164,8 @@ setup-prefix commitment.
 - **The opening matrix remains shared.** Multi-group folds use one opening
   relation over the
   concatenation of all groups' opening segments. This design does not introduce
-  per-group opening commitments. The recursive fold's
-  `open_commit_matrix` is shared by the final witness group and every
+  per-group opening commitments. The recursive fold's single
+  `open_matrix` is shared by the final witness group and every
   precommitted setup-prefix group.
 - **Existing group model is canonical.** The setup prefix is represented by the
   successor's existing precommitted-group fields; the next witness is the final

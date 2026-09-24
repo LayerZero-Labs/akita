@@ -1010,7 +1010,7 @@ fn scalar_schedule_key_accepts_single_group_layout() {
         AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
-    assert_eq!(key.num_commitment_groups(), 1);
+    assert!(key.precommitteds.is_empty());
 }
 
 #[test]
@@ -1214,7 +1214,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     multi_group_key
         .validate(128)
         .expect("a precommitted group may contain multiple polynomials");
-    assert_eq!(multi_group_key.num_commitment_groups(), 2);
+    assert_eq!(multi_group_key.precommitteds.len(), 1);
     assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
     assert!(!multi_group_key.fits_setup_capacity(20, 4).unwrap());
     assert!(multi_group_key.fits_setup_capacity(20, 5).unwrap());

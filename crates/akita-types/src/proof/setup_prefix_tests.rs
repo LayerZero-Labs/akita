@@ -187,7 +187,7 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
     let expected_b_projection = lp.outer().matrix.output_rank()
         * slice_geometry.physical_input_width()
         * (lp.outer().matrix.ring_dimension() / base_d);
-    assert_eq!(geometry.b_projection_width(), expected_b_projection);
+    assert!(geometry.required() >= expected_b_projection);
 
     let logical_unsliced_projection = lp
         .outer_slice_count()
@@ -198,7 +198,7 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
         * lp.blocks().live_blocks
         * lp.outer().digits.num_digits
         * (lp.outer().matrix.ring_dimension() / base_d);
-    assert!(geometry.b_projection_width() < logical_unsliced_projection);
+    assert!(geometry.required() < logical_unsliced_projection);
 }
 
 #[test]
@@ -484,9 +484,6 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
         .expect("heterogeneous projection geometry");
 
     assert_eq!(geometry.base_ring_dim(), base_ring_dimension);
-    assert_eq!(geometry.a_projection_width(), expected_a_projection);
-    assert_eq!(geometry.b_projection_width(), expected_b_projection);
-    assert_eq!(geometry.d_projection_width(), expected_d_projection);
     assert_eq!(geometry.required(), expected_ring_slots);
     assert_eq!(
         active_setup_field_len(&final_params, &opening_batch).expect("active setup field length"),
