@@ -62,7 +62,7 @@ has already factored the relation coordinates. This state is encoded by the
 In direct mode, the verifier builds a `DirectScan` from the plan and the
 prepared coefficient functional. The scan owns the per-group E, T, and Z column
 weights and the packed D, B, and A segment partition; the plan itself carries
-no functional state. `SetupContributionPlan::evaluate_direct` walks the
+no functional state. `DirectScan::evaluate_direct` walks the
 required public setup prefix with that scan. For each setup ring it evaluates
 the ring against the functional (the powers of `alpha` in quotient-lift mode),
 multiplies by the structured index weight, and accumulates the result. The
@@ -144,7 +144,11 @@ its plan and `SetupIndexWeightMle` only from the exact Stage 2 challenge point.
 
 The main implementation owners are:
 
-- `crates/akita-types/src/setup_contribution/` for geometry and tensors;
+- `crates/akita-types/src/setup_contribution/` for the functional-free plan,
+  its geometry and relation-column tensors, and the dense setup-index weights
+  the prover consumes;
+- `crates/akita-verifier/src/setup_contribution/` for the direct scan,
+  structured group contraction, and `SetupIndexWeightMle`;
 - `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs` for
   direct or deferred selection; and
 - `crates/akita-verifier/src/stages/stage3.rs` for the setup product check.

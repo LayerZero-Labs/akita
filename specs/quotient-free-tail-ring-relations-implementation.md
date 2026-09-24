@@ -322,8 +322,9 @@ weights they need without knowing planner policy or proof serialization.
 
 ### Fused setup scan
 
-`SetupContributionPlan::evaluate_direct` consumes a `DirectScan`, built once
-from the plan and a checked `PreparedCoefficientFunctional`. The scan owns the
+`DirectScan::evaluate_direct` (in `akita-verifier`) walks a
+`SetupContributionPlan`. The `DirectScan` is built once from the plan and a
+checked `PreparedCoefficientFunctional`. The scan owns the
 per-role column weights for that functional; the plan stays functional-free.
 The outer fused scan, setup bounds, segment scheduling, parallel job
 partition, group fusion, and base-ring projection remain common.
