@@ -343,15 +343,6 @@ impl DigitRangePlan {
             .collect()
     }
 
-    /// Evaluate the complete balanced-digit range polynomial at `range_image`.
-    pub fn evaluate_range_polynomial<E: Field + Ring>(self, range_image: E) -> E {
-        let mut value = E::one();
-        for root in stage1_root_values::<E>(self.basis()) {
-            value *= range_image - root;
-        }
-        value
-    }
-
     /// Evaluate one leaf polynomial at a range-image value.
     pub fn evaluate_leaf_polynomial<E: Field>(self, coeffs: &[E], range_image: E) -> E {
         coeffs

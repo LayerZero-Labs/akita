@@ -1,6 +1,4 @@
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
-#[cfg(test)]
-use akita_types::DigitRangePlan;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Ring};
 
@@ -635,6 +633,16 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: Field>(
     }
 }
 
+/// Reference oracle for the balanced-digit range polynomial
+/// `prod_{k < b/2} (x - k(k+1))` that the prefix lookup tables tabulate.
+#[cfg(test)]
+pub(crate) fn range_polynomial_eval<E: Field + Ring>(range_image: E, b: usize) -> E {
+    (0..b / 2).fold(E::one(), |value, k| {
+        let k = k as i64;
+        value * (range_image - E::from_i64(k * (k + 1)))
+    })
+}
+
 /// Evaluate the stage-1 candidate storage contribution used by the original
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
@@ -645,10 +653,7 @@ pub(crate) fn stage1_local_norm_eval<E: Field + Ring>(
     y: PrefixPoint<E>,
     b: usize,
 ) -> E {
-    let s_eval = bilinear_eval_on_prefix_points(s_quad, x, y);
-    DigitRangePlan::new(b)
-        .expect("supported test basis")
-        .evaluate_range_polynomial(s_eval)
+    range_polynomial_eval(bilinear_eval_on_prefix_points(s_quad, x, y), b)
 }
 
 /// Evaluate the raw stage-1 full-domain polynomial on
@@ -676,9 +681,9 @@ pub(crate) fn stage1_local_norm_raw_eval<E: Field + Ring>(
     };
 
     match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => DigitRangePlan::new(b)
-            .expect("supported test basis")
-            .evaluate_range_polynomial(bilinear_eval(s_quad, x, y)),
+        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
+            range_polynomial_eval(bilinear_eval(s_quad, x, y), b)
+        }
         (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
         (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
         (PrefixPoint::Infinity, PrefixPoint::Infinity) => pow(dxy),

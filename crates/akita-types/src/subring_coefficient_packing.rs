@@ -178,6 +178,7 @@ impl SubringCoefficientPackingGeometry {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when `index` is outside the A ring.
+    #[cfg(test)]
     pub fn a_ring_coefficient_coordinates(
         self,
         index: usize,
@@ -228,6 +229,7 @@ impl SubringCoefficientPackingGeometry {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when `index` is outside the partial
     /// opening.
+    #[cfg(test)]
     pub fn partial_base_field_coordinates(
         self,
         index: usize,

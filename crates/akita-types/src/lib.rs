@@ -14,15 +14,13 @@ pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, field_modulus_be_bytes, ntt_max_ring_d,
     ntt_min_ring_d, ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
     outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    validate_role_dims_for_field, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
-pub mod lhl_blinding;
 pub(crate) mod narrowing;
 mod native_eor;
 mod native_l2;
@@ -46,9 +44,7 @@ mod transcript_grinding;
 mod transcript_grinding_plan;
 pub mod witness;
 
-pub use commitment_slicing::{
-    CommitmentSliceCount, CommitmentSliceGeometry, MAX_COMMITMENT_SLICES,
-};
+pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
     CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
@@ -58,13 +54,12 @@ pub use compression::{
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    extension_opening_reduction_claim, num_rounds_from_table_len, reduction_table_len,
-    tensor_column_partials_from_base_evals, tensor_column_partials_split_fold,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, validate_reduction_tables, ExtensionOpeningFactorTerm,
-    ExtensionOpeningReductionFactor, ExtensionOpeningTensorPartials, FlatColumnSource,
-    TensorColumnSource, EXTENSION_OPENING_REDUCTION_DEGREE,
+    num_rounds_from_table_len, reduction_table_len, tensor_column_partials_from_base_evals,
+    tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
+    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
@@ -72,10 +67,8 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_encode_vec, golomb_rice_flat_admit_terminal_wire,
-    golomb_rice_flat_rows_admit_terminal_wire, golomb_rice_max_quotient_for_cap,
-    golomb_rice_rows_admit_terminal_wire, golomb_rice_rows_encodable_at_wire_low_bits,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
+    golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width,
 };
 pub use instance_descriptor::{
     digest_descriptor_bytes, digest_effective_schedule, digest_serializable, setup_seed_digest,
@@ -83,19 +76,19 @@ pub use instance_descriptor::{
     SetupSection, TranscriptGrindingBinding,
 };
 pub use layout::{
-    basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
+    basis_weights, basis_weights_prefix, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, native_terminal_response_max_bytes,
     native_terminal_response_planner_bytes, opening_d_segment_width, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
-    sumcheck_rounds, terminal_response_bytes, try_extension_opening_reduction_level_bytes,
-    validate_role_dims, validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode,
-    BlockGeometry, CommitmentRingDims, CommittedGroupParams, FlatMatrix, GadgetDigits,
-    GroupOpenPhaseParams, GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningFamily,
-    OpeningMethod, OuterRoleParams, PrecommittedGroupAdmissionPolicy, RingMatrixView,
-    RingOpeningPoint, RingRole, RoleParams, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
+    padded_boolean_opening_vars, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds,
+    terminal_response_bytes, try_extension_opening_reduction_level_bytes, validate_role_dims,
+    validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode, BlockGeometry,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningFamily, OpeningMethod,
+    OuterRoleParams, PrecommittedGroupAdmissionPolicy, RingMatrixView, RingOpeningPoint, RingRole,
+    RoleParams, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use native_eor::{
     native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
@@ -129,23 +122,19 @@ pub use proof::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
     active_setup_field_len, assemble_compressed_relation_rhs, assemble_relation_rhs,
     build_compression_relation_weights, build_reduced_compression_relation_weights,
-    build_terminal_response_from_groups, build_terminal_response_from_payload,
-    canonical_extension_opening_reduction_shape, commit_only_setup_field_elements,
-    commitment_execution_setup_field_elements, decode_terminal_z_golomb_payload,
-    derive_public_matrix_prefix, draw_group_fold_challenges, emit_witness_e_planes,
-    emit_witness_t_planes, emit_witness_z_planes, evaluate_reduced_compression_map,
-    folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
+    build_terminal_response_from_payload, canonical_extension_opening_reduction_shape,
+    commit_only_setup_field_elements, commitment_execution_setup_field_elements,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
+    emit_witness_e_planes, emit_witness_t_planes, generate_relation_rhs, padded_setup_prefix_len,
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
-    raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_row_count,
-    ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
-    sample_akita_setup_seed, sample_row_coefficients_native, scheduled_setup_prefix,
-    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
-    setup_prefix_coverage_eval_len, setup_prefix_precommitted_params,
-    setup_prefix_slot_field_elements, suffix_opening_layout, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, validate_public_matrix_matches_seed,
+    relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_row_count, ring_subfield_packed_extension_opening_point, sample_akita_setup_seed,
+    sample_row_coefficients_native, scheduled_setup_prefix, setup_matrix_capacity_for_schedule,
+    setup_matrix_field_elements_for_schedule, setup_prefix_coverage_eval_len,
+    setup_prefix_precommitted_params, setup_prefix_slot_field_elements, suffix_opening_layout,
+    terminal_response_upper_bound_bytes, validate_public_matrix_matches_seed,
     validate_setup_prefix_domain, verifier_setup_matrix_capacity_for_schedule,
     verify_row_coefficients_native, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
     AkitaStage1StageShape, AkitaVerifierSetup, CoefficientPackingBatchSemanticInputs,
@@ -162,13 +151,11 @@ pub use proof::{
     RelationRangeImagePlan, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
     RelationWeightContribution, RelationWeightEvent, RelationWitnessGeometry,
     RingMultiplierOpeningPoint, RingRelationGroupOpening, RingRelationGroupOpeningView,
-    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
-    SetupMatrixCapacity, SetupPrefixPublicCommitment, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SubfieldMultiplierOpeningPoint,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
-    TerminalResponseShape, TerminalWitnessTranscriptParts, WitnessCoefficientSink,
-    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
-    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
+    RingRelationInstance, RingVec, RingView, SetupMatrixCapacity, SetupPrefixPublicCommitment,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse,
+    TerminalResponseShape, WitnessCoefficientSink, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
@@ -216,11 +203,8 @@ pub use subring_coefficient_packing::{
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
-    build_trace_table_scaled, ensure_trace_stage2_supported, eval_trace_terms_closed,
-    prepare_evaluation_trace_group_parameters, EvaluationTraceGroupParameters,
-    EvaluationTraceInputs, TraceClaim, TraceFieldBlockOpening, TraceOpeningAtPoint,
-    TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable, TraceTerm,
-    TraceTermBatch, TraceWeightLayout,
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
