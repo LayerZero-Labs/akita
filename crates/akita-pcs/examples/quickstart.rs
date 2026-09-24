@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BasisMode::Lagrange,
     )?;
 
-    println!("Akita proof verified ({} bytes)", proof.len());
+    println!("Akita proof verified");
     Ok(())
 }
 

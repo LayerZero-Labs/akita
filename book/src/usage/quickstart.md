@@ -14,7 +14,7 @@ The first release build compiles the complete proving stack. Later runs reuse
 those build results. A successful run ends with output of this form:
 
 ```text
-Akita proof verified (... bytes)
+Akita proof verified
 ```
 
 The complete source is
