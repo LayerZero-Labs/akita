@@ -346,25 +346,6 @@ impl<W: PrimeWidth> NttPrime<W> {
         canonical.wrapping_add(needs_sub.bitand(self.p.wrapping_neg()))
     }
 
-    /// Pointwise Montgomery multiplication of two coefficient slices.
-    ///
-    /// # Panics
-    ///
-    /// Panics if slices have different lengths.
-    #[inline]
-    pub fn pointwise_mul(
-        self,
-        out: &mut [MontCoeff<W>],
-        lhs: &[MontCoeff<W>],
-        rhs: &[MontCoeff<W>],
-    ) {
-        assert_eq!(out.len(), lhs.len());
-        assert_eq!(lhs.len(), rhs.len());
-        for ((o, a), b) in out.iter_mut().zip(lhs.iter()).zip(rhs.iter()) {
-            *o = self.mul(*a, *b);
-        }
-    }
-
     /// In-place range reduction on a coefficient slice.
     #[inline]
     pub fn reduce_range_in_place(self, coeffs: &mut [MontCoeff<W>]) {

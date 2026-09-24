@@ -257,11 +257,10 @@ mod tests {
             SisNorm::Euclidean,
         )
         .unwrap();
-        for cost in [estimate(&finite, &config).unwrap()] {
-            assert_eq!(cost.beta, Some(953));
-            assert_eq!(cost.d, 2_134);
-            assert!(matches!(cost.rop, CostValue::Finite(_)));
-        }
+        let cost = estimate(&finite, &config).unwrap();
+        assert_eq!(cost.beta, Some(953));
+        assert_eq!(cost.d, 2_134);
+        assert!(matches!(cost.rop, CostValue::Finite(_)));
 
         let q = finite.q.clone();
         for bound in [
@@ -271,15 +270,13 @@ mod tests {
             let params =
                 SisParameters::try_new(finite.n, q.clone(), finite.m, bound, SisNorm::Euclidean)
                     .unwrap();
-            for error in [estimate(&params, &config).unwrap_err()] {
-                assert!(matches!(
-                    error,
-                    EstimatorError::InvalidParameter {
-                        field: "length_bound",
-                        ..
-                    }
-                ));
-            }
+            assert!(matches!(
+                estimate(&params, &config).unwrap_err(),
+                EstimatorError::InvalidParameter {
+                    field: "length_bound",
+                    ..
+                }
+            ));
         }
     }
 

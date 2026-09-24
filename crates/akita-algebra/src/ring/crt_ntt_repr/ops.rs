@@ -1,7 +1,5 @@
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use std::mem::MaybeUninit;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
@@ -459,45 +457,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Add another CRT+NTT element and reduce each coefficient with the matching
-    /// prime to maintain valid Montgomery ranges.
-    pub fn add_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
-            let mut output = MaybeUninit::<Self>::uninit();
-            let output_ptr = output.as_mut_ptr().cast::<i32>();
-            for (k, prime) in params.primes.iter().enumerate() {
-                unsafe {
-                    avx::add_reduce_i32(
-                        output_ptr.add(k * D),
-                        self.limbs[k].as_ptr() as *const i32,
-                        rhs.limbs[k].as_ptr() as *const i32,
-                        D,
-                        prime.p.to_i64() as i32,
-                    );
-                }
-            }
-            // SAFETY: the SIMD loop initializes every coefficient in the
-            // transparent nested-array representation.
-            return unsafe { output.assume_init() };
-        }
-
-        let mut output = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((dst_limb, lhs_limb), rhs_limb)) in output
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = params.primes[k];
-            for ((dst, lhs), rhs) in dst_limb.iter_mut().zip(lhs_limb).zip(rhs_limb) {
-                let sum = MontCoeff::from_raw(lhs.raw().wrapping_add(rhs.raw()));
-                *dst = prime.reduce_range(sum);
-            }
-        }
-        Self { limbs: output }
-    }
-
     /// Add another CRT+NTT element in place and reduce each coefficient.
     pub fn add_assign_reduced(&mut self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) {
         #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
@@ -574,136 +533,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 *a = prime.reduce_range(sum);
             }
         }
-    }
-
-    /// Subtract another CRT+NTT element and reduce.
-    pub fn sub_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
-            let mut out = MaybeUninit::<Self>::uninit();
-            let out_ptr = out.as_mut_ptr().cast::<i32>();
-            for (k, prime) in params.primes.iter().enumerate() {
-                let p = prime.p.to_i64() as i32;
-                unsafe {
-                    avx::sub_reduce_i32(
-                        out_ptr.add(k * D),
-                        self.limbs[k].as_ptr() as *const i32,
-                        rhs.limbs[k].as_ptr() as *const i32,
-                        D,
-                        p,
-                    )
-                }
-            }
-            // SAFETY: the SIMD loop initializes all `D` coefficients in every
-            // limb of the transparent nested-array representation.
-            return unsafe { out.assume_init() };
-        }
-        let mut out = self.clone();
-        for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
-            let prime = params.primes[k];
-            for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
-                *a = prime.reduce_range(diff);
-            }
-        }
-        out
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce.
-    pub fn neg_reduced(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
-                let mut out = MaybeUninit::<Self>::uninit();
-                let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in params.primes.iter().enumerate() {
-                    let p = prime.p.to_i64() as i32;
-                    unsafe {
-                        match mode {
-                            AvxNttMode::Avx2 => avx::neg_reduce_i32(
-                                out_ptr.add(k * D),
-                                self.limbs[k].as_ptr() as *const i32,
-                                D,
-                                p,
-                            ),
-                            AvxNttMode::Avx512 => avx::neg_reduce_i32_avx512(
-                                out_ptr.add(k * D),
-                                self.limbs[k].as_ptr() as *const i32,
-                                D,
-                                p,
-                            ),
-                        }
-                    }
-                }
-                // SAFETY: the SIMD loop initializes all `D` coefficients in
-                // every limb of the transparent nested-array representation.
-                return unsafe { out.assume_init() };
-            }
-        }
-        let mut out = self.clone();
-        for (k, limb) in out.limbs.iter_mut().enumerate() {
-            let prime = params.primes[k];
-            for a in limb.iter_mut() {
-                let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
-                *a = prime.reduce_range(neg);
-            }
-        }
-        out
-    }
-
-    /// Pointwise multiplication in CRT+NTT domain.
-    pub fn pointwise_mul(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
-                let mut out = MaybeUninit::<Self>::uninit();
-                let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in params.primes.iter().copied().enumerate() {
-                    // SAFETY: `Self` and `MontCoeff<W>` are transparent over
-                    // nested contiguous arrays. The width check above proves
-                    // that each coefficient occupies one `i32`, and every
-                    // kernel writes all `D` coefficients in its limb.
-                    let out_limb = unsafe { out_ptr.add(k * D) };
-                    unsafe {
-                        match mode {
-                            AvxNttMode::Avx2 => avx::pointwise_mul_i32(
-                                out_limb,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
-                                D,
-                                prime.p.to_i64() as i32,
-                                prime.pinv.to_i64() as i32,
-                            ),
-                            AvxNttMode::Avx512 => avx::pointwise_mul_i32_avx512(
-                                out_limb,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
-                                D,
-                                prime.p.to_i64() as i32,
-                                prime.pinv.to_i64() as i32,
-                            ),
-                        }
-                    }
-                }
-                // SAFETY: the loop above initializes every coefficient in all
-                // `K` limbs, which is the complete transparent representation.
-                return unsafe { out.assume_init() };
-            }
-        }
-        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((output, lhs), rhs)) in out
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = params.primes[k];
-            prime.pointwise_mul(output, lhs, rhs);
-            for coefficient in output.iter_mut() {
-                *coefficient = prime.reduce_range(*coefficient);
-            }
-        }
-        Self { limbs: out }
     }
 
     /// Accumulate `lhs * rhs` into `self` in CRT+NTT domain.
