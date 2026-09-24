@@ -302,6 +302,12 @@ impl<E: Field> SetupContributionPlan<E> {
         &self.groups
     }
 
+    /// Mutable per-group plans, for tests that perturb one prepared group.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn groups_mut_for_test(&mut self) -> &mut [SetupContributionGroupPlan<E>] {
+        &mut self.groups
+    }
+
     /// Number of shared physical D rows.
     #[must_use]
     pub const fn d_rows(&self) -> usize {

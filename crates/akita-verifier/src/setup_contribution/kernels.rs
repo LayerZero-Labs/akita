@@ -370,7 +370,7 @@ where
     Base: Field,
     E: ExtField<Base> + MulBaseUnreduced<Base>,
 {
-    use super::super::checked_slice;
+    use super::checked_slice;
 
     let ring_d = alpha_pows.len();
     let mut acc = E::zero();

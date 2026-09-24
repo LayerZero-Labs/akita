@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 
 use super::stage1::FlatBooleanDomain;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::layout::RingRole;
 use crate::layout::{validate_role_dims, witness_commitment_domain_len, CommitmentRingDims};
 use crate::RelationWitnessGeometry;
@@ -172,7 +172,7 @@ impl RelationAddressGeometry {
         self.relation_coefficient_block_len.trailing_zeros() as usize
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub const fn role_relation_lane_count(self, role: RingRole) -> usize {
         let role_dim = match role {

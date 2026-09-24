@@ -297,13 +297,13 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
             Some(&fold_gadget),
         )
         .unwrap();
-    let scan = akita_types::DirectScan::new(
+    let scan = crate::DirectScan::new(
         &direct_plan,
-        akita_types::PreparedCoefficientFunctional::lifted_power(alpha),
+        crate::PreparedCoefficientFunctional::lifted_power(alpha),
     )
     .unwrap();
-    let setup_claim = direct_plan
-        .evaluate_direct::<MixedF>(&scan, &setup)
+    let setup_claim = scan
+        .evaluate_direct::<MixedF>(&direct_plan, &setup)
         .unwrap();
 
     let direct = evaluator
@@ -316,13 +316,13 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
 
     // A setup claim scanned under another alpha must not stand in for the
     // exact claim on the deferred path.
-    let wrong_alpha_scan = akita_types::DirectScan::new(
+    let wrong_alpha_scan = crate::DirectScan::new(
         &direct_plan,
-        akita_types::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
+        crate::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
     )
     .unwrap();
-    let wrong_alpha_claim = direct_plan
-        .evaluate_direct::<MixedF>(&wrong_alpha_scan, &setup)
+    let wrong_alpha_claim = wrong_alpha_scan
+        .evaluate_direct::<MixedF>(&direct_plan, &setup)
         .unwrap();
     assert_ne!(wrong_alpha_claim, setup_claim);
     let wrong_deferred = evaluator
@@ -368,9 +368,9 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             Some(&fold_gadget),
         )
         .unwrap();
-    let scan = akita_types::DirectScan::new(
+    let scan = crate::DirectScan::new(
         &plan,
-        akita_types::PreparedCoefficientFunctional::reduced_evaluation(
+        crate::PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             coefficient_point,
             geometry,
@@ -385,8 +385,8 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .iter()
         .try_fold(MixedF::zero(), |sum, group| {
             Ok::<_, AkitaError>(
-                sum + plan.evaluate_reduced_structured_group::<MixedF>(
-                    &scan,
+                sum + scan.evaluate_reduced_structured_group::<MixedF>(
+                    &plan,
                     group.group_id,
                     &group.multipliers.challenges,
                     &group.multipliers.opening,
@@ -394,7 +394,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             )
         })
         .unwrap();
-    let expected = structured + plan.evaluate_direct::<MixedF>(&scan, &setup).unwrap();
+    let expected = structured + scan.evaluate_direct::<MixedF>(&plan, &setup).unwrap();
     let got = evaluator
         .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
         .unwrap();

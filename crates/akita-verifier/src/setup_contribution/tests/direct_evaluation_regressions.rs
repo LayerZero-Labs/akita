@@ -60,9 +60,16 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows,
+        &alpha_pows,
+        &alpha_pows,
+        TEST_D,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 }

@@ -39,10 +39,17 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows,
+        &alpha_pows,
+        &alpha_pows,
+        TEST_D,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 }
 #[test]
@@ -103,10 +110,17 @@ fn multi_group_packed_direct_matches_row_fallback() {
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows,
+        &alpha_pows,
+        &alpha_pows,
+        TEST_D,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 }
 #[test]
@@ -158,17 +172,17 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
     let alpha_pows_a = scalar_powers(alpha, D);
     let alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(
-            &scan,
-            &setup,
-            &alpha_pows_a,
-            &alpha_pows_b,
-            &alpha_pows_d,
-            D,
-        )
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows_a,
+        &alpha_pows_b,
+        &alpha_pows_d,
+        D,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 }
 
@@ -224,16 +238,16 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     let alpha_pows_a = scalar_powers(alpha, D_A);
     let alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(
-            &scan,
-            &setup,
-            &alpha_pows_a,
-            &alpha_pows_b,
-            &alpha_pows_d,
-            D_A,
-        )
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows_a,
+        &alpha_pows_b,
+        &alpha_pows_d,
+        D_A,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 }

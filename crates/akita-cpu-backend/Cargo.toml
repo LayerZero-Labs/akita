@@ -34,6 +34,9 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
+# Test-only: `relation_tests` checks prover relation witnesses against the
+# verifier's setup-contribution evaluators. Never a normal dependency.
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 
 [features]
 default = ["transcript-blake2b"]

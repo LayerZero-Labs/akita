@@ -1,12 +1,11 @@
 //! Shared setup-contribution planning for prover and verifier.
 //!
-//! This module owns challenge-free geometry (`geometry.rs`), pure layout/weight
-//! derivation for the stage-3 setup product, and evaluation planning. The
-//! prover consumes the materialized setup-index weight vector: one scalar weight
-//! per packed setup position. The recursive stage-3 verifier evaluates the
-//! multilinear extension of that weight vector directly at the setup-index
-//! challenge point, while the direct verifier scans the packed setup with the
-//! same segment partition.
+//! This module owns challenge-free geometry (`geometry.rs`) and the pure
+//! layout/weight derivation for the stage-3 setup product. The prover consumes
+//! the materialized setup-index weight vector: one scalar weight per packed
+//! setup position. Verifier-only evaluation of the same plan (the direct
+//! setup scan, closed-form structured groups, and the setup-index weight MLE
+//! at the stage-3 challenge point) lives in `akita-verifier`.
 
 use crate::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_error::{checked, AkitaError};
@@ -14,23 +13,17 @@ use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
 mod plan;
-#[allow(dead_code)]
-#[cfg(test)]
-mod test_oracle_weights;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use geometry::SetupProjectionGroupGeometry;
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
-#[cfg(test)]
-pub(crate) use plan::validate_setup_inputs;
 pub use plan::{
     factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
-    role_tensors_are_aligned, DirectScan, PhysicalBSetupPlan, PhysicalBWeightSegment,
-    PhysicalBWeightTerm, PreparedCoefficientFunctional, PreparedRelationAddress,
-    SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
-    SetupIndexWeightMle, SetupUnitRange,
+    role_tensors_are_aligned, PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm,
+    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionGroupPlan,
+    SetupContributionPlan, SetupUnitRange,
 };
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.

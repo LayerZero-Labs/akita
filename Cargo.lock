@@ -76,6 +76,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
+ "akita-verifier",
  "criterion",
  "jolt-field",
  "rand 0.8.8",

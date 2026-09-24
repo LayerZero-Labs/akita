@@ -25,42 +25,40 @@ struct PackedALayout<'a, E> {
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
 pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
-impl<E: Field> SetupContributionGroupPlan<E> {
-    /// Partition this group's projected setup footprint into scan jobs.
-    pub(super) fn scan_partition(
-        &self,
-        active_d_cols: usize,
-        d_weights: &[E],
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<GroupScanPartition<E>, AkitaError> {
-        if d_weights.len() != d_rows {
-            return Err(AkitaError::InvalidSize {
-                expected: d_rows,
-                actual: d_weights.len(),
-            });
-        }
-        let (required, segments) = build_packed_segments(
-            PackedDLayout {
-                active_col_start: self.d_col_range.start,
-                active_cols: active_d_cols,
-                physical_cols: d_physical_cols,
-                row_weights: d_weights,
-                ratio: self.d_ratio,
-            },
-            PackedBLayout {
-                segments: self.physical_b.weight_segments(),
-                physical_footprint: self.physical_b.physical_footprint()?,
-                ratio: self.b_ratio,
-            },
-            PackedALayout {
-                cols: self.z_cols,
-                row_weights: &self.a_row_weights,
-                ratio: self.a_ratio,
-            },
-        )?;
-        Ok(GroupScanPartition { required, segments })
+/// Partition `group`'s projected setup footprint into scan jobs.
+pub(super) fn scan_partition<E: Field>(
+    group: &SetupContributionGroupPlan<E>,
+    active_d_cols: usize,
+    d_weights: &[E],
+    d_rows: usize,
+    d_physical_cols: usize,
+) -> Result<GroupScanPartition<E>, AkitaError> {
+    if d_weights.len() != d_rows {
+        return Err(AkitaError::InvalidSize {
+            expected: d_rows,
+            actual: d_weights.len(),
+        });
     }
+    let (required, segments) = build_packed_segments(
+        PackedDLayout {
+            active_col_start: group.d_col_range.start,
+            active_cols: active_d_cols,
+            physical_cols: d_physical_cols,
+            row_weights: d_weights,
+            ratio: group.d_ratio,
+        },
+        PackedBLayout {
+            segments: group.physical_b.weight_segments(),
+            physical_footprint: group.physical_b.physical_footprint()?,
+            ratio: group.b_ratio,
+        },
+        PackedALayout {
+            cols: group.z_cols,
+            row_weights: &group.a_row_weights,
+            ratio: group.a_ratio,
+        },
+    )?;
+    Ok(GroupScanPartition { required, segments })
 }
 
 fn build_packed_segments<E: Field>(

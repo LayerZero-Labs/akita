@@ -22,12 +22,12 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    DigitRangePlan, DirectScan, OpeningClaimsLayout, PreparedCoefficientFunctional,
-    PreparedRelationAddress, RelationAddressGeometry, RelationRangeImagePlan,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingRelationInstance,
-    RingRelationMode, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupMatrixCapacity, SisModulusProfileId,
+    DigitRangePlan, OpeningClaimsLayout, PreparedRelationAddress, RelationAddressGeometry,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
+    RingRelationInstance, RingRelationMode, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
+use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
@@ -317,9 +317,9 @@ fn structured_reduced_evaluation(
         .expect("reduced coefficient functional"),
     )
     .expect("reduced direct scan");
-    let structured = setup_plan
+    let structured = scan
         .evaluate_reduced_structured_group::<ReducedF>(
-            &scan,
+            &setup_plan,
             0,
             instance
                 .group_ambient_a_challenges(0)
@@ -348,8 +348,8 @@ fn structured_reduced_evaluation(
         ReducedF::zero()
     };
     structured
-        + setup_plan
-            .evaluate_direct::<ReducedF>(&scan, setup)
+        + scan
+            .evaluate_direct::<ReducedF>(&setup_plan, setup)
             .expect("direct reduced setup evaluation")
         + compression
 }

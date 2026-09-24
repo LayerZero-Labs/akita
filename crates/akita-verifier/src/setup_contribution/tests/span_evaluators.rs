@@ -29,7 +29,7 @@ fn projected_setup_weight_reference(
     d_scales: &[F],
 ) -> F {
     let materialized_b = plan
-        .groups
+        .groups()
         .iter()
         .enumerate()
         .map(|(group_index, group)| {
@@ -41,16 +41,16 @@ fn projected_setup_weight_reference(
     let mut acc = F::zero();
     for base_idx in 0..required {
         let mut weight = F::zero();
-        for (group_index, group) in plan.groups.iter().enumerate() {
+        for (group_index, group) in plan.groups().iter().enumerate() {
             let (e_eq_slice, _t_eq_slice, z_eq_slice) =
                 scan.mode.weights(group_index).unwrap().slices();
             let d_idx = base_idx / d_ratio;
-            if d_idx < plan.d_rows * plan.d_physical_cols {
-                let d_col = d_idx % plan.d_physical_cols;
-                let d_row = d_idx / plan.d_physical_cols;
+            if d_idx < plan.d_rows() * plan.d_physical_cols() {
+                let d_col = d_idx % plan.d_physical_cols();
+                let d_row = d_idx / plan.d_physical_cols();
                 if group.d_col_range.contains(&d_col) {
                     weight += d_scales[base_idx % d_ratio]
-                        * plan.d_weights[d_row]
+                        * plan.d_weights()[d_row]
                         * e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
@@ -353,9 +353,12 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     let outgoing_ring_dim = 32;
     let (inputs, groups, layout, _, _, relation_point, fold_gadget) =
         structured_weight_fixture_with_outgoing(8, &[3, 5], role_dims, outgoing_ring_dim);
-    let geometry =
-        crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, layout.live_coeff_len())
-            .unwrap();
+    let geometry = akita_types::RelationAddressGeometry::new(
+        role_dims,
+        outgoing_ring_dim,
+        layout.live_coeff_len(),
+    )
+    .unwrap();
     let coefficient_point = (0..geometry.relation_coefficient_variable_count())
         .map(|index| test_scalar(701 + index as u128))
         .collect::<Vec<_>>();
@@ -378,8 +381,8 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
             .unwrap(),
     )
     .unwrap();
-    let group_id = plan.groups[0].group_id;
-    let block_claim_count = plan.groups[0].num_claims * plan.groups[0].num_live_blocks;
+    let group_id = plan.groups()[0].group_id;
+    let block_claim_count = plan.groups()[0].num_claims * plan.groups()[0].num_live_blocks;
     let sparse_challenges = (0..block_claim_count)
         .map(|index| SparseChallenge {
             positions: vec![(127 - index % 5) as u32].into(),
@@ -388,21 +391,22 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         .collect::<Vec<_>>();
     let block_challenges = Challenges::from_sparse(
         sparse_challenges,
-        plan.groups[0].num_live_blocks,
-        plan.groups[0].num_claims,
+        plan.groups()[0].num_live_blocks,
+        plan.groups()[0].num_claims,
     )
     .unwrap();
-    let opening_base_weights = (0..plan.groups[0].num_positions_per_block)
+    let opening_base_weights = (0..plan.groups()[0].num_positions_per_block)
         .map(|index| test_scalar(901 + index as u128))
         .collect::<Vec<_>>();
     let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &Challenges, openings: &[F]| {
-        let opening = crate::RingMultiplierOpeningPoint::from_base(&crate::RingOpeningPoint {
-            position_weights: openings.to_vec(),
-            live_block_weights: vec![F::zero(); plan.groups[0].num_live_blocks],
-        })
-        .prepare_functional_multiplier();
+        let opening =
+            akita_types::RingMultiplierOpeningPoint::from_base(&akita_types::RingOpeningPoint {
+                position_weights: openings.to_vec(),
+                live_block_weights: vec![F::zero(); plan.groups()[0].num_live_blocks],
+            })
+            .prepare_functional_multiplier();
         let expected = reduced_structured_slice_reference(
-            &plan.groups[0],
+            &plan.groups()[0],
             &layout,
             &fold_gadget,
             blocks,
@@ -413,7 +417,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         );
         assert_ne!(expected, F::zero());
         assert_eq!(
-            plan.evaluate_reduced_structured_group::<F>(&scan, group_id, blocks, &opening)
+            scan.evaluate_reduced_structured_group::<F>(plan, group_id, blocks, &opening)
                 .unwrap(),
             expected
         );
@@ -426,30 +430,30 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
                 coeffs: Vec::new().into(),
             })
             .collect(),
-        plan.groups[0].num_live_blocks,
-        plan.groups[0].num_claims,
+        plan.groups()[0].num_live_blocks,
+        plan.groups()[0].num_claims,
     )
     .unwrap();
 
-    let original_a_weights = plan.groups[0].a_row_weights.to_vec();
-    let original_consistency = plan.groups[0].consistency_weight;
-    std::sync::Arc::make_mut(&mut plan.groups[0].a_row_weights).fill(F::zero());
+    let original_a_weights = plan.groups()[0].a_row_weights.to_vec();
+    let original_consistency = plan.groups()[0].consistency_weight;
+    std::sync::Arc::make_mut(&mut plan.groups_mut_for_test()[0].a_row_weights).fill(F::zero());
     assert_literal(
         &plan,
         &block_challenges,
         &vec![F::zero(); opening_base_weights.len()],
     );
 
-    std::sync::Arc::make_mut(&mut plan.groups[0].a_row_weights)
+    std::sync::Arc::make_mut(&mut plan.groups_mut_for_test()[0].a_row_weights)
         .copy_from_slice(&original_a_weights);
-    plan.groups[0].consistency_weight = F::zero();
+    plan.groups_mut_for_test()[0].consistency_weight = F::zero();
     assert_literal(
         &plan,
         &block_challenges,
         &vec![F::zero(); opening_base_weights.len()],
     );
 
-    plan.groups[0].consistency_weight = original_consistency;
+    plan.groups_mut_for_test()[0].consistency_weight = original_consistency;
     assert_literal(&plan, &zero_challenges, &opening_base_weights);
 }
 
@@ -496,7 +500,7 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
                 .unwrap(),
             dense
         );
-        let group = &full.groups[0];
+        let group = &full.groups()[0];
         let expected_families = layout.units_for_group(group.group_id).unwrap().count();
         assert_eq!(group.a_tensors.len(), expected_families);
         assert!(group.a_tensors.iter().all(|family| {
@@ -516,8 +520,8 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
         let reference =
             structured_slice_reference(group, direct, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
-            full.evaluate_structured_group_cached::<F>(
-                &scan,
+            scan.evaluate_structured_group_cached::<F>(
+                &full,
                 group.group_id,
                 &block_challenges,
                 &opening_a_evals,
@@ -526,7 +530,8 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
             reference
         );
         assert_eq!(
-            full.evaluate_structured_group::<F>(
+            evaluate_structured_group::<F, _>(
+                &full,
                 group.group_id,
                 &block_challenges,
                 &opening_a_evals,
@@ -560,7 +565,7 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     let role_dims = CommitmentRingDims::uniform(128);
     let (inputs, groups, layout, _, _, _, fold_gadget) =
         structured_weight_fixture(8, &[3, 5], role_dims);
-    let relation_geometry = crate::RelationAddressGeometry::new_with_coefficient_block(
+    let relation_geometry = akita_types::RelationAddressGeometry::new_with_coefficient_block(
         role_dims,
         64,
         128,
@@ -604,7 +609,9 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         opening: 64,
     };
     let setup_ring_dim = 64;
-    for slice_count in [2, 4, 8].map(|count| crate::CommitmentSliceCount::try_new(count).unwrap()) {
+    for slice_count in
+        [2, 4, 8].map(|count| akita_types::CommitmentSliceCount::try_new(count).unwrap())
+    {
         let (_, _, layout, plan, _, _, _) = structured_weight_fixture_with_slices(
             11,
             &[3, 5, 3],
@@ -612,7 +619,7 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
             setup_ring_dim,
             slice_count,
         );
-        let group = &plan.groups[0];
+        let group = &plan.groups()[0];
         let scan = lifted_test_scan(&plan);
         let direct = scan.mode.weights(0).unwrap();
         let expected = naive_sliced_physical_b_weights(group, &direct.t);
@@ -642,8 +649,9 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
         let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
         assert_eq!(
-            plan.evaluate_direct::<F>(&scan, &setup).unwrap(),
-            plan.evaluate_direct_by_rows::<F>(
+            scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
+            evaluate_direct_by_rows::<F, _>(
+                &plan,
                 &scan,
                 &setup,
                 &alpha_pows_a,
@@ -735,7 +743,7 @@ fn span_setup_index_mle_supports_non_power_of_two_ownership_widths() {
 #[test]
 fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
     let alpha = test_scalar(3);
-    let role_dims = crate::CommitmentRingDims {
+    let role_dims = akita_types::CommitmentRingDims {
         inner: 128,
         outer: 64,
         opening: 64,

@@ -38,7 +38,7 @@ fn literal_native_functional<E: Field>(
     let ratio = dimension / coefficient_dimension;
     let mut native_point = coefficient_point.to_vec();
     native_point
-        .extend_from_slice(&plan.relation_address.point()[..ratio.trailing_zeros() as usize]);
+        .extend_from_slice(&plan.relation_address().point()[..ratio.trailing_zeros() as usize]);
     literal_terminal_functional(&native_point, dimension, alpha)
 }
 
@@ -104,21 +104,24 @@ where
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let mut evaluation = E::zero();
-    let row_families =
-        crate::RelationWitnessGeometry::for_level(&inputs.level_params, &inputs.opening_batch, 1)
-            .unwrap()
-            .rhs_layout()
-            .row_families()
-            .unwrap();
+    let row_families = akita_types::RelationWitnessGeometry::for_level(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+    )
+    .unwrap()
+    .rhs_layout()
+    .row_families()
+    .unwrap();
     let d_row_start = row_families
         .iter()
-        .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))
+        .position(|family| matches!(family, akita_types::RelationRowFamily::Opening { .. }))
         .unwrap();
     let coefficient_dimension = plan
         .relation_address_geometry()
         .relation_coefficient_block_len();
     let mut d_column_start = 0usize;
-    for group in &plan.groups {
+    for group in plan.groups() {
         let group_input = group_inputs
             .iter()
             .find(|candidate| candidate.group_id == group.group_id)
@@ -135,7 +138,7 @@ where
         let high_equality = |dimension: usize| {
             let role_lanes = dimension / coefficient_dimension;
             OffsetEqWindow::new(
-                &plan.relation_address.point()[role_lanes.trailing_zeros() as usize..],
+                &plan.relation_address().point()[role_lanes.trailing_zeros() as usize..],
             )
             .unwrap()
         };
@@ -185,9 +188,9 @@ where
 
         let d_view = setup
             .shared_matrix()
-            .ring_view_dyn(plan.d_rows, plan.d_physical_cols, group.role_dims.d_d())
+            .ring_view_dyn(plan.d_rows(), plan.d_physical_cols(), group.role_dims.d_d())
             .unwrap();
-        for row in 0..plan.d_rows {
+        for row in 0..plan.d_rows() {
             for (local_column, &column_weight) in e_weights.iter().enumerate() {
                 let column = d_column_start + local_column;
                 let ring = d_view.row_flat(row).unwrap()
@@ -233,7 +236,7 @@ where
         }
         d_column_start += e_weights.len();
     }
-    assert_eq!(d_column_start, plan.d_physical_cols);
+    assert_eq!(d_column_start, plan.d_physical_cols());
     evaluation
 }
 
@@ -305,17 +308,17 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     let alpha_pows_a = scalar_powers(alpha, D_A);
     let alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(
-            &scan,
-            &setup,
-            &alpha_pows_a,
-            &alpha_pows_b,
-            &alpha_pows_d,
-            D_A,
-        )
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &alpha_pows_a,
+        &alpha_pows_b,
+        &alpha_pows_d,
+        D_A,
+    )
+    .unwrap();
+    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
     assert_eq!(got, expected);
 
     let a_functional: std::sync::Arc<[F]> = akita_algebra::ring::terminal_residue_kernel(
@@ -369,18 +372,18 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
         },
     )
     .unwrap();
-    let reduced_expected = plan
-        .evaluate_direct_by_rows::<F>(
-            &scan,
-            &setup,
-            &a_functional,
-            &projected_functional,
-            &projected_functional,
-            D_A,
-        )
-        .unwrap();
+    let reduced_expected = evaluate_direct_by_rows::<F, _>(
+        &plan,
+        &scan,
+        &setup,
+        &a_functional,
+        &projected_functional,
+        &projected_functional,
+        D_A,
+    )
+    .unwrap();
     assert_eq!(
-        plan.evaluate_direct::<F>(&scan, &setup).unwrap(),
+        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
         reduced_expected
     );
 }
@@ -458,7 +461,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
         &coefficient_point,
         test_scalar(7),
     );
-    assert_eq!(plan.evaluate_direct::<F>(&scan, &setup).unwrap(), expected);
+    assert_eq!(scan.evaluate_direct::<F>(&plan, &setup).unwrap(), expected);
 }
 
 #[test]
@@ -512,7 +515,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         ),
     );
     assert_eq!(
-        plan.evaluate_direct::<F>(&scan, &setup).unwrap(),
+        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
         reduced_direct_literal_oracle(
             &plan,
             &setup,
@@ -588,7 +591,7 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
         ),
     );
     assert_eq!(
-        plan.evaluate_direct::<F>(&scan, &setup).unwrap(),
+        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
         reduced_direct_literal_oracle(
             &plan,
             &setup,

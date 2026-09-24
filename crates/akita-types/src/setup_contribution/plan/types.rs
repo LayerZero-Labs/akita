@@ -1,6 +1,6 @@
 use crate::{
     CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
-    RelationAddressGeometry, SetupProjectionGeometry, WitnessLayout,
+    SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_error::AkitaError;
@@ -308,92 +308,6 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-}
-
-/// Coefficient functional used by the one fused direct-setup traversal.
-///
-/// Lifted evaluation preserves the existing alpha-power factorization.
-/// Reduced evaluation instead contracts each native setup ring against the
-/// terminal residue kernel prepared from the exact Stage-2 coefficient point.
-/// The point contains only the common low coefficient coordinates; role-lane
-/// coordinates remain owned by the setup plan's checked relation tensors.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreparedCoefficientFunctional<E: Field> {
-    LiftedPower {
-        alpha: E,
-    },
-    ReducedEvaluation {
-        alpha: E,
-        coefficient_point: Arc<[E]>,
-    },
-}
-
-impl<E: Field> PreparedCoefficientFunctional<E> {
-    #[must_use]
-    pub const fn lifted_power(alpha: E) -> Self {
-        Self::LiftedPower { alpha }
-    }
-
-    pub fn reduced_evaluation(
-        alpha: E,
-        coefficient_point: &[E],
-        geometry: RelationAddressGeometry,
-    ) -> Result<Self, AkitaError> {
-        let expected = geometry.relation_coefficient_variable_count();
-        if coefficient_point.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: coefficient_point.len(),
-            });
-        }
-        Ok(Self::ReducedEvaluation {
-            alpha,
-            coefficient_point: coefficient_point.to_vec().into(),
-        })
-    }
-
-    #[must_use]
-    pub const fn alpha(&self) -> E {
-        match self {
-            Self::LiftedPower { alpha } | Self::ReducedEvaluation { alpha, .. } => *alpha,
-        }
-    }
-}
-
-pub(crate) struct ProjectedEqPairTensor<E: Field> {
-    pub(crate) ratio: usize,
-    pub(crate) families: Vec<EqPairTensorFamily<E>>,
-    pub(crate) state: ProjectedEqPairTensorState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProjectedEqPairTensorState {
-    Native,
-    RelationFactored,
-}
-
-pub(crate) struct DirectScanWeights<E> {
-    pub(crate) e: Vec<E>,
-    pub(crate) t: Vec<E>,
-    pub(crate) z: Vec<E>,
-}
-
-impl<E> DirectScanWeights<E> {
-    #[cfg(test)]
-    pub(crate) fn slices(&self) -> (&[E], &[E], &[E]) {
-        (&self.e, &self.t, &self.z)
-    }
-}
-
-pub(crate) struct ReducedDirectScanWeights<E> {
-    pub(crate) weights: DirectScanWeights<E>,
-    pub(crate) roles: [ReducedRoleCoefficientState<E>; 3],
-}
-
-#[derive(Clone)]
-pub(crate) struct ReducedRoleCoefficientState<E> {
-    pub(crate) functional: Arc<[E]>,
-    pub(crate) equality: Arc<[E]>,
 }
 
 /// One logical B source feeding a [`PhysicalBWeightSegment`].
