@@ -125,10 +125,10 @@ unsafe fn transpose4_epi32(
 
 /// Vectorized final two DIF stages (`len = 2`, then `len = 1`) for forward i32 NTTs.
 ///
-/// Mirrors the AArch64 `neon::forward_dif_tail_i32` kernel: a 4×4 coefficient
-/// transpose via SSE unpacks lands four independent size-4 sub-DFTs across lanes,
-/// both remaining stages run 4-wide, and the closing `caddp` folds the transform's
-/// final `reduce_range` pass into the last stage outputs.
+/// A 4×4 coefficient transpose via SSE unpacks lands four independent size-4
+/// sub-DFTs across lanes, both remaining stages run 4-wide, and the closing
+/// `caddp` folds the transform's final `reduce_range` pass into the last stage
+/// outputs.
 ///
 /// Requires `D` divisible by 16.
 #[target_feature(enable = "avx2")]

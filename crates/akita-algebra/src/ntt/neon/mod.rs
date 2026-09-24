@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 
 mod i16_kernels;
 mod i32_kernels;
+mod twiddles;
 
 #[cfg(feature = "parallel")]
 pub use i16_kernels::add_reduce_i16;
@@ -23,6 +24,7 @@ pub(crate) use i32_kernels::{
     forward_ntt_i8_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32, pointwise_dot_acc_i32,
     pointwise_mul_acc_i32,
 };
+pub(crate) use twiddles::BarrettTwiddles;
 
 /// Whether the NEON NTT path is active. Cached on first call.
 /// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.

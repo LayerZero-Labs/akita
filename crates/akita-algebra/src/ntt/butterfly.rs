@@ -54,6 +54,9 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) fwd_twiddles: [MontCoeff<W>; D],
     /// Per-position inverse twiddles, same layout as `fwd_twiddles`.
     pub(crate) inv_twiddles: [MontCoeff<W>; D],
+    /// Barrett-form tables for the NEON transforms.
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) barrett: super::neon::BarrettTwiddles<W, D>,
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -135,6 +138,16 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             }
         }
 
+        #[cfg(target_arch = "aarch64")]
+        let barrett = super::neon::BarrettTwiddles::compute(
+            prime,
+            &fwd_twiddles,
+            &inv_twiddles,
+            &psi_pows,
+            &d_inv_psi_inv,
+            d_inv,
+        );
+
         Self {
             fwd_wlen,
             inv_wlen,
@@ -147,6 +160,8 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             d_inv_psi_inv,
             fwd_twiddles,
             inv_twiddles,
+            #[cfg(target_arch = "aarch64")]
+            barrett,
         }
     }
 }

@@ -1,8 +1,11 @@
 use std::arch::aarch64::*;
 
 use super::i32_kernels::centered_reduce_4x_i32;
-use super::{forward_ntt_cyclic_i32, forward_ntt_i32, forward_ntt_i8_i32};
-use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic};
+use super::{
+    forward_ntt_cyclic_i32, forward_ntt_i32, forward_ntt_i8_i32, inverse_ntt_cyclic_i32,
+    inverse_ntt_i32,
+};
+use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
 use crate::ntt::tables::{Q128_RAW_PRIMES, Q64_PRIMES};
 use crate::ntt::{MontCoeff, NttKernelPlan, NttPrime, NttTwiddles};
 
@@ -112,7 +115,50 @@ fn check_transform<const D: usize>(prime: NttPrime<i32>) {
             forward_ntt_cyclic_i32(&mut actual, prime, &tw);
         }
         assert_eq!(actual, expected, "cyclic D={D}, p={p}, case={case}");
+
+        let canonical = |values: [MontCoeff<i32>; D]| values.map(|value| prime.to_canonical(value));
+        let mut expected = input;
+        inverse_ntt(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
+        let mut actual = input;
+        unsafe {
+            inverse_ntt_i32(&mut actual, prime, &tw);
+        }
+        assert!(actual.iter().all(|value| i64::from(value.raw()).abs() < p));
+        assert_eq!(
+            canonical(actual),
+            canonical(expected),
+            "inverse D={D}, p={p}, case={case}"
+        );
+
+        let mut expected = input;
+        inverse_ntt_cyclic(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
+        let mut actual = input;
+        unsafe {
+            inverse_ntt_cyclic_i32(&mut actual, prime, &tw);
+        }
+        assert!(actual.iter().all(|value| i64::from(value.raw()).abs() < p));
+        assert_eq!(
+            canonical(actual),
+            canonical(expected),
+            "inverse cyclic D={D}, p={p}, case={case}"
+        );
     }
+
+    // The negacyclic forward transform accepts any representative below 2^31.
+    let input = std::array::from_fn(|i| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let x = [i32::MAX, -i32::MAX, (state >> 32) as i32][i % 3];
+        MontCoeff::from_raw(x.max(-i32::MAX))
+    });
+    let mut expected = input;
+    forward_ntt(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
+    let mut actual = input;
+    unsafe {
+        forward_ntt_i32(&mut actual, prime, &tw);
+    }
+    assert_eq!(actual, expected, "wide input D={D}, p={p}");
     let digits = std::array::from_fn(|i| (i as i8).wrapping_mul(37).wrapping_add(11));
     let mut expected = std::array::from_fn(|i| prime.from_canonical(i32::from(digits[i])));
     forward_ntt(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
@@ -124,11 +170,13 @@ fn check_transform<const D: usize>(prime: NttPrime<i32>) {
 }
 
 #[test]
-fn centered_forward_matches_scalar_for_negacyclic_cyclic_and_signed_inputs() {
+fn transforms_match_scalar_for_negacyclic_cyclic_and_signed_inputs() {
     for p in Q128_RAW_PRIMES.into_iter().chain(Q64_PRIMES.map(|p| p.p)) {
         let prime = NttPrime::compute(p);
         check_transform::<8>(prime);
         check_transform::<16>(prime);
+        check_transform::<32>(prime);
+        check_transform::<64>(prime);
         check_transform::<128>(prime);
         check_transform::<256>(prime);
         check_transform::<512>(prime);
