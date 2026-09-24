@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::NormalizedPoly;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[inline]
@@ -81,7 +82,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         compact_range_image: &S,
         r0: E,
         r1: E,
-    ) -> EqFactoredUniPoly<E> {
+    ) -> NormalizedPoly<E> {
         debug_assert!(self.defers_compact_range_image_through_third_round());
         debug_assert_eq!(self.rounds_completed, 1);
         let y_len = compact_range_image.len() / self.live_x_cols;
@@ -130,7 +131,9 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             }
         );
 
-        EqFactoredUniPoly::from_q_coeffs(accumulated.into_iter().map(E::reduce_product).collect())
+        NormalizedPoly::from_q_coefficients(
+            accumulated.into_iter().map(E::reduce_product).collect(),
+        )
     }
 
     /// Fold every binary range-image octet through all three initial challenges.
@@ -276,7 +279,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         compact_range_image: &S,
         r0: E,
         r1: E,
-    ) -> EqFactoredUniPoly<E> {
+    ) -> NormalizedPoly<E> {
         debug_assert_eq!(self.basis, 8);
         debug_assert_eq!(self.rounds_completed, 1);
         let y_len = compact_range_image.len() / self.live_x_cols;
@@ -330,7 +333,9 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             }
         );
 
-        EqFactoredUniPoly::from_q_coeffs(accumulated.into_iter().map(E::reduce_product).collect())
+        NormalizedPoly::from_q_coefficients(
+            accumulated.into_iter().map(E::reduce_product).collect(),
+        )
     }
 
     #[tracing::instrument(
@@ -406,7 +411,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         compact_range_image: &S,
         r0: E,
         r1: E,
-    ) -> (Vec<E>, EqFactoredUniPoly<E>) {
+    ) -> (Vec<E>, NormalizedPoly<E>) {
         debug_assert!(self.ring_bits() > 2);
         let live_x_cols = self.live_x_cols;
         let y_len = compact_range_image.len() / live_x_cols;
@@ -512,7 +517,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
         let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
-        let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
+        let poly = NormalizedPoly::from_q_coefficients(q_coeffs);
         (out, poly)
     }
 }

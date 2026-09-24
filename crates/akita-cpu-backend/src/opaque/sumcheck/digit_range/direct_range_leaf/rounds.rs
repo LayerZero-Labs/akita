@@ -1,7 +1,8 @@
 use super::*;
+use jolt_poly::NormalizedPoly;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
-    pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
+    pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> NormalizedPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
         let use_sparse_x_y_round = !use_two_round_prefix && self.use_sparse_x_y_round();
@@ -101,7 +102,7 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+    fn compute_round_eq_factored(&mut self, round: usize) -> NormalizedPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         if let Some(poly) = self.cached_round_poly.take() {
             poly

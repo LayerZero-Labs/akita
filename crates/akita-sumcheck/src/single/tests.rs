@@ -1,5 +1,6 @@
 use super::*;
-use crate::{CompressedUniPoly, UniPoly};
+use jolt_poly::{CompressedPoly, NormalizedPoly, UnivariatePoly};
+
 use akita_algebra::poly::multilinear_eval;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -42,7 +43,7 @@ impl SumcheckInstanceProver<F> for DenseInstance {
         self.claim
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, _claim: F) -> UniPoly<F> {
+    fn compute_round_univariate(&mut self, _round: usize, _claim: F) -> UnivariatePoly<F> {
         let half = self.evaluations.len() / 2;
         let (zero, one) = (0..half).fold((F::zero(), F::zero()), |(zero, one), index| {
             (
@@ -50,7 +51,7 @@ impl SumcheckInstanceProver<F> for DenseInstance {
                 one + self.evaluations[2 * index + 1],
             )
         });
-        UniPoly::from_coeffs(vec![zero, one - zero])
+        UnivariatePoly::new(vec![zero, one - zero])
     }
 
     fn ingest_challenge(&mut self, _round: usize, challenge: F) {
@@ -119,17 +120,13 @@ fn malformed_standard_rounds_fail_before_sampling() {
         ),
         (
             SumcheckProof {
-                round_polys: vec![CompressedUniPoly {
-                    coeffs_except_linear_term: vec![],
-                }],
+                round_polys: vec![CompressedPoly::new(vec![])],
             },
             AkitaError::InvalidProof,
         ),
         (
             SumcheckProof {
-                round_polys: vec![CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); 2],
-                }],
+                round_polys: vec![CompressedPoly::new(vec![F::zero(); 2])],
             },
             AkitaError::InvalidInput("sumcheck round poly degree 2 exceeds bound 1".into()),
         ),
@@ -190,7 +187,7 @@ impl OneRoundEqInstance {
     }
 
     fn q_at(&self, point: F) -> F {
-        UniPoly::from_coeffs(self.q_coeffs.clone()).evaluate(&point)
+        UnivariatePoly::new(self.q_coeffs.clone()).evaluate(point)
     }
 
     fn claim(&self) -> F {
@@ -217,8 +214,8 @@ impl EqFactoredSumcheckInstanceProver<F> for OneRoundEqInstance {
         self.split.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<F> {
-        EqFactoredUniPoly::from_q_coeffs(self.q_coeffs.clone())
+    fn compute_round_eq_factored(&mut self, _round: usize) -> NormalizedPoly<F> {
+        NormalizedPoly::from_q_coefficients(self.q_coeffs.clone())
     }
 
     fn ingest_challenge(&mut self, _round: usize, challenge: F) {
@@ -231,11 +228,11 @@ fn equality_factored_rejects_old_wire_forgery_when_tau_is_zero() {
     let q_coeffs = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
     let instance = OneRoundEqInstance::new(F::zero(), q_coeffs);
     let proof = EqFactoredSumcheckProof {
-        round_polys: vec![EqFactoredUniPoly {
+        round_polys: vec![NormalizedPoly::new(
             // Under the old `[q_0, q_2]` convention, choosing `q_0 = T`
             // collapsed the scaled claim to zero and left `q_2` unconstrained.
-            coeffs_except_constant_term: vec![instance.claim(), F::from_u64(101)],
-        }],
+            vec![instance.claim(), F::from_u64(101)],
+        )],
     };
     let challenge = F::from_u64(11);
 
@@ -261,7 +258,7 @@ fn equality_factored_wire_contains_every_nonconstant_coefficient() {
         F::from_u64(7),
         F::from_u64(11),
     ];
-    let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs.clone());
+    let poly = NormalizedPoly::from_q_coefficients(q_coeffs.clone());
     let mut encoded = Vec::new();
     poly.serialize_uncompressed(&mut encoded).unwrap();
 
@@ -271,7 +268,7 @@ fn equality_factored_wire_contains_every_nonconstant_coefficient() {
     }
     assert_eq!(encoded, expected);
     assert_eq!(
-        EqFactoredUniPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
+        NormalizedPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
         poly
     );
 }
@@ -289,7 +286,7 @@ fn equality_factored_degree_zero_round_has_an_empty_message() {
                 })
                 .unwrap();
 
-            assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
+            assert!(proof.round_polys[0].coefficients().is_empty());
             let mut encoded = Vec::new();
             proof.round_polys[0]
                 .serialize_uncompressed(&mut encoded)
@@ -352,7 +349,7 @@ impl EqFactoredSumcheckInstanceProver<F> for EqInstance {
         self.split.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<F> {
+    fn compute_round_eq_factored(&mut self, round: usize) -> NormalizedPoly<F> {
         let [a, b, c, d] = self.coefficients;
         let coefficients = if round == 0 {
             vec![a + c * self.equality[1], b + d * self.equality[1]]
@@ -360,7 +357,7 @@ impl EqFactoredSumcheckInstanceProver<F> for EqInstance {
             let challenge = self.first_challenge.unwrap();
             vec![a + b * challenge, c + d * challenge]
         };
-        EqFactoredUniPoly::from_q_coeffs(coefficients)
+        NormalizedPoly::from_q_coefficients(coefficients)
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: F) {
@@ -408,6 +405,70 @@ fn equality_factored_replay_rejects_late_tampering_after_a_vanished_factor() {
         )
     };
     assert_eq!(replay(&proof), Ok(point.to_vec()));
-    proof.round_polys[1].coeffs_except_constant_term[0] += F::one();
+    let mut coefficients = proof.round_polys[1].coefficients().to_vec();
+    coefficients[0] += F::one();
+    proof.round_polys[1] = NormalizedPoly::new(coefficients);
     assert_eq!(replay(&proof), Err(AkitaError::InvalidProof));
+}
+
+#[test]
+fn arithmetic_cutover_preserves_proof_and_transcript_bytes() {
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    // Frozen from Akita a5f3629b, before the jolt-poly arithmetic cutover.
+    let evaluations = (1..=16).map(F::from_u64).collect::<Vec<_>>();
+    let claim = evaluations.iter().copied().fold(F::zero(), |a, b| a + b);
+    let mut standard = DenseInstance::new(evaluations, 4, claim);
+    let (standard_proof, standard_point, _) = prove_sumcheck::<F, _, F, _, _>(
+        &mut crate::InfallibleSumcheck(&mut standard),
+        &mut transcript(),
+        sample,
+    )
+    .unwrap();
+    let mut standard_bytes = Vec::new();
+    standard_proof
+        .serialize_uncompressed(&mut standard_bytes)
+        .unwrap();
+    let mut standard_challenges = Vec::new();
+    for point in standard_point {
+        point
+            .serialize_uncompressed(&mut standard_challenges)
+            .unwrap();
+    }
+    assert_eq!(
+        hex(&standard_bytes),
+        "4000000000000000000000000000000056be51b170e69ddb9503b89d67900b5a6910991f8c4c6e05f8cd2fe54ecc91c47f4db5773aa6f5b93fd459b4fca014b4"
+    );
+    assert_eq!(
+        hex(&standard_challenges),
+        "056f542c9c79e776e5006ee719e48296c70bbcf154d6e7450bf394c50601e3a56330fa19fd9fcfed507b7050b5ee72f4ed551a9d2c9f4d1e798da70c51a60eac"
+    );
+
+    let mut normalized = OneRoundEqInstance::new(
+        F::from_u64(3),
+        vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)],
+    );
+    let (normalized_proof, normalized_point, _) =
+        prove_eq_factored_sumcheck::<F, _, F, _, _>(&mut normalized, &mut transcript(), sample)
+            .unwrap();
+    let mut normalized_bytes = Vec::new();
+    normalized_proof
+        .serialize_uncompressed(&mut normalized_bytes)
+        .unwrap();
+    let mut normalized_challenges = Vec::new();
+    for point in normalized_point {
+        point
+            .serialize_uncompressed(&mut normalized_challenges)
+            .unwrap();
+    }
+    assert_eq!(
+        hex(&normalized_bytes),
+        "0500000000000000000000000000000007000000000000000000000000000000"
+    );
+    assert_eq!(
+        hex(&normalized_challenges),
+        "bd7304a00babde122b20294ee65a3f54"
+    );
 }

@@ -487,11 +487,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::CompressedUniPoly;
     use akita_sumcheck::SumcheckProof;
     use akita_transcript::AkitaTranscript;
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, One, Prime32Offset99, Zero};
+    use jolt_poly::CompressedPoly;
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -581,11 +581,8 @@ mod tests {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
             sumcheck: SumcheckProof {
                 round_polys: (0..max_tail_rounds)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![
-                            E::zero();
-                            EXTENSION_OPENING_REDUCTION_DEGREE
-                        ],
+                    .map(|_| {
+                        CompressedPoly::new(vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE])
                     })
                     .collect(),
             },
@@ -670,11 +667,8 @@ mod tests {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
             sumcheck: SumcheckProof {
                 round_polys: (0..NUM_VARS - split_bits)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![
-                            E::zero();
-                            EXTENSION_OPENING_REDUCTION_DEGREE
-                        ],
+                    .map(|_| {
+                        CompressedPoly::new(vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE])
                     })
                     .collect(),
             },

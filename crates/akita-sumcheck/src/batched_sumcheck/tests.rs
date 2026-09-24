@@ -1,6 +1,7 @@
 use super::*;
 use akita_transcript::AkitaTranscript;
 use jolt_field::{Fp64, One, Zero};
+use jolt_poly::UnivariatePoly;
 
 type F = Fp64<4294967197>;
 
@@ -55,7 +56,7 @@ fn deterministic_evals(rounds: usize, seed: u64) -> Vec<F> {
 
 /// Degree-2 round univariate of `sum_x a(x) * b(x)`, binding the top
 /// variable: `g(X) = sum_i (a_lo + X (a_hi - a_lo)) (b_lo + X (b_hi - b_lo))`.
-fn product_round_univariate(a: &[F], b: &[F]) -> UniPoly<F> {
+fn product_round_univariate(a: &[F], b: &[F]) -> UnivariatePoly<F> {
     let half = a.len() / 2;
     let mut c0 = F::zero();
     let mut c1 = F::zero();
@@ -69,7 +70,7 @@ fn product_round_univariate(a: &[F], b: &[F]) -> UniPoly<F> {
         c1 += a_lo * db + b_lo * da;
         c2 += da * db;
     }
-    UniPoly::from_coeffs(vec![c0, c1, c2])
+    UnivariatePoly::new(vec![c0, c1, c2])
 }
 
 fn fold_top_variable(evals: &mut Vec<F>, r: F) {
@@ -118,7 +119,7 @@ impl SumcheckInstanceProver<F> for ProductInstance {
         product_claim(&self.a, &self.b)
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: F) -> UnivariatePoly<F> {
         product_round_univariate(&self.a, &self.b)
     }
 
@@ -241,7 +242,7 @@ fn run_determinism_check(shapes: &[(usize, u64)]) {
         .zip(proof.round_polys.iter())
         .enumerate()
     {
-        let univariates: Vec<UniPoly<F>> = tables
+        let univariates: Vec<UnivariatePoly<F>> = tables
             .iter()
             .zip(reference_claims.iter())
             .map(|(inst, claim)| {
@@ -249,19 +250,23 @@ fn run_determinism_check(shapes: &[(usize, u64)]) {
                 if round >= offset {
                     product_round_univariate(&inst.a, &inst.b)
                 } else {
-                    UniPoly::from_coeffs(vec![claim.half()])
+                    UnivariatePoly::new(vec![claim.half()])
                 }
             })
             .collect();
-        let max_len = univariates.iter().map(|p| p.coeffs.len()).max().unwrap();
+        let max_len = univariates
+            .iter()
+            .map(|p| p.coefficients().len())
+            .max()
+            .unwrap();
         let mut batched = vec![F::zero(); max_len];
         for (poly, coeff) in univariates.iter().zip(round_result.batching_coeffs.iter()) {
-            for (i, c) in poly.coeffs.iter().enumerate() {
+            for (i, c) in poly.coefficients().iter().enumerate() {
                 batched[i] += *c * *coeff;
             }
         }
         assert_eq!(
-            &UniPoly::from_coeffs(batched).compress(),
+            &UnivariatePoly::new(batched).compress(),
             driver_round_poly,
             "round {round}: driver output differs from the serial reference"
         );
@@ -270,7 +275,7 @@ fn run_determinism_check(shapes: &[(usize, u64)]) {
             .zip(reference_claims.iter_mut())
             .zip(univariates.iter())
         {
-            *claim = poly.evaluate(&r_j);
+            *claim = poly.evaluate(r_j);
             let offset = max_num_rounds - inst.rounds;
             if round >= offset {
                 fold_top_variable(&mut inst.a, r_j);

@@ -376,10 +376,10 @@ impl DigitRangePlan {
                 });
             }
             for round_poly in &stage.sumcheck_proof.round_polys {
-                if round_poly.coeffs_except_constant_term.len() != expected.sumcheck_proof.1 {
+                if round_poly.coefficients().len() != expected.sumcheck_proof.1 {
                     return Err(AkitaError::InvalidSize {
                         expected: expected.sumcheck_proof.1,
-                        actual: round_poly.coeffs_except_constant_term.len(),
+                        actual: round_poly.coefficients().len(),
                     });
                 }
             }

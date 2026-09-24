@@ -1,9 +1,10 @@
 //! External implementation fixture: the real entrypoint must require no CPU types.
-use akita_algebra::uni_poly::UniPoly;
+
 use akita_error::AkitaError;
 use akita_prover::backend::*;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::UnivariatePoly;
 use std::marker::PhantomData;
 
 pub struct ExternalBackend<F, E>(PhantomData<(F, E)>);
@@ -151,7 +152,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueEorKernel<F, E> for ExternalB
         session: &mut Self::EorSessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -340,7 +341,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage2Kernel<F, E> for Extern
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -442,7 +443,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage3Kernel<F, E> for Extern
         session: &mut Self::Stage3SessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))

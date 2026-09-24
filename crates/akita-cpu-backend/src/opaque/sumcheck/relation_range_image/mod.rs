@@ -90,11 +90,12 @@ use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::{
-    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
+    fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};
+use jolt_poly::UnivariatePoly;
 use std::mem;
 use std::time::Instant;
 
@@ -144,10 +145,10 @@ type CompactVirtSkipLinearAccum<E> = [<E as Unreduced>::SmallProduct; 2];
 type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 6];
 
 #[inline]
-fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UniPoly<E> {
+fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UnivariatePoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
     trim_trailing_zeros(&mut coeffs);
-    UniPoly::from_coeffs(coeffs)
+    UnivariatePoly::new(coeffs)
 }
 
 #[inline]
@@ -263,8 +264,8 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
     lane_bits: usize,
     num_vars: usize,
     prev_norm_claim: E,
-    prev_norm_poly: Option<UniPoly<E>>,
-    cached_round_poly: Option<UniPoly<E>>,
+    prev_norm_poly: Option<UnivariatePoly<E>>,
+    cached_round_poly: Option<UnivariatePoly<E>>,
 
     scan_time_total: f64,
     fold_time_total: f64,

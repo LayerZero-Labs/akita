@@ -31,6 +31,7 @@ dependencies = [
  "akita-serialization",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rayon",
@@ -81,6 +82,7 @@ dependencies = [
  "akita-verifier",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rayon",
@@ -116,6 +118,7 @@ dependencies = [
  "ark-ff",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "libc",
  "num-bigint 0.5.1",
  "p3-baby-bear",
@@ -160,6 +163,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
+ "jolt-poly",
  "tracing",
 ]
 
@@ -179,6 +183,7 @@ name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-poly",
  "proptest",
  "thiserror",
 ]
@@ -221,6 +226,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "jolt-field",
+ "jolt-poly",
  "rayon",
  "tracing",
 ]
@@ -248,6 +254,7 @@ dependencies = [
  "blake2",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "num-traits",
  "rand 0.8.8",
  "rand_core 0.6.4",
@@ -272,6 +279,7 @@ dependencies = [
  "akita-types",
  "criterion",
  "jolt-field",
+ "jolt-poly",
  "rayon",
  "tracing",
 ]
@@ -892,7 +900,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=72dc6451628d8b1dd794147a1f1cc40be0d77963#72dc6451628d8b1dd794147a1f1cc40be0d77963"
+source = "git+https://github.com/a16z/jolt?rev=fdaced169a70cbd9d7242d7e00b23dec462eea9f#fdaced169a70cbd9d7242d7e00b23dec462eea9f"
 dependencies = [
  "cc",
  "num-traits",
@@ -900,6 +908,28 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "jolt-poly"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=fdaced169a70cbd9d7242d7e00b23dec462eea9f#fdaced169a70cbd9d7242d7e00b23dec462eea9f"
+dependencies = [
+ "jolt-field",
+ "jolt-utils",
+ "num-traits",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-utils"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=fdaced169a70cbd9d7242d7e00b23dec462eea9f#fdaced169a70cbd9d7242d7e00b23dec462eea9f"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

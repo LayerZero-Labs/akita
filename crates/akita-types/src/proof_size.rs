@@ -167,12 +167,12 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_error::AkitaError;
     use akita_serialization::{AkitaSerialize, Compress};
-    use akita_sumcheck::EqFactoredUniPoly;
-    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+    use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
     use jolt_field::{
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59, Zero,
     };
+    use jolt_poly::{CompressedPoly, NormalizedPoly};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::sis::sis_l2_table_key_for_collision_sq;
@@ -270,9 +270,7 @@ mod tests {
     fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
+                .map(|_| CompressedPoly::new(vec![F::zero(); degree]))
                 .collect(),
         }
     }
@@ -283,9 +281,7 @@ mod tests {
     ) -> EqFactoredSumcheckProof<F> {
         EqFactoredSumcheckProof {
             round_polys: (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_constant_term: vec![F::zero(); degree],
-                })
+                .map(|_| NormalizedPoly::new(vec![F::zero(); degree]))
                 .collect(),
         }
     }
@@ -345,9 +341,7 @@ mod tests {
             setup_prefix_eval: F::zero(),
             sumcheck: akita_sumcheck::SumcheckProof {
                 round_polys: (0..rounds)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![F::zero(); SETUP_SUMCHECK_DEGREE],
-                    })
+                    .map(|_| CompressedPoly::new(vec![F::zero(); SETUP_SUMCHECK_DEGREE]))
                     .collect(),
             },
         }

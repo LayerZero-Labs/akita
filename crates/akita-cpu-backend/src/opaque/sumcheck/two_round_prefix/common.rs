@@ -1,8 +1,8 @@
-use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::DigitRangePlan;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Ring};
+use jolt_poly::{NormalizedPoly, UnivariatePoly};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -578,10 +578,12 @@ pub(crate) fn stage2_relation_m_point_values_compressed<E: Field>(
 pub(crate) fn interpolate_eq_factored_q_poly<E: Field + Ring>(
     evals: &[E],
     degree: usize,
-) -> EqFactoredUniPoly<E> {
-    let mut q_coeffs = UniPoly::from_evals(evals).coeffs;
+) -> NormalizedPoly<E> {
+    let mut q_poly = UnivariatePoly::from_evals(evals);
+    q_poly.trim_trailing_zeros();
+    let mut q_coeffs = q_poly.into_coefficients();
     q_coeffs.resize(degree + 1, E::zero());
-    EqFactoredUniPoly::from_q_coeffs(q_coeffs)
+    NormalizedPoly::from_q_coefficients(q_coeffs)
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
@@ -779,8 +781,8 @@ pub(crate) fn add_quadratic_coeffs<E: Field>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3]
 
 #[inline]
 #[cfg(test)]
-pub(crate) fn coeff_array_to_poly<E: Field, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
-    UniPoly::from_coeffs(coeffs.to_vec())
+pub(crate) fn coeff_array_to_poly<E: Field, const N: usize>(coeffs: [E; N]) -> UnivariatePoly<E> {
+    UnivariatePoly::new(coeffs.to_vec())
 }
 
 #[inline]

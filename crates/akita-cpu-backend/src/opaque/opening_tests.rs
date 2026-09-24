@@ -8,6 +8,7 @@ use akita_transcript::labels::{ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATC
 use akita_transcript::{append_ext_field, sample_ext_challenge, AkitaTranscript, Transcript};
 use akita_types::*;
 use jolt_field::{Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
 type F = Prime128OffsetA7F7;
 type E = Ext2<F>;
@@ -120,7 +121,7 @@ impl SumcheckKernel<E> for EorDriver<'_> {
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         <CpuBackend as OpaqueEorKernel<F, E>>::eor_round(self.backend, self.session, round, claim)
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {

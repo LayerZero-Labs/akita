@@ -9,12 +9,13 @@
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
 use crate::single::validate_sumcheck_round_messages;
-use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
+use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_poly::UnivariatePoly;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -36,15 +37,19 @@ fn mul_pow_2<E: Field>(x: E, k: usize) -> E {
     result
 }
 
-fn linear_combination<E: Field>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPoly<E> {
-    let max_len = polys.iter().map(|p| p.coeffs.len()).max().unwrap_or(0);
+fn linear_combination<E: Field>(polys: &[UnivariatePoly<E>], coeffs: &[E]) -> UnivariatePoly<E> {
+    let max_len = polys
+        .iter()
+        .map(|p| p.coefficients().len())
+        .max()
+        .unwrap_or(0);
     let mut result = vec![E::zero(); max_len];
     for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
-        for (i, c) in poly.coeffs.iter().enumerate() {
+        for (i, c) in poly.coefficients().iter().enumerate() {
             result[i] += *c * *coeff;
         }
     }
-    UniPoly::from_coeffs(result)
+    UnivariatePoly::new(result)
 }
 
 /// Verifier-side output of the batched sumcheck round replay.
@@ -157,7 +162,7 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    UniPoly::from_coeffs(vec![previous_claim.half()])
+                    UnivariatePoly::new(vec![previous_claim.half()])
                 }
             };
         // With many instances (the fused selector batch carries dozens), the
@@ -181,7 +186,7 @@ where
             live_points >= PARALLEL_MIN_ROUND_WORK
         };
         #[cfg(feature = "parallel")]
-        let univariate_polys: Vec<UniPoly<E>> = if fan_out {
+        let univariate_polys: Vec<UnivariatePoly<E>> = if fan_out {
             instances
                 .par_iter_mut()
                 .zip(individual_claims.par_iter())
@@ -195,7 +200,7 @@ where
                 .collect()
         };
         #[cfg(not(feature = "parallel"))]
-        let univariate_polys: Vec<UniPoly<E>> = instances
+        let univariate_polys: Vec<UnivariatePoly<E>> = instances
             .iter_mut()
             .zip(individual_claims.iter())
             .map(compute_univariate)
@@ -205,8 +210,8 @@ where
 
         #[cfg(debug_assertions)]
         {
-            let g0 = batched_poly.evaluate(&E::zero());
-            let g1 = batched_poly.evaluate(&E::one());
+            let g0 = batched_poly.evaluate(E::zero());
+            let g1 = batched_poly.evaluate(E::one());
             let batched_claim: E = individual_claims
                 .iter()
                 .zip(batching_coeffs.iter())
@@ -225,7 +230,7 @@ where
 
         // Update individual claims from each instance's own univariate.
         for (claim, poly) in individual_claims.iter_mut().zip(univariate_polys.iter()) {
-            *claim = poly.evaluate(&r_j);
+            *claim = poly.evaluate(r_j);
         }
 
         // Ingest challenge into each active instance.

@@ -122,9 +122,11 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 .ok_or(AkitaError::InvalidProof)?;
             if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0
                 || stage.child_claims.len() != expected.child_claims
-                || stage.sumcheck_proof.round_polys.iter().any(|round| {
-                    round.coeffs_except_constant_term.len() != expected.sumcheck_proof.1
-                })
+                || stage
+                    .sumcheck_proof
+                    .round_polys
+                    .iter()
+                    .any(|round| round.coefficients().len() != expected.sumcheck_proof.1)
             {
                 return Err(AkitaError::InvalidProof);
             }

@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 pub(super) fn prove_stage1<F, E, T, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
@@ -222,8 +223,8 @@ where
             let crate::backend::Stage1RoundPolynomial::Standard(polynomial) = polynomial else {
                 return Err(AkitaError::InvalidProof);
             };
-            if polynomial.coeffs.len() != plan.digit_range_plan().leaf_degree() + 2
-                || polynomial.evaluate(&E::zero()) + polynomial.evaluate(&E::one()) != claim
+            if polynomial.coefficients().len() != plan.digit_range_plan().leaf_degree() + 2
+                || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != claim
             {
                 return Err(AkitaError::InvalidProof);
             }
@@ -659,7 +660,7 @@ impl<F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>>
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend
             .stage3_round_polynomial(self.session, round, claim)
     }
@@ -705,7 +706,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage2Kern
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend
             .stage2_round_polynomial(self.session, round, claim)
     }

@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::CompressedPoly;
 
 #[test]
 fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
@@ -59,11 +60,11 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
                 .round_polys
                 .first_mut()
                 .expect("reduced stage2 sumcheck round");
-            let coefficient = first_round
-                .coeffs_except_linear_term
+            let mut coefficients = first_round.coeffs_except_linear_term().to_vec();
+            *coefficients
                 .first_mut()
-                .expect("reduced stage2 sumcheck coefficient");
-            *coefficient += F::one();
+                .expect("reduced stage2 sumcheck coefficient") += F::one();
+            *first_round = CompressedPoly::new(coefficients);
             let mut tampered_transcript = AkitaTranscript::<F>::new(b"test/prove");
             scheme
                 .batched_verify(

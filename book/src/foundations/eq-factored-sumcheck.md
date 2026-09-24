@@ -88,7 +88,8 @@ For the common case where $p$ contributes degree two, ordinary sum-check would
 send three coefficients for the degree-three product $s_j$. The factored
 message sends two coefficients for the degree-two inner polynomial $q_j$.
 
-`EqFactoredUniPoly` in `akita-sumcheck/src/types.rs` is this exact wire type. A
+`jolt_poly::NormalizedPoly` stores this round message, and
+`akita-serialization` encodes it on the wire. A
 degree-$d$ inner polynomial contributes exactly $d$ field elements. Thus every
 deployed Akita Stage 1 round, whose inner degree is positive, keeps the same
 message width; the valid degree-zero case needs no transmitted coefficient.

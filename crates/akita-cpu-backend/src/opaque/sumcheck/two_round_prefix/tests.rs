@@ -8,9 +8,10 @@ use crate::opaque::{
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use jolt_field::{ExtField, Field, FpExt4, One, Prime128Offset275, Prime32Offset99, Ring, Zero};
+use jolt_poly::{NormalizedPoly, UnivariatePoly};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -969,14 +970,12 @@ fn stage1_storage_domain_matches_local_round_messages() {
                     let cache = Stage1PrefixCache::new(&proof, &[tau0, tau1], 8)
                         .expect("stage1 prefix state should build");
                     let round_values = stage1_norm_round_values(quad, tau0, tau1, r0, 8);
-                    assert_eq!(
-                        cache.reconstruct_round0_poly(),
-                        UniPoly::from_evals(&round_values[..6])
-                    );
-                    assert_eq!(
-                        cache.reconstruct_round1_poly(r0),
-                        UniPoly::from_evals(&round_values[6..])
-                    );
+                    let mut round0 = UnivariatePoly::from_evals(&round_values[..6]);
+                    round0.trim_trailing_zeros();
+                    let mut round1 = UnivariatePoly::from_evals(&round_values[6..]);
+                    round1.trim_trailing_zeros();
+                    assert_eq!(cache.reconstruct_round0_poly(), round0);
+                    assert_eq!(cache.reconstruct_round1_poly(r0), round1);
                 }
             }
         }
@@ -1043,12 +1042,9 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
         state.reconstruct_round0_eq_poly(),
         state.reconstruct_round1_eq_poly(F::from_u64(7)),
     ] {
+        assert_eq!(poly.coefficients().len(), STAGE1_B8_Q_POLY_DEGREE);
         assert_eq!(
-            poly.coeffs_except_constant_term.len(),
-            STAGE1_B8_Q_POLY_DEGREE
-        );
-        assert_eq!(
-            poly.coeffs_except_constant_term,
+            poly.coefficients(),
             vec![F::zero(); STAGE1_B8_Q_POLY_DEGREE]
         );
 
@@ -1056,7 +1052,7 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
         poly.serialize_uncompressed(&mut bytes)
             .expect("eq-factored poly should serialize");
         let decoded =
-            EqFactoredUniPoly::<F>::deserialize_uncompressed(&bytes[..], &STAGE1_B8_Q_POLY_DEGREE)
+            NormalizedPoly::<F>::deserialize_uncompressed(&bytes[..], &STAGE1_B8_Q_POLY_DEGREE)
                 .expect("eq-factored poly should deserialize at degree 4");
         assert_eq!(decoded, poly);
     }

@@ -855,13 +855,13 @@ mod delayed_product_sum_contract {
             let prover_poly = prover.compute_round_univariate(round, claim);
             for &x in &eval_points {
                 assert_eq!(
-                    prover_poly.evaluate(&x),
+                    prover_poly.evaluate(x),
                     reference_round_eval(&witness, &factor, claim, x),
                     "dense round {round} diverged from per-term Mul at x={x:?}"
                 );
             }
             let challenge = LossyField::from_u64(7 + round as u64);
-            claim = prover_poly.evaluate(&challenge);
+            claim = prover_poly.evaluate(challenge);
             prover.ingest_challenge(round, challenge);
             witness = reference_fold(&witness, challenge);
             factor = reference_fold(&factor, challenge);

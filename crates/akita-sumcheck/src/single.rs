@@ -3,14 +3,15 @@
 #[cfg(test)]
 use crate::SumcheckInstanceProver;
 use crate::{
-    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckProof, EqFactoredUniPoly,
-    SumcheckInstanceVerifier, SumcheckProof,
+    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckProof, SumcheckInstanceVerifier,
+    SumcheckProof,
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::{NormalizedPoly, UnivariatePolynomial};
 
 pub(crate) fn validate_sumcheck_round_messages<E: Field>(
     proof: &SumcheckProof<E>,
@@ -24,7 +25,7 @@ pub(crate) fn validate_sumcheck_round_messages<E: Field>(
         });
     }
     for poly in &proof.round_polys {
-        if poly.coeffs_except_linear_term.is_empty() {
+        if poly.coeffs_except_linear_term().is_empty() {
             return Err(AkitaError::InvalidProof);
         }
         if poly.degree() > degree_bound {
@@ -98,7 +99,7 @@ where
             let _span = tracing::info_span!("sumcheck_round_univariate").entered();
             prover.round_polynomial(round, claim)?
         };
-        if poly.evaluate(&E::zero()) + poly.evaluate(&E::one()) != claim {
+        if poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidInput(
                 "sumcheck round polynomial does not match its input claim".into(),
             ));
@@ -193,11 +194,11 @@ where
 pub fn advance_eq_factored_claim<E: Field>(
     claim: E,
     tau: E,
-    poly: &EqFactoredUniPoly<E>,
+    poly: &NormalizedPoly<E>,
     challenge: E,
 ) -> E {
     let constant = claim - tau * poly.nonconstant_term_sum_at_one();
-    constant + poly.eval_nonconstant_terms(&challenge)
+    constant + poly.evaluate_nonconstant_terms(challenge)
 }
 
 /// Prove one normalized equality-factored sumcheck instance.

@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::CompressedPoly;
 
 pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
@@ -266,11 +267,14 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         );
 
         let mut tampered_round = proof.clone();
-        let coefficient = first_stage3_proof_mut(&mut tampered_round)
+        let round = first_stage3_proof_mut(&mut tampered_round)
             .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
-            .and_then(|round| round.coeffs_except_linear_term.first_mut())
-            .expect("recursive profile Stage 3 round coefficient");
-        *coefficient += F::one();
+            .expect("recursive profile Stage 3 round polynomial");
+        let mut coefficients = round.coeffs_except_linear_term().to_vec();
+        *coefficients
+            .first_mut()
+            .expect("recursive profile Stage 3 round coefficient") += F::one();
+        *round = CompressedPoly::new(coefficients);
         reject_stage3_tamper(
             tampered_round,
             "tampered Stage 3 round polynomial and derived point",

@@ -583,7 +583,7 @@ pub trait WitnessExtensionOpeningKernel<H, F, E>: ComputeBackendSetup<F> {
         session: &mut Self::Session,
         round: usize,
         previous_local_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_witness_eor_challenge(
         &self,

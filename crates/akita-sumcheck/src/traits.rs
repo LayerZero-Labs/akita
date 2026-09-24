@@ -5,10 +5,9 @@
 //! polynomial factors as `s(X) = l(X) * q(X)`, where `l` is a linear eq
 //! factor; the prover sends `q` with its constant term omitted.
 
-use crate::types::EqFactoredUniPoly;
-use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
 use jolt_field::Field;
+use jolt_poly::{NormalizedPoly, UnivariatePoly};
 
 /// Prover-side sumcheck instance interface.
 ///
@@ -33,7 +32,7 @@ pub trait SumcheckInstanceProver<E: Field>: Send + Sync {
     /// remaining sum after binding previous challenges, and must satisfy:
     ///
     /// `g_round(0) + g_round(1) == previous_claim`.
-    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E>;
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UnivariatePoly<E>;
 
     /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);
@@ -51,7 +50,8 @@ pub trait SumcheckKernel<E: Field> {
     fn num_rounds(&self) -> usize;
     fn degree_bound(&self) -> usize;
     fn input_claim(&self) -> E;
-    fn round_polynomial(&mut self, round: usize, claim: E) -> Result<UniPoly<E>, AkitaError>;
+    fn round_polynomial(&mut self, round: usize, claim: E)
+        -> Result<UnivariatePoly<E>, AkitaError>;
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
     fn finish(&mut self) -> Result<(), AkitaError>;
 }
@@ -74,7 +74,11 @@ impl<E: Field, P: SumcheckInstanceProver<E> + ?Sized> SumcheckKernel<E>
         SumcheckInstanceProver::input_claim(self.0)
     }
 
-    fn round_polynomial(&mut self, round: usize, claim: E) -> Result<UniPoly<E>, AkitaError> {
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Ok(self.0.compute_round_univariate(round, claim))
     }
 
@@ -135,7 +139,7 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     fn current_tau(&self) -> E;
 
     /// Compute the eq-factored round message.
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E>;
+    fn compute_round_eq_factored(&mut self, round: usize) -> NormalizedPoly<E>;
 
     /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);

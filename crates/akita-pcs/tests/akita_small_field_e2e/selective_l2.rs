@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::CompressedPoly;
 
 fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
@@ -224,11 +225,13 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         assert!(verify(&bad_nonce).is_err());
 
         let mut bad_stage2 = proof;
-        bad_stage2.recursive_folds[l2_index]
+        let round = &mut bad_stage2.recursive_folds[l2_index]
             .stage2
             .sumcheck_proof
-            .round_polys[0]
-            .coeffs_except_linear_term[0] += E::one();
+            .round_polys[0];
+        let mut coefficients = round.coeffs_except_linear_term().to_vec();
+        coefficients[0] += E::one();
+        *round = CompressedPoly::new(coefficients);
         assert!(verify(&bad_stage2).is_err());
     });
 }

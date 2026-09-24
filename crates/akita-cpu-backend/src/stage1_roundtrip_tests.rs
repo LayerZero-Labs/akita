@@ -15,6 +15,7 @@ use jolt_field::{
     Prime32Offset99, Prime64Offset59, Ring, Zero,
 };
 use jolt_field::{Fold, Unreduced};
+use jolt_poly::NormalizedPoly;
 
 type F = Prime128Offset275;
 
@@ -342,19 +343,21 @@ fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
             assert_stage1_rejected(&extra_round, equality_point.clone(), plan);
 
             let mut degree_too_low = proof.clone();
-            degree_too_low.stages[stage_index]
+            let round = &mut degree_too_low.stages[stage_index]
                 .sumcheck_proof
-                .round_polys[0]
-                .coeffs_except_constant_term
-                .pop();
+                .round_polys[0];
+            let mut coefficients = round.coefficients().to_vec();
+            coefficients.pop();
+            *round = NormalizedPoly::new(coefficients);
             assert_stage1_rejected(&degree_too_low, equality_point.clone(), plan);
 
             let mut degree_too_high = proof.clone();
-            degree_too_high.stages[stage_index]
+            let round = &mut degree_too_high.stages[stage_index]
                 .sumcheck_proof
-                .round_polys[0]
-                .coeffs_except_constant_term
-                .push(F::from_u64(0));
+                .round_polys[0];
+            let mut coefficients = round.coefficients().to_vec();
+            coefficients.push(F::from_u64(0));
+            *round = NormalizedPoly::new(coefficients);
             assert_stage1_rejected(&degree_too_high, equality_point.clone(), plan);
 
             let mut wrong_child_count = proof.clone();

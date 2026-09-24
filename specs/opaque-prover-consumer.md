@@ -791,7 +791,7 @@ where
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_stage2_challenge(
         &self,
@@ -866,7 +866,7 @@ where
         session_handle: &mut Self::WitnessEorSessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_eor_challenge(
         &self,
@@ -1049,7 +1049,7 @@ struct GpuStage2SessionState<E> {
     witness_buffer: DeviceBufferLease<PackedWord>,
     folded_state: DeviceBuffer<E>,
     relation_weights: DeviceBuffer<E>,
-    pending_round_polynomial: Option<UniPoly<E>>,
+    pending_round_polynomial: Option<UnivariatePoly<E>>,
     ready_event: GpuEvent,
 }
 ```

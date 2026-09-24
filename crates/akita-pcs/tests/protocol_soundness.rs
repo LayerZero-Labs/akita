@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_cpu_backend::CpuBackend;
+use jolt_poly::CompressedPoly;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
@@ -360,9 +361,8 @@ fn typed_verifier_rejects_empty_stage2_round_messages() {
         assert!(rounds > 1, "fixture must exercise a later round");
         for round in [0, rounds - 1] {
             let mut malformed = proof.clone();
-            malformed.root.stage2.sumcheck_proof.round_polys[round]
-                .coeffs_except_linear_term
-                .clear();
+            malformed.root.stage2.sumcheck_proof.round_polys[round] =
+                CompressedPoly::new(Vec::new());
             assert_invalid_proof(
                 "empty typed Stage 2 round",
                 scheme.batched_verify(

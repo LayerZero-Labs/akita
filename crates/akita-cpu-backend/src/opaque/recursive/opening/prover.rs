@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 /// Prover state for a degree-two extension-opening reduction sumcheck.
 ///
@@ -128,7 +129,7 @@ impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpening
         self.input_claim
     }
 
-    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UnivariatePoly<E> {
         let expected_len = 1usize << (self.num_rounds - round);
         let mut constant = E::zero();
         let mut quadratic = E::zero();
@@ -139,7 +140,7 @@ impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpening
         }
 
         let linear = previous_claim - constant - constant - quadratic;
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
+        UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {

@@ -1,5 +1,6 @@
 use super::*;
-use akita_algebra::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_transcript::AkitaTranscript;
 use jolt_field::{One, Prime128Offset275 as F, Zero};
 
@@ -26,13 +27,13 @@ impl crate::SumcheckKernel<F> for RejectingKernel {
     fn input_claim(&self) -> F {
         F::one()
     }
-    fn round_polynomial(&mut self, _: usize, _: F) -> Result<UniPoly<F>, AkitaError> {
+    fn round_polynomial(&mut self, _: usize, _: F) -> Result<UnivariatePoly<F>, AkitaError> {
         self.calls.push("round");
         match self.failure {
             Failure::Round => Err(AkitaError::InvalidInput("round failure".into())),
-            Failure::Claim => Ok(UniPoly::from_coeffs(vec![F::zero()])),
-            Failure::Degree => Ok(UniPoly::from_coeffs(vec![F::zero(), F::zero(), F::one()])),
-            _ => Ok(UniPoly::from_coeffs(vec![F::zero(), F::one()])),
+            Failure::Claim => Ok(UnivariatePoly::new(vec![F::zero()])),
+            Failure::Degree => Ok(UnivariatePoly::new(vec![F::zero(), F::zero(), F::one()])),
+            _ => Ok(UnivariatePoly::new(vec![F::zero(), F::one()])),
         }
     }
     fn bind_challenge(&mut self, _: usize, _: F) -> Result<(), AkitaError> {

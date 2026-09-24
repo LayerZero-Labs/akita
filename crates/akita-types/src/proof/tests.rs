@@ -1,6 +1,7 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
-use akita_algebra::CompressedUniPoly;
+use jolt_poly::CompressedPoly;
+
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
@@ -202,9 +203,7 @@ fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
     ExtensionOpeningReductionProof {
         partials: vec![F::zero(), F::one()],
         sumcheck: SumcheckProof {
-            round_polys: vec![CompressedUniPoly {
-                coeffs_except_linear_term: vec![F::zero(), F::one()],
-            }],
+            round_polys: vec![CompressedPoly::new(vec![F::zero(), F::one()])],
         },
         final_claims: vec![F::zero()],
     }

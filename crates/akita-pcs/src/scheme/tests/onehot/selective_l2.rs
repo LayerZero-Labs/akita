@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::CompressedPoly;
 
 #[test]
 fn selective_l2_proof_rejects_transcript_mutations() {
@@ -112,14 +113,16 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     assert!(verify(&bad_virtual).is_err());
 
     let mut bad_sumcheck = proof.clone();
-    bad_sumcheck.recursive_folds[l2_index]
+    let round = &mut bad_sumcheck.recursive_folds[l2_index]
         .stage1
         .norm_proof
         .as_mut()
         .expect("L2 norm")
         .sumcheck
-        .round_polys[0]
-        .coeffs_except_linear_term[0] += OneHotF::one();
+        .round_polys[0];
+    let mut coefficients = round.coeffs_except_linear_term().to_vec();
+    coefficients[0] += OneHotF::one();
+    *round = CompressedPoly::new(coefficients);
     assert!(verify(&bad_sumcheck).is_err());
 
     let mut bad_nonce = proof;

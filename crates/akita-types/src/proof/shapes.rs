@@ -348,17 +348,14 @@ pub fn canonical_proof_shape(
 pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     sc.round_polys
         .iter()
-        .map(|p| p.coeffs_except_linear_term.len())
+        .map(|p| p.coeffs_except_linear_term().len())
         .collect()
 }
 
 fn eq_factored_sumcheck_shape<F: Field>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
-    let degree = sc
-        .round_polys
-        .first()
-        .map_or(0, |p| p.coeffs_except_constant_term.len());
+    let degree = sc.round_polys.first().map_or(0, |p| p.coefficients().len());
     (sc.round_polys.len(), degree)
 }
 

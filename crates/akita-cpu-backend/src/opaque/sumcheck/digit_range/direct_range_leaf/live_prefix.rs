@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::NormalizedPoly;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[tracing::instrument(
@@ -9,7 +10,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         &self,
         range_image: &[E],
         r: E,
-    ) -> (Vec<E>, EqFactoredUniPoly<E>) {
+    ) -> (Vec<E>, NormalizedPoly<E>) {
         debug_assert!(self.next_use_prefix_x_round_after_current());
         debug_assert!(self.current_x_width() >= 2);
 
@@ -145,7 +146,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
         let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
-        let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
+        let poly = NormalizedPoly::from_q_coefficients(q_coeffs);
         (out, poly)
     }
 
@@ -157,7 +158,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_round_compact_prefix_x<S: CompactRangeImageSource + ?Sized>(
         &self,
         compact_range_image: &S,
-    ) -> EqFactoredUniPoly<E> {
+    ) -> NormalizedPoly<E> {
         debug_assert!(self.rounds_completed < self.num_vars);
         debug_assert_eq!(
             compact_range_image.len(),
@@ -231,7 +232,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         .map(E::reduce_product)
         .collect();
 
-        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
+        NormalizedPoly::from_q_coefficients(q_coeffs)
     }
 
     #[tracing::instrument(
@@ -241,7 +242,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_round_materialized_prefix_x(
         &self,
         range_image: &[E],
-    ) -> EqFactoredUniPoly<E> {
+    ) -> NormalizedPoly<E> {
         debug_assert!(self.rounds_completed < self.num_vars);
         let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -352,7 +353,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         );
 
         let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product).collect();
-        EqFactoredUniPoly::from_q_coeffs(q_coeffs)
+        NormalizedPoly::from_q_coefficients(q_coeffs)
     }
 
     #[tracing::instrument(
