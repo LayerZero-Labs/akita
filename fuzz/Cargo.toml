@@ -16,7 +16,6 @@ akita-serialization = { path = "../crates/akita-serialization" }
 akita-error = { path = "../crates/akita-error" }
 akita-sumcheck = { path = "../crates/akita-sumcheck" }
 akita-transcript = { path = "../crates/akita-transcript" }
-akita-types = { path = "../crates/akita-types" }
 libfuzzer-sys = "0.4.12"
 
 [[bin]]
