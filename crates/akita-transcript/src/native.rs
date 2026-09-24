@@ -2,8 +2,7 @@
 
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use spongefish::{
-    protocol_id, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, ProverState,
-    VerificationError, WithoutInstance,
+    DuplexSpongeInterface, Encoding, NargDeserialize, ProverState, VerificationError,
 };
 use std::marker::PhantomData;
 use std::{error::Error, fmt};
@@ -20,6 +19,12 @@ pub use sampling::{
 };
 mod verifier;
 pub use verifier::NativeVerifierState;
+mod domain;
+pub use domain::{
+    new_native_prover, new_native_prover_for, new_native_verifier, new_native_verifier_for,
+    NativeInitializationError, NativeProtocolId, NativeProtocolIdError,
+    NATIVE_APPLICATION_NAME_MAX_LEN,
+};
 mod site;
 
 /// Native transcript and proof-stream format version.
@@ -160,18 +165,6 @@ impl ProtocolSiteId {
 /// Native Spongefish prover state used by Akita.
 pub type NativeProverState = ProverState<TranscriptSponge>;
 
-/// Failure to construct a native transcript from an unrepresentable public input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeInitializationError;
-
-impl fmt::Display for NativeInitializationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("native transcript input length exceeds u64")
-    }
-}
-
-impl Error for NativeInitializationError {}
-
 /// A public native context cannot be represented by the fixed site grammar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeContextError;
@@ -183,74 +176,6 @@ impl fmt::Display for NativeContextError {
 }
 
 impl Error for NativeContextError {}
-
-#[derive(Clone, Copy)]
-struct FramedBytes<'a> {
-    bytes: &'a [u8],
-    len: u64,
-}
-
-impl<'a> FramedBytes<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Self, NativeInitializationError> {
-        Ok(Self {
-            bytes,
-            len: u64::try_from(bytes.len()).map_err(|_| NativeInitializationError)?,
-        })
-    }
-}
-
-impl Encoding<[u8]> for FramedBytes<'_> {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::with_capacity(8 + self.bytes.len());
-        out.extend_from_slice(&self.len.to_le_bytes());
-        out.extend_from_slice(self.bytes);
-        out
-    }
-}
-
-fn native_protocol_id() -> [u8; 64] {
-    #[cfg(feature = "transcript-blake2b")]
-    let name = "akita-pcs/native-proof-stream/v7/blake2b";
-    #[cfg(feature = "transcript-keccak")]
-    let name = "akita-pcs/native-proof-stream/v7/keccak";
-    protocol_id(format_args!("{name}"))
-}
-
-fn native_domain<'a>(
-    session: &'a [u8],
-    instance: &'a [u8],
-) -> Result<
-    DomainSeparator<
-        spongefish::WithInstance<FramedBytes<'a>>,
-        spongefish::WithSession<FramedBytes<'a>>,
-    >,
-    NativeInitializationError,
-> {
-    Ok(
-        DomainSeparator::<WithoutInstance>::new(native_protocol_id())
-            .session(FramedBytes::new(session)?)
-            .instance(FramedBytes::new(instance)?),
-    )
-}
-
-/// Construct a bound native prover state.
-pub fn new_native_prover(
-    session: &[u8],
-    instance: &[u8],
-) -> Result<NativeProverState, NativeInitializationError> {
-    Ok(native_domain(session, instance)?.to_prover(TranscriptSponge::default()))
-}
-
-/// Construct a bound native verifier state over one proof byte string.
-pub fn new_native_verifier<'proof>(
-    session: &[u8],
-    instance: &[u8],
-    proof: &'proof [u8],
-) -> Result<NativeVerifierState<'proof>, NativeInitializationError> {
-    Ok(NativeVerifierState::new(
-        native_domain(session, instance)?.to_verifier(TranscriptSponge::default(), proof),
-    ))
-}
 
 /// A fixed-width, canonical field atom for native proof transport.
 ///

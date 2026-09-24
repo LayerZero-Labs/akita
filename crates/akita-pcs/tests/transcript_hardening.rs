@@ -165,6 +165,10 @@ fn native_stream_binds_session_statement_basis_and_eof() {
             BasisMode::Lagrange,
         )
         .is_err());
+        // An outer-transcript digest appended to the same label is a
+        // different session.
+        let suffixed_session = [LABEL, &[0xa5; 32]].concat();
+        assert!(verify(&proof, &suffixed_session, opening, BasisMode::Lagrange).is_err());
         assert!(verify(&proof, LABEL, opening, BasisMode::Monomial).is_err());
         assert!(verify(&proof, LABEL, opening + F::one(), BasisMode::Lagrange).is_err());
         assert!(verify(
