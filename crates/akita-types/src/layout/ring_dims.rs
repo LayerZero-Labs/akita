@@ -1,8 +1,7 @@
 //! Per-level and per-schedule ring dimension validation.
 //!
 //! [`validate_schedule_ring_dims`] checks every fold level's [`CommitmentRingDims`].
-//! Per-level geometry (`n_ring_elems`, `flat_field_len`, …) lives on
-//! [`super::CommittedGroupParams`].
+//! Per-level geometry lives on [`super::CommittedGroupParams`].
 
 use crate::schedule::FoldSchedule;
 use akita_error::AkitaError;

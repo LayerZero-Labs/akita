@@ -22,8 +22,8 @@ pub use geometry::{
     BlockGeometry, GadgetDigits, InnerRoleParams, OpenRoleParams, OuterRoleParams, RoleParams,
 };
 pub use opening_point::{
-    basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
-    lagrange_weights, monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
+    basis_weights, basis_weights_prefix, checked_opening_source_index, lagrange_weights,
+    monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, witness_commitment_domain_len, BasisMode, RingOpeningPoint,
 };
 pub use params::{

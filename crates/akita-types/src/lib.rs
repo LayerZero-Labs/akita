@@ -55,13 +55,12 @@ pub use compression::{
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    extension_opening_reduction_claim, num_rounds_from_table_len, reduction_table_len,
-    tensor_column_partials_from_base_evals, tensor_column_partials_split_fold,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, validate_reduction_tables, ExtensionOpeningFactorTerm,
-    ExtensionOpeningReductionFactor, ExtensionOpeningTensorPartials, FlatColumnSource,
-    TensorColumnSource, EXTENSION_OPENING_REDUCTION_DEGREE,
+    num_rounds_from_table_len, reduction_table_len, tensor_column_partials_from_base_evals,
+    tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
+    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
@@ -69,10 +68,8 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_encode_vec, golomb_rice_flat_admit_terminal_wire,
-    golomb_rice_flat_rows_admit_terminal_wire, golomb_rice_max_quotient_for_cap,
-    golomb_rice_rows_admit_terminal_wire, golomb_rice_rows_encodable_at_wire_low_bits,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
+    golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width,
 };
 pub use instance_descriptor::{
     digest_descriptor_bytes, digest_effective_schedule, digest_serializable, setup_seed_digest,
@@ -80,7 +77,7 @@ pub use instance_descriptor::{
     SetupSection, TranscriptGrindingBinding,
 };
 pub use layout::{
-    basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
+    basis_weights, basis_weights_prefix, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, native_terminal_response_max_bytes,
     native_terminal_response_planner_bytes, opening_d_segment_width, opening_domain_len,

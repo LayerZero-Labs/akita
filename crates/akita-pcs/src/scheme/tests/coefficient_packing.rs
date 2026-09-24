@@ -78,10 +78,6 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         .params
         .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
-    assert_eq!(
-        prefix.source_encoding(),
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-    );
     assert!(matches!(
         prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
