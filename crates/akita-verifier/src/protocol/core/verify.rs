@@ -16,6 +16,9 @@ use akita_types::{
 };
 
 /// Verify one authoritative native Spongefish argument under config `Cfg`.
+///
+/// `session` is the length-framed session passed to
+/// [`akita_transcript::new_native_verifier`]; it must equal the prover's.
 #[inline(never)]
 pub fn batched_verify<Cfg>(
     proof: &[u8],

@@ -15,7 +15,17 @@ which bytes are absorbed and when each challenge is drawn.
 Production uses Spongefish's native prover and verifier states. Its domain
 separator includes a backend-specific protocol tag, the caller's length-framed
 session bytes, and canonical instance bytes. The selected backend is BLAKE2b
-or Keccak; each has its own protocol tag.
+or Keccak; each has its own protocol tag. Each frame is `LE64(len) || bytes`,
+so moving bytes between the session and the instance changes the transcript.
+
+Akita's own tag is `akita-pcs/native-proof-stream/v7/{blake2b|keccak}`,
+zero-padded to 64 bytes. A protocol that reuses the native stream types for
+its own rounds should not claim this tag. `NativeProtocolId::for_application`
+derives a caller tag of the form
+`{application}/akita-native/v7/{blake2b|keccak}`, and
+`new_native_prover_for` and `new_native_verifier_for` start streams under it.
+The application name must be 1 to 40 visible ASCII bytes. Akita appends the
+format version and hash suite itself, and no caller tag equals Akita's.
 
 Akita pins Spongefish v0.7.4. Its digest bridge encodes squeeze counters as
 fixed-width `u64` values, so Blake2b transcript bytes do not depend on whether
@@ -289,7 +299,9 @@ Binding an instance initializes the transcript state for that instance.
 Application code should use the intended session label and let the scheme's
 shared binding path construct the descriptor before replay. Prepending
 application messages to a transcript that will then be rebound does not
-preserve those messages in the new state.
+preserve those messages in the new state. To bind an enclosing protocol's
+transcript, append a digest of it to the session label, as described in
+[proof artifacts](../usage/proof-artifacts.md#compose-with-an-outer-transcript).
 
 The current descriptor's `SetupSection.protocol_features.zk` is
 `false`. Transcript binding does not add hiding or zero knowledge.
@@ -309,9 +321,10 @@ nonce encoding are documented in
   shared descriptor and grinding plan.
 - `crates/akita-types/src/instance_descriptor/mod.rs` owns descriptor fields,
   canonical serialization, and version validation.
-- `crates/akita-transcript/src/native.rs` owns native state construction,
-  context framing, canonical atom codecs, bounded bytes, and EOF-compatible
-  proof transport.
+- `crates/akita-transcript/src/native/domain.rs` owns native state
+  construction: protocol identifiers, session and instance framing.
+- `crates/akita-transcript/src/native.rs` owns context framing, canonical atom
+  codecs, bounded bytes, and EOF-compatible proof transport.
 - `crates/akita-types/src/transcript_grinding/plan.rs` defines the ordered
   plan; `crates/akita-types/src/transcript_grinding/native_replay.rs` couples
   native nonce transport, predicate checks, challenges, and plan progress.

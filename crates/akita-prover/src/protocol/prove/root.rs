@@ -4,6 +4,10 @@ use akita_config::TrustedScheduleCatalog;
 use jolt_field::AdditiveGroup;
 
 /// Prove an ordered statement using reusable commitments retained by one backend.
+///
+/// `transcript_session` is the length-framed session passed to
+/// [`akita_transcript::new_native_prover`]; its documentation states what it
+/// binds and how to carry an outer-transcript digest.
 #[allow(clippy::too_many_arguments)]
 pub fn batched_prove<'a, Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,

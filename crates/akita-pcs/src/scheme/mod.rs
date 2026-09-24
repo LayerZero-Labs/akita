@@ -117,6 +117,18 @@ where
     /// Each handle retains its exact source. The backend validates public claims
     /// against that commitment before creating independent proof state.
     ///
+    /// # Session
+    ///
+    /// `session` is length-framed and bound after Akita's protocol identifier
+    /// and before the canonical instance descriptor. The verifier must pass the
+    /// same bytes. To run this opening inside a larger Fiat-Shamir protocol,
+    /// set `session` to a fixed application label followed by a digest of the
+    /// outer transcript: a hash output of at least 256 bits, squeezed after
+    /// the last outer message that precedes the opening. The returned proof is
+    /// not absorbed into the outer transcript; the outer protocol must do that
+    /// if it continues. See [`akita_transcript::new_native_prover`] for the exact
+    /// encoding.
+    ///
     /// # Errors
     ///
     /// Returns an error for mismatched ownership, setup, claims, or an invalid
@@ -172,6 +184,16 @@ where
     }
 
     /// Verify the canonical native Spongefish argument stream.
+    ///
+    /// `session` must equal the bytes passed to
+    /// [`batched_prove`](Self::batched_prove), including any outer-transcript
+    /// digest suffix. A proof produced under one session is rejected under any
+    /// other.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the statement is malformed, does not match the
+    /// setup or selected schedule, or the proof does not verify.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     pub fn batched_verify(
         &self,
