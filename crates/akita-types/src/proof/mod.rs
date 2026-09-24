@@ -27,6 +27,7 @@ pub mod terminal_witness;
 
 mod containers;
 
+#[cfg(test)]
 mod levels;
 mod shapes;
 mod tail_segments;
@@ -60,7 +61,7 @@ pub use coefficient_packing_relation::{
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
-pub use commitment::{AkitaCommitment, Commitment, CommittedGroup, DummyProof, RingCommitment};
+pub use commitment::{Commitment, CommittedGroup};
 pub use compression_relation_weights::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
@@ -69,7 +70,8 @@ pub use compression_relation_weights::{
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 
-pub use levels::{
+#[cfg(test)]
+pub(crate) use levels::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
     FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
     TerminalLevelProof,
@@ -113,9 +115,7 @@ pub use setup_prefix::{
 };
 pub use shapes::{
     canonical_extension_opening_reduction_shape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
-    PhysicalL2NormProofWireShape, SetupProductSumcheckShape, TerminalLevelProofShape,
-    SETUP_SUMCHECK_DEGREE,
+    ExtensionOpeningReductionShape, PhysicalL2NormProofWireShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
@@ -137,12 +137,8 @@ use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::uniform_sumcheck_shape;
 #[cfg(test)]
-use akita_sumcheck::EqFactoredSumcheckProof;
-#[cfg(test)]
-use akita_sumcheck::SumcheckProof;
+use jolt_field::CanonicalEncoding;
 use jolt_field::Field;
-#[cfg(test)]
-use jolt_field::{CanonicalEncoding, ExtField};
 use std::io::{Read, Write};
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;

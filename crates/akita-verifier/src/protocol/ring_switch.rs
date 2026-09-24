@@ -14,7 +14,7 @@ use akita_types::{
     RingRelationMode, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::validate_log_basis;
 
@@ -78,12 +78,6 @@ pub struct RelationMatrixEvaluator<F: Field> {
     pub(crate) log_basis: u32,
     pub(crate) eq_tau1: Arc<[F]>,
     pub(crate) flat_context: FlatRelationContext,
-    pub(crate) setup_plan_cache: Arc<Mutex<Option<CachedSetupContributionPlan<F>>>>,
-}
-
-pub(crate) struct CachedSetupContributionPlan<F: Field> {
-    x_challenges: Vec<F>,
-    plan: SetupContributionPlan<F>,
 }
 
 #[derive(Clone)]
@@ -123,7 +117,7 @@ pub(crate) enum PreparedRelationGroups<E: Field> {
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
-pub struct RingSwitchReplay<'a, F: Field, E> {
+pub(crate) struct RingSwitchReplay<'a, F: Field, E> {
     pub setup: &'a AkitaExpandedSetup<F>,
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
@@ -331,7 +325,7 @@ where
 /// the expanded tau1 table is too short for the level layout, or sparse
 /// challenge evaluation fails.
 #[tracing::instrument(skip_all, name = "prepare_relation_matrix_evaluator")]
-pub fn prepare_relation_matrix_evaluator<F, E>(
+pub(crate) fn prepare_relation_matrix_evaluator<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
@@ -585,7 +579,6 @@ where
             witness_layout: layout,
             extension_degree,
         },
-        setup_plan_cache: Default::default(),
     })
 }
 
@@ -636,43 +629,6 @@ pub(crate) fn setup_contribution_group_inputs<F: Field>(
 }
 
 impl<E: Field> RelationMatrixEvaluator<E> {
-    /// Evaluate the canonical relation weights directly in the flattened
-    /// opening domain, without materializing its padded Boolean suffix.
-    pub fn eval_flat_at_point<F>(
-        &self,
-        point: &[E],
-        setup: &AkitaExpandedSetup<F>,
-        alpha: E,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
-    {
-        relation_evaluation::evaluate_relation_at_point::<F, E>(self, point, setup, alpha)
-    }
-
-    /// Evaluate quotient-lift relation weights using an authenticated deferred
-    /// setup-contribution claim. Reduced evaluation has no deferred setup state.
-    pub fn eval_flat_at_point_with_deferred_setup<F>(
-        &self,
-        point: &[E],
-        setup: &AkitaExpandedSetup<F>,
-        alpha: E,
-        setup_claim: E,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
-    {
-        relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<F, E>(
-            self,
-            point,
-            setup,
-            alpha,
-            setup_claim,
-        )
-    }
-
     pub(crate) fn setup_contribution_inputs(&self) -> Vec<SetupContributionGroupInputs> {
         setup_contribution_group_inputs(&self.groups)
     }
@@ -712,37 +668,6 @@ impl<E: Field> RelationMatrixEvaluator<E> {
             fold_gadget,
             self.relation_address_geometry,
         )
-    }
-
-    pub(crate) fn take_cached_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-    ) -> Result<Option<SetupContributionPlan<E>>, AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        let Some(cached) = cache.as_ref() else {
-            return Ok(None);
-        };
-        if cached.x_challenges.as_slice() != x_challenges {
-            return Ok(None);
-        }
-        Ok(cache.take().map(|cached| cached.plan))
-    }
-
-    fn cache_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-        plan: SetupContributionPlan<E>,
-    ) -> Result<(), AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        *cache = Some(CachedSetupContributionPlan {
-            x_challenges: x_challenges.to_vec(),
-            plan,
-        });
-        Ok(())
     }
 
     pub(crate) fn witness_layout(&self) -> Result<&WitnessLayout, AkitaError> {

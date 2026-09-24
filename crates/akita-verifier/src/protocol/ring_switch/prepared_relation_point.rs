@@ -143,10 +143,6 @@ impl<E: Field> PreparedLiftedRelationPoint<E> {
         self.alpha
     }
 
-    pub(super) fn address_point(&self) -> &[E] {
-        self.address.point()
-    }
-
     pub(super) fn relation_address(&self) -> &PreparedRelationAddress<E> {
         &self.address
     }

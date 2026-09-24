@@ -1,5 +1,4 @@
 use super::*;
-
 impl<E: Field + AkitaSerialize> AkitaSerialize for PhysicalL2NormProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -30,65 +29,6 @@ impl<E: Field + AkitaSerialize> AkitaSerialize for PhysicalL2NormProof<E> {
                 .map(|evaluation| evaluation.serialized_size(compress))
                 .sum::<usize>()
             + self.sumcheck.serialized_size(compress)
-    }
-}
-
-impl<E> AkitaDeserialize for PhysicalL2NormProof<E>
-where
-    E: Field + Valid + AkitaDeserialize<Context = ()>,
-{
-    type Context = PhysicalL2NormProofWireShape;
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        shape: &Self::Context,
-    ) -> Result<Self, SerializationError> {
-        let response_l2_sq = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut subclaims = Vec::new();
-        reserve_shape_len(&mut subclaims, shape.subclaims)?;
-        for _ in 0..shape.subclaims {
-            subclaims.push(E::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let mut virtual_evaluations = Vec::new();
-        reserve_shape_len(&mut virtual_evaluations, shape.virtual_evaluations)?;
-        for _ in 0..shape.virtual_evaluations {
-            virtual_evaluations.push(E::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let out = Self {
-            response_l2_sq,
-            subclaims,
-            virtual_evaluations,
-            sumcheck: SumcheckProof::deserialize_with_mode(
-                reader,
-                compress,
-                validate,
-                &shape.sumcheck,
-            )?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<E: Field + Valid> Valid for PhysicalL2NormProof<E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.subclaims.check()?;
-        self.virtual_evaluations.check()?;
-        self.sumcheck.check()
     }
 }
 
@@ -137,65 +77,6 @@ where
     })
 }
 
-fn deserialize_extension_opening_reduction<E, R>(
-    mut reader: R,
-    compress: Compress,
-    validate: Validate,
-    shape: Option<&ExtensionOpeningReductionShape>,
-) -> Result<Option<ExtensionOpeningReductionProof<E>>, SerializationError>
-where
-    E: Field + Valid + AkitaDeserialize<Context = ()>,
-    R: Read,
-{
-    let Some(shape) = shape else {
-        return Ok(None);
-    };
-    shape.check()?;
-    let mut partials = Vec::new();
-    reserve_shape_len(&mut partials, shape.partials)?;
-    for _ in 0..shape.partials {
-        partials.push(E::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?);
-    }
-    let sumcheck =
-        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
-    let mut final_claims = Vec::new();
-    reserve_shape_len(&mut final_claims, shape.final_claims)?;
-    for _ in 0..shape.final_claims {
-        final_claims.push(E::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?);
-    }
-    Ok(Some(ExtensionOpeningReductionProof {
-        partials,
-        sumcheck,
-        final_claims,
-    }))
-}
-
-/// Reject EOR payloads when the claim field coincides with the coefficient field.
-fn reject_eor_when_single_field<F, E>(
-    extension_opening_reduction: &Option<ExtensionOpeningReductionProof<E>>,
-) -> Result<(), SerializationError>
-where
-    F: Field,
-    E: ExtField<F>,
-{
-    if E::DEGREE == 1 && extension_opening_reduction.is_some() {
-        return Err(SerializationError::InvalidData(
-            "extension-opening reduction is forbidden when ExtField::DEGREE is 1".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 fn serialize_next_witness_binding<F, W>(
     binding: &NextWitnessBinding<F>,
     writer: W,
@@ -223,33 +104,6 @@ where
     match binding {
         NextWitnessBinding::OuterPayload(commitment) => commitment.serialized_size(compress),
         NextWitnessBinding::TerminalInnerState => 0,
-    }
-}
-
-fn check_next_witness_binding<F: Field + Valid>(
-    binding: &NextWitnessBinding<F>,
-) -> Result<(), SerializationError> {
-    match binding {
-        NextWitnessBinding::OuterPayload(commitment) => commitment.check(),
-        NextWitnessBinding::TerminalInnerState => Ok(()),
-    }
-}
-
-fn deserialize_next_witness_binding<F, R>(
-    reader: R,
-    compress: Compress,
-    validate: Validate,
-    shape: NextWitnessBindingShape,
-) -> Result<NextWitnessBinding<F>, SerializationError>
-where
-    F: Field + Valid + AkitaDeserialize<Context = ()>,
-    R: Read,
-{
-    match shape {
-        NextWitnessBindingShape::OuterPayload { coeffs } => Ok(NextWitnessBinding::OuterPayload(
-            RingVec::deserialize_with_mode(reader, compress, validate, &coeffs)?,
-        )),
-        NextWitnessBindingShape::TerminalInnerState => Ok(NextWitnessBinding::TerminalInnerState),
     }
 }
 
@@ -281,27 +135,6 @@ where
         + opening_payload.serialized_size(compress)
 }
 
-type IntermediateFoldWirePrefix<F, E> = (Option<ExtensionOpeningReductionProof<E>>, RingVec<F>);
-
-fn deserialize_intermediate_fold_wire_prefix<F, E, R>(
-    mut reader: R,
-    compress: Compress,
-    validate: Validate,
-    extension_shape: Option<&ExtensionOpeningReductionShape>,
-    opening_payload_shape: &<RingVec<F> as AkitaDeserialize>::Context,
-) -> Result<IntermediateFoldWirePrefix<F, E>, SerializationError>
-where
-    F: Field + Valid + AkitaDeserialize<Context = ()>,
-    E: Field + Valid + AkitaDeserialize<Context = ()>,
-    R: Read,
-{
-    let extension_opening_reduction =
-        deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
-    let opening_payload =
-        RingVec::deserialize_with_mode(&mut reader, compress, validate, opening_payload_shape)?;
-    Ok((extension_opening_reduction, opening_payload))
-}
-
 fn serialize_terminal_fold_wire_prefix<E, W>(
     writer: W,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
@@ -322,19 +155,6 @@ where
     E: Field + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
-}
-
-fn deserialize_terminal_fold_wire_prefix<E, R>(
-    mut reader: R,
-    compress: Compress,
-    validate: Validate,
-    extension_shape: Option<&ExtensionOpeningReductionShape>,
-) -> Result<Option<ExtensionOpeningReductionProof<E>>, SerializationError>
-where
-    E: Field + Valid + AkitaDeserialize<Context = ()>,
-    R: Read,
-{
-    deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)
 }
 
 fn serialize_stage3_sumcheck<E, W>(
@@ -374,31 +194,6 @@ where
     })
 }
 
-fn deserialize_stage3_sumcheck<E, R>(
-    mut reader: R,
-    compress: Compress,
-    validate: Validate,
-    shape: Option<&SetupProductSumcheckShape>,
-) -> Result<Option<SetupSumcheckProof<E>>, SerializationError>
-where
-    E: Field + Valid + AkitaDeserialize<Context = ()>,
-    R: Read,
-{
-    let Some(shape) = shape else {
-        return Ok(None);
-    };
-    shape.check()?;
-    let claim = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let setup_prefix_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let sumcheck =
-        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
-    Ok(Some(SetupSumcheckProof {
-        claim,
-        setup_prefix_eval,
-        sumcheck,
-    }))
-}
-
 impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> AkitaSerialize
     for TerminalLevelProof<F, E>
 {
@@ -421,53 +216,6 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> A
             self.extension_opening_reduction.as_ref(),
             compress,
         ) + self.terminal_response.serialized_size(compress)
-    }
-}
-
-impl<F: Field + Valid, E: Field + Valid> Valid for TerminalLevelProof<F, E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        if let Some(reduction) = &self.extension_opening_reduction {
-            reduction.partials.check()?;
-            reduction.sumcheck.check()?;
-        }
-        self.terminal_response.check()
-    }
-}
-
-impl<
-        F: Field + Valid + AkitaDeserialize<Context = ()>,
-        E: Field + Valid + AkitaDeserialize<Context = ()> + ExtField<F>,
-    > AkitaDeserialize for TerminalLevelProof<F, E>
-{
-    type Context = TerminalLevelProofShape;
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &TerminalLevelProofShape,
-    ) -> Result<Self, SerializationError> {
-        ctx.check()?;
-        let extension_opening_reduction = deserialize_terminal_fold_wire_prefix(
-            &mut reader,
-            compress,
-            validate,
-            ctx.extension_opening_reduction.as_ref(),
-        )?;
-        reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
-        let terminal_response = TerminalResponse::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.terminal_response,
-        )?;
-        let out = Self {
-            extension_opening_reduction,
-            terminal_response,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
     }
 }
 
@@ -506,7 +254,7 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> A
         serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         serialize_next_witness_binding(&stage2.next_witness_binding, &mut writer, compress)?;
         stage2
-            .next_w_eval()
+            .next_w_eval
             .serialize_with_mode(&mut writer, compress)
     }
 
@@ -538,132 +286,6 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize, E: Field + AkitaSerialize> A
             + ({ stage2.sumcheck_proof.serialized_size(compress) })
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + next_witness_binding_serialized_size(&stage2.next_witness_binding, compress)
-            + stage2.next_w_eval().serialized_size(compress)
-    }
-}
-
-impl<F: Field + Valid, E: Field + Valid> Valid for FoldLevelProof<F, E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        if let Some(reduction) = &self.extension_opening_reduction {
-            reduction.partials.check()?;
-            reduction.sumcheck.check()?;
-        }
-        self.opening_payload.check()?;
-        for stage in &self.stage1.stages {
-            stage.sumcheck_proof.check()?;
-            stage.child_claims.check()?;
-        }
-        self.stage1.range_image_evaluation.check()?;
-        if let Some(norm) = &self.stage1.norm_proof {
-            norm.check()?;
-        }
-        let stage2 = &self.stage2;
-        stage2.sumcheck_proof.check()?;
-        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
-            stage3_sumcheck.claim.check()?;
-            stage3_sumcheck.setup_prefix_eval.check()?;
-            stage3_sumcheck.sumcheck.check()?;
-        }
-        check_next_witness_binding(&stage2.next_witness_binding)?;
-        stage2.next_w_eval().check()
-    }
-}
-
-impl<
-        F: Field + Valid + AkitaDeserialize<Context = ()>,
-        E: Field + Valid + AkitaDeserialize<Context = ()> + ExtField<F>,
-    > AkitaDeserialize for FoldLevelProof<F, E>
-{
-    type Context = LevelProofShape;
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &LevelProofShape,
-    ) -> Result<Self, SerializationError> {
-        ctx.check()?;
-        let (extension_opening_reduction, opening_payload) =
-            deserialize_intermediate_fold_wire_prefix(
-                &mut reader,
-                compress,
-                validate,
-                ctx.extension_opening_reduction.as_ref(),
-                &ctx.opening_payload_coeffs,
-            )?;
-        reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
-        let mut stage1_stages = Vec::new();
-        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
-        for stage_shape in &ctx.stage1_stages {
-            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &stage_shape.sumcheck_proof,
-            )?;
-            let mut child_claims = Vec::new();
-            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
-            for _ in 0..stage_shape.child_claims {
-                child_claims.push(E::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            stage1_stages.push(AkitaStage1StageProof {
-                sumcheck_proof: sumcheck,
-                child_claims,
-            });
-        }
-        let range_image_evaluation =
-            E::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let norm_proof = if let Some(shape) = &ctx.stage1_norm {
-            Some(PhysicalL2NormProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                shape,
-            )?)
-        } else {
-            None
-        };
-        let stage1 = AkitaStage1Proof {
-            stages: stage1_stages,
-            range_image_evaluation,
-            norm_proof,
-        };
-        let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck_proof,
-        )?;
-        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
-            &mut reader,
-            compress,
-            validate,
-            ctx.stage3_sumcheck.as_ref(),
-        )?;
-        let stage2 = AkitaStage2Proof {
-            sumcheck_proof: stage2_sumcheck_proof,
-            next_witness_binding: deserialize_next_witness_binding(
-                &mut reader,
-                compress,
-                validate,
-                ctx.next_witness_binding,
-            )?,
-            next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
-        let out = Self {
-            extension_opening_reduction,
-            opening_payload,
-            stage1,
-            stage2,
-            stage3_sumcheck_proof,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
+            + stage2.next_w_eval.serialized_size(compress)
     }
 }

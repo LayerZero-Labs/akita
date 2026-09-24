@@ -1,11 +1,18 @@
-use super::shapes::level_proof_shape;
-use super::shapes::sumcheck_shape;
+//! Typed per-level proof values.
+//!
+//! The protocol wire is the spongefish byte stream produced by the prover and
+//! replayed by the verifier; nothing in production builds these values. They
+//! remain as a test oracle: [`super::wire`] serializes them so the planner byte
+//! formulas in `proof_size` and `schedule_tests` can be checked against an
+//! independent encoding. Only `AkitaSerialize` is implemented; nothing decodes
+//! them.
+
 use super::*;
 use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaStage1StageProof<F: Field> {
+pub(crate) struct AkitaStage1StageProof<F: Field> {
     /// Eq-factored sumcheck proof for this stage.
     pub sumcheck_proof: EqFactoredSumcheckProof<F>,
     /// Claimed child-node evaluations at this stage's output point.
@@ -17,7 +24,7 @@ pub struct AkitaStage1StageProof<F: Field> {
 
 /// Proof payload for stage 1 of a single Akita level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaStage1Proof<F: Field> {
+pub(crate) struct AkitaStage1Proof<F: Field> {
     /// Root-to-leaf range-check stages.
     pub stages: Vec<AkitaStage1StageProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
@@ -30,7 +37,7 @@ pub struct AkitaStage1Proof<F: Field> {
 
 /// Stage-1 payload for one schedule-selected physical L2 norm proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PhysicalL2NormProof<F: Field> {
+pub(crate) struct PhysicalL2NormProof<F: Field> {
     /// Exact nonnegative integer square sum reconstructed by the verifier.
     pub response_l2_sq: u128,
     /// Direct mode leaves this empty. Limb-Gram mode carries the canonical
@@ -44,12 +51,11 @@ pub struct PhysicalL2NormProof<F: Field> {
 
 /// FoldSchedule-shaped outgoing witness binding for an intermediate fold.
 ///
-/// The proof stream carries no variant tag. Headerless decoding obtains the
-/// variant from [`NextWitnessBindingShape`]: ordinary recursive edges carry an
-/// compressed outer payload, while an edge into the suffix terminal binds the `t` segment
-/// owned by the following [`TerminalLevelProof`].
+/// The encoding carries no variant tag. Ordinary recursive edges carry a
+/// compressed outer payload, while an edge into the suffix terminal binds the
+/// `t` segment owned by the following [`TerminalLevelProof`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NextWitnessBinding<F: Field> {
+pub(crate) enum NextWitnessBinding<F: Field> {
     /// Terminal compressed commitment payload for an ordinary recursive edge.
     OuterPayload(RingVec<F>),
     /// The following terminal proof's canonical `t` segment is the state.
@@ -58,7 +64,7 @@ pub enum NextWitnessBinding<F: Field> {
 
 /// Intermediate-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaStage2Proof<F: Field, E: Field> {
+pub(crate) struct AkitaStage2Proof<F: Field, E: Field> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck_proof: SumcheckProof<E>,
     /// FoldSchedule-shaped binding for the next witness.
@@ -67,20 +73,13 @@ pub struct AkitaStage2Proof<F: Field, E: Field> {
     pub next_w_eval: E,
 }
 
-impl<F: Field, E: Field> AkitaStage2Proof<F, E> {
-    /// Wire value for the next-witness evaluation claim at stage 2.
-    pub fn next_w_eval(&self) -> E {
-        self.next_w_eval
-    }
-}
-
 /// Optional proof that reduces a logical extension-field opening into one
 /// ordinary opening of the transformed committed witness.
 ///
-/// This object is not serialized with a tag or length. Its presence and shape
-/// are determined by the verifier's expected proof shape.
+/// This object is serialized without a tag or length; the schedule determines
+/// its presence and lengths.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionOpeningReductionProof<E: Field> {
+pub(crate) struct ExtensionOpeningReductionProof<E: Field> {
     /// Transcript-bound partial evaluations used by the basis-conversion
     /// check.
     pub partials: Vec<E>,
@@ -94,7 +93,7 @@ pub struct ExtensionOpeningReductionProof<E: Field> {
 
 /// Stage-3 proof for the public setup contribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupSumcheckProof<E: Field> {
+pub(crate) struct SetupSumcheckProof<E: Field> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
     pub claim: E,
     /// Claimed setup-prefix opening carried into the next fold as a precommitted group.
@@ -103,34 +102,9 @@ pub struct SetupSumcheckProof<E: Field> {
     pub sumcheck: SumcheckProof<E>,
 }
 
-impl<E: Field> SetupSumcheckProof<E> {
-    /// Shape descriptor required for headerless deserialization.
-    pub fn shape(&self) -> SetupProductSumcheckShape {
-        SetupProductSumcheckShape {
-            sumcheck: sumcheck_shape(&self.sumcheck),
-        }
-    }
-}
-
-impl<E: Field> ExtensionOpeningReductionProof<E> {
-    /// Shape descriptor required for headerless deserialization.
-    pub fn shape(&self) -> ExtensionOpeningReductionShape {
-        ExtensionOpeningReductionShape {
-            partials: self.partials.len(),
-            final_claims: self.final_claims.len(),
-            sumcheck: sumcheck_shape(&self.sumcheck),
-        }
-    }
-
-    /// Number of sumcheck rounds in the reduction proof.
-    pub fn num_rounds(&self) -> usize {
-        self.sumcheck.round_polys.len()
-    }
-}
-
 /// Proof for one non-terminal fold level, including the root.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FoldLevelProof<F: Field, E: Field> {
+pub(crate) struct FoldLevelProof<F: Field, E: Field> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Terminal compressed opening payload `p_H`.
@@ -141,50 +115,6 @@ pub struct FoldLevelProof<F: Field, E: Field> {
     pub stage2: AkitaStage2Proof<F, E>,
     /// Optional stage-3 setup product-sumcheck proof.
     pub stage3_sumcheck_proof: Option<SetupSumcheckProof<E>>,
-}
-
-impl<F: Field, E: Field> FoldLevelProof<F, E> {
-    /// Construct from typed ring elements for the current level and its
-    /// inline norm-check payloads.
-    pub fn new<const D: usize>(
-        opening_payload: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<E>,
-        stage2: AkitaStage2Proof<F, E>,
-    ) -> Self {
-        Self {
-            extension_opening_reduction: None,
-            opening_payload: RingVec::from_ring_elems(&opening_payload).into_compact(),
-            stage1,
-            stage2,
-            stage3_sumcheck_proof: None,
-        }
-    }
-
-    /// Borrow the stage-1 payload.
-    pub fn stage1(&self) -> &AkitaStage1Proof<E> {
-        &self.stage1
-    }
-
-    /// Borrow the stage-2 payload.
-    pub fn stage2(&self) -> &AkitaStage2Proof<F, E> {
-        &self.stage2
-    }
-
-    /// Claimed evaluation of the next witness `w` at the norm-check output point.
-    pub fn next_w_eval(&self) -> E {
-        self.stage2.next_w_eval()
-    }
-
-    /// Derive the [`LevelProofShape`] for this level proof.
-    pub fn shape(&self) -> LevelProofShape {
-        level_proof_shape(
-            self.extension_opening_reduction.as_ref(),
-            &self.opening_payload,
-            &self.stage1,
-            &self.stage2,
-            self.stage3_sumcheck_proof.as_ref(),
-        )
-    }
 }
 
 /// Terminal fold-level proof.
@@ -200,7 +130,7 @@ impl<F: Field, E: Field> FoldLevelProof<F, E> {
 /// directly from the response). All terminal schedules drop commitment and
 /// D-row blocks, so neither an outer `u` nor `v` is serialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalLevelProof<F: Field, E: Field> {
+pub(crate) struct TerminalLevelProof<F: Field, E: Field> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Quotient-free terminal response checked directly by the verifier.
@@ -212,29 +142,13 @@ impl<F: Field, E: Field> TerminalLevelProof<F, E> {
     ///
     /// Pass `extension_opening_reduction = None` for opening shapes that do
     /// not use extension-opening reduction.
-    pub fn new_with_extension_opening_reduction(
+    pub(crate) fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         terminal_response: TerminalResponse<F>,
     ) -> Self {
         Self {
             extension_opening_reduction,
             terminal_response,
-        }
-    }
-
-    /// Borrow the clear terminal response.
-    pub fn terminal_response(&self) -> &TerminalResponse<F> {
-        &self.terminal_response
-    }
-
-    /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
-    pub fn shape(&self) -> TerminalLevelProofShape {
-        TerminalLevelProofShape {
-            extension_opening_reduction: self
-                .extension_opening_reduction
-                .as_ref()
-                .map(ExtensionOpeningReductionProof::shape),
-            terminal_response: self.terminal_response().shape(),
         }
     }
 }

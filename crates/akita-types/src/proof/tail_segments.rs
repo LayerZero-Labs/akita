@@ -9,7 +9,7 @@ use akita_serialization::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
+use super::{checked_shape_len, checked_shape_sequence_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
@@ -179,123 +179,6 @@ impl Valid for TailSegmentLayout {
     }
 }
 
-impl AkitaSerialize for TailSegmentLayout {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.ring_dimension
-            .serialize_with_mode(&mut writer, compress)?;
-        self.groups.serialize_with_mode(&mut writer, compress)?;
-        self.logical_num_elems
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.ring_dimension.serialized_size(compress)
-            + self.groups.serialized_size(compress)
-            + self.logical_num_elems.serialized_size(compress)
-    }
-}
-
-impl AkitaSerialize for TailSegmentGroupLayout {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.z_coords.serialize_with_mode(&mut writer, compress)?;
-        self.e_field_elems
-            .serialize_with_mode(&mut writer, compress)?;
-        self.t_field_elems
-            .serialize_with_mode(&mut writer, compress)?;
-        self.z_linf_cap
-            .unwrap_or(0)
-            .serialize_with_mode(&mut writer, compress)?;
-        self.z_rice_low_bits
-            .serialize_with_mode(&mut writer, compress)?;
-        self.z_payload_bytes
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.z_coords.serialized_size(compress)
-            + self.e_field_elems.serialized_size(compress)
-            + self.t_field_elems.serialized_size(compress)
-            + 0u128.serialized_size(compress)
-            + self.z_rice_low_bits.serialized_size(compress)
-            + self.z_payload_bytes.serialized_size(compress)
-    }
-}
-
-impl AkitaDeserialize for TailSegmentGroupLayout {
-    type Context = ();
-
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            z_coords: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            e_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            t_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            z_linf_cap: match u128::deserialize_with_mode(&mut reader, compress, validate, &())? {
-                0 => None,
-                cap => Some(cap),
-            },
-            z_rice_low_bits: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            z_payload_bytes: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
-        Ok(out)
-    }
-}
-
-impl AkitaDeserialize for TailSegmentLayout {
-    type Context = ();
-
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let encoded_group_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let group_len = usize::try_from(encoded_group_len).map_err(|_| {
-            SerializationError::LengthLimitExceeded {
-                len: encoded_group_len,
-                max: super::MAX_PROOF_SHAPE_SEQUENCE_LEN,
-            }
-        })?;
-        checked_shape_sequence_len(group_len)?;
-        let mut groups = Vec::new();
-        reserve_shape_len(&mut groups, group_len)?;
-        for _ in 0..group_len {
-            groups.push(TailSegmentGroupLayout::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let logical_num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self {
-            ring_dimension,
-            groups,
-            logical_num_elems,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 impl TerminalResponseShape {
     /// Derive the scalar terminal response directly from raw response
     /// coordinates. No `t`/`e` gadget-plane equivalent is introduced.
@@ -361,40 +244,6 @@ impl Valid for TerminalResponseShape {
     fn check(&self) -> Result<(), SerializationError> {
         self.layout.check()?;
         Ok(())
-    }
-}
-
-impl AkitaSerialize for TerminalResponseShape {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.layout.serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.layout.serialized_size(compress)
-    }
-}
-
-impl AkitaDeserialize for TerminalResponseShape {
-    type Context = ();
-
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let layout =
-            TailSegmentLayout::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self { layout };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
     }
 }
 

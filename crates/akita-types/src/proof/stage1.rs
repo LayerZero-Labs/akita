@@ -1,8 +1,6 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::proof::PhysicalL2NormProofWireShape;
-#[cfg(test)]
-use crate::AkitaStage1Proof;
 use crate::{AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
@@ -335,52 +333,6 @@ impl DigitRangePlan {
             rounds,
             norm,
         })
-    }
-
-    /// Validate the complete in-memory range-proof shape without allocation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the number of substages, rounds, polynomial degree,
-    /// or child claims differs from this plan.
-    #[cfg(test)]
-    pub fn validate_proof_shape<E: Field>(
-        self,
-        proof: &AkitaStage1Proof<E>,
-        rounds: usize,
-    ) -> Result<(), AkitaError> {
-        if proof.stages.len() != self.stage_count() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.stage_count(),
-                actual: proof.stages.len(),
-            });
-        }
-        for (stage_index, stage) in proof.stages.iter().enumerate() {
-            let expected = self
-                .stage_shape(rounds, stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0 {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.sumcheck_proof.0,
-                    actual: stage.sumcheck_proof.round_polys.len(),
-                });
-            }
-            for round_poly in &stage.sumcheck_proof.round_polys {
-                if round_poly.coeffs_except_constant_term.len() != expected.sumcheck_proof.1 {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected.sumcheck_proof.1,
-                        actual: round_poly.coeffs_except_constant_term.len(),
-                    });
-                }
-            }
-            if stage.child_claims.len() != expected.child_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.child_claims,
-                    actual: stage.child_claims.len(),
-                });
-            }
-        }
-        Ok(())
     }
 
     /// Coefficients of the final range-leaf polynomials.

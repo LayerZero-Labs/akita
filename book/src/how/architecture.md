@@ -62,7 +62,7 @@ Further reading: [Configuration and planning](./configuration.md), [Setup
 offloading](./setup-offloading.md), [Proving](./proving/proving.md), and
 [Verification](./verification.md).
 
-Recursive setup offloading adds one setup-only `SetupSumcheckProof` at each
+Recursive setup offloading adds one setup-only Stage 3 message group at each
 nonterminal producer whose successor consumes a setup prefix.
 Its wire payload is the setup claim, the setup-prefix evaluation, and one
 degree-two sumcheck over the native setup domain.
