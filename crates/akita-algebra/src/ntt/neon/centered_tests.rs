@@ -1,8 +1,8 @@
 use std::arch::aarch64::*;
 
 use super::i32_kernels::centered_reduce_4x_i32;
-use super::{forward_ntt_i32, forward_ntt_i8_i32};
-use crate::ntt::butterfly::forward_ntt;
+use super::{forward_ntt_cyclic_i32, forward_ntt_i32, forward_ntt_i8_i32};
+use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic};
 use crate::ntt::tables::{Q128_RAW_PRIMES, Q64_PRIMES};
 use crate::ntt::{MontCoeff, NttKernelPlan, NttPrime, NttTwiddles};
 
@@ -104,6 +104,14 @@ fn check_transform<const D: usize>(prime: NttPrime<i32>) {
             forward_ntt_i32(&mut actual, prime, &tw);
         }
         assert_eq!(actual, expected, "D={D}, p={p}, case={case}");
+
+        let mut expected = input;
+        forward_ntt_cyclic(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
+        let mut actual = input;
+        unsafe {
+            forward_ntt_cyclic_i32(&mut actual, prime, &tw);
+        }
+        assert_eq!(actual, expected, "cyclic D={D}, p={p}, case={case}");
     }
     let digits = std::array::from_fn(|i| (i as i8).wrapping_mul(37).wrapping_add(11));
     let mut expected = std::array::from_fn(|i| prime.from_canonical(i32::from(digits[i])));
@@ -116,7 +124,7 @@ fn check_transform<const D: usize>(prime: NttPrime<i32>) {
 }
 
 #[test]
-fn centered_forward_matches_scalar_for_general_and_signed_inputs() {
+fn centered_forward_matches_scalar_for_negacyclic_cyclic_and_signed_inputs() {
     for p in Q128_RAW_PRIMES.into_iter().chain(Q64_PRIMES.map(|p| p.p)) {
         let prime = NttPrime::compute(p);
         check_transform::<8>(prime);
