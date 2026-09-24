@@ -396,21 +396,28 @@ pub(crate) struct ReducedRoleCoefficientState<E> {
     pub(crate) equality: Arc<[E]>,
 }
 
+/// One logical B source feeding a [`PhysicalBWeightSegment`].
 #[derive(Clone, Copy)]
-pub(crate) struct PhysicalBWeightTerm<E> {
-    pub(super) logical_start: usize,
-    pub(super) row_weight: E,
+pub struct PhysicalBWeightTerm<E> {
+    /// First logical B column read by this term.
+    pub logical_start: usize,
+    /// Logical B row weight applied to every column of the term.
+    pub row_weight: E,
 }
 
+/// One contiguous physical B column run and its logical sources.
 #[derive(Clone)]
-pub(crate) struct PhysicalBWeightSegment<E> {
-    pub(super) physical_start: usize,
-    pub(super) len: usize,
-    pub(super) terms: Arc<[PhysicalBWeightTerm<E>]>,
+pub struct PhysicalBWeightSegment<E> {
+    /// First physical B ring index of the run.
+    pub physical_start: usize,
+    /// Number of physical B rings in the run.
+    pub len: usize,
+    /// Logical slices whose weights add onto this run.
+    pub terms: Arc<[PhysicalBWeightTerm<E>]>,
 }
 
 /// One canonical owner for the physical B matrix and its logical sliced image.
-pub(crate) struct PhysicalBSetupPlan<E: Field> {
+pub struct PhysicalBSetupPlan<E: Field> {
     pub(super) geometry: CommitmentSliceGeometry,
     pub(super) physical_rows: usize,
     pub(super) logical_row_weights: Arc<[E]>,
@@ -419,7 +426,7 @@ pub(crate) struct PhysicalBSetupPlan<E: Field> {
 }
 
 impl<E: Field> PhysicalBSetupPlan<E> {
-    pub(crate) fn new(
+    pub fn new(
         geometry: CommitmentSliceGeometry,
         physical_rows: usize,
         logical_row_weights: Arc<[E]>,
@@ -444,79 +451,90 @@ impl<E: Field> PhysicalBSetupPlan<E> {
         })
     }
 
-    pub(crate) fn logical_rows(&self) -> Result<usize, AkitaError> {
+    pub fn logical_rows(&self) -> Result<usize, AkitaError> {
         self.geometry.logical_output_rows(self.physical_rows)
     }
 
-    pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
+    pub const fn geometry(&self) -> &CommitmentSliceGeometry {
         &self.geometry
     }
 
-    pub(crate) const fn physical_rows(&self) -> usize {
+    pub const fn physical_rows(&self) -> usize {
         self.physical_rows
     }
 
-    pub(crate) fn logical_row_weights(&self) -> &[E] {
+    pub fn logical_row_weights(&self) -> &[E] {
         &self.logical_row_weights
     }
 
-    pub(super) fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
+    pub fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
         &self.weight_segments
     }
 
-    pub(crate) fn logical_input_width(&self) -> usize {
+    /// Relation-column tensors of the logical B role, one per active unit
+    /// and claim.
+    pub fn relation_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.relation_tensors
+    }
+
+    pub fn logical_input_width(&self) -> usize {
         self.geometry.logical_input_width()
     }
 
-    pub(crate) fn physical_input_width(&self) -> usize {
+    pub fn physical_input_width(&self) -> usize {
         self.geometry.physical_input_width()
     }
 
-    pub(crate) fn physical_footprint(&self) -> Result<usize, AkitaError> {
+    pub fn physical_footprint(&self) -> Result<usize, AkitaError> {
         self.geometry
             .physical_matrix_ring_elements(self.physical_rows)
     }
 }
 
-pub(crate) struct SetupContributionGroupPlan<E: Field> {
-    pub(crate) group_id: usize,
-    pub(crate) opening_method: crate::OpeningMethod,
-    pub(crate) role_dims: CommitmentRingDims,
-    pub(crate) a_ratio: usize,
-    pub(crate) b_ratio: usize,
-    pub(crate) d_ratio: usize,
-    pub(crate) a_relation_ratio: usize,
-    pub(crate) b_relation_ratio: usize,
-    pub(crate) d_relation_ratio: usize,
-    pub(crate) opening_subcolumns: usize,
-    pub(crate) consistency_weight: E,
-    pub(crate) num_claims: usize,
-    pub(crate) num_live_blocks: usize,
-    pub(crate) num_positions_per_block: usize,
-    pub(crate) depth_witness: usize,
-    pub(crate) depth_commit: usize,
-    pub(crate) depth_open: usize,
-    pub(crate) log_basis_inner: u32,
-    pub(crate) log_basis_outer: u32,
-    pub(crate) log_basis_open: u32,
-    pub(crate) d_col_range: Range<usize>,
-    pub(crate) z_cols: usize,
-    pub(crate) n_a: usize,
-    pub(crate) physical_b: PhysicalBSetupPlan<E>,
-    pub(crate) a_row_weights: Arc<[E]>,
-    pub(crate) fold_gadget: Arc<[E]>,
+/// Challenge-free per-group setup-contribution geometry and weights.
+///
+/// Built only by [`SetupContributionPlan::prepare`] (or the test-support
+/// fixture constructor); consumers read it through
+/// [`SetupContributionPlan::groups`].
+pub struct SetupContributionGroupPlan<E: Field> {
+    pub group_id: usize,
+    pub opening_method: crate::OpeningMethod,
+    pub role_dims: CommitmentRingDims,
+    pub a_ratio: usize,
+    pub b_ratio: usize,
+    pub d_ratio: usize,
+    pub a_relation_ratio: usize,
+    pub b_relation_ratio: usize,
+    pub d_relation_ratio: usize,
+    pub opening_subcolumns: usize,
+    pub consistency_weight: E,
+    pub num_claims: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
+    pub depth_witness: usize,
+    pub depth_commit: usize,
+    pub depth_open: usize,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
+    pub d_col_range: Range<usize>,
+    pub z_cols: usize,
+    pub n_a: usize,
+    pub physical_b: PhysicalBSetupPlan<E>,
+    pub a_row_weights: Arc<[E]>,
+    pub fold_gadget: Arc<[E]>,
     /// Exact non-empty block ranges used by the partitioned E and T roles.
-    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    pub active_unit_ranges: Arc<[SetupUnitRange]>,
     /// All physical units, including empty chunks that retain replicated Z.
-    pub(crate) num_physical_units: usize,
-    pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+    pub num_physical_units: usize,
+    pub d_tensors: Vec<EqPairTensorFamily<E>>,
+    pub a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SetupUnitRange {
-    pub(crate) global_block_start: usize,
-    pub(crate) num_live_blocks: usize,
+pub struct SetupUnitRange {
+    pub global_block_start: usize,
+    pub num_live_blocks: usize,
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {

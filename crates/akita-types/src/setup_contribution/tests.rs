@@ -427,51 +427,13 @@ fn finalize_test_plan(
     role_dims: CommitmentRingDims,
 ) -> (SetupContributionPlan<F>, DirectScan<F>) {
     let (groups, direct_groups): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
-    let a_footprint = groups
-        .iter()
-        .map(|group| group.n_a * group.z_cols)
-        .max()
-        .unwrap();
-    let b_footprint = groups
-        .iter()
-        .map(|group| group.physical_b.physical_footprint().unwrap())
-        .max()
-        .unwrap();
-    let d_footprint = d_rows * d_physical_cols;
-    let projection_geometry = SetupProjectionGeometry::from_role_footprints(
-        role_dims,
-        a_footprint,
-        b_footprint,
-        d_footprint,
-    )
-    .unwrap();
-    let mut plan = SetupContributionPlan {
-        groups,
-        d_rows,
-        d_physical_cols,
-        d_weights: (0..d_rows)
-            .map(|idx| test_scalar(43 + 4 * idx as u128))
-            .collect::<Vec<_>>()
-            .into(),
-        relation_address: PreparedRelationAddress::new(&[]).unwrap(),
-        relation_address_geometry: crate::RelationAddressGeometry::new(
-            role_dims,
-            role_dims.d_a(),
-            role_dims.common_relation_coeff_count(),
-        )
-        .unwrap(),
-        projection_geometry,
-    };
-    for group in &mut plan.groups {
-        group.role_dims = role_dims;
-        group
-            .set_projection_ratios(
-                plan.projection_geometry.base_ring_dim(),
-                plan.relation_address_geometry
-                    .relation_coefficient_block_len(),
-            )
-            .expect("valid test group projection");
-    }
+    let d_weights = (0..d_rows)
+        .map(|idx| test_scalar(43 + 4 * idx as u128))
+        .collect::<Vec<_>>()
+        .into();
+    let plan =
+        SetupContributionPlan::from_test_groups(d_physical_cols, d_weights, groups, role_dims)
+            .expect("valid test setup plan");
     let scan = DirectScan::with_mode(
         &plan,
         DirectScanMode::Lifted {

@@ -41,16 +41,17 @@ mod types;
 pub use direct_scan::DirectScan;
 pub(crate) use direct_scan::{DirectScanMode, GroupScanPartition};
 pub use setup_index_weight::SetupIndexWeightMle;
+pub use setup_index_weight::{
+    factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
+    role_tensors_are_aligned,
+};
 pub(crate) use types::validate_setup_inputs;
 pub(crate) use types::ReducedRoleCoefficientState;
-pub(crate) use types::{
-    DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights, SetupContributionGroupPlan,
-    SetupUnitRange,
-};
-pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
+pub(crate) use types::{DirectScanWeights, ReducedDirectScanWeights};
 pub use types::{
-    PreparedCoefficientFunctional, PreparedRelationAddress, SetupContributionGroupInputs,
-    SetupContributionPlan,
+    PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedCoefficientFunctional,
+    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionGroupPlan,
+    SetupContributionPlan, SetupUnitRange,
 };
 
 use super::geometry::SetupProjectionGroupGeometry;

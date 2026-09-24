@@ -107,7 +107,7 @@ impl<E: Field> PhysicalBSetupPlan<E> {
     /// Contract logical slice-major B row and column weights onto the one
     /// physical B matrix. The logical columns remain polynomial-major, while
     /// each slice is padded independently to the physical matrix width.
-    pub(crate) fn contract_logical_column_weights(
+    pub fn contract_logical_column_weights(
         &self,
         logical_column_weights: &[E],
     ) -> Result<Vec<E>, AkitaError> {

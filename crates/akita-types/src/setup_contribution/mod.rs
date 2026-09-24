@@ -26,8 +26,11 @@ pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
 #[cfg(test)]
 pub(crate) use plan::validate_setup_inputs;
 pub use plan::{
-    DirectScan, PreparedCoefficientFunctional, PreparedRelationAddress,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupIndexWeightMle,
+    factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
+    role_tensors_are_aligned, DirectScan, PhysicalBSetupPlan, PhysicalBWeightSegment,
+    PhysicalBWeightTerm, PreparedCoefficientFunctional, PreparedRelationAddress,
+    SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
+    SetupIndexWeightMle, SetupUnitRange,
 };
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
@@ -53,8 +56,9 @@ pub fn shared_setup_fold_gadget<F: Field + CanonicalEncoding>(
     ))
 }
 
+/// Borrow `slice[start..start + len]`, rejecting overflow and short slices.
 #[inline(always)]
-pub(crate) fn checked_slice<'a, T>(
+pub fn checked_slice<'a, T>(
     slice: &'a [T],
     start: usize,
     len: usize,

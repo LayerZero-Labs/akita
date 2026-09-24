@@ -183,7 +183,9 @@ impl<E: Field> SetupIndexWeightMle<E> {
 }
 
 impl<E: Field> SetupContributionPlan<E> {
-    pub(super) fn materialize_role_tensor_weights(
+    /// Materialize one role's relation-column weights at `alpha` from its
+    /// canonical relation tensors.
+    pub fn materialize_role_tensor_weights(
         &self,
         ratio: usize,
         tensors: &[EqPairTensorFamily<E>],
@@ -457,7 +459,7 @@ impl<E: Field> SetupContributionPlan<E> {
 
     /// Split the relation address into its low bridge coordinates (relation
     /// base to setup base) and the setup-base relation point.
-    pub(super) fn relation_base_bridge_split(&self) -> Result<(&[E], &[E]), AkitaError> {
+    pub fn relation_base_bridge_split(&self) -> Result<(&[E], &[E]), AkitaError> {
         let bridge_bits = self.relation_base_bridge_ratio()?.trailing_zeros() as usize;
         self.relation_address
             .point()
@@ -465,7 +467,8 @@ impl<E: Field> SetupContributionPlan<E> {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    fn relation_base_bridge_ratio(&self) -> Result<usize, AkitaError> {
+    /// Number of relation-base coefficient blocks in one setup base ring.
+    pub fn relation_base_bridge_ratio(&self) -> Result<usize, AkitaError> {
         let relation_base = self
             .relation_address_geometry
             .relation_coefficient_block_len();
@@ -801,10 +804,8 @@ fn compact_affine_unit_families<E: Field>(
     Ok(compact)
 }
 
-pub(super) fn role_tensors_are_aligned<E: Field>(
-    tensors: &[EqPairTensorFamily<E>],
-    ratio: usize,
-) -> bool {
+/// Whether every relation offset and stride of `tensors` is `ratio`-aligned.
+pub fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
     ratio.is_power_of_two()
         && tensors.iter().all(|tensor| {
             tensor.right_offset.is_multiple_of(ratio)
@@ -815,7 +816,9 @@ pub(super) fn role_tensors_are_aligned<E: Field>(
         })
 }
 
-pub(super) fn factor_aligned_role_tensors<E: Field>(
+/// Divide the relation offsets and strides of `ratio`-aligned tensors by
+/// `ratio`.
+pub fn factor_aligned_role_tensors<E: Field>(
     tensors: &mut [EqPairTensorFamily<E>],
     ratio: usize,
 ) -> Result<(), AkitaError> {
@@ -833,7 +836,9 @@ pub(super) fn factor_aligned_role_tensors<E: Field>(
     Ok(())
 }
 
-fn role_projection_evaluation<E: Field>(
+/// Multilinear extension of the `alpha^base_ring_dim` power sequence at
+/// `low_point`.
+pub fn role_projection_evaluation<E: Field>(
     alpha: E,
     base_ring_dim: usize,
     low_point: &[E],
@@ -847,7 +852,8 @@ fn role_projection_evaluation<E: Field>(
     ))
 }
 
-fn project_role_tensors<E: Field>(
+/// Append the `alpha^base_ring_dim` lane-projection axis to every tensor.
+pub fn project_role_tensors<E: Field>(
     tensors: &[EqPairTensorFamily<E>],
     ratio: usize,
     alpha: E,
