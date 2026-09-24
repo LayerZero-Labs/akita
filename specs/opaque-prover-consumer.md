@@ -1144,10 +1144,15 @@ let build_start = consumer.begin_recursive_witness(
     group_commitments,
 )?;
 
-build_start.opening_payload().append_flat_to_transcript(
-    ABSORB_OPENING_PAYLOAD,
-    build_start.opening_payload_ring_dimension(),
-    transcript,
+send_native_field_group(
+    grinding.state_mut(),
+    ProtocolSiteId {
+        family: SITE_FAMILY_OPENING_PAYLOAD,
+        level,
+        detail: build_start.opening_payload_ring_dimension() as u32,
+        ..ProtocolSiteId::default()
+    },
+    build_start.opening_payload().coeffs(),
 )?;
 
 let gamma = prepare_gamma(transcript, &opening_batch)?;
