@@ -48,9 +48,8 @@ pub use crate::opening_claims::{
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
-    folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, PreparedOpeningPoint, PreparedRingMultiplier,
-    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
+    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
@@ -64,8 +63,7 @@ pub use coefficient_packing_relation::{
 pub use commitment::{Commitment, CommittedGroup};
 pub use compression_relation_weights::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
-    evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
-    ReducedCompressionRelationWeights,
+    CompressionRelationWeights, NegativeBinarySupport, ReducedCompressionRelationWeights,
 };
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};

@@ -21,7 +21,6 @@ pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
-pub mod lhl_blinding;
 pub(crate) mod narrowing;
 mod native_eor;
 mod native_l2;
@@ -127,8 +126,7 @@ pub use proof::{
     canonical_extension_opening_reduction_shape, commit_only_setup_field_elements,
     commitment_execution_setup_field_elements, decode_terminal_z_golomb_payload,
     derive_public_matrix_prefix, draw_group_fold_challenges, emit_witness_e_planes,
-    emit_witness_t_planes, emit_witness_z_planes, evaluate_reduced_compression_map,
-    folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
+    emit_witness_t_planes, emit_witness_z_planes, generate_relation_rhs, padded_setup_prefix_len,
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
     raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
