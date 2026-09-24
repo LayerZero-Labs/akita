@@ -14,7 +14,7 @@ The first release build compiles the complete proving stack. Later runs reuse
 those build results. A successful run ends with output of this form:
 
 ```text
-Akita proof verified (... bytes)
+Akita proof verified
 ```
 
 The complete source is
@@ -125,12 +125,11 @@ construction.
 ```rust
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 
-let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
 let proof = scheme.batched_prove(
     &setup,
     prover_data,
     &backend,
-    &mut prover_transcript,
+    TRANSCRIPT_DOMAIN,
     BasisMode::Lagrange,
 )?;
 ```
@@ -139,25 +138,17 @@ let proof = scheme.batched_prove(
 Boolean cube. This is the standard representation for multilinear extensions
 in proof systems.
 
-## Encode and decode the proof
+## Transport the proof
 
-Applications send bytes, not Rust objects. The example therefore performs a
-real compressed serialization round trip before verification.
+The proof is already the canonical Spongefish argument byte string. Store or
+send it directly; the public schedule bounds every message the verifier reads.
 
 ```rust
-let proof_shape = proof.shape();
-let mut proof_bytes = Vec::new();
-proof.serialize_compressed(&mut proof_bytes)?;
-
-let decoded_proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-    &mut std::io::Cursor::new(&proof_bytes),
-    &proof_shape,
-)?;
+let proof_bytes: Vec<u8> = proof;
 ```
 
-The shape gives the decoder explicit limits and structure. A deployment should
-derive or authenticate that shape from its supported configuration and public
-statement before allocating for an incoming proof.
+Akita resolves the authenticated schedule before reading proof messages and
+rejects truncation, noncanonical atoms, and trailing bytes.
 
 ## Verify with fresh public state
 
@@ -176,19 +167,17 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-let mut verifier_transcript =
-    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
 scheme.batched_verify(
-    &decoded_proof,
+    &proof_bytes,
     &verifier_setup,
-    &mut verifier_transcript,
+    TRANSCRIPT_DOMAIN,
     statement,
     BasisMode::Lagrange,
 )?;
 ```
 
-The prover and verifier each create a fresh transcript for their side of the
-protocol. Akita binds the complete public statement before deriving proof
+Akita constructs fresh native prover and verifier states and binds the complete
+public statement before deriving proof
 challenges, so a change to the group order, point, value, commitment,
 configuration, or schedule causes verification to fail.
 

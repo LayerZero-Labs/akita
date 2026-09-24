@@ -419,7 +419,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         .prover_state()
         .inner_relation_material(plan.inner(), sources.len())
         .unwrap();
-    TerminalTFieldsMessage::from_row(&frozen.rows()[0]).unwrap();
+    TerminalTFieldsMessage::from_row(&frozen.rows()[0]);
     assert_eq!(
         actual.prover_state().retained_bytes().unwrap(),
         retained_before_freeze

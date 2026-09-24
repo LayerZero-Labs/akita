@@ -19,10 +19,6 @@ pub struct TraceWeightLayout {
 }
 
 impl TraceWeightLayout {
-    pub fn opening_digit_col_count(&self) -> usize {
-        self.num_live_blocks * (self.source_ring_dim / self.opening_ring_dim) * self.num_digits_open
-    }
-
     pub fn ring_len(&self) -> usize {
         1usize << self.ring_bits
     }

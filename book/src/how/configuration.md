@@ -100,7 +100,7 @@ an error rather than panicking.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, and artifact generation.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
-- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
+- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`native_nonterminal_level_layout`, planned witness sizing).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-planner/src/emit/`, and
   `crates/akita-schedules/src/artifact.rs`.

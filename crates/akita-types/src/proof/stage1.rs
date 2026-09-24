@@ -1,22 +1,9 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::proof::PhysicalL2NormProofWireShape;
-use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
+use crate::{AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_error::AkitaError;
-use akita_transcript::{append_ext_field, labels, Transcript};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-/// Absorb digit-range product child claims in their canonical transcript order.
-pub fn append_digit_range_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: Transcript<F>,
-{
-    for claim in claims {
-        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
-    }
-}
+use jolt_field::{Field, Ring};
 
 /// Checked flat Boolean domain for the compact digit witness.
 ///
@@ -348,51 +335,6 @@ impl DigitRangePlan {
         })
     }
 
-    /// Validate the complete in-memory range-proof shape without allocation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the number of substages, rounds, polynomial degree,
-    /// or child claims differs from this plan.
-    pub fn validate_proof_shape<E: Field>(
-        self,
-        proof: &AkitaStage1Proof<E>,
-        rounds: usize,
-    ) -> Result<(), AkitaError> {
-        if proof.stages.len() != self.stage_count() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.stage_count(),
-                actual: proof.stages.len(),
-            });
-        }
-        for (stage_index, stage) in proof.stages.iter().enumerate() {
-            let expected = self
-                .stage_shape(rounds, stage_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0 {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.sumcheck_proof.0,
-                    actual: stage.sumcheck_proof.round_polys.len(),
-                });
-            }
-            for round_poly in &stage.sumcheck_proof.round_polys {
-                if round_poly.coefficients().len() != expected.sumcheck_proof.1 {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected.sumcheck_proof.1,
-                        actual: round_poly.coefficients().len(),
-                    });
-                }
-            }
-            if stage.child_claims.len() != expected.child_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected.child_claims,
-                    actual: stage.child_claims.len(),
-                });
-            }
-        }
-        Ok(())
-    }
-
     /// Coefficients of the final range-leaf polynomials.
     pub fn leaf_coeffs<E: Field + Ring>(self) -> Vec<Vec<E>> {
         stage1_root_values::<E>(self.basis())
@@ -469,14 +411,14 @@ impl DigitRangePlan {
 
 /// Stage 1 shape for a selected A route, retaining only the optional L2 norm
 /// payload in addition to the canonical digit-range stages.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DigitRangeRouteShape {
     plan: DigitRangePlan,
     rounds: usize,
     pub(crate) norm: Option<PhysicalL2NormShape>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalL2NormShape {
     pub(crate) subclaims: usize,
     pub(crate) virtual_evaluations: usize,

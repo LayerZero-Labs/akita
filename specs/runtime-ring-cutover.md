@@ -344,7 +344,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 
 **Completed slices (2026-07-03):** D-free PCS API, proof storage, prover spine
 `const D` = 0, mixed-D-per-level E2E, root poly step 11, council audit fixes
-(grind dispatch hoist, `RingView::append_flat_to_transcript` → `Result`),
+(grind dispatch hoist and checked runtime ring views),
 slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
 `role_dims`, regression locks).
 

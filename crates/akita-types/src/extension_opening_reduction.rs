@@ -4,7 +4,6 @@
 //! The concrete EOR prover instance and its witness-bearing state live in
 //! `akita-prover`.
 
-use akita_algebra::poly::multilinear_eval;
 use akita_algebra::{EqPolynomial, SplitEqEvals};
 use akita_error::{checked, AkitaError};
 use jolt_field::{ExtField, Field, MulBaseUnreduced, Unreduced};
@@ -437,34 +436,6 @@ where
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
 }
 
-#[doc(hidden)]
-pub fn project_tensor_factor_value<F, E>(
-    value: E,
-    eta_weights: &[E],
-    width: usize,
-) -> Result<E, AkitaError>
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    if E::DEGREE != width {
-        return Err(AkitaError::InvalidSize {
-            expected: width,
-            actual: E::DEGREE,
-        });
-    }
-    if eta_weights.len() != width {
-        return Err(AkitaError::InvalidSize {
-            expected: width,
-            actual: eta_weights.len(),
-        });
-    }
-    Ok(project_tensor_factor_value_unchecked::<F, E>(
-        value,
-        eta_weights,
-    ))
-}
-
 #[inline]
 fn project_tensor_factor_value_unchecked<F, E>(value: E, eta_weights: &[E]) -> E
 where
@@ -611,15 +582,6 @@ where
         .fold(E::zero(), |acc, (coord_eval, eta_weight)| {
             acc + coord_eval * eta_weight
         }))
-}
-
-/// Verifier replay output for an extension-opening reduction sumcheck.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionOpeningReductionRoundResult<E: Field> {
-    /// Final sumcheck claim after all verifier challenges have been bound.
-    pub final_claim: E,
-    /// Sumcheck challenge point `rho`.
-    pub challenges: Vec<E>,
 }
 
 /// One row-local term in a transparent extension-opening reduction factor.
@@ -776,41 +738,6 @@ pub fn extension_opening_reduction_claim<E: Field>(
         .iter()
         .zip(factor_evals.iter())
         .fold(E::zero(), |acc, (&w, &a)| acc + w * a))
-}
-
-/// Evaluate the final reduction oracle `witness(point) * factor(point)`.
-///
-/// # Errors
-///
-/// Returns an error if either table length is malformed or inconsistent with
-/// `point.len()`.
-pub fn extension_opening_reduction_eval_at_point<E: Field>(
-    witness_evals: &[E],
-    factor_evals: &[E],
-    point: &[E],
-) -> Result<E, AkitaError> {
-    validate_reduction_tables(witness_evals, factor_evals)?;
-    let witness_eval = multilinear_eval(witness_evals, point)?;
-    let factor_eval = multilinear_eval(factor_evals, point)?;
-    Ok(witness_eval * factor_eval)
-}
-
-/// Check the final extension-opening reduction equality.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] if the final sumcheck claim does not
-/// match the product of the ordinary witness opening and transparent factor
-/// evaluation at the sumcheck challenge point.
-pub fn check_extension_opening_reduction_output<E: Field>(
-    final_claim: E,
-    witness_eval: E,
-    factor_eval: E,
-) -> Result<(), AkitaError> {
-    if final_claim != witness_eval * factor_eval {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(())
 }
 
 pub fn validate_reduction_tables<E: Field>(

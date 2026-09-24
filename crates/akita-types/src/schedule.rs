@@ -18,17 +18,6 @@ pub use profiles::{
 pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
-/// Public inputs that deterministically select one level's active Akita params.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AkitaScheduleInputs {
-    /// Root polynomial variable count.
-    pub num_vars: usize,
-    /// Fold level, where `0` is the original polynomial.
-    pub level: usize,
-    /// Current witness length in field elements before this level runs.
-    pub input_witness_len: usize,
-}
-
 /// Transcript binding used for one fold's outgoing witness state.
 ///
 /// This is schedule-owned because the same intermediate proof body may either
@@ -365,10 +354,6 @@ impl FoldSchedule {
 
     pub fn root_fold(&self) -> &FoldParams {
         &self.root
-    }
-
-    pub fn root_fold_mut(&mut self) -> &mut FoldParams {
-        &mut self.root
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
@@ -818,8 +803,8 @@ fn validate_stage2_successor_capacity(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
-    /// Exact proof-level packed nonce-stream bytes.
-    pub nonce_stream_bytes: usize,
+    /// Maximum bytes used by independently encoded canonical native nonces.
+    pub native_nonce_max_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
@@ -861,7 +846,7 @@ impl FoldScheduleEstimate {
     pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
         self.estimated_direct_proof_payload_bytes()?
             .checked_add(self.estimated_stage3_payload_bytes()?)
-            .and_then(|value| value.checked_add(self.nonce_stream_bytes))
+            .and_then(|value| value.checked_add(self.native_nonce_max_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

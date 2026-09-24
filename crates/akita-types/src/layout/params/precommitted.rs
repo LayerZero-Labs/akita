@@ -257,28 +257,6 @@ impl GroupOpenPhaseParams {
         )
     }
 
-    /// Validate and materialize a recursive setup prefix at the batch-shared
-    /// opening basis.
-    pub fn admit_setup_prefix(
-        layout: GroupCommitPhaseParams,
-        natural_len: usize,
-        num_digits_fold: usize,
-        policy: PrecommittedGroupAdmissionPolicy,
-        opening_method: OpeningMethod,
-        fold_challenge_config: SparseChallengeConfig,
-        log_basis_open: u32,
-    ) -> Result<Self, AkitaError> {
-        Self::admit_with_setup_natural_len(
-            layout,
-            Some(natural_len),
-            num_digits_fold,
-            policy,
-            opening_method,
-            fold_challenge_config,
-            log_basis_open,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn admit_with_setup_natural_len(
         layout: GroupCommitPhaseParams,
@@ -500,13 +478,6 @@ impl GroupOpenPhaseParams {
             self.profile.blocks.live_blocks,
             self.profile.group.num_polynomials(),
         )
-    }
-
-    /// Width contribution of this group's decomposed folded response.
-    pub fn z_segment_width(&self, num_digits_fold: usize) -> Result<usize, AkitaError> {
-        self.inner_width()
-            .checked_mul(num_digits_fold)
-            .ok_or_else(|| AkitaError::InvalidSetup("group z segment width overflow".to_string()))
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {

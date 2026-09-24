@@ -1,236 +1,35 @@
-use super::suffix::{verify_suffix, SuffixVerifierState, SuffixWitnessState};
-use super::*;
+use super::root_fold::verify_root_native;
+use super::suffix::{verify_suffix_native, NativeSuffixVerifierState};
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
-    bind_transcript_instance_descriptor, ensure_verifier_schedule_fits_setup, CommitmentConfig,
+    ensure_verifier_schedule_fits_setup, transcript_instance_descriptor, CommitmentConfig,
     TrustedScheduleCatalog,
 };
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
-/// Reject malformed proof carriers against the selected schedule before any
-/// transcript replay or proof-owned buffer is cloned.
-fn validate_proof_against_schedule<F, E>(
-    proof: &AkitaBatchedProof<F, E>,
-    schedule: &FoldSchedule,
-) -> Result<(), AkitaError>
-where
-    F: Field + Valid,
-    E: Field + Valid,
-{
-    proof.check().map_err(|_| AkitaError::InvalidProof)?;
-
-    let total_fold_levels = schedule.num_fold_levels();
-    if proof.num_fold_levels() != total_fold_levels
-        || proof.recursive_folds.len()
-            != total_fold_levels
-                .checked_sub(2)
-                .ok_or(AkitaError::InvalidProof)?
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let validate_nonterminal = |fold: &FoldLevelProof<F, E>,
-                                params: &CommittedGroupParams,
-                                next_params: Option<&CommittedGroupParams>,
-                                binding: akita_types::NextWitnessBindingPolicy|
-     -> Result<(), AkitaError> {
-        if matches!(
-            params.opening_method(),
-            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-        ) && fold.extension_opening_reduction().is_some()
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        if fold.opening_payload.coeff_len()
-            != params
-                .opening_payload_geometry()?
-                .transmitted_coefficients()
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-
-        match (binding, &fold.stage2.next_witness_binding) {
-            (
-                akita_types::NextWitnessBindingPolicy::OuterPayload,
-                akita_types::NextWitnessBinding::OuterPayload(commitment),
-            ) => {
-                let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
-                if commitment.coeff_len()
-                    != next_params
-                        .outer_payload_geometry()?
-                        .transmitted_coefficients()
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-            }
-            (
-                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
-                akita_types::NextWitnessBinding::TerminalInnerState,
-            ) => {}
-            _ => return Err(AkitaError::InvalidProof),
-        }
-        Ok(())
-    };
-
-    let (root_next, root_binding) = schedule.recursive_folds.first().map_or(
-        (
-            None,
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
-        ),
-        |step| {
-            (
-                Some(&step.params),
-                akita_types::NextWitnessBindingPolicy::OuterPayload,
-            )
-        },
-    );
-    validate_nonterminal(&proof.root, &schedule.root.params, root_next, root_binding)?;
-    for (index, (fold, step)) in proof
-        .recursive_folds
-        .iter()
-        .zip(&schedule.recursive_folds)
-        .enumerate()
-    {
-        let (next, binding) = schedule.recursive_folds.get(index + 1).map_or(
-            (
-                None,
-                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
-            ),
-            |next| {
-                (
-                    Some(&next.params),
-                    akita_types::NextWitnessBindingPolicy::OuterPayload,
-                )
-            },
-        );
-        validate_nonterminal(fold, &step.params, next, binding)?;
-    }
-
-    let terminal_shape = &schedule.terminal.response_shape;
-    if !terminal_shape
-        .layout
-        .admits_realized(&proof.terminal.terminal_response().layout)
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
-}
-
-/// Verify a prepared folded batched proof once the schedule and transcript
-/// descriptor are fixed.
-///
-/// # Errors
-///
-/// Returns an error if the schedule and proof shapes disagree or any root or
-/// suffix verification step rejects.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn verify<F, E, T>(
-    proof: &AkitaBatchedProof<F, E>,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    claims: OpeningClaims<'_, E, &Commitment<F>>,
-    opening_batch: &OpeningClaimsLayout,
-    basis: BasisMode,
-    schedule: &FoldSchedule,
-) -> Result<(), AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    let root_step = schedule.root_fold();
-    let first_recursive_params = schedule.recursive_folds.first();
-    let root_t_state = if first_recursive_params.is_none() {
-        let witness = proof.terminal.terminal_response();
-        let t_state = raw_field_segment_bytes(&witness.t_fields)?;
-        if t_state.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Some(t_state)
-    } else {
-        None
-    };
-    let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
-        &proof.root,
-        setup,
-        transcript,
-        &claims,
-        opening_batch,
-        basis,
-        &root_step.params,
-        first_recursive_params,
-        first_recursive_params.map_or(schedule.terminal.d_a(), |step| step.params.d_a()),
-        root_t_state.as_deref(),
-    )
-    .map_err(|error| {
-        AkitaError::InvalidInput(format!("compressed root replay failed: {error:?}"))
-    })?;
-
-    let root_next_commitment = proof.root.next_w_payload();
-    let root_witness = match (root_next_commitment, root_t_state) {
-        (Some(commitment), None) => SuffixWitnessState::Commitment(commitment),
-        (None, Some(t_state)) => SuffixWitnessState::TerminalT(t_state),
-        _ => return Err(AkitaError::InvalidProof),
-    };
-    verify_suffix::<F, E, T>(
-        &proof.recursive_folds,
-        &proof.terminal,
-        setup,
-        transcript,
-        schedule,
-        SuffixVerifierState {
-            opening_point: root_challenges,
-            opening: proof.root.next_w_eval(),
-            witness: root_witness,
-            basis: BasisMode::Lagrange,
-            witness_len: root_step.output_witness_len,
-            setup_prefix_opening,
-        },
-    )
-}
-
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup, BasisMode, Commitment,
-    CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims,
+    validate_schedule_ring_dims, AkitaVerifierSetup, BasisMode, CommittedGroupBatchProfile,
+    FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 
-/// Verify a batched proof under config `Cfg`.
-///
-/// This is the verifier crate's top-level orchestration entrypoint. It owns
-/// public claim normalization, folded schedule selection from the trusted
-/// catalog, and
-/// transcript instance-descriptor binding before handing off to `verify`.
-///
-/// # Errors
-///
-/// Returns an error if public claims are malformed, schedule/layout policy
-/// rejects the proof shape or proof replay fails.
-pub fn batched_verify<Cfg, T>(
-    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+/// Verify one authoritative native Spongefish argument under config `Cfg`.
+#[inline(never)]
+pub fn batched_verify<Cfg>(
+    proof: &[u8],
     setup: &AkitaVerifierSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
-    transcript: &mut T,
+    session: &[u8],
     statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: Field
-        + CanonicalEncoding
-        + akita_serialization::AkitaSerialize
-        + PseudoMersenne
-        + Field
-        + Valid,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::Field:
+        Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
-    T: Transcript<Cfg::Field>,
 {
     let selection = statement.selection();
     let claims = statement.into_claims();
@@ -313,35 +112,17 @@ where
     schedule
         .validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_proof_against_schedule(proof, schedule).map_err(|error| {
-        AkitaError::InvalidInput(format!(
-            "proof does not match the selected compressed schedule: {error:?}"
-        ))
-    })?;
-
-    // Schedule resolution is the earliest point at which the terminal ring
-    // dimension, A widths, and exact base-versus-i16-tail capabilities are all
-    // known. Warm those derived, non-serialized prefixes before transcript
-    // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
-
-    let grinding_plan = {
-        let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
-            &setup.expanded().descriptor,
-            &opening_batch,
-            selection,
-            schedule,
-            basis,
-            transcript,
-        )?
-    };
-    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<T>::new(
-        transcript,
-        &proof.nonce_stream,
-        &grinding_plan,
+    let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
+        &setup.expanded().descriptor,
+        &opening_batch,
+        selection,
+        schedule,
+        basis,
     )?;
-
+    let state = akita_transcript::new_native_verifier(session, &descriptor_bytes, proof)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let mut grinding = akita_types::NativeVerifierGrinding::new(state, &grinding_plan);
     let raw_groups = claims
         .groups()
         .iter()
@@ -356,17 +137,30 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, _>(
-        proof,
+    let root = verify_root_native::<Cfg::Field, Cfg::ExtField>(
         setup,
-        &mut grinding_transcript,
-        raw_claims,
+        &mut grinding,
+        &raw_claims,
         &opening_batch,
         basis,
+        root_params,
+        schedule.recursive_folds.first(),
+        &schedule.terminal,
+    )?;
+    verify_suffix_native::<Cfg::Field, Cfg::ExtField>(
+        setup,
+        &mut grinding,
         schedule,
-    )
-    .and_then(|()| grinding_transcript.finish())
-    .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
+        NativeSuffixVerifierState {
+            opening_point: root.challenges,
+            opening: root.opening,
+            witness: root.next_witness,
+            basis: BasisMode::Lagrange,
+            witness_len: schedule.root_fold().output_witness_len,
+            setup_prefix_opening: root.setup_prefix_opening,
+        },
+    )?;
+    grinding.finish().map(|_accepted| ())
 }
 
 #[cfg(test)]

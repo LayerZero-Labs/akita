@@ -3,8 +3,6 @@
 //! This module is always compiled. The transparent protocol does not use it;
 //! it documents the digit-plane sizing discipline and anchors post-audit ZK work.
 
-use jolt_field::CanonicalEncoding;
-
 /// Statistical security target used by the LHL hiding mask.
 pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;
 
@@ -35,21 +33,6 @@ pub fn blinding_digit_plane_count_from_bits(
         .saturating_mul(field_bits)
         .saturating_add(lhl_slack)
         .div_ceil(entropy_per_plane)
-}
-
-/// Number of fresh digit-ring planes needed for an output in
-/// `R_q^{output_ring_len}`.
-pub fn blinding_digit_plane_count<F: CanonicalEncoding>(
-    output_ring_len: usize,
-    ring_dimension: usize,
-    log_basis: u32,
-) -> usize {
-    blinding_digit_plane_count_from_bits(
-        output_ring_len,
-        ring_dimension,
-        log_basis,
-        F::MODULUS_BITS as usize,
-    )
 }
 
 #[cfg(test)]

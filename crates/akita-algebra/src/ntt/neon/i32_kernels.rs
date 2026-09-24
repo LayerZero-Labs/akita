@@ -58,6 +58,23 @@ unsafe fn reduce_range_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
     )
 }
 
+/// Centered reduction of `|x| < 2p`, for a modulus `3 <= p < 2^30`.
+///
+/// Let `v = round(2^31 / p)` and `qhat = round(x*v / 2^31)`. Then
+/// `|qhat - x/p| <= 1/2 + |x|/2^32 < 1`, so `x - qhat*p` is congruent
+/// to `x` and lies strictly in `(-p, p)`. Also `|qhat| <= 2`, hence the
+/// product and result fit i32. `sqrdmulh` cannot reach its saturation case.
+/// This representative is sufficient between DIF stages; the existing tail
+/// still produces canonical `[0, p)` output.
+#[inline(always)]
+pub(super) unsafe fn centered_reduce_4x_i32(
+    x: int32x4_t,
+    p: int32x4_t,
+    reciprocal: int32x4_t,
+) -> int32x4_t {
+    vmlsq_s32(x, vqrdmulhq_s32(x, reciprocal), p)
+}
+
 /// 4-wide `caddp`: add `p` to lanes that are negative, mapping `(-p, p)` → `[0, p)`.
 ///
 /// Equivalent to [`reduce_range_4x_i32`] when the input is already in `(-p, p)`,
@@ -189,7 +206,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         }
     }
 
-    forward_ntt_i32_from_twisted(a, prime, tw);
+    forward_ntt_cyclic_i32(a, prime, tw);
 }
 
 /// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
@@ -232,73 +249,7 @@ pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
         i += 1;
     }
 
-    forward_ntt_i32_from_twisted(a, prime, tw);
-}
-
-/// Forward DIF butterfly stages for an already twisted i32 limb.
-#[inline]
-unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
-    a: &mut [MontCoeff<i32>; D],
-    prime: NttPrime<i32>,
-    tw: &NttTwiddles<i32, D>,
-) {
-    let p_q = vdupq_n_s32(prime.p);
-    let pinv_q = vdupq_n_s32(prime.pinv);
-    let a_ptr = a.as_mut_ptr() as *mut i32;
-
-    // DIF butterfly stages (4-wide while half-length permits).
-    let mut len = D / 2;
-    while len >= 4 {
-        let twiddle_base = len - 1;
-        let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
-        let mut start = 0usize;
-        while start < D {
-            let mut j = 0;
-            while j < len {
-                let u = vld1q_s32(a_ptr.add(start + j));
-                let v = vld1q_s32(a_ptr.add(start + j + len));
-                let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
-
-                let sum = vaddq_s32(u, v);
-                let diff = vsubq_s32(u, v);
-
-                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
-                vst1q_s32(
-                    a_ptr.add(start + j + len),
-                    mont_mul_4x_i32(diff, w, p_q, pinv_q),
-                );
-                j += 4;
-            }
-            start += 2 * len;
-        }
-        len /= 2;
-    }
-
-    // Final two stages (len = 2, 1). The vectorized tail already normalizes its
-    // outputs to [0, p), so the closing reduce_range pass is only needed on the
-    // scalar fallback (D not a multiple of 16).
-    if batched_four_point_eligible::<D>(4) {
-        forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
-    } else {
-        while len > 0 {
-            let twiddle_base = len - 1;
-            let mut start = 0usize;
-            while start < D {
-                for j in 0..len {
-                    let w = tw.fwd_twiddles[twiddle_base + j];
-                    let u = a[start + j];
-                    let v = a[start + j + len];
-                    let sum = u.raw().wrapping_add(v.raw());
-                    let diff = u.raw().wrapping_sub(v.raw());
-                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
-                    a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
-                }
-                start += 2 * len;
-            }
-            len /= 2;
-        }
-        reduce_range_in_place_i32(a, p_q);
-    }
+    forward_ntt_cyclic_i32(a, prime, tw);
 }
 
 /// NEON-accelerated inverse negacyclic NTT for i32 primes.
@@ -369,6 +320,12 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
 }
 
 /// NEON-accelerated forward cyclic NTT for i32 (no negacyclic twist).
+///
+/// This is the single forward DIF engine: the negacyclic entry points apply
+/// their `psi^i` twist (and, for signed digits, Montgomery conversion) and
+/// then call this directly. Inputs must lie in `(-p, p)`; outputs are
+/// canonical `[0, p)`.
+#[inline]
 pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
@@ -377,7 +334,9 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     let p_q = vdupq_n_s32(prime.p);
     let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
+    let reciprocal = vdupq_n_s32((((1u64 << 31) + prime.p as u64 / 2) / prime.p as u64) as i32);
 
+    // DIF butterfly stages (4-wide while half-length permits).
     let mut len = D / 2;
     while len >= 4 {
         let twiddle_base = len - 1;
@@ -389,9 +348,14 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
                 let u = vld1q_s32(a_ptr.add(start + j));
                 let v = vld1q_s32(a_ptr.add(start + j + len));
                 let w = vld1q_s32(tw_ptr.add(twiddle_base + j));
+
                 let sum = vaddq_s32(u, v);
                 let diff = vsubq_s32(u, v);
-                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
+
+                vst1q_s32(
+                    a_ptr.add(start + j),
+                    centered_reduce_4x_i32(sum, p_q, reciprocal),
+                );
                 vst1q_s32(
                     a_ptr.add(start + j + len),
                     mont_mul_4x_i32(diff, w, p_q, pinv_q),
@@ -403,6 +367,9 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         len /= 2;
     }
 
+    // Final two stages (len = 2, 1). The vectorized tail already normalizes its
+    // outputs to [0, p), so the closing reduce_range pass is only needed on the
+    // scalar fallback (D not a multiple of 16).
     if batched_four_point_eligible::<D>(4) {
         forward_dif_tail_i32::<D>(a_ptr, tw.fwd_twiddles.as_ptr() as *const i32, p_q, pinv_q);
     } else {

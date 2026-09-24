@@ -8,15 +8,15 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false }
 akita-serialization = { path = "../crates/akita-serialization" }
+akita-error = { path = "../crates/akita-error" }
 akita-sumcheck = { path = "../crates/akita-sumcheck" }
 akita-transcript = { path = "../crates/akita-transcript" }
-akita-types = { path = "../crates/akita-types" }
 libfuzzer-sys = "0.4.12"
 
 [[bin]]
@@ -36,13 +36,6 @@ bench = false
 [[bin]]
 name = "sumcheck_rounds"
 path = "fuzz_targets/sumcheck_rounds.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "proof_shapes"
-path = "fuzz_targets/proof_shapes.rs"
 test = false
 doc = false
 bench = false

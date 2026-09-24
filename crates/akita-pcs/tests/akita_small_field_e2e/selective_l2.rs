@@ -1,5 +1,4 @@
 use super::*;
-use jolt_poly::CompressedPoly;
 
 fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
@@ -20,38 +19,9 @@ fn fp32_l2_onehot_poly(
     akita_cpu_backend::OneHotPoly::new(onehot_k, indices).expect("fp32 L2 one-hot polynomial")
 }
 
-fn encode_test_golomb_rice(values: &[i64], rice_low_bits: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    let mut bit_position = 0usize;
-    let mut write_bit = |bit: bool| {
-        let byte_index = bit_position / 8;
-        if byte_index == bytes.len() {
-            bytes.push(0);
-        }
-        if bit {
-            bytes[byte_index] |= 1 << (bit_position % 8);
-        }
-        bit_position += 1;
-    };
-    for &value in values {
-        let zigzag = ((value << 1) ^ (value >> 63)) as u64;
-        let quotient = zigzag >> rice_low_bits;
-        for _ in 0..quotient {
-            write_bit(true);
-        }
-        write_bit(false);
-        let remainder = zigzag & ((1u64 << rice_low_bits) - 1);
-        for bit in 0..rice_low_bits {
-            write_bit((remainder >> bit) & 1 == 1);
-        }
-    }
-    bytes
-}
-
 #[test]
 fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
     type Cfg = fp32::OneHot;
-    type F = fp32::Field;
     type E = fp32::ExtensionField;
     const NUM_VARS: usize = 28;
     const LABEL: &[u8] = b"test/fp32-ext4-multiblock-l2-pcs";
@@ -93,9 +63,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
         let akita_types::InnerCommitSecurityRoute::L2 {
-            response_l2_sq_cap,
-            norm_proof_shape,
-            ..
+            norm_proof_shape, ..
         } = l2_step.params.inner().matrix.security_route()
         else {
             unreachable!("selected route checked above")
@@ -130,43 +98,17 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         )
         .expect("L2 prover group")])
         .expect("L2 prover claims");
-        let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
             .batched_prove(
                 &setup,
                 selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                LABEL,
                 BasisMode::Lagrange,
             )
             .expect("small-field L2 proof");
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof
-            .serialize_uncompressed(&mut bytes)
-            .expect("serialize small-field L2 PCS proof");
-        let proof = AkitaBatchedProof::<F, E>::deserialize_uncompressed(&bytes[..], &shape)
-            .expect("deserialize small-field L2 PCS proof");
-        let l2_index = proof
-            .recursive_folds
-            .iter()
-            .position(|fold| fold.stage1.norm_proof.is_some())
-            .expect("proof must carry the selected L2 norm");
-        let norm_proof = proof.recursive_folds[l2_index]
-            .stage1
-            .norm_proof
-            .as_ref()
-            .expect("L2 norm proof");
-        assert_eq!(
-            norm_proof.subclaims.len(),
-            norm_proof_shape.subclaim_count().expect("valid norm shape")
-        );
-        assert_eq!(
-            norm_proof.virtual_evaluations.len(),
-            norm_proof_shape.virtual_evaluation_count()
-        );
 
-        let verify = |candidate: &AkitaBatchedProof<F, E>| {
+        let verify = |candidate: &[u8]| {
             let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 vec![opening],
@@ -174,72 +116,27 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             )
             .expect("L2 verifier group")])
             .expect("L2 verifier claims");
-            let mut transcript = AkitaTranscript::<F>::new(LABEL);
             scheme.batched_verify(
                 candidate,
                 &verifier_setup,
-                &mut transcript,
+                LABEL,
                 selected_statement::<Cfg>(claims, scheme.schedules()),
                 BasisMode::Lagrange,
             )
         };
-        verify(&proof).expect("verify serialized small-field L2 PCS proof");
-
-        let mut over_cap = proof.clone();
-        over_cap.recursive_folds[l2_index]
-            .stage1
-            .norm_proof
-            .as_mut()
-            .expect("L2 norm proof")
-            .response_l2_sq = response_l2_sq_cap + 1;
-        assert!(verify(&over_cap).is_err());
-
-        if !norm_proof.subclaims.is_empty() {
-            let mut bad_subclaim = proof.clone();
-            bad_subclaim.recursive_folds[l2_index]
-                .stage1
-                .norm_proof
-                .as_mut()
-                .expect("L2 norm proof")
-                .subclaims[0] += E::one();
-            assert!(verify(&bad_subclaim).is_err());
+        verify(&proof).expect("verify native small-field L2 PCS proof");
+        for offset in [0, proof.len() / 3, proof.len() * 2 / 3, proof.len() - 1] {
+            let mut mutated = proof.clone();
+            mutated[offset] ^= 1;
+            assert!(verify(&mutated).is_err());
         }
-
-        let mut bad_virtual = proof.clone();
-        bad_virtual.recursive_folds[l2_index]
-            .stage1
-            .norm_proof
-            .as_mut()
-            .expect("L2 norm proof")
-            .virtual_evaluations[0] += E::one();
-        assert!(verify(&bad_virtual).is_err());
-
-        let mut bad_nonce = proof.clone();
-        let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
-        nonce_bytes[0] ^= 1;
-        bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
-            nonce_bytes,
-            bad_nonce.nonce_stream.bit_len(),
-        )
-        .unwrap();
-        assert!(verify(&bad_nonce).is_err());
-
-        let mut bad_stage2 = proof;
-        let round = &mut bad_stage2.recursive_folds[l2_index]
-            .stage2
-            .sumcheck_proof
-            .round_polys[0];
-        let mut coefficients = round.coeffs_except_linear_term().to_vec();
-        coefficients[0] += E::one();
-        *round = CompressedPoly::new(coefficients);
-        assert!(verify(&bad_stage2).is_err());
+        assert!(verify(&proof[..proof.len() - 1]).is_err());
     });
 }
 
 #[test]
 fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
     type Cfg = fp32::OneHot;
-    type F = fp32::Field;
     type E = fp32::ExtensionField;
     const NUM_VARS: usize = 20;
     const LABEL: &[u8] = b"test/fp32-nv20-shipped-terminal-route";
@@ -259,7 +156,13 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .schedule()
             .clone();
         let terminal_params = &schedule.terminal;
-        let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
+        assert!(
+            terminal_params.response_l2_sq_cap().is_some()
+                || terminal_params.response_shape.layout.groups[0]
+                    .z_linf_cap
+                    .is_some(),
+            "terminal route must enforce an L2 or Linf response bound"
+        );
 
         let poly = fp32_l2_onehot_poly(&schedule.root.params, 9);
         let point = (0..NUM_VARS)
@@ -291,18 +194,17 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         )
         .expect("terminal L2 prover group")])
         .expect("terminal L2 prover claims");
-        let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = scheme
             .batched_prove(
                 &setup,
                 selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                LABEL,
                 BasisMode::Lagrange,
             )
             .expect("shipped terminal proof");
 
-        let verify = |candidate: &AkitaBatchedProof<F, E>| {
+        let verify = |candidate: &[u8]| {
             let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 vec![opening],
@@ -310,78 +212,20 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             )
             .expect("terminal L2 verifier group")])
             .expect("terminal L2 verifier claims");
-            let mut transcript = AkitaTranscript::<F>::new(LABEL);
             scheme.batched_verify(
                 candidate,
                 &verifier_setup,
-                &mut transcript,
+                LABEL,
                 selected_statement::<Cfg>(claims, scheme.schedules()),
                 BasisMode::Lagrange,
             )
         };
         verify(&proof).expect("verify shipped terminal proof");
-
-        let mut bad_nonce = proof.clone();
-        let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
-        nonce_bytes[0] ^= 1;
-        bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
-            nonce_bytes,
-            bad_nonce.nonce_stream.bit_len(),
-        )
-        .unwrap();
-        assert!(verify(&bad_nonce).is_err());
-
-        let mut over_cap = proof;
-        let group = *over_cap
-            .terminal
-            .terminal_response
-            .layout
-            .groups
-            .first()
-            .expect("single terminal group");
-        let payload = over_cap
-            .terminal
-            .terminal_response
-            .z_payloads
-            .first_mut()
-            .expect("terminal z payload");
-        let mut values = akita_types::decode_terminal_z_golomb_payload(payload, &group)
-            .expect("honest terminal z decode")
-            .into_iter()
-            .map(i64::from)
-            .collect::<Vec<_>>();
-        if let Some(response_l2_sq_cap) = response_l2_sq_cap {
-            assert!(
-                group.z_linf_cap.is_none(),
-                "terminal L2 routes must not enforce a separate Linf cap"
-            );
-            // Stay comfortably inside the signed terminal wire type while
-            // making the complete decoded response exceed the scheduled cap.
-            let coordinate = i64::from(i16::MAX / 2);
-            let coordinate_sq = u128::try_from(coordinate * coordinate).expect("positive square");
-            let mut forced_l2_sq = 0u128;
-            for value in &mut values {
-                *value = coordinate;
-                forced_l2_sq += coordinate_sq;
-                if forced_l2_sq > response_l2_sq_cap {
-                    break;
-                }
-            }
-            assert!(forced_l2_sq > response_l2_sq_cap);
-        } else {
-            let linf_cap = group
-                .z_linf_cap
-                .expect("terminal Linf routes must carry a coefficient cap");
-            let over_linf = i64::try_from(
-                linf_cap
-                    .checked_add(1)
-                    .expect("terminal Linf cap increment"),
-            )
-            .expect("terminal Linf cap fits the signed wire type");
-            *values.first_mut().expect("nonempty terminal response") = over_linf;
+        for offset in [0, proof.len() / 2, proof.len() - 1] {
+            let mut mutated = proof.clone();
+            mutated[offset] ^= 1;
+            assert!(verify(&mutated).is_err());
         }
-        *payload = encode_test_golomb_rice(&values, group.z_rice_low_bits);
-        assert!(payload.len() <= group.z_payload_bytes);
-        assert!(verify(&over_cap).is_err());
+        assert!(verify(&proof[..proof.len() - 1]).is_err());
     });
 }

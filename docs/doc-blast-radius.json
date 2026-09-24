@@ -45,16 +45,6 @@
       ]
     },
     {
-      "id": "witness-polyops",
-      "description": "Shared witness/polynomial view vocabulary",
-      "code": ["crates/akita-witness/**"],
-      "consider_updating": [
-        "book/src/how/architecture.md",
-        "book/src/how/proving/sumcheck-stages.md",
-        "specs/archive/2026-Q3/akita-polyops-cutover.md"
-      ]
-    },
-    {
       "id": "sis-security",
       "description": "SIS floors, norm bounds, challenge sampling",
       "code": ["crates/akita-types/src/sis/**", "crates/akita-challenges/**"],

@@ -1,9 +1,140 @@
 use super::*;
 use jolt_poly::UnivariatePoly;
 
-pub(super) fn prove_stage1<F, E, T, B>(
+struct Stage1EqSumcheck<
+    'a,
+    F: Field + CanonicalEncoding,
+    E: Field,
+    B: crate::backend::OpaqueStage1Kernel<F, E>,
+> {
+    backend: &'a B,
+    session: &'a mut B::Stage1SessionHandle,
+    step: crate::backend::Stage1Step,
+    equality_point: &'a [E],
+    claim: E,
+    degree: usize,
+    next_round: usize,
+    field: std::marker::PhantomData<F>,
+}
+
+impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kernel<F, E>>
+    akita_sumcheck::EqFactoredSumcheckKernel<E> for Stage1EqSumcheck<'_, F, E, B>
+{
+    fn num_rounds(&self) -> usize {
+        self.equality_point.len()
+    }
+    fn degree_bound(&self) -> usize {
+        self.degree
+    }
+    fn input_claim(&self) -> E {
+        self.claim
+    }
+    fn current_tau(&self) -> E {
+        self.equality_point[self.next_round]
+    }
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<jolt_poly::OmittedConstantPoly<E>, AkitaError> {
+        if round != self.next_round {
+            return Err(AkitaError::InvalidProof);
+        }
+        let polynomial =
+            self.backend
+                .stage1_round_polynomial(self.session, self.step, round, claim)?;
+        let crate::backend::Stage1RoundPolynomial::EqFactored(polynomial) = polynomial else {
+            return Err(AkitaError::InvalidProof);
+        };
+        if polynomial.degree() != self.degree {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(polynomial)
+    }
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        if round != self.next_round {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.backend
+            .bind_stage1_challenge(self.session, self.step, round, challenge)?;
+        self.next_round += 1;
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        if self.next_round != self.equality_point.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+}
+
+struct Stage1StandardSumcheck<
+    'a,
+    F: Field + CanonicalEncoding,
+    E: Field,
+    B: crate::backend::OpaqueStage1Kernel<F, E>,
+> {
+    backend: &'a B,
+    session: &'a mut B::Stage1SessionHandle,
+    step: crate::backend::Stage1Step,
+    claim: E,
+    rounds: usize,
+    degree: usize,
+    next_round: usize,
+    field: std::marker::PhantomData<F>,
+}
+
+impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kernel<F, E>>
+    akita_sumcheck::SumcheckKernel<E> for Stage1StandardSumcheck<'_, F, E, B>
+{
+    fn num_rounds(&self) -> usize {
+        self.rounds
+    }
+    fn degree_bound(&self) -> usize {
+        self.degree
+    }
+    fn input_claim(&self) -> E {
+        self.claim
+    }
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
+        if round != self.next_round {
+            return Err(AkitaError::InvalidProof);
+        }
+        let polynomial =
+            self.backend
+                .stage1_round_polynomial(self.session, self.step, round, claim)?;
+        let crate::backend::Stage1RoundPolynomial::Standard(polynomial) = polynomial else {
+            return Err(AkitaError::InvalidProof);
+        };
+        if polynomial.coefficients().len() != self.degree + 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(polynomial)
+    }
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        if round != self.next_round {
+            return Err(AkitaError::InvalidProof);
+        }
+        self.backend
+            .bind_stage1_challenge(self.session, self.step, round, challenge)?;
+        self.next_round += 1;
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        if self.next_round != self.rounds {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn prove_stage1<F, E, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
     rs: &mut RingSwitchOutput<E, B::RelationHandle>,
     lp: &CommittedGroupParams,
@@ -12,7 +143,6 @@ pub(super) fn prove_stage1<F, E, T, B>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Send + Sync + 'static,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize + Send + Sync + 'static,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: crate::backend::OpaqueStage1Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -51,59 +181,37 @@ where
     )?;
     let product_count = plan.digit_range_plan().product_stage_arities().len();
     let rounds = domain.num_vars();
-    let mut stage_proofs = Vec::with_capacity(product_count + usize::from(physical_plan.is_none()));
     let mut claim = E::zero();
     for stage_index in 0..product_count {
         let shape = plan
             .digit_range_plan()
             .stage_shape(rounds, stage_index)
             .ok_or(AkitaError::InvalidProof)?;
-        transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_CLAIM, &claim);
         let step = crate::backend::Stage1Step::Product(stage_index);
-        let mut polynomials = Vec::with_capacity(rounds);
-        let mut challenges = Vec::with_capacity(rounds);
-        for round in 0..rounds {
-            let polynomial = crate::backend::OpaqueStage1Kernel::stage1_round_polynomial(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                claim,
+        let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
+        let mut kernel = Stage1EqSumcheck {
+            backend: ctx.backend(),
+            session: &mut session_handle,
+            step,
+            equality_point: &equality_coordinates,
+            claim,
+            degree: shape.sumcheck_proof.1,
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let (challenges, _output_claim) =
+            akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
+                &mut kernel,
+                &mut channel,
+                akita_sumcheck::NativeSumcheckShape::new(rounds, shape.sumcheck_proof.1)?,
+                0,
             )?;
-            let crate::backend::Stage1RoundPolynomial::EqFactored(polynomial) = polynomial else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if polynomial.degree() != shape.sumcheck_proof.1 {
-                return Err(AkitaError::InvalidProof);
-            }
-            transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_ROUND, &polynomial);
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                transcript,
-                akita_types::SumcheckProtocol::Stage1,
-                level,
-                u32::try_from(stage_index)
-                    .map_err(|_| AkitaError::InvalidSetup("Stage 1 index overflow".into()))?,
-                u32::try_from(round)
-                    .map_err(|_| AkitaError::InvalidSetup("Stage 1 round overflow".into()))?,
-            )?;
-            claim = akita_sumcheck::advance_eq_factored_claim(
-                claim,
-                *equality_coordinates
-                    .get(round)
-                    .ok_or(AkitaError::InvalidProof)?,
-                &polynomial,
-                challenge,
-            );
-            crate::backend::OpaqueStage1Kernel::bind_stage1_challenge(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                challenge,
-            )?;
-            polynomials.push(polynomial);
-            challenges.push(challenge);
-        }
         let crate::backend::Stage1PublicTransition::ProductChildClaims(child_claims) =
             crate::backend::OpaqueStage1Kernel::stage1_public_transition(
                 ctx.backend(),
@@ -116,16 +224,15 @@ where
         if child_claims.len() != shape.child_claims {
             return Err(AkitaError::InvalidProof);
         }
-        akita_types::append_digit_range_child_claims::<F, E, T>(&child_claims, transcript);
-        transcript.grind_query(akita_types::GrindingSite::Stage1InterstageBatch {
+        akita_types::native_stage1_prover_child_claims::<F, E>(
+            grinding,
             level,
-            stage: u32::try_from(stage_index)
-                .map_err(|_| AkitaError::InvalidSetup("Stage 1 index overflow".into()))?,
-        })?;
-        let gamma = sample_ext_challenge::<F, E, T>(
-            transcript,
-            akita_transcript::labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-        );
+            stage,
+            &child_claims,
+        )?;
+        let gamma = grinding.grinded_ext_challenge::<F, E>(
+            akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+        )?;
         let weights = plan
             .digit_range_plan()
             .interstage_batch_weights(gamma, child_claims.len());
@@ -139,15 +246,9 @@ where
             gamma,
         )?;
         equality_coordinates = challenges;
-        stage_proofs.push(akita_types::AkitaStage1StageProof {
-            sumcheck_proof: akita_sumcheck::EqFactoredSumcheckProof {
-                round_polys: polynomials,
-            },
-            child_claims,
-        });
     }
 
-    let mut final_point = Vec::with_capacity(rounds);
+    let final_point;
     let (range_image_evaluation, norm_proof) = if physical_plan.is_some() {
         let step = crate::backend::Stage1Step::FusedRangeNorm;
         let crate::backend::Stage1PublicTransition::PhysicalL2Claims {
@@ -170,21 +271,13 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
-        transcript.append_serde(
-            akita_transcript::labels::ABSORB_L2_NORM_INTEGER,
-            &response_l2_sq,
-        );
-        for subclaim in &subclaims {
-            transcript.append_serde(akita_transcript::labels::ABSORB_L2_NORM_SUBCLAIM, subclaim);
-        }
+        akita_types::native_l2_prover_prefix::<F, E>(grinding, level, response_l2_sq, &subclaims)?;
         let norm_claim = if subclaims.is_empty() {
             E::from_u128(response_l2_sq)
         } else {
-            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
-            let gamma = sample_ext_challenge::<F, E, T>(
-                transcript,
-                akita_transcript::labels::CHALLENGE_L2_NORM_BATCH,
-            );
+            let gamma = grinding.grinded_ext_challenge::<F, E>(
+                akita_types::GrindingSite::L2SubclaimBatch { level },
+            )?;
             crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
                 ctx.backend(),
                 &mut session_handle,
@@ -198,11 +291,8 @@ where
                 next
             })
         };
-        transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
-        let merge = sample_ext_challenge::<F, E, T>(
-            transcript,
-            akita_transcript::labels::CHALLENGE_L2_NORM_MERGE,
-        );
+        let merge = grinding
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::L2NormMerge { level })?;
         crate::backend::OpaqueStage1Kernel::bind_stage1_batch_challenge(
             ctx.backend(),
             &mut session_handle,
@@ -210,45 +300,33 @@ where
             merge,
         )?;
         claim += merge * norm_claim;
-        transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_CLAIM, &claim);
-        let mut round_polys = Vec::with_capacity(rounds);
-        for round in 0..rounds {
-            let polynomial = crate::backend::OpaqueStage1Kernel::stage1_round_polynomial(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                claim,
-            )?;
-            let crate::backend::Stage1RoundPolynomial::Standard(polynomial) = polynomial else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if polynomial.coefficients().len() != plan.digit_range_plan().leaf_degree() + 2
-                || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != claim
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-            let compressed = polynomial.compress();
-            transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_ROUND, &compressed);
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                transcript,
-                akita_types::SumcheckProtocol::PhysicalL2,
-                level,
-                0,
-                u32::try_from(round)
-                    .map_err(|_| AkitaError::InvalidSetup("physical L2 round overflow".into()))?,
-            )?;
-            claim = compressed.eval_from_hint(&claim, &challenge);
-            crate::backend::OpaqueStage1Kernel::bind_stage1_challenge(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                challenge,
-            )?;
-            round_polys.push(compressed);
-            final_point.push(challenge);
-        }
+        let mut kernel = Stage1StandardSumcheck {
+            backend: ctx.backend(),
+            session: &mut session_handle,
+            step,
+            claim,
+            rounds,
+            degree: plan.digit_range_plan().leaf_degree() + 1,
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::PhysicalL2,
+            level,
+            0,
+        );
+        let (point, output_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+            &mut kernel,
+            &mut channel,
+            akita_sumcheck::NativeSumcheckShape::new(
+                rounds,
+                plan.digit_range_plan().leaf_degree() + 1,
+            )?,
+            0,
+        )?;
+        claim = output_claim;
+        final_point = point;
         let crate::backend::Stage1PublicTransition::Final {
             range_image_evaluation,
             virtual_evaluations,
@@ -263,67 +341,45 @@ where
         if virtual_evaluations.len() != physical.shape().virtual_evaluation_count() {
             return Err(AkitaError::InvalidProof);
         }
-        for evaluation in &virtual_evaluations {
-            transcript.append_serde(
-                akita_transcript::labels::ABSORB_L2_VIRTUAL_EVALUATION,
-                evaluation,
-            );
-        }
+        akita_types::native_l2_prover_virtual_evaluations::<F, E>(
+            grinding,
+            level,
+            &virtual_evaluations,
+        )?;
         (
             range_image_evaluation,
-            Some(akita_types::PhysicalL2NormProof {
-                response_l2_sq,
-                subclaims,
-                virtual_evaluations,
-                sumcheck: akita_sumcheck::SumcheckProof { round_polys },
-            }),
+            Some((response_l2_sq, virtual_evaluations)),
         )
     } else {
         let step = crate::backend::Stage1Step::RangeLeaf;
-        transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_CLAIM, &claim);
-        let mut polynomials = Vec::with_capacity(rounds);
-        for round in 0..rounds {
-            let polynomial = crate::backend::OpaqueStage1Kernel::stage1_round_polynomial(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                claim,
-            )?;
-            let crate::backend::Stage1RoundPolynomial::EqFactored(polynomial) = polynomial else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if polynomial.degree() != plan.digit_range_plan().leaf_degree() {
-                return Err(AkitaError::InvalidProof);
-            }
-            transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_ROUND, &polynomial);
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                transcript,
-                akita_types::SumcheckProtocol::Stage1,
-                level,
-                u32::try_from(product_count)
-                    .map_err(|_| AkitaError::InvalidSetup("Stage 1 index overflow".into()))?,
-                u32::try_from(round)
-                    .map_err(|_| AkitaError::InvalidSetup("Stage 1 round overflow".into()))?,
-            )?;
-            claim = akita_sumcheck::advance_eq_factored_claim(
-                claim,
-                *equality_coordinates
-                    .get(round)
-                    .ok_or(AkitaError::InvalidProof)?,
-                &polynomial,
-                challenge,
-            );
-            crate::backend::OpaqueStage1Kernel::bind_stage1_challenge(
-                ctx.backend(),
-                &mut session_handle,
-                step,
-                round,
-                challenge,
-            )?;
-            polynomials.push(polynomial);
-            final_point.push(challenge);
-        }
+        let stage = u32::try_from(product_count).map_err(|_| AkitaError::InvalidProof)?;
+        let mut kernel = Stage1EqSumcheck {
+            backend: ctx.backend(),
+            session: &mut session_handle,
+            step,
+            equality_point: &equality_coordinates,
+            claim,
+            degree: plan.digit_range_plan().leaf_degree(),
+            next_round: 0,
+            field: std::marker::PhantomData,
+        };
+        let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+            grinding,
+            akita_types::SumcheckProtocol::Stage1,
+            level,
+            stage,
+        );
+        let (point, output_claim) = akita_sumcheck::prove_eq_factored_sumcheck_native::<F, E, _, _>(
+            &mut kernel,
+            &mut channel,
+            akita_sumcheck::NativeSumcheckShape::new(
+                rounds,
+                plan.digit_range_plan().leaf_degree(),
+            )?,
+            0,
+        )?;
+        claim = output_claim;
+        final_point = point;
         let crate::backend::Stage1PublicTransition::Final {
             range_image_evaluation,
             virtual_evaluations,
@@ -338,12 +394,6 @@ where
         if !virtual_evaluations.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        stage_proofs.push(akita_types::AkitaStage1StageProof {
-            sumcheck_proof: akita_sumcheck::EqFactoredSumcheckProof {
-                round_polys: polynomials,
-            },
-            child_claims: Vec::new(),
-        });
         (range_image_evaluation, None)
     };
     let final_claims =
@@ -352,18 +402,16 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let stage1_point = final_claims.point().to_vec();
-    let stage1_proof = AkitaStage1Proof {
-        stages: stage_proofs,
+    akita_types::native_stage1_prover_range_image::<F, E>(
+        grinding,
+        level,
+        u32::try_from(product_count).map_err(|_| AkitaError::InvalidProof)?,
         range_image_evaluation,
-        norm_proof,
-    };
-    let range_image_evaluation = stage1_proof.range_image_evaluation;
+    )?;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
-            let norm_proof = stage1_proof
-                .norm_proof
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?;
+            let (response_l2_sq, virtual_evaluations) =
+                norm_proof.as_ref().ok_or(AkitaError::InvalidProof)?;
             let InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
             } = lp.inner().matrix.security_route()
@@ -372,7 +420,7 @@ where
                     "physical L2 plan disagrees with the A security route".into(),
                 ));
             };
-            if norm_proof.response_l2_sq > response_l2_sq_cap {
+            if *response_l2_sq > response_l2_sq_cap {
                 return Err(AkitaError::InvalidInput(
                     "folded response exceeds the scheduled L2 cap".into(),
                 ));
@@ -380,13 +428,13 @@ where
             Some(PhysicalL2ProverReplay {
                 plan: physical_plan,
                 point: stage1_point.clone(),
-                virtual_evaluations: norm_proof.virtual_evaluations.clone(),
+                virtual_evaluations: virtual_evaluations.clone(),
                 batching: Vec::new(),
                 claim: E::zero(),
             })
         }
         None => {
-            if stage1_proof.norm_proof.is_some() {
+            if norm_proof.is_some() {
                 return Err(AkitaError::InvalidInput(
                     "L-infinity route produced an L2 norm proof".into(),
                 ));
@@ -395,7 +443,6 @@ where
         }
     };
     Ok(Stage1ProveOutput {
-        proof: stage1_proof,
         point: stage1_point,
         range_image_evaluation,
         physical_l2,
@@ -403,10 +450,10 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage2<F, E, T, B>(
+pub(super) fn prove_stage2<F, E, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     level: usize,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     batching_coeff: E,
     rs: RingSwitchOutput<E, B::RelationHandle>,
     stage1_point: &[E],
@@ -422,7 +469,6 @@ pub(super) fn prove_stage2<F, E, T, B>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: crate::backend::OpaqueStage2Kernel<F, E>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -497,33 +543,31 @@ where
         rounds: num_rounds,
         field: std::marker::PhantomData,
     };
-    let mut round = 0u32;
-    let (proof, sumcheck_challenges, claim) =
-        akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut kernel, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::Stage2,
-                level,
-                0,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-            Ok(challenge)
-        })?;
+    let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::Stage2,
+        level,
+        0,
+    );
+    let (sumcheck_challenges, claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+        &mut kernel,
+        &mut channel,
+        akita_sumcheck::NativeSumcheckShape::new(num_rounds, 3)?,
+        0,
+    )?;
     let final_output =
         crate::backend::OpaqueStage2Kernel::finish_stage2(ctx.backend(), session_handle)?;
     if claim != final_output.final_claim() {
         return Err(AkitaError::InvalidProof);
     }
     Ok(Stage2ProveOutput {
-        proof,
         challenges: sumcheck_challenges,
         witness_evaluation: final_output.witness_evaluation(),
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_stage3<F, E, T, B>(
+pub(super) fn prove_stage3<F, E, B>(
     backend: &B,
     session: &B::ProofSessionHandle,
     level: usize,
@@ -537,7 +581,7 @@ pub(super) fn prove_stage3<F, E, T, B>(
     alpha: E,
     sumcheck_challenges: &[E],
     relation_address_geometry: akita_types::RelationAddressGeometry,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -547,7 +591,6 @@ where
         + AkitaSerialize
         + jolt_field::Unreduced
         + jolt_field::MulBaseUnreduced<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
     match setup_contribution_mode {
@@ -594,10 +637,13 @@ where
                     stage2_challenges: sumcheck_challenges,
                     address_geometry: relation_address_geometry,
                 })?;
-            transcript.append_serde(
-                akita_transcript::labels::ABSORB_SETUP_PREFIX_SLOT,
-                &slot.public.id,
-            );
+            let mut encoded_slot = Vec::new();
+            slot.public
+                .id
+                .serialize_compressed(&mut encoded_slot)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            akita_types::native_stage3_public_slot_prover(grinding, level, &encoded_slot)?;
+            akita_types::native_stage3_prover_claim::<F, E>(grinding, level, setup_product_claim)?;
             let mut kernel = Stage3Sumcheck {
                 backend,
                 session: &mut session,
@@ -606,28 +652,29 @@ where
                 next_round: 0,
                 field: std::marker::PhantomData,
             };
-            let mut round = 0u32;
-            let (sumcheck, setup_prefix_point, _) =
-                akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut kernel, transcript, |tr| {
-                    let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                        tr,
-                        akita_types::SumcheckProtocol::Stage3,
-                        level,
-                        0,
-                        round,
-                    )?;
-                    round = round
-                        .checked_add(1)
-                        .ok_or_else(|| AkitaError::InvalidSetup("Stage 3 round overflow".into()))?;
-                    Ok(challenge)
-                })?;
+            let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+                grinding,
+                akita_types::SumcheckProtocol::Stage3,
+                level,
+                0,
+            );
+            let (setup_prefix_point, _) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+                &mut kernel,
+                &mut channel,
+                akita_sumcheck::NativeSumcheckShape::new(
+                    prefix_len.trailing_zeros() as usize,
+                    akita_types::SETUP_SUMCHECK_DEGREE,
+                )?,
+                0,
+            )?;
             let setup_prefix_eval = backend.finish_stage3(session)?;
+            akita_types::native_stage3_prover_prefix_eval::<F, E>(
+                grinding,
+                level,
+                setup_prefix_eval,
+            )?;
             Ok(Some(Stage3ProveOutput {
-                proof: SetupSumcheckProof {
-                    claim: setup_product_claim,
-                    setup_prefix_eval,
-                    sumcheck,
-                },
+                setup_prefix_eval,
                 setup_prefix_point,
             }))
         }

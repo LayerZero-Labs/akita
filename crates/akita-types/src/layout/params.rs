@@ -472,27 +472,6 @@ impl CommittedGroupParams {
         )
     }
 
-    /// Sent commitment row count for one opening group.
-    pub fn group_commitment_rows(
-        &self,
-        opening_batch: &OpeningClaimsLayout,
-        group_index: usize,
-    ) -> Result<usize, AkitaError> {
-        let final_group_index = self.validate_opening_batch(opening_batch)?;
-        if group_index == final_group_index {
-            return self
-                .outer_slice_count()
-                .logical_output_rows(self.outer().matrix.output_rank());
-        }
-        let group = self
-            .preceding_group_params(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        group
-            .profile
-            .outer_slice_count
-            .logical_output_rows(group.profile.outer.matrix.output_rank())
-    }
-
     /// This fold's own new group.
     ///
     /// Takes no layout because the fold stores its own authoritative layout.
@@ -524,22 +503,6 @@ impl CommittedGroupParams {
             ));
         }
         Ok(self.final_group())
-    }
-
-    /// Physical source encoding of the group at `group_index`.
-    ///
-    /// The fold's own new witness carries this fold's encoding; every earlier
-    /// group is canonical by admission, because
-    /// `GroupCommitPhaseParams::try_from_params` refuses to freeze a
-    /// non-canonical standalone profile. This is the single owner that replaces
-    /// the group accessor's hard-coded constant.
-    #[must_use]
-    pub fn source_encoding_of(&self, group_index: usize) -> crate::CommittedSourceEncoding {
-        if group_index == self.preceding_group_count() {
-            self.source_encoding
-        } else {
-            crate::CommittedSourceEncoding::CanonicalCoefficientTable
-        }
     }
 
     /// Every group this fold opens, in canonical transcript order.

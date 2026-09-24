@@ -26,17 +26,10 @@ pub use eval::{
 };
 pub use evaluation_trace::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
-    scale_evaluation_trace_claim_coefficients, EvaluationTraceGroupParameters,
-    EvaluationTraceInputs,
+    EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use layout::TraceWeightLayout;
-pub use stage2::{
-    build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, eval_dense_trace_table,
-    root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TraceClaim,
-    TracePublicWeights, TraceTermBatch,
-};
+pub use stage2::{build_trace_table_scaled, TraceClaim, TracePublicWeights, TraceTermBatch};
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
 #[cfg(test)]

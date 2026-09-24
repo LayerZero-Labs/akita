@@ -26,11 +26,14 @@ pub mod stage1;
 pub mod terminal_witness;
 
 mod containers;
+
+#[cfg(test)]
 mod levels;
 mod shapes;
 mod tail_segments;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
 mod wire;
 mod witness_emission;
 
@@ -41,14 +44,13 @@ mod witness_emission;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    sample_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    sample_row_coefficients_native, verify_row_coefficients_native, GroupBatchStatement,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
-    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    ring_subfield_packed_extension_opening_point, PreparedOpeningPoint, PreparedRingMultiplier,
+    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
@@ -59,26 +61,23 @@ pub use coefficient_packing_relation::{
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
-pub use commitment::{
-    AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
-};
+pub use commitment::{Commitment, CommittedGroup};
 pub use compression_relation_weights::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
     ReducedCompressionRelationWeights,
 };
-pub use containers::{
-    append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
-};
+pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
-pub use levels::{
-    AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof,
-    SetupSumcheckProof, TerminalLevelProof,
+
+#[cfg(test)]
+pub(crate) use levels::{
+    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
+    FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
+    TerminalLevelProof,
 };
 pub use relation::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs,
-    compression_relation_claim_from_rhs_extension, generate_relation_rhs,
+    assemble_compressed_relation_rhs, assemble_relation_rhs, generate_relation_rhs,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
     relation_rhs_row_count, relation_row_weight, RelationGroupRows, RelationRhsLayout,
@@ -95,7 +94,7 @@ pub use ring_relation::{
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
-pub use scheme::{CommitmentVerifier, OpeningPoints};
+pub use scheme::OpeningPoints;
 pub use setup::{
     derive_public_matrix_prefix, sample_akita_setup_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
@@ -115,27 +114,19 @@ pub use setup_prefix::{
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
-    canonical_extension_opening_reduction_shape, canonical_proof_shape, AkitaBatchedProofShape,
-    AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    canonical_extension_opening_reduction_shape, AkitaStage1StageShape,
+    ExtensionOpeningReductionShape, PhysicalL2NormProofWireShape, SETUP_SUMCHECK_DEGREE,
 };
-pub use stage1::{
-    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
-};
+pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
-    build_terminal_response, build_terminal_response_from_groups,
-    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
-    raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
-    TerminalResponseShape,
+    build_terminal_response_from_groups, build_terminal_response_from_payload,
+    decode_terminal_z_golomb_payload, raw_field_segment_bytes, terminal_response_upper_bound_bytes,
+    terminal_response_z_payload_bytes, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse,
+    TerminalResponseGroupParts, TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 pub use witness_emission::{
-    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    WitnessCoefficientSink,
+    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, WitnessCoefficientSink,
 };
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
@@ -144,12 +135,10 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-use akita_sumcheck::EqFactoredSumcheckProof;
-use akita_sumcheck::{
-    uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
-};
-use akita_transcript::Transcript;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use akita_sumcheck::uniform_sumcheck_shape;
+#[cfg(test)]
+use jolt_field::CanonicalEncoding;
+use jolt_field::Field;
 use std::io::{Read, Write};
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;

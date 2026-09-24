@@ -10,11 +10,11 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }

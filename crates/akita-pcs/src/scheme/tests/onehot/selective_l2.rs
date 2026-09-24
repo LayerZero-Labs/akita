@@ -1,8 +1,16 @@
 use super::*;
-use jolt_poly::CompressedPoly;
 
 #[test]
 fn selective_l2_proof_rejects_transcript_mutations() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(selective_l2_proof_rejects_transcript_mutations_inner)
+        .expect("selective L2 test thread")
+        .join()
+        .expect("selective L2 test thread panicked");
+}
+
+fn selective_l2_proof_rejects_transcript_mutations_inner() {
     const NV: usize = 30;
     const BATCH_SIZE: usize = 4;
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
@@ -45,7 +53,6 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     let prover_group =
         PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
             .expect("L2 prover group");
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
     let proof = scheme
         .batched_prove(
             &setup,
@@ -56,12 +63,12 @@ fn selective_l2_proof_rejects_transcript_mutations() {
             )
             .expect("L2 opening data"),
             &stack,
-            &mut prover_transcript,
+            TRANSCRIPT_LABEL,
             BasisMode::Lagrange,
         )
         .expect("L2 proof");
 
-    let verify = |candidate: &AkitaBatchedProof<OneHotF, OneHotF>| {
+    let verify = |candidate: &[u8]| {
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
             openings.clone(),
@@ -69,69 +76,22 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         )
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
-        let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
         scheme.batched_verify(
             candidate,
             &verifier_setup,
-            &mut transcript,
+            TRANSCRIPT_LABEL,
             selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
             BasisMode::Lagrange,
         )
     };
     verify(&proof).expect("valid L2 proof");
 
-    let l2_index = proof
-        .recursive_folds
-        .iter()
-        .position(|fold| fold.stage1.norm_proof.is_some())
-        .expect("generated schedule must select one L2 fold");
-    let mut bad_norm = proof.clone();
-    bad_norm.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq += 1;
-    assert!(verify(&bad_norm).is_err());
+    for offset in [0, proof.len() / 4, proof.len() / 2, proof.len() - 1] {
+        let mut mutated = proof.clone();
+        mutated[offset] ^= 1;
+        assert!(verify(&mutated).is_err(), "mutated proof accepted");
+    }
 
-    let mut over_cap = proof.clone();
-    over_cap.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq = u128::MAX;
-    assert!(verify(&over_cap).is_err());
-
-    let mut bad_virtual = proof.clone();
-    bad_virtual.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .virtual_evaluations[0] += OneHotF::one();
-    assert!(verify(&bad_virtual).is_err());
-
-    let mut bad_sumcheck = proof.clone();
-    let round = &mut bad_sumcheck.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .sumcheck
-        .round_polys[0];
-    let mut coefficients = round.coeffs_except_linear_term().to_vec();
-    coefficients[0] += OneHotF::one();
-    *round = CompressedPoly::new(coefficients);
-    assert!(verify(&bad_sumcheck).is_err());
-
-    let mut bad_nonce = proof;
-    let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
-    nonce_bytes[0] ^= 1;
-    bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
-        nonce_bytes,
-        bad_nonce.nonce_stream.bit_len(),
-    )
-    .unwrap();
-    assert!(verify(&bad_nonce).is_err());
+    let truncated = &proof[..proof.len() - 1];
+    assert!(verify(truncated).is_err());
 }

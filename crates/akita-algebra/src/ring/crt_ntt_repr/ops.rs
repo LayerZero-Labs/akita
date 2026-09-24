@@ -289,79 +289,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Accumulate `lhs * rhs(digits)` into `self` while reusing caller-owned
-    /// scratch storage for the digit CRT+NTT conversion.
-    #[inline]
-    pub fn add_assign_pointwise_mul_i8_with_lut_scratch(
-        &mut self,
-        lhs: &Self,
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
-        scratch: &mut [[MontCoeff<W>; D]; K],
-    ) {
-        #[cfg(target_arch = "aarch64")]
-        if params.kernel_plan.uses_neon() {
-            for (k, scratch_limb) in scratch.iter_mut().enumerate() {
-                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = params.kernel_plan.x86_pointwise_mode();
-        for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, digit);
-            }
-            forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
-
-            let prime = params.primes[k];
-            let acc_limb = &mut self.limbs[k];
-            let lhs_limb = &lhs.limbs[k];
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = x86_mode {
-                // SAFETY: guarded by x86 runtime dispatch.
-                unsafe {
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc_limb,
-                        lhs_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                }
-                continue;
-            }
-            Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
-        }
-    }
-
     /// Transform a short run of signed-i8 columns and accumulate their
     /// pointwise dot product into every output row.
     ///
@@ -838,15 +765,5 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
-    }
-
-    /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).
-    ///
-    /// This is a pure index permutation per CRT limb and does not negate values.
-    pub fn conjugation_automorphism_ntt(&self) -> Self {
-        let limbs = std::array::from_fn(|k| {
-            std::array::from_fn(|j| self.limbs[k][D.saturating_sub(1) - j])
-        });
-        Self { limbs }
     }
 }

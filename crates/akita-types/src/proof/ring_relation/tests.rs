@@ -12,6 +12,7 @@ use crate::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout, RingOpeningPoint,
 };
+use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};

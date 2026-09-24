@@ -95,7 +95,4 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
 }
 
 #[cfg(test)]
-mod stage1_roundtrip_tests;
-
-#[cfg(test)]
 mod tests;

@@ -9,7 +9,6 @@ use akita_prover::{
     ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
@@ -73,7 +72,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                     scheme.schedules()
                 ),
                 &foreign,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
+                DOMAIN,
                 BasisMode::Lagrange,
             )
             .is_err());
@@ -89,7 +88,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                 &setup,
                 claims(&changed, output.private_handle.clone(), scheme.schedules()),
                 &backend,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
+                DOMAIN,
                 BasisMode::Lagrange,
             )
             .is_err());
@@ -109,13 +108,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         )
         .unwrap();
         assert!(scheme
-            .batched_prove(
-                &setup,
-                false_claim,
-                &backend,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, false_claim, &backend, DOMAIN, BasisMode::Lagrange,)
             .is_err());
 
         // A public statement can arrive over the wire without carrying the
@@ -136,13 +129,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             let opening = claims(&decoded, output.private_handle.clone(), scheme.schedules());
             let selection = opening.selection();
             let proof = scheme
-                .batched_prove(
-                    &setup,
-                    opening,
-                    &backend,
-                    &mut AkitaTranscript::<F>::new(DOMAIN),
-                    BasisMode::Lagrange,
-                )
+                .batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange)
                 .unwrap();
             let public = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 vec![F::from_u64(2); NV],
@@ -155,14 +142,12 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                 .batched_verify(
                     &proof,
                     &scheme.setup_verifier(&setup).unwrap(),
-                    &mut AkitaTranscript::<F>::new(DOMAIN),
+                    DOMAIN,
                     GroupBatchStatement::new(selection, public).unwrap(),
                     BasisMode::Lagrange,
                 )
                 .unwrap();
-            let mut bytes = Vec::new();
-            proof.serialize_compressed(&mut bytes).unwrap();
-            bytes
+            proof
         };
         let (first, second) = std::thread::scope(|scope| {
             let a = std::thread::Builder::new()

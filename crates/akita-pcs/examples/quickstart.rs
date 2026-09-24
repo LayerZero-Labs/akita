@@ -7,11 +7,7 @@ use workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_prover::SelectedProverOpeningData;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
-use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-};
+use akita_types::{BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_field::CanonicalEncoding;
 use std::sync::Arc;
 
@@ -55,21 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let selection = prover_data.selection();
 
-    let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
     let proof = scheme.batched_prove(
         &setup,
         prover_data,
         &backend,
-        &mut prover_transcript,
+        TRANSCRIPT_DOMAIN,
         BasisMode::Lagrange,
-    )?;
-
-    let proof_shape = proof.shape();
-    let mut proof_bytes = Vec::new();
-    proof.serialize_compressed(&mut proof_bytes)?;
-    let decoded_proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-        &mut std::io::Cursor::new(&proof_bytes),
-        &proof_shape,
     )?;
 
     let verifier_setup = scheme.setup_verifier(&setup)?;
@@ -79,16 +66,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &commit_output.committed_group,
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
-    let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
     scheme.batched_verify(
-        &decoded_proof,
+        &proof,
         &verifier_setup,
-        &mut verifier_transcript,
+        TRANSCRIPT_DOMAIN,
         statement,
         BasisMode::Lagrange,
     )?;
 
-    println!("Akita proof verified ({} bytes)", proof_bytes.len());
+    println!("Akita proof verified");
     Ok(())
 }
 

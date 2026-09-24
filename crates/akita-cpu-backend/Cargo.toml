@@ -14,11 +14,11 @@ akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba33d69acfbb838cd1fbc99a2c4c62f1ada734d9", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -28,9 +28,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 rand = "0.8"
-rand_core = "0.6"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
@@ -83,10 +81,6 @@ harness = false
 
 [[bench]]
 name = "decompose_fold"
-harness = false
-
-[[bench]]
-name = "digit_range"
 harness = false
 
 [[bench]]

@@ -378,12 +378,6 @@ pub(crate) enum ProjectedEqPairTensorState {
 }
 
 impl<E: Field> SetupContributionPlan<E> {
-    /// Equality window shared by every direct contribution over this opening point.
-    #[must_use]
-    pub fn eq_window(&self) -> &OffsetEqWindow<E> {
-        self.relation_address.equality_window()
-    }
-
     /// Prepared D/B/A column equality slices for `group_id`.
     ///
     /// The D-role slice is laid out
