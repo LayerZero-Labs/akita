@@ -40,10 +40,12 @@ recent push, and passing Socket Security checks. `main` keeps a linear history,
 so pull requests merge by squash or rebase. Any contributor with write access
 can merge once these conditions hold.
 
-`dev` accepts changes only through pull requests with passing CI, merged with a
-merge commit, and it rejects force pushes and deletion. It does not require
-maintainer-team approval. Any contributor with write access can merge into
-`dev`. Ask another `dev`
+`dev` accepts changes only through pull requests with passing CI, and it
+rejects force pushes and deletion. It allows squash merges and merge commits.
+Squash-merge every pull request into `dev` except a sync from `main`, which
+needs a merge commit (see [Sync `main` into `dev`](#sync-main-into-dev)). `dev`
+does not require maintainer-team approval. Any contributor with write access
+can merge into `dev`. Ask another `dev`
 contributor to review changes that modify files from `main` or verifier-reachable
 code.
 
@@ -137,19 +139,25 @@ rules in [`AGENTS.md`](../AGENTS.md).
 
 Maintainer review can take weeks. To build on a seam before it lands on `main`:
 
-1. Merge the seam pull request's branch into `dev` with a merge commit. Do not
-   cherry-pick it. Shared history lets the later sync merge cleanly when `main`
-   takes the same change.
-2. List the carried seam in the extension's tracking issue.
-3. If `main` merges a different version of the seam, take the `main` version
+1. Sync `main` into `dev`, so that the next pull request contains only the
+   seam.
+2. Open a pull request from the seam branch into `dev`, and squash-merge it.
+3. List the carried seam in the extension's tracking issue.
+4. If `main` merges a different version of the seam, take the `main` version
    during the next sync and adapt the extension to it.
+
+`main` squash- or rebase-merges the seam, so the commit on `main` never shares
+history with the copy on `dev`. The later sync merges cleanly wherever the two
+copies are identical.
 
 ### Sync `main` into `dev`
 
 1. After each merge into `main`, open a pull request from `main` into `dev`.
-2. Merge it with **Create a merge commit**, the only merge method that `dev`
-   allows. A squash or rebase merge would remove the `main` commits from the
-   `dev` history, so every later sync would conflict again.
+2. Merge it with **Create a merge commit**, not a squash merge. Check the
+   selected merge method before you merge. A merge commit makes `main` a parent
+   of `dev` and moves their merge base forward. After a squash merge, the next
+   sync starts from the old merge base and conflicts on lines that `main` has
+   changed since, and the footprint command below lists changes from `main`.
 3. Resolve conflicts in favor of the `main` code, then reattach the extension at
    its seam.
 4. Regenerate generated files instead of merging them by hand. Run
