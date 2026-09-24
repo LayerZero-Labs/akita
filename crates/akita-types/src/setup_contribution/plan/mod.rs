@@ -53,14 +53,6 @@ use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
-fn divide_aligned(
-    value: usize,
-    divisor: usize,
-    context: &'static str,
-) -> Result<usize, AkitaError> {
-    checked::exact_div(value, divisor).ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
 fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
 where
     F: Field + CanonicalEncoding,

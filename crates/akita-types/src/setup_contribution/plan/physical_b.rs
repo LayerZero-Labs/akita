@@ -218,11 +218,15 @@ pub(super) fn build_group_b_setup_tensors<E: Field>(
                     0,
                     0,
                 )?;
-                let relation_lane_start = divide_aligned(
+                let relation_lane_start = checked::exact_div(
                     witness_coefficient,
                     relation_geometry.relation_coefficient_block_len(),
-                    "setup B coefficient address is not relation-block aligned",
-                )?;
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "setup B coefficient address is not relation-block aligned".into(),
+                    )
+                })?;
                 let row_weights = slice_row_weights.get(slice_index).ok_or_else(|| {
                     AkitaError::InvalidSetup("B slice row weights are missing".into())
                 })?;

@@ -544,11 +544,15 @@ fn build_group_role_tensors<E: Field>(
                 0,
                 0,
             )?;
-            let d_relation_lane_start = divide_aligned(
+            let d_relation_lane_start = checked::exact_div(
                 d_witness_coefficient,
                 relation_geometry.relation_coefficient_block_len(),
-                "setup D coefficient address is not relation-block aligned",
-            )?;
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup D coefficient address is not relation-block aligned".into(),
+                )
+            })?;
             d_tensors.push(EqPairTensorFamily::new(
                 d_setup_column,
                 d_relation_lane_start,
@@ -587,11 +591,15 @@ fn build_group_role_tensors<E: Field>(
                     0,
                     0,
                 )?;
-                let b_relation_lane_start = divide_aligned(
+                let b_relation_lane_start = checked::exact_div(
                     b_witness_coefficient,
                     relation_geometry.relation_coefficient_block_len(),
-                    "setup B coefficient address is not relation-block aligned",
-                )?;
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "setup B coefficient address is not relation-block aligned".into(),
+                    )
+                })?;
                 b_tensors.push(EqPairTensorFamily::new(
                     b_setup_column,
                     b_relation_lane_start,
@@ -629,11 +637,15 @@ fn build_group_role_tensors<E: Field>(
                 0,
                 0,
             )?;
-            let a_relation_lane_start = divide_aligned(
+            let a_relation_lane_start = checked::exact_div(
                 a_witness_coefficient,
                 relation_geometry.relation_coefficient_block_len(),
-                "setup A coefficient address is not relation-block aligned",
-            )?;
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup A coefficient address is not relation-block aligned".into(),
+                )
+            })?;
             a_tensors.push(EqPairTensorFamily::new(
                 0,
                 a_relation_lane_start,
