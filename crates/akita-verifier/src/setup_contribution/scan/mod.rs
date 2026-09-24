@@ -129,29 +129,28 @@ where
         build_root_projection("B", alpha_pows_b, geometry.b_ratio())?,
         build_root_projection("D", alpha_pows_d, geometry.d_ratio())?,
     ];
-    let projections =
-        if plan.groups().len() == 1 && plan.groups()[0].role_dims == geometry.role_dims() {
-            vec![root_projections]
-        } else {
-            plan.groups()
-                .iter()
-                .map(|group| {
-                    let build = |role: &'static str, dimension: usize, ratio: usize| {
-                        let powers = scalar_powers(alpha, dimension);
-                        role_projection(&powers, base_pows, ratio).ok_or_else(|| {
-                            AkitaError::InvalidSetup(format!(
-                                "{role} alpha powers do not decompose over the shared setup base"
-                            ))
-                        })
-                    };
-                    Ok([
-                        build("A", group.role_dims.d_a(), group.a_ratio)?,
-                        build("B", group.role_dims.d_b(), group.b_ratio)?,
-                        build("D", group.role_dims.d_d(), group.d_ratio)?,
-                    ])
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?
-        };
+    let projections = if matches!(plan.groups(), [only] if only.role_dims == geometry.role_dims()) {
+        vec![root_projections]
+    } else {
+        plan.groups()
+            .iter()
+            .map(|group| {
+                let build = |role: &'static str, dimension: usize, ratio: usize| {
+                    let powers = scalar_powers(alpha, dimension);
+                    role_projection(&powers, base_pows, ratio).ok_or_else(|| {
+                        AkitaError::InvalidSetup(format!(
+                            "{role} alpha powers do not decompose over the shared setup base"
+                        ))
+                    })
+                };
+                Ok([
+                    build("A", group.role_dims.d_a(), group.a_ratio)?,
+                    build("B", group.role_dims.d_b(), group.b_ratio)?,
+                    build("D", group.role_dims.d_d(), group.d_ratio)?,
+                ])
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?
+    };
 
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Opening),

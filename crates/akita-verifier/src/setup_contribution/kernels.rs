@@ -118,7 +118,7 @@ pub(super) fn role_projection<E: Field>(
     Some(RoleProjection::Projected {
         scales,
         shift: ratio.trailing_zeros() as usize,
-        mask: ratio - 1,
+        mask: ratio.checked_sub(1)?,
     })
 }
 

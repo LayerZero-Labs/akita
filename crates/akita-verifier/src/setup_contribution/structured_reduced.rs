@@ -42,7 +42,10 @@ fn embedded_terminal_functionals<E: Field>(
                 .filter(|&end| end <= ambient_dimension)
                 .ok_or(AkitaError::InvalidProof)?;
             let mut embedded = vec![E::zero(); ambient_dimension];
-            embedded[start..end].copy_from_slice(native_equality);
+            embedded
+                .get_mut(start..end)
+                .ok_or(AkitaError::InvalidProof)?
+                .copy_from_slice(native_equality);
             terminal_residue_kernel(&embedded, alpha)
         })
         .collect()

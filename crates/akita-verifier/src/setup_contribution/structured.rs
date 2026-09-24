@@ -419,12 +419,20 @@ where
         let expected_d_offset = setup_block
             .checked_mul(e_stride)
             .ok_or(AkitaError::InvalidProof)?;
-        debug_assert_eq!(d_tensor.left_offset, expected_d_offset);
+        if d_tensor.left_offset != expected_d_offset {
+            return Err(AkitaError::InvalidSetup(
+                "structured D tensor offset does not match its setup block".into(),
+            ));
+        }
         if let Some(b_tensor) = b_tensor {
             let expected_b_offset = setup_block
                 .checked_mul(t_stride)
                 .ok_or(AkitaError::InvalidProof)?;
-            debug_assert_eq!(b_tensor.left_offset, expected_b_offset);
+            if b_tensor.left_offset != expected_b_offset {
+                return Err(AkitaError::InvalidSetup(
+                    "structured B tensor offset does not match its setup block".into(),
+                ));
+            }
         }
         let claim_start = claim
             .checked_mul(group.num_live_blocks)
