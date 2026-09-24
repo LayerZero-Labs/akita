@@ -72,7 +72,8 @@ impl<F: Field> PortableCompressionState<F> {
     }
 
     /// Relation mode represented by this checked compression material.
-    pub fn relation_mode(&self) -> RingRelationMode {
+    #[cfg(test)]
+    pub(crate) fn relation_mode(&self) -> RingRelationMode {
         match self.material.as_ref() {
             PortableCompressionMaterial::QuotientLift { .. } => RingRelationMode::QuotientLift,
             PortableCompressionMaterial::ReducedEvaluation { .. } => {
