@@ -99,8 +99,8 @@ B, and D setup rows, their witness weights, and the powers of the ring challenge
 used at the sampled relation point.
 
 In direct mode, the verifier uses this plan to scan the public setup. In
-offloaded mode, Stage 2 accepts a claimed value and saves the same plan for
-Stage 3. The prover and verifier then run a degree two sumcheck over two
+offloaded mode, Stage 2 accepts a claimed value, and Stage 3 prepares the same
+plan again from the Stage 2 challenge point. The prover and verifier then run a degree two sumcheck over two
 coordinates:
 
 - one coordinate selects a coefficient inside a setup ring; and

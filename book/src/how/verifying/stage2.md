@@ -73,8 +73,8 @@ w(r)\widetilde M_{native}(\tau_1,r).
 ```
 
 The previous chapter explains `M`. Direct setup mode reads the public setup
-during this evaluation. Deferred setup mode substitutes the Stage 3 setup claim
-and caches the exact `SetupContributionPlan` for Stage 3.
+during this evaluation. Deferred setup mode substitutes the Stage 3 setup claim;
+Stage 3 then prepares its setup-index weight from the same challenge point.
 
 Compressed F and H rows are evaluated separately because their digit support
 and native dimensions differ from the ordinary A, B, and D roles. Their result

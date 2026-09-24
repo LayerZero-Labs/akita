@@ -11,8 +11,10 @@
 //!   structured groups in closed form from the plan alone.
 //! - `segments`: the packed D/B/A partition used by the specialized
 //!   single-group direct scanner.
-//! - `setup_index_weight`: the setup-index weight polynomial used by the
-//!   recursive stage-3 setup-product sumcheck.
+//! - `setup_index_weight`: the setup-index weight used by the recursive
+//!   stage-3 setup-product sumcheck. The prover materializes it densely from
+//!   the plan; the verifier evaluates it through [`SetupIndexWeightMle`],
+//!   whose paired-equality tensors the plan does not store.
 //! - `scan`: direct verifier evaluation of the setup matrix. Multi-group scans
 //!   add every group's weight before evaluating each shared setup ring once.
 //!

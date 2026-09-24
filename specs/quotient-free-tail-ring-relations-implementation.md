@@ -322,9 +322,10 @@ weights they need without knowing planner policy or proof serialization.
 
 ### Fused setup scan
 
-`SetupContributionPlan::evaluate_direct` currently receives native alpha-power
-slices. It SHOULD evolve to consume a checked coefficient-functional view for
-each role. The outer fused scan, setup bounds, segment scheduling, parallel job
+`SetupContributionPlan::evaluate_direct` consumes a `DirectScan`, built once
+from the plan and a checked `PreparedCoefficientFunctional`. The scan owns the
+per-role column weights for that functional; the plan stays functional-free.
+The outer fused scan, setup bounds, segment scheduling, parallel job
 partition, group fusion, and base-ring projection remain common.
 
 The per-ring inner operation becomes:
@@ -339,9 +340,9 @@ The common scanner MUST specialize the lifted power path where
 discarding its optimized inner product.
 
 Because reduced evaluation is forbidden when setup is deferred, the
-reduced-evaluation branch
-does not cache a Stage-3 `SetupContributionPlan` and does not consume
-`setup_prefix_eval`.
+reduced-evaluation branch never builds a Stage-3 `SetupIndexWeightMle` and
+does not consume `setup_prefix_eval`. The verifier rejects a deferred setup
+claim at a reduced-evaluation level with `InvalidSetup` before setup planning.
 
 ### Planner integration
 
