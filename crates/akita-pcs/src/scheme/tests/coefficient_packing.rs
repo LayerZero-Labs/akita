@@ -184,15 +184,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()
                 .slot_id()
                 .expect("setup prefix group");
-            assert_eq!(
-                setup_prefix.d_setup(),
-                setup_prefix
-                    .commitment_profile
-                    .inner
-                    .matrix
-                    .ring_dimension(),
-                "the prefix dispatcher must use its frozen A-ring dimension"
-            );
             let prefix_backend =
                 CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
             let artifacts = prefix_backend

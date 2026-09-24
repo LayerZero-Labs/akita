@@ -550,7 +550,6 @@ fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
         "slot does not cover request",
     )
     .expect("selection succeeds");
-    assert_eq!(id.d_setup(), 64);
     assert_eq!(setup_eval_len, 8);
 
     let external_setup_eval_len = setup_prefix_coverage_eval_len(

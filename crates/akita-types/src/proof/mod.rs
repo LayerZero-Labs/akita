@@ -88,9 +88,8 @@ pub use relation_range_image::{
 };
 pub use relation_weight_event::{RelationWeightContribution, RelationWeightEvent};
 pub use ring_relation::{
-    ring_relation_segment_lengths, CoefficientPackingChallenges, RingRelationGroupOpening,
-    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
+    CoefficientPackingChallenges, RingRelationGroupOpening, RingRelationGroupOpeningView,
+    RingRelationInstance,
 };
 pub use scheme::OpeningPoints;
 pub use setup::{

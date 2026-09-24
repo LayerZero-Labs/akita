@@ -16,21 +16,6 @@ use jolt_field::{CanonicalEncoding, ExtField, Ring};
 
 mod challenge_validation;
 
-/// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingRelationSegmentLengths {
-    pub z_len: usize,
-    pub e_len: usize,
-    pub t_len: usize,
-}
-
-/// Opening-batch counts that determine witness segment widths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingRelationOpeningCounts {
-    pub num_claims: usize,
-    pub num_t_vectors: usize,
-}
-
 /// Method-typed fold challenge and opening-point material for one relation group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingRelationGroupOpening<F: Field> {
@@ -184,56 +169,6 @@ impl<F: Field> RingRelationGroupOpening<F> {
             OpeningFamily::EvaluationTrace(_) => None,
         }
     }
-}
-
-/// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
-    lp: &CommittedGroupParams,
-    opening_counts: RingRelationOpeningCounts,
-) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let num_live_blocks = lp.blocks().live_blocks;
-    if num_live_blocks == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_live_blocks must be positive".to_string(),
-        ));
-    }
-    let depth_open = lp.open().digits.num_digits;
-    let depth_inner = lp.inner().digits.num_digits;
-    let depth_outer = lp.outer().digits.num_digits;
-    let RingRelationOpeningCounts {
-        num_claims,
-        num_t_vectors,
-    } = opening_counts;
-    let depth_fold = lp.num_digits_fold();
-    if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "prepared ring-switch layout has zero width".to_string(),
-        ));
-    }
-    let total_blocks = num_live_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-    let t_total_blocks = num_live_blocks
-        .checked_mul(num_t_vectors)
-        .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
-
-    let e_len = depth_open
-        .checked_mul(total_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
-    let t_len = depth_outer
-        .checked_mul(lp.inner().matrix.output_rank())
-        .and_then(|len| len.checked_mul(t_total_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
-    let z_len = depth_fold
-        .checked_mul(depth_inner)
-        .and_then(|len| len.checked_mul(lp.blocks().positions_per_block))
-        .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
-
-    Ok(RingRelationSegmentLengths {
-        z_len,
-        e_len,
-        t_len,
-    })
 }
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
@@ -409,6 +344,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     }
 
     /// Row-coefficient rings embedded in flat ring storage.
+    #[cfg(test)]
     pub fn row_coefficient_rings(&self) -> &RingVec<F> {
         &self.row_coefficient_rings
     }

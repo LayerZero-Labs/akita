@@ -212,14 +212,6 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     let num_claims = 3;
     let lp = chunk_test_level_params(1, num_claims);
     assert_eq!(lp.witness_chunk.num_chunks, 1);
-    let _lens = ring_relation_segment_lengths::<F>(
-        &lp,
-        RingRelationOpeningCounts {
-            num_claims,
-            num_t_vectors: num_claims,
-        },
-    )
-    .expect("lengths");
 
     let resolved = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
