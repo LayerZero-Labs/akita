@@ -68,6 +68,7 @@ impl OpeningClaimsLayout {
     }
 
     /// Build a layout from group sizes, all sharing the same active variable count.
+    #[cfg(test)]
     pub fn from_group_sizes(
         num_vars: usize,
         polynomials_per_group: &[usize],
@@ -184,13 +185,6 @@ impl OpeningClaimsLayout {
             }
         }
         Ok(order)
-    }
-
-    /// Layouts of precommitted groups in root transcript order.
-    pub fn root_precommitted_group_layouts(&self) -> Result<&[PolynomialGroupLayout], AkitaError> {
-        self.check()?;
-        let final_index = self.root_final_group_index()?;
-        Ok(&self.groups[..final_index])
     }
 
     /// Final/new group layout for multi-group root schedule lookup.
@@ -529,11 +523,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 .collect(),
         )
     }
-
-    /// Layout digest for this claim set.
-    pub fn opening_batch_digest(&self) -> Result<DescriptorDigest, AkitaError> {
-        Ok(self.layout()?.opening_batch_digest())
-    }
 }
 
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
@@ -597,13 +586,6 @@ mod tests {
 
     type F = Prime128OffsetA7F7;
 
-    fn prefix_claims(num_vars: usize, evals: usize) -> OpeningClaims<'static, F, ()> {
-        let group =
-            PolynomialGroupClaims::new(vec![F::zero(); num_vars], vec![F::zero(); evals], ())
-                .expect("group");
-        OpeningClaims::from_groups(vec![group]).expect("claims")
-    }
-
     #[test]
     fn groups_own_independent_points() {
         let first = vec![F::from_u64(1), F::from_u64(2)];
@@ -617,15 +599,6 @@ mod tests {
         assert_eq!(claims.group_point(0).expect("first point"), first);
         assert_eq!(claims.group_point(1).expect("second point"), second);
         assert_eq!(claims.layout().expect("layout").max_num_vars(), 3);
-    }
-
-    #[test]
-    fn layout_digest_matches_layout_view() {
-        let claims = prefix_claims(4, 2);
-        assert_eq!(
-            claims.opening_batch_digest().expect("claims digest"),
-            claims.layout().expect("layout").opening_batch_digest()
-        );
     }
 
     #[test]
@@ -667,15 +640,6 @@ mod tests {
         .expect("multi-group layout");
 
         assert_eq!(layout.root_final_group_index().expect("final index"), 2);
-        assert_eq!(
-            layout
-                .root_precommitted_group_layouts()
-                .expect("precommitted layouts"),
-            &[
-                PolynomialGroupLayout::new(2, 1),
-                PolynomialGroupLayout::new(3, 2),
-            ]
-        );
         assert_eq!(
             layout.root_final_group_layout().expect("final layout"),
             PolynomialGroupLayout::new(4, 1)

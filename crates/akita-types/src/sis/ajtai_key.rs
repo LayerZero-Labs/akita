@@ -8,7 +8,6 @@
 
 use akita_error::AkitaError;
 
-use super::coverage::inner_coeff_linf_bounds;
 #[cfg(test)]
 use super::generated_sis_table::SIS_TABLE_DIGEST;
 use super::l2_table::{min_secure_l2_rank, SisL2TableKey};
@@ -395,24 +394,6 @@ impl InnerCommitMatrixParams {
             InnerCommitSecurityRoute::Linf(key) => Some(key.coeff_linf_bound),
             InnerCommitSecurityRoute::L2 { .. } => None,
         }
-    }
-
-    #[must_use]
-    pub fn max_secure_collision_linf(&self) -> Option<u128> {
-        let key = self.sis_table_key()?;
-        inner_coeff_linf_bounds(key.modulus_profile, key.ring_dimension)
-            .into_iter()
-            .take_while(|&bound| {
-                min_secure_rank(
-                    SisTableKey {
-                        coeff_linf_bound: bound,
-                        ..key
-                    },
-                    self.input_width as u64,
-                )
-                .is_some_and(|rank| rank <= self.output_rank)
-            })
-            .last()
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {

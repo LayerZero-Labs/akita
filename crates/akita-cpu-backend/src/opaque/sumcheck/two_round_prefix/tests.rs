@@ -9,7 +9,7 @@ use crate::opaque::{
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
-use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
+use akita_types::DigitRangeEqualityPoint;
 use jolt_field::{ExtField, Field, FpExt4, One, Prime128Offset275, Prime32Offset99, Ring, Zero};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 use std::collections::HashMap;
@@ -33,12 +33,6 @@ fn ordered_equality_point(
     )
     .expect("valid test point")
     .into_coordinates()
-}
-
-fn range_polynomial_eval(range_image: F, basis: usize) -> F {
-    DigitRangePlan::new(basis)
-        .expect("supported test basis")
-        .evaluate_range_polynomial(range_image)
 }
 
 fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {

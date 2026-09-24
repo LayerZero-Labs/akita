@@ -29,8 +29,8 @@ pub(crate) enum CompressionRelationOutput<F: Field> {
     ReducedEvaluation,
 }
 
+#[cfg(test)]
 impl<F: Field> CompressionRelationOutput<F> {
-    #[cfg(test)]
     pub(crate) fn quotient_lift(&self) -> Result<&[RingVec<F>], AkitaError> {
         match self {
             Self::QuotientLift { quotients } => Ok(quotients),

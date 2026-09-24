@@ -24,11 +24,10 @@ fn reference_payload_bytes(
             "reference payload profile disagrees with field width".into(),
         ));
     }
-    Ok(akita_types::proof_ring_vec_bytes(
-        geometry.transmitted_rows()?,
-        geometry.transcript_ring_dimension(),
-        akita_types::field_bytes(field_bits),
-    ))
+    geometry
+        .transmitted_coefficients()
+        .checked_mul(akita_types::field_bytes(field_bits))
+        .ok_or_else(|| AkitaError::InvalidSetup("reference payload bytes overflow".into()))
 }
 
 fn reference_level_proof_bytes(

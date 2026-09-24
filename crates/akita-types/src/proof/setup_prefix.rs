@@ -64,12 +64,6 @@ impl PartialEq for SetupPrefixSlotId {
 impl Eq for SetupPrefixSlotId {}
 
 impl SetupPrefixSlotId {
-    /// Ring dimension used to commit the setup-prefix coefficient vector.
-    #[must_use]
-    pub fn d_setup(&self) -> usize {
-        self.commitment_profile.inner.matrix.ring_dimension()
-    }
-
     /// Full power-of-two flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
         n_prefix_from_commitment_profile(&self.commitment_profile).map_err(|err| {

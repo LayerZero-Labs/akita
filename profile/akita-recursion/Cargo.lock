@@ -121,12 +121,10 @@ dependencies = [
  "akita-prover",
  "akita-serialization",
  "akita-setup",
- "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "akita-verifier",
  "jolt-field",
- "jolt-poly",
  "rayon",
  "tracing",
 ]

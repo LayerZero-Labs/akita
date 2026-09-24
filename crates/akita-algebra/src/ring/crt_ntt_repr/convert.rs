@@ -292,21 +292,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair(coeffs, params, None, false)
+        // SAFETY: without a LUT every coefficient takes the checked reduction path.
+        unsafe { Self::from_centered_i32_pair(coeffs, params, None) }
     }
 
     /// Like [`Self::from_centered_i32_pair_with_params`] but uses a precomputed
-    /// [`CenteredMontLut`] for the coefficient-to-Montgomery conversion.
-    pub fn from_centered_i32_pair_with_lut(
-        coeffs: &[i32; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &CenteredMontLut<W, K>,
-    ) -> (Self, Self) {
-        Self::from_centered_i32_pair(coeffs, params, Some(lut), false)
-    }
-
-    /// Like [`Self::from_centered_i32_pair_with_lut`] for caller-validated
-    /// centered coefficients.
+    /// [`CenteredMontLut`] for caller-validated centered coefficients.
     ///
     /// # Safety
     ///
@@ -317,14 +308,17 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair(coeffs, params, Some(lut), true)
+        // SAFETY: forwarded from this function's contract.
+        unsafe { Self::from_centered_i32_pair(coeffs, params, Some(lut)) }
     }
 
-    fn from_centered_i32_pair(
+    /// # Safety
+    ///
+    /// When `lut` is `Some`, every entry in `coeffs` must be within its range.
+    unsafe fn from_centered_i32_pair(
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: Option<&CenteredMontLut<W, K>>,
-        unchecked_lut: bool,
     ) -> (Self, Self) {
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -338,13 +332,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let reducer = CenteredPrimeReducer::new(*prime);
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = if unchecked_lut {
-                        unsafe { lut.get_unchecked(k, coeff) }
-                    } else {
-                        lut.get(k, coeff).unwrap_or_else(|| {
-                            prime.from_canonical(reducer.reduce_i64(i64::from(coeff)))
-                        })
-                    };
+                    // SAFETY: the caller guarantees `coeff` is covered by `lut`.
+                    *dst = unsafe { lut.get_unchecked(k, coeff) };
                 }
             } else {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {

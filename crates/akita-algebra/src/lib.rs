@@ -1,7 +1,7 @@
 //! Concrete algebra backends and arithmetic building blocks.
 //!
 //! This module includes:
-//! - Module and polynomial containers (`module`, `poly`)
+//! - Multilinear polynomial utilities (`poly`)
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 //! - Cyclotomic ring and backend arithmetic structure
 //!
@@ -14,7 +14,6 @@
 
 pub mod eq_poly;
 pub mod fft;
-pub mod module;
 pub mod ntt;
 pub mod offset_eq;
 pub mod poly;
@@ -28,7 +27,6 @@ pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
 pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
-pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{
     CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,

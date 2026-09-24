@@ -458,15 +458,19 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .chunks_exact(D)
         .take(canonical.blocks().positions_per_block)
     {
-        source_digits.extend(
-            akita_algebra::CyclotomicRing::<F, D>::from_coefficients(
-                coefficients.try_into().unwrap(),
-            )
-            .balanced_decompose_pow2_i8(
-                canonical.inner().digits.num_digits,
-                canonical.inner().digits.log_basis,
-            ),
-        );
+        let digits = canonical.inner().digits;
+        let q = (-<F as jolt_field::One>::one()).to_u128_checked().unwrap() + 1;
+        let mut planes = vec![[0i8; D]; digits.num_digits];
+        akita_algebra::CyclotomicRing::<F, D>::from_coefficients(coefficients.try_into().unwrap())
+            .balanced_decompose_pow2_i8_into_with_params(
+                &mut planes,
+                &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
+                    digits.num_digits,
+                    digits.log_basis,
+                    q,
+                ),
+            );
+        source_digits.extend(planes);
     }
     let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
     assert_eq!(

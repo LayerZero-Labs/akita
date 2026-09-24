@@ -30,7 +30,6 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "jolt-field",
- "jolt-poly",
  "libfuzzer-sys",
 ]
 

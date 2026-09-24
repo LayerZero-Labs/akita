@@ -5,8 +5,6 @@
 
 use akita_error::AkitaError;
 
-use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
-
 /// Bit cursor over a byte slice for no-panic decode.
 #[derive(Debug, Clone)]
 pub(crate) struct BitReader<'a> {
@@ -290,108 +288,6 @@ pub fn golomb_rice_values_within_cap<T: Copy + Into<i64>>(
     Ok(())
 }
 
-fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
-    rows.iter()
-        .flat_map(|row| row.iter().map(|&n| i64::from(n)))
-        .collect()
-}
-
-/// Whether total wire bits fit the planner budget (`cap_rice_low_bits + 2` per coord).
-pub fn golomb_rice_values_fit_planner_wire_budget(
-    values: &[i64],
-    cap: u128,
-    rice_low_bits: u32,
-    zigzag_w: u32,
-) -> Result<(), AkitaError> {
-    let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(cap))
-        .checked_mul(values.len())
-        .ok_or(AkitaError::InvalidSetup(
-            "terminal z planner bit budget overflow".to_string(),
-        ))?;
-    let total_bits = golomb_rice_total_wire_bits(values, rice_low_bits, zigzag_w)?;
-    if total_bits > budget_bits {
-        return Err(AkitaError::InvalidInput(format!(
-            "terminal z golomb payload needs {total_bits} bits, planner budget is {budget_bits}"
-        )));
-    }
-    Ok(())
-}
-
-/// Whether every centered row coefficient lies in `[-cap, cap]`.
-pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
-    rows: &[[i32; D]],
-    cap: u128,
-) -> Result<(), AkitaError> {
-    if cap == 0 && rows.iter().any(|row| row.iter().any(|&n| n != 0)) {
-        return Err(AkitaError::InvalidInput(
-            "golomb-rice encodability check at zero cap".to_string(),
-        ));
-    }
-    golomb_rice_values_within_cap(&centered_rows_to_i64(rows), cap).map_err(|_| {
-        AkitaError::InvalidInput(format!("centered coefficient exceeds fold cap {cap}"))
-    })
-}
-
-/// Whether every centered row is admissible at wire low bits and fits the planner bit budget.
-pub fn golomb_rice_rows_admit_terminal_wire<const D: usize>(
-    rows: &[[i32; D]],
-    cap: u128,
-) -> Result<(), AkitaError> {
-    golomb_rice_flat_rows_admit_terminal_wire(rows.as_flattened(), D, cap)
-}
-
-/// Runtime ring-dimension form of [`golomb_rice_rows_admit_terminal_wire`]:
-/// `flat` holds centered row coefficients row-major, chunked at `ring_d`.
-///
-/// The admissibility checks (cap range + planner wire budget) are
-/// per-coefficient and per-total, so the row chunking does not affect the
-/// result; `ring_d` documents the layout and is asserted in debug builds.
-///
-/// # Errors
-///
-/// Returns an error if any coefficient exceeds `cap` (including any non-zero
-/// coefficient at `cap == 0`) or if the total wire bits exceed the planner
-/// budget.
-pub fn golomb_rice_flat_rows_admit_terminal_wire(
-    flat: &[i32],
-    ring_d: usize,
-    cap: u128,
-) -> Result<(), AkitaError> {
-    debug_assert!(
-        ring_d > 0 && flat.len().is_multiple_of(ring_d),
-        "flat centered coefficients must be row-major chunks of ring_d"
-    );
-    let values: Vec<i64> = flat.iter().map(|&n| i64::from(n)).collect();
-    golomb_rice_flat_admit_terminal_wire(&values, cap)
-}
-
-/// Whether every centered coefficient is admissible at wire low bits and fits the planner bit budget.
-pub fn golomb_rice_flat_admit_terminal_wire(values: &[i64], cap: u128) -> Result<(), AkitaError> {
-    golomb_rice_flat_admit_terminal_wire_with_caps(values, cap, cap)
-}
-
-/// Whether centered coefficients fit a terminal wire whose coding scale and
-/// matrix-certified admission cap differ.
-pub(crate) fn golomb_rice_flat_admit_terminal_wire_with_caps(
-    values: &[i64],
-    coding_scale: u128,
-    admissible_cap: u128,
-) -> Result<(), AkitaError> {
-    if admissible_cap == 0 && values.iter().any(|&n| n != 0) {
-        return Err(AkitaError::InvalidInput(
-            "golomb-rice encodability check at zero cap".to_string(),
-        ));
-    }
-    golomb_rice_values_within_cap(values, admissible_cap).map_err(|_| {
-        AkitaError::InvalidInput(format!(
-            "centered coefficient exceeds terminal admission cap {admissible_cap}"
-        ))
-    })?;
-    let rice_low_bits = wire_rice_low_bits(coding_scale);
-    let zigzag_w = golomb_rice_zigzag_width(admissible_cap);
-    golomb_rice_values_fit_planner_wire_budget(values, coding_scale, rice_low_bits, zigzag_w)
-}
-
 fn golomb_rice_encode_one_into(
     writer: &mut BitWriter,
     n: i64,
@@ -665,22 +561,5 @@ mod tests {
     fn tail_z_planner_cap_low_bits_plus_two_bits_per_coord() {
         assert_eq!(tail_z_planner_bits_per_coord(8), 10);
         assert_eq!(tail_z_planner_bits_per_coord(10), 12);
-    }
-
-    #[test]
-    fn golomb_rice_rows_encodable_at_wire_low_bits_matches_cap_range() {
-        for &cap in &[504u128, 1008] {
-            let row = [cap as i32; 4];
-            golomb_rice_rows_encodable_at_wire_low_bits(&[row], cap).expect("row encodable");
-        }
-        assert!(golomb_rice_rows_encodable_at_wire_low_bits(&[[1009i32; 4]], 1008).is_err());
-    }
-
-    #[test]
-    fn golomb_rice_rows_admit_terminal_wire_rejects_planner_budget_overflow() {
-        let cap = 1008u128;
-        let row = [[cap as i32; 4]];
-        golomb_rice_rows_encodable_at_wire_low_bits(&row, cap).expect("within cap");
-        assert!(golomb_rice_rows_admit_terminal_wire(&row, cap).is_err());
     }
 }

@@ -47,7 +47,6 @@ mod test_support;
 
 pub use akita_algebra::fft;
 pub use akita_algebra::fft::SmoothFftField;
-pub use akita_algebra::Module;
 pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
 #[doc(hidden)]

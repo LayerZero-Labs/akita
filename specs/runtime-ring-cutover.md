@@ -274,16 +274,16 @@ Mixed-D:
 Orchestration obtains `CommitmentRingDims` from `CommittedGroupParams::role_dims` /
 `RingLevelContext::role_dims` at each fold entry. **Role-specific buffers use
 `dims.d_a()`, `dims.d_b()`, or `dims.d_d()` — not bare
-`CommittedGroupParams::ring_dimension`.** Witness-borrow paths that still call
-`uniform_dim()` are deferred follow-on work (see Deferred below).
+`CommittedGroupParams::ring_dimension`.** No witness-borrow path gates on a
+single uniform role dimension.
 
 `RingRelationInstance` and relation helpers (`generate_relation_rhs`,
 `relation_claim_from_rows_extension`) must treat `v`, commitment rows, and
 `row_coefficient_rings` under their respective role dimensions, not a single
 stored `ring_dim`.
 
-`validate_level_dispatch::<D>(lp)` is insufficient for per-role work; kernels
-enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
+A single level dimension is insufficient for per-role work; kernels are
+dispatched through `dispatch_for_field!` keyed on the matching `d_a` / `d_b` /
 `d_d`.
 
 ### Non-Goals
@@ -325,7 +325,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] **Per-role operation dispatch (litmus):** prover and verifier fold paths
       admit `d_a`, `d_b`, `d_d` from `CommitmentRingDims` with separate
       `dispatch_for_field!` per operation (EOR, relation build, ring
-      switch, stage2, stage3, relation claim). No `uniform_dim()` fused path
+      switch, stage2, stage3, relation claim). No uniform-dimension fused path
       remains on the prove/verify hot path.
 - [x] Zero **prover** and **verifier** discriminator violations (`const D` +
       schedule types), zero banned #227 bridge names, and no F2 level-wrap in
@@ -349,8 +349,8 @@ slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
 `role_dims`, regression locks).
 
 **Deferred (follow-on, not merge blockers):** divergent per-role planner
-emission (`d_a ≠ d_b ≠ d_d` within one fold level), mixed ring-switch views
-when `d_d ≠ d_a`, and removing the last witness borrow `uniform_dim()` gate.
+emission (`d_a ≠ d_b ≠ d_d` within one fold level) and mixed ring-switch views
+when `d_d ≠ d_a`.
 
 ### Testing Strategy
 

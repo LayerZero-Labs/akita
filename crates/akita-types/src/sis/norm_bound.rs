@@ -293,6 +293,7 @@ impl FoldWitnessNorms {
     }
 
     /// Witness L1 norm `||s||_1 = nonzeros · ||s||_inf`.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub fn l1_norm(&self) -> u128 {
@@ -317,6 +318,7 @@ impl FoldWitnessNorms {
     /// Sparse-binary witness with at most one nonzero per logical chunk.
     ///
     /// `||s||_inf = 1` and `||s||_1 = ceil(D / K)`.
+    #[cfg(test)]
     #[inline]
     pub fn sparse_binary(ring_dimension: usize, chunk_size: usize) -> Result<Self, AkitaError> {
         if chunk_size == 0 || !chunk_size.is_power_of_two() {

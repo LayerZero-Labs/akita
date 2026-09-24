@@ -106,7 +106,6 @@ dependencies = [
  "akita-schedules",
  "akita-serialization",
  "akita-setup",
- "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "akita-verifier",
