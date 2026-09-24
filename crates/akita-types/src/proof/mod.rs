@@ -26,8 +26,7 @@ pub mod stage1;
 pub mod terminal_witness;
 
 mod containers;
-mod hints;
-#[cfg(test)]
+
 mod levels;
 mod shapes;
 mod tail_segments;
@@ -71,8 +70,7 @@ pub use compression_relation_weights::{
 };
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
-pub use hints::AkitaCommitmentHint;
-#[cfg(test)]
+
 pub use levels::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
     FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
@@ -113,9 +111,8 @@ pub use setup_envelope::{
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
     setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
-    validate_setup_prefix_domain, SetupPrefixProverRegistry, SetupPrefixPublicCommitment,
-    SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SETUP_PREFIX_CONTENT_TAG,
+    validate_setup_prefix_domain, SetupPrefixPublicCommitment, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
     canonical_extension_opening_reduction_shape, AkitaStage1StageShape,
@@ -125,7 +122,8 @@ pub use shapes::{
 };
 pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
-    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    build_terminal_response, build_terminal_response_from_groups,
+    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
     raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
@@ -144,11 +142,11 @@ use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
+use akita_sumcheck::uniform_sumcheck_shape;
 #[cfg(test)]
 use akita_sumcheck::EqFactoredSumcheckProof;
 #[cfg(test)]
 use akita_sumcheck::SumcheckProof;
-use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
 use jolt_field::Field;
 #[cfg(test)]
 use jolt_field::{CanonicalEncoding, ExtField};

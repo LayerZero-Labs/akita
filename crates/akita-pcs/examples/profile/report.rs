@@ -1,6 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
+use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_error::AkitaError;
-use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_types::{
     sis::compute_num_digits_field_width, CommitmentPayloadMode, CommitmentSliceCount,
     CommittedGroupParams, CommittedSourceEncoding, FoldSchedule, GrindingPlan,

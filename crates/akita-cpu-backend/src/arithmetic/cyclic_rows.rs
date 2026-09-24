@@ -1,0 +1,32 @@
+use super::prepared::validate_digit_row_request;
+use super::CpuBackend;
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8_cyclic;
+use crate::opaque::CyclicRowsComputeBackend;
+use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
+use akita_types::{NttCacheKey, NttTransformDomain};
+use jolt_field::{CanonicalEncoding, Field};
+
+impl<F, Cfg> CyclicRowsComputeBackend<F> for CpuBackend<Cfg>
+where
+    Cfg: akita_config::CommitmentConfig,
+    F: Field + CanonicalEncoding,
+{
+    fn cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digits: &[[i8; D]],
+        log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        validate_digit_row_request(
+            row_len,
+            digits.len(),
+            prepared.expanded.shared_matrix.num_field_elements() / D,
+        )?;
+        prepared.with_shared_ntt::<D, _>(
+            NttCacheKey::from_matrix_shape(D, row_len, digits.len(), NttTransformDomain::Cyclic)?,
+            |ntt| mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis),
+        )
+    }
+}

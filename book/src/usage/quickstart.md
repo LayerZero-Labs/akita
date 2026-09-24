@@ -58,13 +58,10 @@ let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
 )?;
 let setup = scheme.setup_prover(NUM_VARS, 1)?;
-let backend = CpuBackend::DEFAULT;
-let prepared = backend.prepare_setup(&setup)?;
-let stack = UniformProverStack::uniform(
-    &backend,
-    &prepared,
-    setup.expanded.as_ref(),
-)?;
+let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
+    setup.expanded.clone(),
+    scheme.schedules(),
+)?);
 ```
 
 The prepared backend holds reproducible compute state such as transformed
@@ -78,10 +75,9 @@ One call commits to one group of polynomials. This example has one polynomial
 and no earlier groups.
 
 ```rust
-let commit_output = scheme.commit(
-    &setup,
-    std::slice::from_ref(&polynomial),
-    stack.commitment(),
+let source = backend.import_source(vec![polynomial])?;
+let commit_output = backend.commit(
+    &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
@@ -89,7 +85,7 @@ let commit_output = scheme.commit(
 The call returns two values:
 
 - `committed_group` is public. The verifier receives it.
-- `prover_state` is private prover data. The prover keeps it with the polynomial.
+- `private_handle` retains the exact immutable source and commitment parameters.
 
 The group context tells Akita which catalog row to use for the commitment. A
 later chapter explains how earlier commitment groups change this context.
@@ -97,7 +93,7 @@ later chapter explains how earlier commitment groups change this context.
 ## Assemble the opening claim
 
 An opening claim joins the point, claimed value, and commitment. The prover also
-supplies the original polynomial and its private prover state.
+supplies the reusable commitment handle. It cannot substitute another polynomial.
 
 ```rust
 let prover_claims = OpeningClaims::from_groups(vec![
@@ -108,11 +104,9 @@ let prover_claims = OpeningClaims::from_groups(vec![
     )?,
 ])?;
 
-let polynomial_group = [&polynomial];
 let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
     prover_claims,
-    vec![commit_output.prover_state],
-    vec![&polynomial_group],
+    vec![commit_output.private_handle.clone()],
     scheme.schedules(),
 )?;
 let selection = prover_data.selection();
@@ -134,7 +128,7 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 let proof = scheme.batched_prove(
     &setup,
     prover_data,
-    &stack,
+    &backend,
     TRANSCRIPT_DOMAIN,
     BasisMode::Lagrange,
 )?;

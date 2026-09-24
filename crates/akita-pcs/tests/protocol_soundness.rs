@@ -2,13 +2,14 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, SelectedProverOpeningData};
+use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
-    lagrange_weights, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup, BasisMode,
-    CommittedGroup, CommittedGroupBatchProfile, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    lagrange_weights, AkitaScheduleLookupKey, AkitaVerifierSetup, BasisMode, CommittedGroup,
+    CommittedGroupBatchProfile, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use jolt_field::{
@@ -50,33 +51,29 @@ fn selection_for<Cfg: CommitmentConfig>(
         .selection()
 }
 
-fn prove_input<'a, Cfg, P>(
+type ProverInput<'a, Cfg> = SelectedProverOpeningData<
+    'a,
+    <Cfg as CommitmentConfig>::ExtField,
+    CommitmentHandle<<Cfg as CommitmentConfig>::Field, <Cfg as CommitmentConfig>::ExtField, Cfg>,
+    <Cfg as CommitmentConfig>::Field,
+>;
+
+fn prove_input<'a, Cfg>(
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
-    polynomials: &'a [&'a P],
+    opening: Cfg::ExtField,
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: AkitaCommitmentHint<Cfg::Field>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
     schedules: &TrustedScheduleCatalog<Cfg>,
-) -> SelectedProverOpeningData<
-    'a,
-    Cfg::ExtField,
-    akita_prover::PreparedProverGroup<'a, P>,
-    Cfg::Field,
->
+) -> ProverInput<'a, Cfg>
 where
     Cfg: CommitmentConfig,
-    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let group = PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![Cfg::ExtField::zero(); polynomials.len()],
-        commitment.clone(),
-    )
-    .expect("valid prover group");
+    let group = PolynomialGroupClaims::new(point.to_vec(), vec![opening], commitment.clone())
+        .expect("valid prover group");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         OpeningClaims::from_groups(vec![group]).expect("valid prover claims"),
         vec![hint],
-        vec![polynomials],
         schedules,
     )
     .expect("valid prover opening data");
@@ -151,36 +148,26 @@ where
         });
 
     let setup = scheme.setup_prover(num_vars, 1).expect("prover setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("prover stack");
+    let stack =
+        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("prover backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
+        private_handle: hint,
+    } = stack
         .commit(
-            &setup,
-            std::slice::from_ref(&polynomial),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            &stack.import_source(vec![polynomial]).expect("source"),
+            GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commitment");
     let selection = selection_for::<Cfg>(&commitment, scheme.schedules());
-    let polynomial_refs = [&polynomial];
     let proof = scheme
         .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 selection,
                 &point,
-                &polynomial_refs,
+                opening,
                 &commitment,
                 hint,
                 scheme.schedules(),

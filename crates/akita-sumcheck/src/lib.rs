@@ -24,7 +24,8 @@ pub use native::{
 };
 pub use single::advance_eq_factored_claim;
 pub use traits::{
-    EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckKernel, InfallibleEqFactoredSumcheck,
+    InfallibleSumcheck, SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckKernel,
 };
 pub use types::{
     uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,

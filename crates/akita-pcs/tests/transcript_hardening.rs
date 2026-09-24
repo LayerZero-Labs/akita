@@ -2,7 +2,7 @@
 
 mod common;
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
 #[cfg(feature = "logging-transcript")]
 use common::native_mutations::{
     assert_native_ranges_match_context, representative_native_mutation_ranges,
@@ -33,25 +33,16 @@ fn native_stream_binds_session_statement_basis_and_eof() {
         let point = random_point(NUM_VARS, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
         #[cfg(feature = "logging-transcript")]
@@ -59,13 +50,7 @@ fn native_stream_binds_session_statement_basis_and_eof() {
         let proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(
-                    &point,
-                    &[&poly],
-                    &commitment,
-                    hint,
-                    scheme.schedules(),
-                ),
+                prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
                 &stack,
                 LABEL,
                 BasisMode::Lagrange,
@@ -215,29 +200,22 @@ fn native_stream_mutations_reject_without_panicking() {
             BasisMode::Lagrange,
         );
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
+            .expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
         let proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<DenseCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
+                prove_input::<DenseCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
                 &stack,
                 LABEL,
                 BasisMode::Lagrange,

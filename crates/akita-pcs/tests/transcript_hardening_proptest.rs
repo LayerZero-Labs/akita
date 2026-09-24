@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 mod common;
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
 use akita_types::OpeningClaimsLayout;
 use common::*;
 use proptest::prelude::*;
@@ -47,32 +47,25 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .collect();
 
     let setup = scheme.setup_prover(num_vars, total_claims).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
+        private_handle: hint,
+    } = stack
         .commit(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
     let proof = scheme
         .batched_prove(
             &setup,
-            prove_input::<DenseCfg, _>(
+            prove_input::<DenseCfg>(
                 &opening_point,
-                &poly_refs,
+                &openings,
                 &commitment,
                 hint,
                 scheme.schedules(),

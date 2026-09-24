@@ -3,7 +3,7 @@ use super::*;
 fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
     seed: usize,
-) -> akita_prover::OneHotPoly<fp32::Field, u8> {
+) -> akita_cpu_backend::OneHotPoly<fp32::Field, u8> {
     let onehot_k = akita_config::unit_onehot_source_chunk_size::<fp32::OneHot>()
         .expect("fp32 one-hot fixture requires a unit-one-hot config");
     let total_field = params
@@ -16,7 +16,7 @@ fn fp32_l2_onehot_poly(
     let indices = (0..total_field / onehot_k)
         .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
         .collect();
-    akita_prover::OneHotPoly::new(onehot_k, indices).expect("fp32 L2 one-hot polynomial")
+    akita_cpu_backend::OneHotPoly::new(onehot_k, indices).expect("fp32 L2 one-hot polynomial")
 }
 
 #[test]
@@ -78,28 +78,22 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("L2 prover setup");
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared L2 setup");
         let stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-                .expect("L2 prover stack");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("L2 commitment");
-        let poly_refs = [&poly];
+
         let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
-            vec![E::zero()],
+            vec![opening],
             commitment.clone(),
         )
         .expect("L2 prover group")])
@@ -107,12 +101,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
         let proof = scheme
             .batched_prove(
                 &setup,
-                selected_prover_data::<Cfg, _>(
-                    prover_claims,
-                    vec![hint],
-                    vec![&poly_refs],
-                    scheme.schedules(),
-                ),
+                selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
                 LABEL,
                 BasisMode::Lagrange,
@@ -183,30 +172,24 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let setup = scheme
             .setup_prover(NUM_VARS, 1)
             .expect("terminal L2 prover setup");
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared terminal L2 setup");
         let stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-                .expect("terminal L2 prover stack");
+            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
         let verifier_setup = scheme
             .setup_verifier(&setup)
             .expect("terminal L2 verifier setup");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("terminal L2 commitment");
-        let poly_refs = [&poly];
+
         let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point.clone(),
-            vec![E::zero()],
+            vec![opening],
             commitment.clone(),
         )
         .expect("terminal L2 prover group")])
@@ -214,12 +197,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let proof = scheme
             .batched_prove(
                 &setup,
-                selected_prover_data::<Cfg, _>(
-                    prover_claims,
-                    vec![hint],
-                    vec![&poly_refs],
-                    scheme.schedules(),
-                ),
+                selected_prover_data::<Cfg>(prover_claims, vec![hint], scheme.schedules()),
                 &stack,
                 LABEL,
                 BasisMode::Lagrange,

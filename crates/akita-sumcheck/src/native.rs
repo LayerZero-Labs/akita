@@ -1,9 +1,11 @@
 //! Native Spongefish proof-stream driver for standard sumcheck.
 
 use crate::{
-    advance_eq_factored_claim, CompressedUniPoly, EqFactoredSumcheckInstanceProver,
-    EqFactoredUniPoly, SumcheckInstanceProver, SumcheckInstanceVerifier,
+    advance_eq_factored_claim, CompressedUniPoly, EqFactoredUniPoly, SumcheckInstanceVerifier,
+    SumcheckKernel,
 };
+#[cfg(test)]
+use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::{checked, AkitaError};
 use akita_transcript::{
@@ -218,7 +220,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     C: NativeSumcheckProverChannel<E>,
-    P: SumcheckInstanceProver<E> + ?Sized,
+    P: SumcheckKernel<E> + ?Sized,
 {
     shape.validate_instance(prover.num_rounds(), prover.degree_bound())?;
     let num_rounds = shape.num_rounds();
@@ -230,7 +232,12 @@ where
     let mut challenges = Vec::with_capacity(num_rounds);
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let poly = prover.compute_round_univariate(round, claim);
+        let poly = prover.round_polynomial(round, claim)?;
+        if poly.evaluate(&E::zero()) + poly.evaluate(&E::one()) != claim {
+            return Err(AkitaError::InvalidInput(
+                "sumcheck round polynomial does not match its input claim".into(),
+            ));
+        }
         let mut compressed = poly.compress();
         let coefficient_count = compressed.coeffs_except_linear_term.len();
         if coefficient_count == 0 || coefficient_count > degree_bound {
@@ -256,10 +263,10 @@ where
         }
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
-        prover.ingest_challenge(round, challenge);
+        prover.bind_challenge(round, challenge)?;
         challenges.push(challenge);
     }
-    prover.finalize();
+    prover.finish()?;
     Ok((challenges, claim))
 }
 
@@ -359,7 +366,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     C: NativeSumcheckProverChannel<E>,
-    P: EqFactoredSumcheckInstanceProver<E> + ?Sized,
+    P: crate::EqFactoredSumcheckKernel<E> + ?Sized,
 {
     shape.validate_instance(prover.num_rounds(), prover.degree_bound())?;
     let num_rounds = shape.num_rounds();
@@ -371,7 +378,7 @@ where
 
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let mut poly = prover.compute_round_eq_factored(round);
+        let mut poly = prover.round_polynomial(round, claim)?;
         let coefficient_count = poly.coeffs_except_constant_term.len();
         if coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
@@ -396,9 +403,9 @@ where
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, prover.current_tau(), &poly, challenge);
         challenges.push(challenge);
-        prover.ingest_challenge(round, challenge);
+        prover.bind_challenge(round, challenge)?;
     }
-    prover.finalize();
+    prover.finish()?;
     Ok((challenges, claim))
 }
 
@@ -838,8 +845,13 @@ mod tests {
             invocation: 7,
         };
         let shape = NativeSumcheckShape::new(4, 1).unwrap();
-        let (prover_point, _) =
-            prove_sumcheck_native(&mut prover_instance, &mut prover, shape, 7).unwrap();
+        let (prover_point, _) = prove_sumcheck_native(
+            &mut crate::InfallibleSumcheck(&mut prover_instance),
+            &mut prover,
+            shape,
+            7,
+        )
+        .unwrap();
         let proof = prover.state.narg_string().to_vec();
 
         let verifier_instance = DenseInstance {
@@ -870,7 +882,13 @@ mod tests {
             invocation: 7,
         };
         let shape = NativeSumcheckShape::new(4, 1).unwrap();
-        prove_sumcheck_native(&mut prover_instance, &mut prover, shape, 7).unwrap();
+        prove_sumcheck_native(
+            &mut crate::InfallibleSumcheck(&mut prover_instance),
+            &mut prover,
+            shape,
+            7,
+        )
+        .unwrap();
         let proof = prover.state.narg_string();
         let verifier_instance = DenseInstance {
             evaluations,
@@ -901,9 +919,13 @@ mod tests {
             state: new_native_prover(b"native-eq-sumcheck", b"fixture").unwrap(),
             invocation: 12,
         };
-        let (prover_point, _) =
-            prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, shape, 12)
-                .unwrap();
+        let (prover_point, _) = prove_eq_factored_sumcheck_native::<F, F, _, _>(
+            &mut crate::InfallibleEqFactoredSumcheck(&mut instance),
+            &mut prover,
+            shape,
+            12,
+        )
+        .unwrap();
         let proof = prover.state.narg_string().to_vec();
 
         let expected = OneRoundEq::new(tau, coefficients);
@@ -968,8 +990,13 @@ mod tests {
             challenges: point.to_vec(),
         };
         let shape = NativeSumcheckShape::new(2, 1).unwrap();
-        prove_eq_factored_sumcheck_native::<F, F, _, _>(&mut instance, &mut prover, shape, 23)
-            .unwrap();
+        prove_eq_factored_sumcheck_native::<F, F, _, _>(
+            &mut crate::InfallibleEqFactoredSumcheck(&mut instance),
+            &mut prover,
+            shape,
+            23,
+        )
+        .unwrap();
         let honest = prover.state.narg_string().to_vec();
         let expected = TwoRoundEq::new(equality, coefficients).evaluate(point[0], point[1]);
         let verify = |proof: &[u8]| {

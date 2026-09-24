@@ -114,7 +114,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
     let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
-        setup.expanded(),
+        &setup.expanded().descriptor,
         &opening_batch,
         selection,
         schedule,

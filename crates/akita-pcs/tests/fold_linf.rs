@@ -2,9 +2,9 @@
 
 mod common;
 
+use akita_cpu_backend::CpuBackend;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_types::{AkitaVerifierSetup, BasisMode, CommittedGroup, GrindingPlan};
+use akita_types::{AkitaVerifierSetup, CommittedGroup, GrindingPlan};
 use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -51,31 +51,22 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
     let setup = scheme.setup_prover(num_vars, 1).expect("setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepare setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
+        private_handle: hint,
+    } = stack
         .commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
     let proof = scheme
         .batched_prove(
             &setup,
-            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint, scheme.schedules()),
+            prove_input::<OneHotCfg>(&point, &[opening], &commitment, hint, scheme.schedules()),
             &stack,
             LABEL,
             BasisMode::Lagrange,

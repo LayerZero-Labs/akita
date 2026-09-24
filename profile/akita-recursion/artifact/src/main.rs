@@ -17,11 +17,8 @@
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitOutput, CommitmentExecutor, ComputeBackendSetup,
-    CpuBackend, CpuPreparedSetup, DenseType, GroupContext, OneHotPoly, PolynomialType,
-    PortableStatePolicy, SelectedProverOpeningData,
-};
+use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend, GroupContext, OneHotPoly};
+use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
@@ -174,22 +171,16 @@ where
     Ok(opening)
 }
 
-fn materialize_schedule_setup_prefix_slots<FF>(
-    setup: &mut AkitaProverSetup<FF>,
-    backend: &CpuBackend,
-    prepared: &CpuPreparedSetup<FF>,
+fn materialize_schedule_setup_prefix_slots<C>(
+    setup: &mut AkitaProverSetup<C::Field>,
+    backend: &CpuBackend<C>,
     schedule: &akita_types::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    FF: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
+    C: CommitmentConfig,
+    C::Field: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
-    let executor = CommitmentExecutor::cpu(
-        backend,
-        prepared,
-        setup.expanded.as_ref(),
-        vec![PolynomialType::Dense(DenseType::Coefficients)],
-        PortableStatePolicy,
-    )?;
+    let mut ids = Vec::new();
     for setup_prefix in schedule
         .recursive_folds
         .iter()
@@ -201,8 +192,10 @@ where
         if setup.prefix_slots.get(&slot_id).is_some() {
             continue;
         }
-        let slot = commit_setup_prefix(&setup.expanded, &executor, &slot_id)?;
-        setup.prefix_slots.insert(slot)?;
+        ids.push(slot_id);
+    }
+    for (_, slot) in backend.export_setup_prefixes::<C::Field>(&ids)?.iter() {
+        setup.prefix_slots.insert(slot.clone())?;
     }
     Ok(())
 }
@@ -369,24 +362,16 @@ macro_rules! generate_scalar_case {
         let mut prover_setup = scheme
             .setup_prover(num_vars, 1)
             .map_err(|err| format!("{} prover setup: {err}", case))?;
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&prover_setup)
+        let backend = CpuBackend::<ScalarCfg>::new(prover_setup.expanded.clone(), scheme.schedules())
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
         if $recursive {
             materialize_schedule_setup_prefix_slots(
                 &mut prover_setup,
-                &CpuBackend::DEFAULT,
-                &prepared,
+                &backend,
                 schedule.schedule(),
             )
             .map_err(|err| format!("{} setup prefix materialization: {err}", case))?;
         }
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            prover_setup.expanded.as_ref(),
-        )
-        .map_err(|err| format!("{} prover stack: {err}", case))?;
         tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prover setup complete");
 
         let poly = make_onehot_poly::<ScalarField>(num_vars, 0x0bee_fcaf_2800_0000)?;
@@ -397,14 +382,12 @@ macro_rules! generate_scalar_case {
             &opening_point,
         )?];
         let t0 = Instant::now();
+        let source = backend.import_source(vec![poly])
+            .map_err(|err| format!("{} source import: {err}", case))?;
         let CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit(
-                &prover_setup,
-                std::slice::from_ref(&poly),
-                stack.commitment(),
+            private_handle: hint,
+        } = backend.commit(&source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
         .map_err(|err| format!("{} commit: {err}", case))?;
@@ -416,13 +399,10 @@ macro_rules! generate_scalar_case {
             commitment.clone(),
         )
         .map_err(|err| format!("{} prover claims: {err}", case))?;
-        let poly_ref = &poly;
-        let poly_group = [poly_ref];
         let prove_input = SelectedProverOpeningData::from_committed_claims::<ScalarCfg>(
             OpeningClaims::from_groups(vec![prover_group])
                 .map_err(|err| format!("{} opening claims: {err}", case))?,
             vec![hint],
-            vec![poly_group.as_slice()],
             scheme.schedules(),
         )
         .map_err(|err| format!("{} prover opening data: {err}", case))?;
@@ -432,7 +412,7 @@ macro_rules! generate_scalar_case {
             .batched_prove(
                 &prover_setup,
                 prove_input,
-                &stack,
+                &backend,
                 TRANSCRIPT_DOMAIN,
                 BasisMode::Lagrange,
             )
@@ -667,28 +647,19 @@ fn run() -> Result<(), String> {
     let mut prover_setup = scheme
         .setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&prover_setup)
+    let backend = CpuBackend::<Cfg>::new(prover_setup.expanded.clone(), scheme.schedules())
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     materialize_schedule_setup_prefix_slots(
         &mut prover_setup,
-        &CpuBackend::DEFAULT,
-        &prepared,
+        &backend,
         schedule.schedule(),
     )
     .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        prover_setup.expanded.as_ref(),
-    )
-    .map_err(|err| format!("prover stack validation failed: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"
     );
 
-    let mut pre_polys_by_group = Vec::with_capacity(PRE_GROUPS);
     let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
     let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
     let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
@@ -699,18 +670,15 @@ fn run() -> Result<(), String> {
             0x0bee_fcaf_2100_0000 + group_idx as u64,
         )?];
         let openings = vec![onehot_opening(&polys[0], pre_point)?];
+        let source = backend.import_source(polys)
+            .map_err(|err| format!("precommit source import: {err}"))?;
         let CommitOutput {
             committed_group,
-            prover_state: hint,
-        } = base_scheme
-            .commit(
-                &prover_setup,
-                &polys,
-                stack.commitment(),
-                GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = backend.commit(&source,
+                GroupContext::explicit(&pre_descriptor),
             )
             .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
-        pre_polys_by_group.push(polys);
         pre_openings.push(openings);
         pre_commitments.push(committed_group);
         pre_hints.push(hint);
@@ -725,27 +693,17 @@ fn run() -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()?;
     let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
         .map_err(|err| format!("precommitted profile list: {err}"))?;
+    let source = backend.import_source(final_polys)
+        .map_err(|err| format!("final source import: {err}"))?;
     let CommitOutput {
         committed_group: final_commitment,
-        prover_state: final_hint,
-    } = scheme
-        .commit(
-            &prover_setup,
-            &final_polys,
-            stack.commitment(),
+        private_handle: final_hint,
+    } = backend.commit(&source,
             GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .map_err(|err| format!("final multi-group commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
-    let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
-        .iter()
-        .map(|polys| polys.iter().collect())
-        .collect();
-    let final_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
-    let mut poly_groups: Vec<&[&OneHotPoly<F, u8>]> =
-        pre_refs_by_group.iter().map(Vec::as_slice).collect();
-    poly_groups.push(final_refs.as_slice());
     let mut prover_groups = Vec::with_capacity(PRE_GROUPS + 1);
     for ((opening_point, openings), commitment) in
         pre_points.iter().zip(&pre_openings).zip(&pre_commitments)
@@ -769,7 +727,6 @@ fn run() -> Result<(), String> {
         OpeningClaims::from_groups(prover_groups)
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         prover_hints,
-        poly_groups,
         scheme.schedules(),
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
@@ -778,7 +735,7 @@ fn run() -> Result<(), String> {
         .batched_prove(
             &prover_setup,
             prove_input,
-            &stack,
+            &backend,
             TRANSCRIPT_DOMAIN,
             BasisMode::Lagrange,
         )

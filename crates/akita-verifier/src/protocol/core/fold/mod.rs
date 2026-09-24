@@ -434,15 +434,10 @@ where
         gamma,
         row_coefficient_rings,
         relation_rhs,
-        if prepared.lp.payload_mode.is_compressed() {
-            RingVec::from_coeffs(Vec::new())
-        } else {
-            prepared.opening_payload.clone()
-        },
         role_dims,
     )?;
     if !prepared.lp.payload_mode.is_compressed() {
-        relation_instance.check_v_shape_for_level(prepared.lp)?;
+        RingRelationInstance::check_v_shape_for_level(&prepared.opening_payload, prepared.lp)?;
     }
     let next_witness = match prepared.next_witness {
         NativeNextWitnessPlan::OuterPayload { coefficient_count } => {

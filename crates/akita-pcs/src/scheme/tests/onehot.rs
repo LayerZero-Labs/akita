@@ -15,24 +15,15 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
-    let akita_prover::CommitOutput {
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: _hint,
-    } = scheme
+        private_handle: _hint,
+    } = stack
         .commit(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
     let frozen_layout = commitment.profile;
@@ -69,23 +60,13 @@ fn with_precommit_stack<R>(
     scheme: &OneHotScheme,
     max_num_vars: usize,
     max_num_polys: usize,
-    run: impl FnOnce(
-        &akita_prover::AkitaProverSetup<OneHotF>,
-        &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
-    ) -> R,
+    run: impl FnOnce(&akita_cpu_backend::AkitaProverSetup<OneHotF>, &CpuBackend) -> R,
 ) -> R {
     let setup = scheme
         .setup_prover(max_num_vars, max_num_polys)
         .expect("setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
     run(&setup, &stack)
 }
 
@@ -109,27 +90,23 @@ fn profile_native_commit_group_allows_independent_groups() {
         debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2002),
     ];
 
-    with_precommit_stack(&scheme, NV, SETUP_CAPACITY_SIZE, |setup, stack| {
-        let akita_prover::CommitOutput {
+    with_precommit_stack(&scheme, NV, SETUP_CAPACITY_SIZE, |_setup, stack| {
+        let akita_cpu_backend::CommitOutput {
             committed_group: pre_a_commitment,
-            prover_state: _pre_a_hint,
-        } = scheme
+            private_handle: _pre_a_hint,
+        } = stack
             .commit(
-                setup,
-                &pre_a_polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(pre_a_polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit A");
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: pre_b_commitment,
-            prover_state: _pre_b_hint,
-        } = scheme
+            private_handle: _pre_b_hint,
+        } = stack
             .commit(
-                setup,
-                &pre_b_polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                &stack.import_source(pre_b_polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit B");
         let pre_a_frozen = pre_a_commitment.profile;
@@ -231,35 +208,24 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let setup = scheme
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared protocol setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("protocol stack");
-    let akita_prover::CommitOutput {
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let akita_cpu_backend::CommitOutput {
         committed_group: pre_a_commitment,
-        prover_state: _pre_a_hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &pre_a_polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: _pre_a_hint,
+    } = stack
+        .commit(
+            &stack.import_source(pre_a_polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit A");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: pre_b_commitment,
-        prover_state: _pre_b_hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &pre_b_polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: _pre_b_hint,
+    } = stack
+        .commit(
+            &stack.import_source(pre_b_polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
@@ -288,28 +254,27 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         pre_b_commitment.profile,
     ])
     .expect("nonempty precommitted groups");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
-        prover_state: final_hint,
-    } = scheme
+        private_handle: final_hint,
+    } = stack
         .commit(
-            &setup,
-            &final_polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+            &stack.import_source(final_polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
-    let explicit_output = scheme
+    let explicit_output = stack
         .commit(
-            &setup,
-            &final_polys,
-            stack.commitment(),
-            akita_prover::GroupContext::explicit(&main_params.own_group().profile),
+            &stack.import_source(final_polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::explicit(&main_params.own_group().profile),
         )
         .expect("explicit final multi-group commitment");
 
     assert_eq!(explicit_output.committed_group, final_commitment);
-    assert_eq!(explicit_output.prover_state, final_hint);
+    assert_eq!(
+        explicit_output.private_handle.metadata(),
+        final_hint.metadata()
+    );
 
     assert_eq!(
         pre_a_commitment.rows().count(),
@@ -323,9 +288,9 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         final_commitment.rows().count(),
         main_params.outer().matrix.output_rank()
     );
-    assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
+    assert_eq!(final_hint.metadata().num_polynomials(), FINAL_SIZE);
     assert_eq!(
-        akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
+        akita_cpu_backend::RootPolyMeta::num_vars(&final_polys[0]),
         FINAL_NV,
         "final one-hot group should retain its native variable domain"
     );
@@ -358,24 +323,15 @@ fn commit_group_returns_frozen_exact_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
-    let akita_prover::CommitOutput {
+    let stack =
+        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: _hint,
-    } = scheme
+        private_handle: _hint,
+    } = stack
         .commit(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit group");
     let frozen_layout = commitment.profile;
@@ -429,7 +385,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_e000_1500 + poly_idx as u64)
         })
         .collect();
-    let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
+
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
@@ -445,42 +401,34 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
-    let cached_backend = CpuBackend::with_ring_switch_cache_limit(usize::MAX);
-    let prepared = cached_backend.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &cached_backend,
-        &prepared,
-        setup.expanded.as_ref(),
+    let stack = CpuBackend::<OneHotCfg>::with_ring_switch_cache_limit(
+        setup.expanded.clone(),
+        scheme.schedules(),
+        usize::MAX,
     )
-    .expect("stack");
+    .unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
     let commitments = [commitment];
-    let prover_group = PolynomialGroupClaims::new(
-        point.clone(),
-        vec![OneHotF::zero(); poly_refs.len()],
-        commitments[0].clone(),
-    )
-    .expect("valid one-hot prover group");
+    let prover_group =
+        PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
+            .expect("valid one-hot prover group");
     let proof = scheme
-        .batched_prove::<_, _, _>(
+        .batched_prove(
             &setup,
-            selected_prover_data::<OneHotCfg, _, _>(
+            selected_prover_data::<OneHotCfg, _>(
                 &scheme,
                 OpeningClaims::from_groups(vec![prover_group])
                     .expect("valid one-hot prover claims"),
                 vec![hint],
-                vec![&poly_refs[..]],
             )
             .expect("valid one-hot prover opening data"),
             &stack,

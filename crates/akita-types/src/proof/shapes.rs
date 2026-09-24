@@ -1,5 +1,8 @@
 use super::*;
 use crate::OpeningClaimsLayout;
+use akita_sumcheck::{
+    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -161,7 +164,6 @@ pub struct PhysicalL2NormProofWireShape {
     pub sumcheck: SumcheckProofShape,
 }
 
-#[cfg(test)]
 pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     sc.round_polys
         .iter()
@@ -169,7 +171,6 @@ pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofSh
         .collect()
 }
 
-#[cfg(test)]
 fn eq_factored_sumcheck_shape<F: Field>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
@@ -180,7 +181,6 @@ fn eq_factored_sumcheck_shape<F: Field>(
     (sc.round_polys.len(), degree)
 }
 
-#[cfg(test)]
 pub(super) fn level_proof_shape<F: Field, E: Field>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     opening_payload: &RingVec<F>,

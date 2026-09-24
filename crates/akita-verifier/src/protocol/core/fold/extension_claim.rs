@@ -548,7 +548,7 @@ mod tests {
         )
         .unwrap();
         akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
-            &mut sumcheck,
+            &mut akita_sumcheck::InfallibleSumcheck(&mut sumcheck),
             &mut channel,
             shape,
             akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,

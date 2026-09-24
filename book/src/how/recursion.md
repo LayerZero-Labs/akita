@@ -246,7 +246,7 @@ still enforce their explicit minimum contraction policy.
 
 ## Code map
 
-- `crates/akita-prover/src/protocol/ring_switch/commit.rs` prepares the
+- `crates/akita-cpu-backend/src/opaque/recursive/commit.rs` prepares the
   successor's physical witness, commitment, or terminal inner state.
 - `crates/akita-types/src/proof/levels.rs` defines the level records and
   successor-binding variants.

@@ -42,6 +42,53 @@ pub trait SumcheckInstanceProver<E: Field>: Send + Sync {
     fn finalize(&mut self) {}
 }
 
+/// Fallible arithmetic boundary used by the canonical sumcheck driver.
+///
+/// Backends can reject stale sessions or invalid round progression without
+/// manufacturing a polynomial or panicking. In-memory arithmetic instances
+/// retain their infallible interface through [`InfallibleSumcheck`].
+pub trait SumcheckKernel<E: Field> {
+    fn num_rounds(&self) -> usize;
+    fn degree_bound(&self) -> usize;
+    fn input_claim(&self) -> E;
+    fn round_polynomial(&mut self, round: usize, claim: E) -> Result<UniPoly<E>, AkitaError>;
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
+    fn finish(&mut self) -> Result<(), AkitaError>;
+}
+
+/// Adapt an in-memory arithmetic instance to the fallible protocol driver.
+pub struct InfallibleSumcheck<'a, P: ?Sized>(pub &'a mut P);
+
+impl<E: Field, P: SumcheckInstanceProver<E> + ?Sized> SumcheckKernel<E>
+    for InfallibleSumcheck<'_, P>
+{
+    fn num_rounds(&self) -> usize {
+        SumcheckInstanceProver::num_rounds(self.0)
+    }
+
+    fn degree_bound(&self) -> usize {
+        SumcheckInstanceProver::degree_bound(self.0)
+    }
+
+    fn input_claim(&self) -> E {
+        SumcheckInstanceProver::input_claim(self.0)
+    }
+
+    fn round_polynomial(&mut self, round: usize, claim: E) -> Result<UniPoly<E>, AkitaError> {
+        Ok(self.0.compute_round_univariate(round, claim))
+    }
+
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        self.0.ingest_challenge(round, challenge);
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        self.0.finalize();
+        Ok(())
+    }
+}
+
 /// Verifier-side sumcheck instance interface.
 ///
 /// Implementations provide the initial claim and the oracle evaluation at the
@@ -95,4 +142,56 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
 
     /// Optional end-of-protocol hook after the last challenge has been ingested.
     fn finalize(&mut self) {}
+}
+
+/// Fallible boundary for equality-factored sumcheck rounds supplied by a backend.
+pub trait EqFactoredSumcheckKernel<E: Field> {
+    fn num_rounds(&self) -> usize;
+    fn degree_bound(&self) -> usize;
+    fn input_claim(&self) -> E;
+    fn current_tau(&self) -> E;
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        claim: E,
+    ) -> Result<EqFactoredUniPoly<E>, AkitaError>;
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
+    fn finish(&mut self) -> Result<(), AkitaError>;
+}
+
+/// Adapt an in-memory equality-factored instance to the fallible driver.
+pub struct InfallibleEqFactoredSumcheck<'a, P: ?Sized>(pub &'a mut P);
+
+impl<E: Field, P: EqFactoredSumcheckInstanceProver<E> + ?Sized> EqFactoredSumcheckKernel<E>
+    for InfallibleEqFactoredSumcheck<'_, P>
+{
+    fn num_rounds(&self) -> usize {
+        EqFactoredSumcheckInstanceProver::num_rounds(self.0)
+    }
+    fn degree_bound(&self) -> usize {
+        EqFactoredSumcheckInstanceProver::degree_bound(self.0)
+    }
+    fn input_claim(&self) -> E {
+        EqFactoredSumcheckInstanceProver::input_claim(self.0)
+    }
+    fn current_tau(&self) -> E {
+        EqFactoredSumcheckInstanceProver::current_tau(self.0)
+    }
+    fn round_polynomial(
+        &mut self,
+        round: usize,
+        _claim: E,
+    ) -> Result<EqFactoredUniPoly<E>, AkitaError> {
+        Ok(EqFactoredSumcheckInstanceProver::compute_round_eq_factored(
+            self.0, round,
+        ))
+    }
+    fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {
+        EqFactoredSumcheckInstanceProver::ingest_challenge(self.0, round, challenge);
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<(), AkitaError> {
+        EqFactoredSumcheckInstanceProver::finalize(self.0);
+        Ok(())
+    }
 }

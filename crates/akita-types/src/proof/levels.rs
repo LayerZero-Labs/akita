@@ -2,6 +2,7 @@ use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
 use crate::{CommittedGroupParams, SetupContributionMode};
+use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]

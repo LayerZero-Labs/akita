@@ -1,21 +1,13 @@
 //! Prover-side protocol orchestration helpers.
 
-mod coefficient_packing;
-pub mod core;
-pub mod extension_opening_reduction;
-pub mod fold_grind;
-pub mod prg;
-pub mod ring_relation;
-pub mod ring_relation_witness;
-pub mod ring_switch;
-pub mod sumcheck;
+mod fold_grind;
+mod prove;
+mod ring_relation;
+mod ring_switch;
 
 pub use akita_types::RingRelationInstance;
-pub use core::{batched_prove, SuffixProverState};
-pub use ring_relation::RingRelationProver;
-pub use ring_relation_witness::RingRelationWitness;
-pub use ring_switch::{
-    build_relation_weight_events, commit_terminal_w, commit_w, RelationSetupSource,
-    RelationWeightContribution, RelationWeightEvent, RelationWeightEventInputs,
-    RelationWeightEvents, RelationWeightFactorization, RingSwitchOutput,
+pub use prove::{batched_prove, ProveLevelOutput, RecursiveSuffixOutcome, SuffixProverState};
+pub use ring_relation::{
+    validate_chunked_witness_cfg, validate_prepared_relation_groups, RingRelationProver,
 };
+pub use ring_switch::RingSwitchOutput;
