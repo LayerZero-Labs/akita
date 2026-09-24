@@ -58,6 +58,23 @@ unsafe fn reduce_range_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
     )
 }
 
+/// Centered reduction of `|x| < 2p`, for a modulus `3 <= p < 2^30`.
+///
+/// Let `v = round(2^31 / p)` and `qhat = round(x*v / 2^31)`. Then
+/// `|qhat - x/p| <= 1/2 + |x|/2^32 < 1`, so `x - qhat*p` is congruent
+/// to `x` and lies strictly in `(-p, p)`. Also `|qhat| <= 2`, hence the
+/// product and result fit i32. `sqrdmulh` cannot reach its saturation case.
+/// This representative is sufficient between DIF stages; the existing tail
+/// still produces canonical `[0, p)` output.
+#[inline(always)]
+pub(super) unsafe fn centered_reduce_4x_i32(
+    x: int32x4_t,
+    p: int32x4_t,
+    reciprocal: int32x4_t,
+) -> int32x4_t {
+    vmlsq_s32(x, vqrdmulhq_s32(x, reciprocal), p)
+}
+
 /// 4-wide `caddp`: add `p` to lanes that are negative, mapping `(-p, p)` → `[0, p)`.
 ///
 /// Equivalent to [`reduce_range_4x_i32`] when the input is already in `(-p, p)`,
@@ -242,9 +259,28 @@ unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
+    // Cached once per process. Const specialization removes this benchmark
+    // control from the vector arithmetic loop. Set the variable to 0 to retain
+    // the previous reduction for reproducible A/B measurements.
+    static CENTERED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *CENTERED.get_or_init(|| std::env::var("AKITA_NTT_CENTERED_REDUCTION").as_deref() != Ok("0"))
+    {
+        forward_dif_stages_i32::<D, true>(a, prime, tw);
+    } else {
+        forward_dif_stages_i32::<D, false>(a, prime, tw);
+    }
+}
+
+#[inline]
+unsafe fn forward_dif_stages_i32<const D: usize, const CENTERED: bool>(
+    a: &mut [MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
     let p_q = vdupq_n_s32(prime.p);
     let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
+    let reciprocal = vdupq_n_s32((((1u64 << 31) + prime.p as u64 / 2) / prime.p as u64) as i32);
 
     // DIF butterfly stages (4-wide while half-length permits).
     let mut len = D / 2;
@@ -262,7 +298,12 @@ unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
                 let sum = vaddq_s32(u, v);
                 let diff = vsubq_s32(u, v);
 
-                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
+                let reduced_sum = if CENTERED {
+                    centered_reduce_4x_i32(sum, p_q, reciprocal)
+                } else {
+                    reduce_range_4x_i32(sum, p_q)
+                };
+                vst1q_s32(a_ptr.add(start + j), reduced_sum);
                 vst1q_s32(
                     a_ptr.add(start + j + len),
                     mont_mul_4x_i32(diff, w, p_q, pinv_q),
