@@ -650,7 +650,7 @@ pub(crate) trait InnerRelationMaterial<F: Field>: Send + 'static {
         source_count: usize,
     ) -> Result<(), AkitaError>;
 
-    fn terminal_message(&self) -> Result<TerminalTFieldsMessage, AkitaError>
+    fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
         F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize;
 
@@ -668,7 +668,7 @@ impl<F: Field + 'static> InnerRelationMaterial<F> for InnerRelationStateMaterial
         self.validate(plan, source_count)
     }
 
-    fn terminal_message(&self) -> Result<TerminalTFieldsMessage, AkitaError>
+    fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
         F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
     {
@@ -677,7 +677,7 @@ impl<F: Field + 'static> InnerRelationMaterial<F> for InnerRelationStateMaterial
                 "terminal inner relation material must contain one row".into(),
             ));
         };
-        TerminalTFieldsMessage::from_row(row)
+        Ok(TerminalTFieldsMessage::from_row(row))
     }
 
     fn into_terminal_row(self) -> Result<RingVec<F>, AkitaError> {

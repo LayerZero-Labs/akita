@@ -1,7 +1,5 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 use akita_error::AkitaError;
-use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
@@ -47,10 +45,10 @@ pub(crate) struct RingSwitchFinalization<E: Field, RelationHandle> {
 /// Sample the relation challenges and prepare its opaque witness state.
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ring_switch_finalize<F, E, T, B>(
+pub(crate) fn ring_switch_finalize<F, E, B>(
     ctx: &crate::backend::OperationCtx<'_, F, B>,
     instance: &RingRelationInstance<F>,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
     witness_handle: &B::WitnessHandle,
     lp: &CommittedGroupParams,
@@ -63,7 +61,6 @@ pub(crate) fn ring_switch_finalize<F, E, T, B>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: crate::backend::OpaqueRelationWitnessKernel<F, E>,
 {
     use crate::backend::RecursiveWitnessHandle;
@@ -137,16 +134,16 @@ where
             "backend relation geometry differs from the public plan".into(),
         ));
     }
-    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
-    let alpha = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
-    transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-    let tau0 = (0..column_bits + coefficient_bits)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-        .collect();
-    transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-    let tau1 = (0..lp.relation_row_index_num_vars(opening_batch)?)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-        .collect::<Vec<_>>();
+    let alpha = grinding
+        .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })?;
+    let tau0 = grinding.grinded_ext_challenges::<F, E>(
+        akita_types::GrindingSite::Tau0Point { level },
+        column_bits + coefficient_bits,
+    )?;
+    let tau1 = grinding.grinded_ext_challenges::<F, E>(
+        akita_types::GrindingSite::Tau1Point { level },
+        lp.relation_row_index_num_vars(opening_batch)?,
+    )?;
 
     let opening_semantics = match prepared_relation_groups
         .first()

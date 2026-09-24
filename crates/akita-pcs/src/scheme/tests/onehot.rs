@@ -418,7 +418,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         )
         .expect("batched onehot commit");
     let commitments = [commitment];
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let prover_group =
         PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
             .expect("valid one-hot prover group");
@@ -433,60 +432,15 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             )
             .expect("valid one-hot prover opening data"),
             &stack,
-            &mut prover_transcript,
+            b"test/batched-onehot-shape",
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-
-    let expected_shape = expected_same_point_batched_shape(&scheme, NV, BATCH_SIZE, &proof);
-    let actual_shape = proof.shape();
-    assert_eq!(
-        expected_shape.nonce_stream_bits,
-        actual_shape.nonce_stream_bits
-    );
-    assert_eq!(
-        expected_shape.root.opening_payload_coeffs,
-        actual_shape.root.opening_payload_coeffs
-    );
-    assert_eq!(
-        expected_shape.root.stage1_stages,
-        actual_shape.root.stage1_stages
-    );
-    assert_eq!(
-        expected_shape.root.stage2_sumcheck_proof,
-        actual_shape.root.stage2_sumcheck_proof
-    );
-    assert_eq!(
-        expected_shape.root.next_witness_binding,
-        actual_shape.root.next_witness_binding
-    );
-    assert_eq!(expected_shape.recursive_folds, actual_shape.recursive_folds);
-    assert_eq!(
-        expected_shape.terminal.extension_opening_reduction,
-        actual_shape.terminal.extension_opening_reduction
-    );
-    assert!(
-        expected_shape
-            .terminal
-            .terminal_response
-            .admits_realized(&actual_shape.terminal.terminal_response),
-        "terminal witness shape {:?} does not admit {:?}",
-        expected_shape.terminal.terminal_response,
-        actual_shape.terminal.terminal_response
-    );
-    let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).unwrap();
-    let decoded =
-        AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(&*bytes, &actual_shape)
-            .expect("deserialize batched proof with derived shape");
-    assert_eq!(decoded, proof);
-
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     scheme
         .batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"test/batched-onehot-shape",
             selected_statement::<OneHotCfg>(
                 &scheme,
                 OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

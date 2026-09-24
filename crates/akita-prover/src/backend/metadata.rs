@@ -179,7 +179,7 @@ where
     fn terminal_message(
         &self,
         material: &M,
-    ) -> Result<crate::backend::TerminalTFieldsMessage, AkitaError>;
+    ) -> Result<crate::backend::TerminalTFieldsMessage<F>, AkitaError>;
 
     fn consume_terminal_row(&self, material: M) -> Result<akita_types::RingVec<F>, AkitaError>;
 }

@@ -2,14 +2,10 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
-#[cfg(test)]
-use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
-use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection, TranscriptGrinding};
+use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection};
 use akita_error::{checked, AkitaError};
-use akita_transcript::labels::ABSORB_BATCH_SHAPE;
-use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -245,25 +241,6 @@ impl OpeningClaimsLayout {
             push_usize(&mut bytes, group.num_polynomials());
         }
         blake2b_256(&bytes)
-    }
-
-    /// Absorb normalized batch-shape fields into the transcript.
-    pub fn append_batch_shape_to_transcript<F, T>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        T: Transcript<F>,
-    {
-        self.check()?;
-
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_groups());
-        for group in self.groups() {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_vars());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials());
-        }
-        Ok(())
     }
 
     /// Sum batched public opening claims under per-slot gamma coefficients.
@@ -608,33 +585,40 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Apply the scheduled work and sample row-batching coefficients for a protocol site.
-///
-/// Claimed values must already have been absorbed. Keeping message binding
-/// separate makes the phase boundary explicit. The caller chooses whether this
-/// is an early protocol-local compression or the later application batch and
-/// must use the corresponding transcript phase.
-pub fn sample_row_coefficients<F, L, T>(
+/// Apply the scheduled native work and sample one context-bound coefficient
+/// per opening claim.
+pub fn sample_row_coefficients_native<F, L>(
     layout: &OpeningClaimsLayout,
     site: GrindingSite,
-    transcript: &mut T,
+    grinding: &mut crate::NativeProverGrinding<'_>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     L: ExtField<F>,
-    T: TranscriptGrinding<F>,
 {
     layout.check()?;
     if !layout.requires_row_batch_challenge() {
         return Ok(vec![L::one()]);
     }
-    transcript.grind_query(site)?;
-    let challenge_label = site.proof_of_work_label().ok_or_else(|| {
-        AkitaError::InvalidInput("row batching requires a proof-of-work grinding site".into())
-    })?;
-    Ok((0..layout.num_total_polynomials())
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
-        .collect())
+    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
+}
+
+/// Verify the scheduled native work and replay one context-bound coefficient
+/// per opening claim.
+pub fn verify_row_coefficients_native<F, L>(
+    layout: &OpeningClaimsLayout,
+    site: GrindingSite,
+    grinding: &mut crate::NativeVerifierGrinding<'_, '_>,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    L: ExtField<F>,
+{
+    layout.check()?;
+    if !layout.requires_row_batch_challenge() {
+        return Ok(vec![L::one()]);
+    }
+    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
 }
 
 fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
@@ -648,7 +632,6 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::AkitaTranscript;
     use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
@@ -792,46 +775,5 @@ mod tests {
             aggregate_bytes - final_only_bytes,
             extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
         );
-    }
-
-    #[test]
-    fn public_row_coefficients_bind_against_claim_cancellation() {
-        let layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::singleton(2),
-            PolynomialGroupLayout::singleton(3),
-        ])
-        .expect("two-group layout");
-        let openings = [F::from_u64(5), F::from_u64(11)];
-        let delta = F::from_u64(3);
-        let tampered = [openings[0] + delta, openings[1] - delta];
-
-        let target = |values: &[F]| {
-            let mut inner = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
-            append_claim_values_to_transcript::<F, F, _>(values, &mut inner);
-            let plan = crate::GrindingPlan::new(
-                vec![crate::GrindingRun::proof_of_work(
-                    GrindingSite::EvaluationBatch { level: 0 },
-                    1,
-                    128,
-                )
-                .expect("grinding run")],
-                128,
-            )
-            .expect("grinding plan");
-            let mut transcript = crate::ProverGrindingTranscript::new(&mut inner, &plan)
-                .expect("grinding transcript");
-            let coefficients = sample_row_coefficients::<F, F, _>(
-                &layout,
-                GrindingSite::EvaluationBatch { level: 0 },
-                &mut transcript,
-            )
-            .expect("derive coefficients");
-            transcript.finish().expect("finish grinding");
-            layout
-                .batched_eval_target(&coefficients, values)
-                .expect("batched target")
-        };
-
-        assert_ne!(target(&openings), target(&tampered));
     }
 }

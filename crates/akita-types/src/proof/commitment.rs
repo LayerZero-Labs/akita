@@ -5,7 +5,6 @@ use crate::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
     SisSecurityPolicyId, SisTableDigest,
 };
-use crate::transcript::AppendToTranscript;
 use crate::{
     CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
@@ -20,11 +19,9 @@ type MatrixFields = (
     usize,
 );
 use akita_algebra::ring::CyclotomicRing;
-use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
@@ -102,15 +99,6 @@ impl AkitaDeserialize for DummyProof {
     }
 }
 
-impl<F> AppendToTranscript<F> for AkitaCommitment
-where
-    F: Field + CanonicalEncoding,
-{
-    fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
-        transcript.append_serde(label, self);
-    }
-}
-
 /// D-free public commitment payload stored as flat field coefficients.
 ///
 /// For a committed polynomial group this carries the terminal compressed
@@ -139,26 +127,6 @@ impl<F: Field> Commitment<F> {
     /// Consume into the underlying flat ring-coefficient buffer.
     pub fn into_rows(self) -> RingVec<F> {
         self.0
-    }
-
-    /// Absorb this payload using its canonical flat coefficient encoding under
-    /// the caller-derived terminal compression `ring_dim`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored buffer is not
-    /// well-formed for `ring_dim` (see [`RingVec::append_flat_to_transcript`]).
-    pub fn append_to_transcript<T: Transcript<F>>(
-        &self,
-        label: &[u8],
-        ring_dim: usize,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: CanonicalEncoding + AkitaSerialize,
-    {
-        self.0
-            .append_flat_to_transcript(label, ring_dim, transcript)
     }
 }
 

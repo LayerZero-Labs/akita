@@ -164,6 +164,7 @@ name = "akita_e2e"
 harness = false
 
 [[bench]]
+
 name = "fft_smooth"
 harness = false
 

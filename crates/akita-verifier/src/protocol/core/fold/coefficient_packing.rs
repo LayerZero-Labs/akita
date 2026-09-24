@@ -3,11 +3,9 @@
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{
-    append_claim_values_to_transcript, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
+    BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -91,29 +89,46 @@ where
     })
 }
 
-/// Prepare a recursive packing prefix without extension-opening reduction.
-pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix<F, E, T>(
+pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix_native<F, E>(
     claims: &OpeningClaims<'_, E>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
+    level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F>,
 {
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
-    let mut point_refs = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let point = claims.group_point(group_index)?;
-        point_refs.push(point);
+        akita_transcript::public_native_extensions_verifier::<F, E>(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                level,
+                stage: 1,
+                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            claims.group_point(group_index)?,
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
     }
-    super::single_field::absorb_protocol_opening_points::<F, E, T>(&point_refs, transcript);
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+    akita_transcript::public_native_extensions_verifier::<F, E>(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+            level,
+            stage: 2,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        openings,
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),

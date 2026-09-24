@@ -112,14 +112,13 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                         .expect("cross-mode prover group");
                 let claims =
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
                     .batched_prove(
                         &setup,
                         selected_prover_data(scheme, claims, vec![handle])
                             .expect("cross-mode prover data"),
                         backend,
-                        &mut transcript,
+                        LABEL,
                         BasisMode::Lagrange,
                     )
                     .expect("cross-mode proof")
@@ -147,12 +146,11 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     "reduced",
                 ),
             ] {
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
                     .batched_verify(
                         proof,
                         &verifier_setup,
-                        &mut transcript,
+                        LABEL,
                         statement(selection, &point, opening, &commitment),
                         BasisMode::Lagrange,
                     )
@@ -174,11 +172,10 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    let mut transcript = AkitaTranscript::<F>::new(LABEL);
                     scheme.batched_verify(
                         proof,
                         &verifier_setup,
-                        &mut transcript,
+                        LABEL,
                         statement(wrong_selection, &point, opening, &commitment),
                         BasisMode::Lagrange,
                     )

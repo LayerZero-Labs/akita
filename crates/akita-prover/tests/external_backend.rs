@@ -55,7 +55,10 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueProverConsumer<F, E> for Exte
 impl<F: Field + CanonicalEncoding, E: Field> TerminalCommitmentMaterialKernel<F, Handle>
     for ExternalBackend<F, E>
 {
-    fn terminal_message(&self, _material: &Handle) -> Result<TerminalTFieldsMessage, AkitaError> {
+    fn terminal_message(
+        &self,
+        _material: &Handle,
+    ) -> Result<TerminalTFieldsMessage<F>, AkitaError> {
         Err(AkitaError::InvalidProof)
     }
     fn consume_terminal_row(&self, _material: Handle) -> Result<RingVec<F>, AkitaError> {
@@ -467,13 +470,13 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage3Kernel<F, E> for Extern
 /// This body instantiates the actual prover for a backend in an external crate.
 /// Admission rejects unsupported plans without requiring CPU preparation or sources.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_with_external_backend<'a, Cfg, T>(
+pub fn prove_with_external_backend<'a, Cfg>(
     expanded: &AkitaSetupDescriptor,
     prefixes: &akita_prover::SetupPrefixProverRegistry<Cfg::Field, Handle>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
     opening: akita_prover::SelectedProverOpeningData<'a, Cfg::ExtField, Handle, Cfg::Field>,
-    transcript: &mut T,
-) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
+    transcript_session: &[u8],
+) -> Result<Vec<u8>, AkitaError>
 where
     Cfg: akita_config::CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -491,16 +494,15 @@ where
         + jolt_field::MulBaseUnreduced<Cfg::Field>
         + akita_serialization::AkitaSerialize
         + 'static,
-    T: akita_transcript::Transcript<Cfg::Field> + akita_transcript::TranscriptChallengePreview,
 {
     let backend = ExternalBackend::<Cfg::Field, Cfg::ExtField>(PhantomData);
-    akita_prover::batched_prove::<Cfg, T, _>(
+    akita_prover::batched_prove::<Cfg, _>(
         expanded,
         prefixes,
         schedules,
         &backend,
         opening,
-        transcript,
+        transcript_session,
         BasisMode::Lagrange,
     )
 }

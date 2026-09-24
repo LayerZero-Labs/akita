@@ -818,8 +818,8 @@ fn validate_stage2_successor_capacity(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
-    /// Exact proof-level packed nonce-stream bytes.
-    pub nonce_stream_bytes: usize,
+    /// Maximum bytes used by independently encoded canonical native nonces.
+    pub native_nonce_max_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
@@ -861,7 +861,7 @@ impl FoldScheduleEstimate {
     pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
         self.estimated_direct_proof_payload_bytes()?
             .checked_add(self.estimated_stage3_payload_bytes()?)
-            .and_then(|value| value.checked_add(self.nonce_stream_bytes))
+            .and_then(|value| value.checked_add(self.native_nonce_max_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

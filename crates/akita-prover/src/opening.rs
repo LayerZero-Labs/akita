@@ -2,8 +2,6 @@
 use crate::backend::CommitmentHandleMetadata;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{
     Commitment, CommittedGroup, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims,
@@ -137,22 +135,21 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
             self.groups.iter().map(&mut map).collect(),
         )
     }
-    /// Absorb the normalized batch shape, commitments, and group points.
-    pub fn append_to_transcript<T>(
+    pub(crate) fn append_to_native(
         &self,
         root_params: &CommittedGroupParams,
-        transcript: &mut T,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
     ) -> Result<(), AkitaError>
     where
-        CommitF: CanonicalEncoding + AkitaSerialize,
+        CommitF: CanonicalEncoding,
         PointF: ExtField<CommitF>,
-        T: Transcript<CommitF>,
     {
-        let layout = self.opening_layout();
-        let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_level(root_params, layout, PointF::DEGREE)?;
+        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+            root_params,
+            self.opening_layout(),
+            PointF::DEGREE,
+        )?;
         let relation_layout = relation_geometry.rhs_layout();
-        layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
             let compression = relation_layout.compression_plan_for_group(group_index)?;
             if commitment.rows().coeff_len() != compression.terminal_coefficients() {
@@ -165,20 +162,36 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
                 .last()
                 .ok_or(AkitaError::InvalidProof)?
                 .ring_dimension();
-            commitment.append_to_transcript(
-                akita_transcript::labels::ABSORB_COMMITMENT,
-                ring_dim,
-                transcript,
-            )?;
+            let group = u32::try_from(group_index)
+                .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?;
+            akita_transcript::public_native_fields_prover(
+                grinding.state_mut(),
+                akita_transcript::ProtocolSiteId {
+                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
+                    stage: 1,
+                    group,
+                    detail: u32::try_from(ring_dim).map_err(|_| {
+                        AkitaError::InvalidSetup("ring dimension exceeds u32".into())
+                    })?,
+                    ..akita_transcript::ProtocolSiteId::default()
+                },
+                commitment.rows().coeffs(),
+            )
+            .map_err(|_| AkitaError::InvalidProof)?;
         }
-        for group in self.opening_claims.groups() {
-            for coord in group.point() {
-                akita_transcript::append_ext_field::<CommitF, PointF, T>(
-                    transcript,
-                    akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
-                    coord,
-                );
-            }
+        for (group_index, group_claims) in self.opening_claims.groups().iter().enumerate() {
+            akita_transcript::public_native_extensions_prover::<CommitF, PointF>(
+                grinding.state_mut(),
+                akita_transcript::ProtocolSiteId {
+                    family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
+                    stage: 2,
+                    group: u32::try_from(group_index)
+                        .map_err(|_| AkitaError::InvalidSetup("group index exceeds u32".into()))?,
+                    ..akita_transcript::ProtocolSiteId::default()
+                },
+                group_claims.point(),
+            )
+            .map_err(|_| AkitaError::InvalidProof)?;
         }
         Ok(())
     }

@@ -191,11 +191,11 @@ pub(super) fn terminal(
         .unwrap_or(certified_linf_cap);
     let response_shape =
         akita_types::TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
-    let terminal_bytes = akita_types::terminal_response_planner_bytes(
+    let terminal_bytes = akita_types::native_terminal_response_planner_bytes(
         ctx.policy.decomposition.field_bits(),
         &response_shape,
         terminal_params.response_l2_sq_cap(),
-    );
+    )?;
     let payload_bytes = opening_reduction_bytes
         .checked_add(terminal_bytes)
         .ok_or_else(|| {
@@ -209,7 +209,7 @@ pub(super) fn terminal(
             )?,
         ),
         first_direct_output_witness_len: 0,
-        cost: PackedProofCost::new(payload_bytes, 0, 0)?,
+        cost: NativeProofCost::new(payload_bytes, 0, 0, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
         terminal: Arc::new(CandidateTerminalResponse {
@@ -264,18 +264,26 @@ pub(super) fn prepend_fold(
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
     )?;
+    let natural_setup_field_len = akita_types::active_setup_field_len(params, &opening_layout)?;
+    let scan_work = crate::schedule_params::direct_setup_scan_work_elements(
+        natural_setup_field_len,
+        relation_geometry.relation_coefficient_block_len(),
+    )?;
+    let work = output_witness_len
+        .checked_add(scan_work)
+        .ok_or_else(|| AkitaError::InvalidSetup("unpruned fold work overflow".into()))?;
     let cost = child.cost.checked_prepend(
         direct_bytes,
+        edge_grinding_cost.native_nonce_max_bytes,
         edge_grinding_cost.total_nonce_bits,
         edge_grinding_cost.expanded_query_count,
+        work,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);
     }
     Ok(Some(ScheduleCandidate {
-        first_direct_setup_field_len: std::num::NonZeroUsize::new(
-            akita_types::active_setup_field_len(params, &opening_layout)?,
-        ),
+        first_direct_setup_field_len: std::num::NonZeroUsize::new(natural_setup_field_len),
         first_direct_output_witness_len: output_witness_len,
         cost,
         setup_field_elements: reference_setup_field_elements(params)?
@@ -331,10 +339,19 @@ pub(super) fn prepend_root(
         policy.claim_ext_degree,
         0,
     )?;
+    let scan_work = crate::schedule_params::direct_setup_scan_work_elements(
+        first_direct_setup_field_len.get(),
+        relation_geometry.relation_coefficient_block_len(),
+    )?;
+    let work = output_witness_len
+        .checked_add(scan_work)
+        .ok_or_else(|| AkitaError::InvalidSetup("unpruned root work overflow".into()))?;
     let cost = suffix.cost.checked_prepend(
         root_bytes,
+        root_grinding_cost.native_nonce_max_bytes,
         root_grinding_cost.total_nonce_bits,
         root_grinding_cost.expanded_query_count,
+        work,
     )?;
     if !cost.fits_query_limit() {
         return Ok(None);
@@ -360,7 +377,11 @@ pub(super) fn prepend_root(
         &candidate.folds.to_vec(),
         candidate.terminal.as_ref(),
     )?;
-    if candidate.cost.grinding_cost() != canonical_cost {
+    let edge_wise_cost = candidate.cost.grinding_cost();
+    if edge_wise_cost.total_nonce_bits != canonical_cost.total_nonce_bits
+        || edge_wise_cost.native_nonce_max_bytes != canonical_cost.native_nonce_max_bytes
+        || edge_wise_cost.expanded_query_count != canonical_cost.expanded_query_count
+    {
         return Err(AkitaError::InvalidSetup(
             "edge-wise oracle grinding cost disagrees with the canonical complete schedule".into(),
         ));
