@@ -168,26 +168,10 @@ fn heterogeneous_group_types() {
             "heterogeneous selection must resolve to the two-precommit entry"
         );
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
+        let session = b"completeness/heterogeneous_group_types";
         let proof = onehot_scheme
-            .batched_prove(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
@@ -209,13 +193,11 @@ fn heterogeneous_group_types() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
         onehot_scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -365,26 +347,10 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // really do disagree on their committed-source depth.
         assert_eq!(schedule.root.params.inner().digits.num_digits, 1,);
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
+        let session = b"completeness/bounded_dense_precommit_with_onehot_final";
         let proof = onehot_scheme
-            .batched_prove(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("mixed-bound prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
@@ -396,13 +362,11 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         onehot_scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -425,14 +389,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .expect("final verifier group"),
         ])
         .expect("tampered claims");
-        let mut tampered_transcript =
-            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         assert!(
             onehot_scheme
                 .batched_verify(
-                    &decoded,
+                    &proof,
                     &verifier_setup,
-                    &mut tampered_transcript,
+                    session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
                     BasisMode::Lagrange,
                 )
@@ -750,8 +712,7 @@ fn explicit_commitment_transfer_between_backends() {
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
+        let session = b"completeness/heterogeneous_compute_backends";
         let resolved = scheme.schedules().resolve_selection(selection).unwrap();
         let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
@@ -761,33 +722,21 @@ fn explicit_commitment_transfer_between_backends() {
         let prefixes = receiver
             .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
             .unwrap();
-        let proof = akita_prover::batched_prove::<Cfg, _, _>(
+        let proof = akita_prover::batched_prove::<Cfg, _>(
             setup.expanded.descriptor(),
             &prefixes,
             scheme.schedules(),
             &receiver,
             prover_data,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(
                     selection,
                     OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

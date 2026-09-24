@@ -24,9 +24,9 @@ A nonterminal fold starts with four kinds of information.
 | Public setup | The A, B, and D matrix entries required by this scheduled level |
 | Scheduled parameters | Ring dimensions, block geometry, digit bases, opening method, norm route, and proof shape |
 
-The fold produces:
+The fold streams:
 
-- one `FoldLevelProof` containing its commitment payloads and sum-check proofs;
+- one schedule-shaped sequence of native commitment payloads and sum-check messages;
 - one smaller digit witness for the successor;
 - one opening claim that binds that witness at the final Stage 2 challenge; and
 - when setup offloading is selected, a separate opening claim for one prepared

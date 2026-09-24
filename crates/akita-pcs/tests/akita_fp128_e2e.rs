@@ -89,11 +89,8 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims,
+    BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use common::*;
 use matrix_drivers::*;
@@ -353,33 +350,22 @@ fn fp128_onehot_batched() {
             )
             .expect("commit");
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
+        let session = b"completeness/fp128_onehot_batched";
         let proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -427,33 +413,22 @@ fn fp128_dense_batched() {
             )
             .expect("commit");
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
+        let session = b"completeness/fp128_dense_batched";
         let proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -522,8 +497,7 @@ fn fp128_onehot_oversized_setup() {
             )
             .expect("commit");
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
+        let session = b"completeness/fp128_onehot_oversized_setup";
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -535,28 +509,17 @@ fn fp128_onehot_oversized_setup() {
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -599,8 +562,7 @@ fn fp128_dense_monomial_basis() {
             )
             .expect("commit");
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
+        let session = b"completeness/fp128_dense_monomial_basis";
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -612,28 +574,17 @@ fn fp128_dense_monomial_basis() {
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Monomial,
             )
             .expect("monomial prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Monomial,
             )

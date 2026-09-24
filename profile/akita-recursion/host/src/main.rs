@@ -20,7 +20,6 @@ use std::time::Instant;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
-use akita_transcript::AkitaTranscript;
 use akita_types::{prepared_verifier_ntt_cache_metadata, BasisMode};
 use akita_verifier::{batched_verify, build_riscv64_terminal_ntt_cache};
 use clap::Parser;
@@ -156,13 +155,11 @@ macro_rules! strict_decode_and_verify {
         let decoded =
             AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>(inner_blob, &schedules)
                 .map_err(|err| format!("strict input decode failed: {err}"))?;
-        let mut transcript =
-            AkitaTranscript::<$field>::unbound_verifier(&decoded.transcript_domain);
-        batched_verify::<$cfg, _>(
+        batched_verify::<$cfg>(
             &decoded.proof,
             &decoded.verifier_setup,
             &schedules,
-            &mut transcript,
+            &decoded.transcript_domain,
             decoded
                 .verifier_statement()
                 .map_err(|err| format!("strict input statement failed: {err}"))?,
@@ -192,13 +189,11 @@ macro_rules! strict_fp128_preflight {
                 decoded.schedule_selection.row_digest,
             )
             .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
-        let mut cached_transcript =
-            AkitaTranscript::<fp128::Field>::unbound_verifier(&decoded.transcript_domain);
-        batched_verify::<$cfg, _>(
+        batched_verify::<$cfg>(
             &decoded.proof,
             &decoded.verifier_setup,
             &schedules,
-            &mut cached_transcript,
+            &decoded.transcript_domain,
             decoded
                 .verifier_statement()
                 .map_err(|err| format!("cached input statement failed: {err}"))?,

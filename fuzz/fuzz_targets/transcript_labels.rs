@@ -1,15 +1,18 @@
 #![no_main]
 
+use akita_transcript::{
+    native_prover_field_challenge, new_native_prover, public_native_bytes_prover, ProtocolSiteId,
+};
 use jolt_field::Prime128Offset275;
-use akita_transcript::{AkitaTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let split = data.len().min(255);
     let (label, bytes) = data.split_at(split);
 
-    let mut transcript = AkitaTranscript::<Prime128Offset275>::new(b"akita-fuzz");
-    transcript.append_bytes(label, bytes);
-    let _ = transcript.challenge_scalar(label);
-    let _ = transcript.challenge_bytes(label, bytes.len().min(96));
+    let Ok(mut transcript) = new_native_prover(b"akita-fuzz", label) else {
+        return;
+    };
+    let _ = public_native_bytes_prover(&mut transcript, ProtocolSiteId::default(), bytes);
+    let _: Prime128Offset275 = native_prover_field_challenge(&mut transcript).unwrap();
 });

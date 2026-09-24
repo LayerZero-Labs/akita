@@ -306,7 +306,7 @@ fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
 }
 
 #[test]
-fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
+fn native_proof_budget_is_derived_from_the_selected_schedule() {
     let schedules = schedules::<TestCfg>();
     let opening_claims = akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout");
     let row = schedules
@@ -316,39 +316,42 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
                 .expect("singleton group layout"),
         ))
         .expect("trusted singleton row");
-    let opening_layout = row.profiles().opening_layout().expect("opening layout");
-    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(row.schedule(), &opening_layout)
-        .expect("grinding plan");
-    let canonical = canonical_proof_shape(row.schedule(), &opening_layout, 1, &grinding_plan)
-        .expect("canonical shape");
-
-    let mut huge = canonical.clone();
-    huge.root.opening_payload_coeffs = usize::MAX;
-    let budget_error = AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<
-        TestCfg,
-    >(row.selection(), &huge, 0, &schedules)
-    .expect_err("huge shape must fail against remaining bytes");
-    let budget_message = budget_error.to_string();
+    let bound = AkitaJoltInputs::<TestF, TEST_D>::native_proof_byte_bound::<TestCfg>(
+        row.selection(),
+        &schedules,
+    )
+    .expect("native proof bound");
+    assert!(bound > 0);
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group: row.profiles().final_group.group,
+        precommitteds: row.profiles().precommitteds.clone(),
+    };
+    let planner_estimate = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
+        &key,
+        row.schedule(),
+        &akita_config::policy_of::<TestCfg>(),
+    )
+    .expect("native planner estimate");
     assert!(
-        budget_message.contains("remaining proof bytes") || budget_message.contains("overflow"),
-        "unexpected budget error: {budget_message}"
+        bound >= planner_estimate,
+        "native parser bound {bound} must cover the native selection estimate {planner_estimate}"
     );
 
-    let mut noncanonical = canonical;
-    noncanonical.root.opening_payload_coeffs += 1;
-    let identity_error =
-        AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<TestCfg>(
-            row.selection(),
-            &noncanonical,
-            MAX_JOLT_BLOB_BYTES as usize,
-            &schedules,
-        )
-        .expect_err("noncanonical shape must fail before proof decoding");
-    assert!(identity_error.to_string().contains("canonical schedule"));
+    let mut encoded_oversize = Vec::new();
+    ((bound as u64) + 1)
+        .serialize_with_mode(&mut encoded_oversize, BLOB_COMPRESS)
+        .expect("encode oversized length");
+    let error = AkitaJoltInputs::<TestF, TEST_D>::decode_capped_bytes(
+        &mut encoded_oversize.as_slice(),
+        bound,
+        "test native proof",
+    )
+    .expect_err("oversized native proof must fail before allocation");
+    assert!(matches!(error, SerializationError::LengthLimitExceeded { .. }));
 }
 
 #[test]
-fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
+fn unknown_schedule_identity_is_rejected_before_native_proof_allocation() {
     type ExtCfg = fp32::OneHot;
     type ExtF = fp32::Field;
     type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
@@ -362,30 +365,11 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
                 .expect("singleton group layout"),
         ))
         .expect("trusted fp32 singleton row");
-    let opening_layout = row.profiles().opening_layout().expect("catalog layout");
-    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(row.schedule(), &opening_layout)
-        .expect("grinding plan");
-    let mut noncanonical = canonical_proof_shape(
-        row.schedule(),
-        &opening_layout,
-        <ExtE as ExtField<ExtF>>::DEGREE,
-        &grinding_plan,
+    let mut unknown = row.selection();
+    unknown.row_digest = akita_types::ScheduleRowDigest::from_bytes([0x5a; 32]);
+    let error = AkitaJoltInputs::<ExtF, 2048, ExtE>::native_proof_byte_bound::<ExtCfg>(
+        unknown, &schedules,
     )
-    .expect("canonical extension shape");
-    noncanonical
-        .terminal
-        .extension_opening_reduction
-        .as_mut()
-        .expect("proper extension claims require a terminal reduction shape")
-        .partials += 1;
-
-    let error =
-        AkitaJoltInputs::<ExtF, 2048, ExtE>::validate_proof_shape_before_allocation::<ExtCfg>(
-            row.selection(),
-            &noncanonical,
-            MAX_JOLT_BLOB_BYTES as usize,
-            &schedules,
-        )
-        .expect_err("noncanonical extension shape must fail before proof decoding");
-    assert!(error.to_string().contains("canonical schedule"));
+    .expect_err("unknown schedule must fail before proof decoding");
+    assert!(error.to_string().contains("schedule"));
 }

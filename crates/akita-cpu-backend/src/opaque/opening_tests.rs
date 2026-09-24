@@ -4,8 +4,7 @@ use akita_config::proof_optimized::fp128::OneHot;
 use akita_error::AkitaError;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
-use akita_transcript::labels::{ABSORB_EVALUATION_CLAIMS, CHALLENGE_SUMCHECK_BATCH};
-use akita_transcript::{append_ext_field, sample_ext_challenge, AkitaTranscript, Transcript};
+use akita_transcript::{new_native_prover, new_native_verifier};
 use akita_types::*;
 use jolt_field::{Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use std::sync::Arc;
@@ -97,7 +96,8 @@ fn witness(
     .unwrap()
 }
 struct ProvedReduction {
-    proof: ExtensionOpeningReductionProof<E>,
+    partials: Vec<E>,
+    final_claims: Vec<E>,
     rho: Vec<E>,
 }
 struct EorDriver<'a> {
@@ -135,7 +135,7 @@ impl SumcheckKernel<E> for EorDriver<'_> {
         Ok(())
     }
 }
-fn prove_eor<T: ProverTranscriptGrinding<F>>(
+fn prove_eor(
     backend: &CpuBackend,
     session: &crate::opaque::CpuProofSessionHandle,
     context: &ProofContext,
@@ -146,27 +146,23 @@ fn prove_eor<T: ProverTranscriptGrinding<F>>(
         super::CommitmentHandle<F, E, ExtensionTestConfig>,
         crate::opaque::CpuWitnessHandle,
     >],
-    transcript: &mut T,
+    grinding: &mut NativeProverGrinding<'_>,
 ) -> Result<ProvedReduction, AkitaError> {
     let prepared = <CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
         backend, session, context, layout, groups,
     )?;
-    append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
-    for partial in &prepared.proof_partials {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
-    }
-    transcript.grind_query(GrindingSite::ExtensionOpeningPoint { level: 1 })?;
-    let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-    let coefficients = sample_row_coefficients::<F, E, T>(
+    let prefix = native_eor_prover_prefix::<F, E>(
+        grinding,
         layout,
-        GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
-        transcript,
+        &prepared.openings,
+        &prepared.proof_partials,
+        1,
     )?;
     let (claim, mut session) = <CpuBackend as OpaqueEorKernel<F, E>>::begin_eor(
         backend,
         prepared.handle,
-        &[eta],
-        &coefficients,
+        &prefix.eta,
+        &prefix.claim_coefficients,
     )?;
     let mut driver = EorDriver {
         backend,
@@ -174,33 +170,34 @@ fn prove_eor<T: ProverTranscriptGrinding<F>>(
         claim,
         rounds: layout.max_num_vars() - 1,
     };
-    let mut round = 0;
-    let (sumcheck, rho, _) =
-        akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut driver, transcript, |tr| {
-            let challenge = sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                SumcheckProtocol::ExtensionOpeningReduction,
-                1,
-                0,
-                round,
-            )?;
-            round += 1;
-            Ok(challenge)
-        })?;
+    let mut channel = NativeGrindingSumcheckProver::<F, E>::new(
+        grinding,
+        SumcheckProtocol::ExtensionOpeningReduction,
+        1,
+        0,
+    );
+    let (rho, final_claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+        &mut driver,
+        &mut channel,
+        akita_sumcheck::NativeSumcheckShape::new(
+            layout.max_num_vars() - 1,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+        )?,
+        NATIVE_EOR_SUMCHECK_INVOCATION,
+    )?;
     let final_claims = <CpuBackend as OpaqueEorKernel<F, E>>::finish_eor(backend, session)?;
-    for claim in &final_claims {
-        append_ext_field::<F, E, T>(
-            transcript,
-            akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM,
-            claim,
-        );
+    if final_claims
+        .iter()
+        .zip(&prefix.claim_coefficients)
+        .fold(E::zero(), |sum, (value, weight)| sum + *value * *weight)
+        != final_claim
+    {
+        return Err(AkitaError::InvalidProof);
     }
+    native_eor_prover_final_claims::<F, E>(grinding, layout, &final_claims, 1)?;
     Ok(ProvedReduction {
-        proof: ExtensionOpeningReductionProof {
-            partials: prepared.proof_partials,
-            sumcheck,
-            final_claims,
-        },
+        partials: prepared.proof_partials,
+        final_claims,
         rho,
     })
 }
@@ -338,22 +335,21 @@ fn recursive_extension_opening_reduction_pads_and_shares_challenges() {
             ring_dimension: 64,
         },
     ];
-    let mut transcript = AkitaTranscript::<F>::new(b"test/aggregate-padding");
+    let native = new_native_prover(b"test/aggregate-padding", b"test").unwrap();
     let plan = eor_test_plan(7, true);
-    let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
+    let mut grinding = NativeProverGrinding::new(native, &plan);
     let proved = prove_eor(
         &backend,
         &proof.session,
         context,
         &layout,
         &groups,
-        &mut transcript,
+        &mut grinding,
     )
     .unwrap();
-    transcript.finish().unwrap();
-    assert_eq!(proved.proof.num_rounds(), 7);
-    assert_eq!(proved.proof.partials.len(), 4);
-    assert_eq!(proved.proof.final_claims.len(), 2);
+    grinding.finish().unwrap();
+    assert_eq!(proved.partials.len(), 4);
+    assert_eq!(proved.final_claims.len(), 2);
     assert_eq!(proved.rho.len(), 7);
     backend.finish_scope(&proof.session).unwrap();
 }
@@ -487,19 +483,19 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     ring_dimension: D,
                 },
             ];
-            let mut transcript = AkitaTranscript::<F>::new(b"test/mixed-eor-dense-oracle");
+            let native = new_native_prover(b"test/mixed-eor-dense-oracle", b"test").unwrap();
             let plan = eor_test_plan(8, true);
-            let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
+            let mut grinding = NativeProverGrinding::new(native, &plan);
             let proved = prove_eor(
                 &backend,
                 &proof.session,
                 context,
                 &layout,
                 &groups,
-                &mut transcript,
+                &mut grinding,
             )
             .unwrap();
-            let nonces = transcript.finish().unwrap();
+            let proof_bytes = grinding.finish().unwrap();
             let tables = [
                 (&setup_evals, &long_point),
                 (&long_evals, &long_point),
@@ -513,25 +509,15 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 .iter()
                 .flat_map(|(evals, point)| direct_column_partials::<F, E>(evals, point))
                 .collect::<Vec<_>>();
-            assert_eq!(proved.proof.partials, partials);
-            let mut replay = AkitaTranscript::<F>::new(b"test/mixed-eor-dense-oracle");
-            let mut replay = VerifierGrindingTranscript::new(&mut replay, &nonces, &plan).unwrap();
-            append_claim_values_to_transcript::<F, E, _>(&openings, &mut replay);
-            for partial in &partials {
-                append_ext_field::<F, E, _>(&mut replay, ABSORB_EVALUATION_CLAIMS, partial);
-            }
-            TranscriptGrinding::grind_query(
-                &mut replay,
-                GrindingSite::ExtensionOpeningPoint { level: 1 },
-            )
-            .unwrap();
-            let eta = sample_ext_challenge::<F, E, _>(&mut replay, CHALLENGE_SUMCHECK_BATCH);
-            let coefficients = sample_row_coefficients::<F, E, _>(
-                &layout,
-                GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
-                &mut replay,
-            )
-            .unwrap();
+            assert_eq!(proved.partials, partials);
+            let native =
+                new_native_verifier(b"test/mixed-eor-dense-oracle", b"test", &proof_bytes).unwrap();
+            let mut replay = NativeVerifierGrinding::new(native, &plan);
+            let eor_prefix =
+                native_eor_verifier_prefix::<F, E>(&mut replay, &layout, &openings, 1).unwrap();
+            assert_eq!(eor_prefix.partials, partials);
+            let eta = eor_prefix.eta[0];
+            let coefficients = eor_prefix.claim_coefficients;
             let terms = tables
                 .iter()
                 .map(|(evals, point)| direct_tensor_tables::<F, E>(evals, point, eta))
@@ -546,27 +532,24 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                             .fold(E::zero(), |sum, (w, f)| sum + *w * *f)
                 },
             );
-            replay.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_CLAIM, &input);
-            let mut round = 0;
-            let (claim, rho) = akita_sumcheck::verify_sumcheck_rounds::<F, _, E, _>(
-                &proved.proof.sumcheck,
-                input,
-                8,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
+            let mut channel = NativeGrindingSumcheckVerifier::<F, E>::new(
                 &mut replay,
-                |tr| {
-                    let challenge = sample_grinded_sumcheck_challenge::<F, E, _>(
-                        tr,
-                        SumcheckProtocol::ExtensionOpeningReduction,
-                        1,
-                        0,
-                        round,
-                    )?;
-                    round += 1;
-                    Ok(challenge)
-                },
+                SumcheckProtocol::ExtensionOpeningReduction,
+                1,
+                0,
+            );
+            let rounds = akita_sumcheck::verify_sumcheck_rounds_native::<F, E, _>(
+                &mut channel,
+                NATIVE_EOR_SUMCHECK_INVOCATION,
+                input,
+                akita_sumcheck::NativeSumcheckShape::new(8, EXTENSION_OPENING_REDUCTION_DEGREE)
+                    .unwrap(),
             )
             .unwrap();
+            let claim = rounds.output_claim;
+            let rho = rounds.challenges;
+            let final_claims =
+                native_eor_verifier_final_claims::<F, E>(&mut replay, &layout, 1).unwrap();
             replay.finish().unwrap();
             assert_eq!(rho, proved.rho);
             let expected = terms
@@ -581,7 +564,8 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                         * extra
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(proved.proof.final_claims, expected);
+            assert_eq!(proved.final_claims, expected);
+            assert_eq!(final_claims, expected);
             assert_eq!(
                 claim,
                 expected
@@ -601,21 +585,21 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     point: &long_point,
                     ring_dimension: D,
                 }];
-                let mut transcript = AkitaTranscript::<F>::new(b"test/shared-commitment-scopes");
+                let native = new_native_prover(b"test/shared-commitment-scopes", b"test").unwrap();
                 let plan = eor_test_plan(8, false);
-                let mut transcript = ProverGrindingTranscript::new(&mut transcript, &plan).unwrap();
+                let mut grinding = NativeProverGrinding::new(native, &plan);
                 let proved = prove_eor(
                     &backend,
                     guard.session(),
                     &context,
                     &shared_layout,
                     &requests,
-                    &mut transcript,
+                    &mut grinding,
                 )
                 .unwrap();
-                transcript.finish().unwrap();
+                grinding.finish().unwrap();
                 guard.finish().unwrap();
-                (proved.proof.partials, proved.proof.final_claims, proved.rho)
+                (proved.partials, proved.final_claims, proved.rho)
             };
             let first_proof = super::opening_tests::proof(&backend);
             let second_proof = super::opening_tests::proof(&backend);

@@ -17,14 +17,12 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-rayon = { version = "1.10", optional = true }
-tracing = "0.1"
 
 [features]
 default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
-parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
 
 [lints]
 workspace = true

@@ -4,8 +4,6 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
@@ -134,20 +132,64 @@ pub struct RingSwitchReplay<'a, F: Field, E> {
     pub opening_ring_dim: usize,
 }
 
-/// Replay the verifier half of ring switching after the caller has absorbed
-/// the schedule-selected outgoing witness binding.
-#[tracing::instrument(skip_all, name = "ring_switch_verifier")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier<F, E, T>(
+trait RingSwitchChallengeSource<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError>;
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+}
+
+struct NativeRingSwitchChallenges<'a, 'proof, 'plan>(
+    &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+);
+
+impl<F, E> RingSwitchChallengeSource<F, E> for NativeRingSwitchChallenges<'_, '_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
+        self.0
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })
+    }
+
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau0Point { level }, count)
+    }
+
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
+    }
+}
+pub(crate) fn ring_switch_verifier_native<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
+{
+    let mut challenges = NativeRingSwitchChallenges(grinding);
+    ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
+}
+
+fn ring_switch_verifier_with_challenges<F, E, C>(
+    replay: &RingSwitchReplay<'_, F, E>,
+    w_len: usize,
+    challenges: &mut C,
+    level: u32,
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    C: RingSwitchChallengeSource<F, E>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -155,10 +197,9 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
-    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
     let alpha: E = {
         let _span = tracing::info_span!("ring_switch_transcript_challenges").entered();
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH)
+        challenges.alpha(level)?
     };
 
     let num_claims = relation.opening_batch().num_total_polynomials();
@@ -221,14 +262,8 @@ where
             tau1_len = num_i
         )
         .entered();
-        transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-        let tau0 = (0..num_sc_vars)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect();
-        transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-        let tau1 = (0..num_i)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-            .collect::<Vec<_>>();
+        let tau0 = challenges.tau0(level, num_sc_vars)?;
+        let tau1 = challenges.tau1(level, num_i)?;
         (tau0, tau1)
     };
     if gamma.len() != num_claims {

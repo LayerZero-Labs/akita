@@ -113,7 +113,7 @@ impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
         )))
     }
 
-    fn opening_claim(&self) -> E {
+    pub(crate) fn opening_claim(&self) -> E {
         match &self.0 {
             OpeningFamily::EvaluationTrace(trace) => trace.opening_claim,
             OpeningFamily::SubringCoefficientPacking(packing) => packing.opening_claim,
