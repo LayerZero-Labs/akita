@@ -28,9 +28,7 @@ fn d64_production_uses_multi_chunk() {
 fn multi_chunk_profile_grid_roundtrip() {
     for (index, profile) in MultiChunkProfileId::ALL.into_iter().enumerate() {
         assert_eq!(profile.index(), index);
-        assert_eq!(MultiChunkProfileId::from_index(index), profile);
         let cfg = ChunkedWitnessCfg::from_profile(profile);
-        assert_eq!(cfg.profile_id(), Some(profile));
         cfg.validate().expect("grid profile is valid");
     }
 }
@@ -124,18 +122,6 @@ fn balanced_chunks_are_exact_and_contiguous() {
         assert_eq!(span.range().len(), span.map().padded_digit_count());
         assert_eq!(support[map_index].start, span.range().start);
         assert_eq!(support[map_index].end, layer.h_span().range().end);
-        assert_eq!(
-            layout
-                .f_compression_coefficient_index(0, map_index, 1, 2)
-                .expect("F address"),
-            span.range().start + span.map().ring_dimension() + 2
-        );
-        assert_eq!(
-            layout
-                .h_compression_coefficient_index(map_index, 1, 2)
-                .expect("H address"),
-            layer.h_span().range().start + layer.h_span().map().ring_dimension() + 2
-        );
         let f_quotient_rows = layer
             .f_quotient_rows()
             .expect("quotient-lift compression rows");

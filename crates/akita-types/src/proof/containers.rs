@@ -112,19 +112,6 @@ impl<F: Field> RingVec<F> {
         }
     }
 
-    /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension or
-    /// element count does not match `D`.
-    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        if D == 0 || (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(CyclotomicRing::from_slice(&self.coeffs))
-    }
-
     /// Reconstruct a vector of ring elements.
     ///
     /// # Panics
@@ -144,26 +131,6 @@ impl<F: Field> RingVec<F> {
             .chunks_exact(D)
             .map(CyclotomicRing::from_slice)
             .collect()
-    }
-
-    /// Reconstruct a vector of ring elements, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension does
-    /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
-    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        if D == 0
-            || (self.ring_dim > 0 && self.ring_dim != D)
-            || !self.coeffs.len().is_multiple_of(D)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(self
-            .coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect())
     }
 
     /// Hot-path borrow after construction or schedule dispatch has fixed `D`.

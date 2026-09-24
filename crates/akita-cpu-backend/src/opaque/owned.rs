@@ -480,27 +480,15 @@ where
     }
 }
 
-#[cfg(feature = "response-model-diagnostics")]
+#[cfg(all(test, feature = "response-model-diagnostics"))]
 impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
-    /// Application-only source energy diagnostic; it is never a proving message.
-    pub fn witness_source_l2_sq<F: Field>(
+    /// Source energy of a witness, checked against the witness's proof binding.
+    pub(crate) fn witness_source_l2_sq<F: Field>(
         &self,
         witness: &crate::opaque::CpuWitnessHandle,
     ) -> Result<Option<u128>, AkitaError> {
         self.validate_binding(&witness.operation_binding())?;
         Ok(witness.source_l2_sq::<F>())
-    }
-    /// Application-only source energy diagnostic; it is never a proving message.
-    pub fn source_l2_sq(
-        &self,
-        source: &SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>,
-    ) -> Result<Option<u128>, AkitaError> {
-        if source.owner != self.owner_id() {
-            return Err(AkitaError::InvalidInput(
-                "source belongs to another backend".into(),
-            ));
-        }
-        Ok(source.storage.source_l2_sq())
     }
 }
 

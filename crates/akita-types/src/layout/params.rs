@@ -209,6 +209,7 @@ impl CommittedGroupParams {
     }
 
     /// Add one precommitted group, keeping the fold's own group last.
+    #[cfg(test)]
     pub fn insert_precommitted_group(
         &mut self,
         group: GroupOpenPhaseParams,
@@ -217,6 +218,7 @@ impl CommittedGroupParams {
     }
 
     /// Replace this fold's precommitted groups, keeping any incoming prefix.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_precommitted_groups(
         &mut self,
         groups: Vec<GroupOpenPhaseParams>,
@@ -251,12 +253,6 @@ impl CommittedGroupParams {
         self.open().matrix.input_width()
     }
 
-    /// Total outer variable count (`block_index_bits + position_index_bits`).
-    #[inline]
-    pub fn outer_vars(&self) -> usize {
-        self.block_index_bits() + self.position_index_bits()
-    }
-
     /// Logical opening-point variable count for recursive fold levels.
     ///
     /// Uses the direct `[position bits | fold bits]` source split plus the
@@ -274,14 +270,13 @@ impl CommittedGroupParams {
         )
     }
 
-    // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
+    // ---- Relation-matrix row layout ----
     //
     // Scalar row layout: consistency (1) | A (n_a) | B (n_b · nc) | D.
     // Multi-group row layout: [consistency_g | A_g | B_g]_g | D.
     // Public-output rows bind through the fused trace term, not the M-matrix.
-    // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
-    // `prepare`, the relation claim, the verifier ring-switch row eval) must
-    // derive its block starts from these helpers rather than recompute inline.
+    // `a_start`, `group_a_start`, and `relation_matrix_row_count` below derive
+    // block boundaries from this layout.
 
     #[inline]
     fn relation_matrix_row_overflow() -> AkitaError {
@@ -292,28 +287,6 @@ impl CommittedGroupParams {
     #[inline]
     pub fn a_start(&self) -> usize {
         1
-    }
-
-    /// Absolute start row of the B block.
-    #[inline]
-    pub fn b_start(&self) -> Result<usize, AkitaError> {
-        self.a_start()
-            .checked_add(self.inner().matrix.output_rank())
-            .ok_or_else(Self::relation_matrix_row_overflow)
-    }
-
-    /// Absolute start row of the D block.
-    #[inline]
-    pub fn d_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
-        let b_rows = self
-            .outer()
-            .matrix
-            .output_rank()
-            .checked_mul(num_commitments)
-            .ok_or_else(Self::relation_matrix_row_overflow)?;
-        self.b_start()?
-            .checked_add(b_rows)
-            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Number of commitment groups in this opening batch (`precommitted + final`).

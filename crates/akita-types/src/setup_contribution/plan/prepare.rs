@@ -527,6 +527,7 @@ impl<E: Field> SetupContributionPlan<E> {
 
     /// Canonical relation-address geometry used by every setup contribution
     /// tensor.
+    #[cfg(test)]
     #[must_use]
     pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
         self.relation_address_geometry

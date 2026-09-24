@@ -12,11 +12,11 @@ use jolt_field::{CanonicalEncoding, Field};
 use super::{checked_shape_len, checked_shape_sequence_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
-    golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
-    golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
+    golomb_rice_decode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_zigzag_width,
+    tail_z_planner_bits_per_coord,
 };
 use crate::layout::field_bytes;
-use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
+use crate::proof::RingVec;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 use crate::{CommittedGroupParams, TerminalFoldParams};
 
@@ -62,17 +62,6 @@ pub struct TerminalResponse<F: Field> {
     pub z_payloads: Vec<Vec<u8>>,
     pub e_fields: RingVec<F>,
     pub t_fields: RingVec<F>,
-}
-
-pub struct TerminalResponseGroupParts<'a, F: Field> {
-    pub params: crate::GroupOpenPhaseParams,
-    pub num_w_vectors: usize,
-    pub num_t_vectors: usize,
-    pub num_z_segments: usize,
-    pub e_folded: &'a RingVec<F>,
-    /// Block-major native-A rows: `[block][A row][coefficient]`.
-    pub recomposed_inner_rows: &'a RingVec<F>,
-    pub z_folded_centered_flat: &'a [i32],
 }
 
 impl TailSegmentLayout {
@@ -394,27 +383,6 @@ impl<F: Field + CanonicalEncoding + AkitaSerialize> TerminalResponse<F> {
         append_field_coeffs(writer, self.t_fields.coeffs(), compress)?;
         Ok(())
     }
-
-    /// Materialize pre-challenge `e` bytes and the post-challenge `z` response.
-    /// This helper omits `t`: the predecessor binds it as outgoing state and
-    /// terminal current-state replay owns its second transcript binding.
-    pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
-        let e_folded = raw_field_segment_bytes(&self.e_fields)?;
-        if e_folded.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        if self.t_fields.coeffs().is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut response = Vec::new();
-        for payload in &self.z_payloads {
-            response.extend_from_slice(payload);
-        }
-        if response.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(TerminalWitnessTranscriptParts { e_folded, response })
-    }
 }
 
 fn append_field_coeffs<F: Field + AkitaSerialize, W: Write>(
@@ -430,36 +398,6 @@ fn append_field_coeffs<F: Field + AkitaSerialize, W: Write>(
             })?;
     }
     Ok(())
-}
-
-fn append_field_coeffs_vec<F: Field + AkitaSerialize>(
-    out: &mut Vec<u8>,
-    coeffs: &[F],
-) -> Result<(), AkitaError> {
-    for coeff in coeffs {
-        coeff
-            .serialize_with_mode(&mut *out, Compress::No)
-            .map_err(|_| AkitaError::InvalidProof)?;
-    }
-    Ok(())
-}
-
-/// Canonical transcript bytes for a raw-field terminal segment.
-///
-/// Both the prover terminal absorb and the verifier's decoded-witness replay
-/// route through this single routine, so the bound `e_hat` bytes are identical
-/// by construction (it mirrors the `e_fields` the segment witness carries).
-///
-/// # Errors
-///
-/// Propagates field serialization failures as [`AkitaError::InvalidProof`].
-pub fn raw_field_segment_bytes<F>(fields: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-{
-    let mut out = Vec::new();
-    append_field_coeffs_vec(&mut out, fields.coeffs())?;
-    Ok(out)
 }
 
 /// Decode terminal `z` with the exact schedule-owned norm route and wire shape.
@@ -618,18 +556,6 @@ impl TerminalResponseShape {
     }
 }
 
-/// Planner byte budget for the Golomb-coded terminal `z` segment.
-///
-/// Uses cap-derived low bits plus the average-case `cap_rice_low_bits + 2` bits/coord model so schedules
-/// stay conservative across field families; on-wire encode/decode uses [`crate::wire_rice_low_bits`].
-///
-/// # Errors
-///
-/// Propagates fold cap setup errors.
-pub fn terminal_response_z_payload_bytes(layout: &TailSegmentLayout) -> usize {
-    layout.z_payload_bytes()
-}
-
 /// Serialized byte size for a terminal response at a fixed `z` budget.
 #[must_use]
 pub fn terminal_response_upper_bound_bytes(
@@ -644,111 +570,6 @@ pub fn terminal_response_upper_bound_bytes(
         .saturating_mul(field_bytes(field_bits))
         .saturating_add(z_payload_bytes)
         .saturating_add(8usize.saturating_mul(layout.groups.len()))
-}
-
-pub fn build_terminal_response_from_groups<F>(
-    ring_d: usize,
-    groups: &[TerminalResponseGroupParts<'_, F>],
-    lp: &CommittedGroupParams,
-    scheduled_shape: &TerminalResponseShape,
-) -> Result<TerminalResponse<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + AkitaSerialize,
-{
-    if ring_d == 0 || lp.d_a() != ring_d {
-        return Err(AkitaError::InvalidInput(
-            "terminal response ring dimension mismatch".to_string(),
-        ));
-    }
-    let layout = scheduled_shape.layout.clone();
-    if layout.groups.len() != groups.len() {
-        return Err(AkitaError::InvalidSetup(
-            "terminal response group count does not match its schedule".into(),
-        ));
-    }
-    let mut z_payloads = Vec::with_capacity(groups.len());
-    let mut e_coeffs = Vec::new();
-    let mut t_coeffs = Vec::new();
-    for (group_index, group) in groups.iter().enumerate() {
-        if !group.e_folded.can_decode_vec(ring_d) {
-            return Err(AkitaError::InvalidInput(
-                "terminal e segment ring layout mismatch".to_string(),
-            ));
-        }
-        if !group.z_folded_centered_flat.len().is_multiple_of(ring_d) {
-            return Err(AkitaError::InvalidInput(
-                "terminal z segment ring layout mismatch".to_string(),
-            ));
-        }
-        let z_centered_i64: Vec<i64> = group
-            .z_folded_centered_flat
-            .iter()
-            .map(|&coeff| i64::from(coeff))
-            .collect();
-        // Price this group's response against *this group's* challenge family.
-        let security_cap = crate::sis::certified_terminal_response_linf_cap(
-            group.params.inner_commit_matrix_params(),
-            &group.params.fold_challenge_config(),
-        )?;
-        let depth_witness = group.params.num_digits_inner();
-        let inner_width = group.params.num_positions_per_block() * depth_witness;
-        let row_count = group.z_folded_centered_flat.len() / ring_d;
-        if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
-            return Err(AkitaError::InvalidInput(
-                "z_folded length does not match layout".to_string(),
-            ));
-        }
-        let group_layout = layout
-            .groups
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        let z_cap = group_layout.z_linf_cap.ok_or_else(|| {
-            AkitaError::InvalidSetup("legacy terminal group requires a Linf cap".into())
-        })?;
-        if z_cap > security_cap {
-            return Err(AkitaError::InvalidSetup(
-                "terminal response cap exceeds its matrix-certified capacity".into(),
-            ));
-        }
-        golomb_rice_values_within_cap(&z_centered_i64, z_cap)
-            .map_err(|_| AkitaError::InvalidInput("terminal response exceeds its cap".into()))?;
-        let zigzag_w_z = golomb_rice_zigzag_width(z_cap);
-        let z_payload =
-            golomb_rice_encode_vec(&z_centered_i64, group_layout.z_rice_low_bits, zigzag_w_z)?;
-        if z_payload.len() > group_layout.z_payload_bytes {
-            return Err(AkitaError::InvalidInput(
-                "terminal z segment length mismatch".to_string(),
-            ));
-        }
-        z_payloads.push(z_payload);
-        let e_fields = group.e_folded.clone().into_compact();
-        if e_fields.coeff_len() != group_layout.e_field_elems {
-            return Err(AkitaError::InvalidInput(
-                "terminal e segment length mismatch".to_string(),
-            ));
-        }
-        e_coeffs.extend_from_slice(e_fields.coeffs());
-        if !group.recomposed_inner_rows.can_decode_vec(ring_d) {
-            return Err(AkitaError::InvalidInput(
-                "terminal t segment ring layout mismatch".to_string(),
-            ));
-        }
-        if group.recomposed_inner_rows.coeff_len() != group_layout.t_field_elems {
-            return Err(AkitaError::InvalidInput(
-                "terminal t segment length mismatch".to_string(),
-            ));
-        }
-        t_coeffs.extend_from_slice(group.recomposed_inner_rows.coeffs());
-    }
-    let e_fields = RingVec::from_coeffs(e_coeffs);
-    let t_fields = RingVec::from_coeffs(t_coeffs);
-    let witness = TerminalResponse {
-        layout: layout.clone(),
-        z_payloads,
-        e_fields,
-        t_fields,
-    };
-    Ok(witness)
 }
 
 /// Build a terminal response from an opaque backend-produced canonical Z payload.
