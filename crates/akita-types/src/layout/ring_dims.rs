@@ -130,19 +130,6 @@ impl CommitmentRingDims {
         }
     }
 
-    /// The single dimension shared by all matrices, or an error once their
-    /// dimensions diverge.
-    pub fn uniform_dim(self) -> Result<usize, AkitaError> {
-        if self.inner == self.outer && self.outer == self.opening {
-            Ok(self.inner)
-        } else {
-            Err(AkitaError::InvalidSetup(format!(
-                "fused ring path requires uniform role dims, got d_a={} d_b={} d_d={}",
-                self.inner, self.outer, self.opening
-            )))
-        }
-    }
-
     /// Ring dimension for `role`.
     #[must_use]
     pub const fn dim_for(self, role: RingRole) -> usize {

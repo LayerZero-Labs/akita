@@ -891,7 +891,8 @@ mod tests {
                                         .expect("trace coefficient");
                                     let source =
                                         role_subcolumn * group_dims.d_d() + role_coefficient;
-                                    dense[address] += factor * parameters.shared_inner_trace()[source];
+                                    dense[address] +=
+                                        factor * parameters.shared_inner_trace()[source];
                                 }
                             }
                         }

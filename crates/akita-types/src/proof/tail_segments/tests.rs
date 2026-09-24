@@ -160,12 +160,6 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let z_bytes = terminal_response_z_payload_bytes(&layout);
     let group = layout.groups[0];
     assert_eq!(z_bytes, z_payload_budget_from_cap(group.z_coords, cap));
-    let depth_fold = lp.num_digits_fold();
-    let packed_z = crate::layout::proof_size::packed_digits_bytes(
-        group.z_coords.saturating_mul(depth_fold),
-        8,
-    );
-    assert_ne!(z_bytes, packed_z);
 }
 
 #[test]

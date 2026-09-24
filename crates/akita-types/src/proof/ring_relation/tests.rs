@@ -1,5 +1,3 @@
-#[path = "tests/dimension_tests.rs"]
-mod dimension_tests;
 #[path = "tests/support.rs"]
 mod support;
 

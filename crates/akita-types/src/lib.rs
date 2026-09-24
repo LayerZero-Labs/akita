@@ -14,8 +14,7 @@ pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, field_modulus_be_bytes, ntt_max_ring_d,
     ntt_min_ring_d, ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
     outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    validate_role_dims_for_field, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -46,9 +45,7 @@ mod transcript_grinding;
 mod transcript_grinding_plan;
 pub mod witness;
 
-pub use commitment_slicing::{
-    CommitmentSliceCount, CommitmentSliceGeometry, MAX_COMMITMENT_SLICES,
-};
+pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
     CommitmentPayloadPhase, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
@@ -87,15 +84,15 @@ pub use layout::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, native_terminal_response_max_bytes,
     native_terminal_response_planner_bytes, opening_d_segment_width, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
-    sumcheck_rounds, terminal_response_bytes, try_extension_opening_reduction_level_bytes,
-    validate_role_dims, validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode,
-    BlockGeometry, CommitmentRingDims, CommittedGroupParams, FlatMatrix, GadgetDigits,
-    GroupOpenPhaseParams, GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningFamily,
-    OpeningMethod, OuterRoleParams, PrecommittedGroupAdmissionPolicy, RingMatrixView,
-    RingOpeningPoint, RingRole, RoleParams, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
+    padded_boolean_opening_vars, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds,
+    terminal_response_bytes, try_extension_opening_reduction_level_bytes, validate_role_dims,
+    validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode, BlockGeometry,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningFamily, OpeningMethod,
+    OuterRoleParams, PrecommittedGroupAdmissionPolicy, RingMatrixView, RingOpeningPoint, RingRole,
+    RoleParams, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use native_eor::{
     native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
