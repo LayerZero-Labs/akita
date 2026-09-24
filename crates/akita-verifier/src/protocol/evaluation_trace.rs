@@ -859,7 +859,7 @@ mod tests {
                 .units_for_group(parameters.group_index())
                 .expect("group witness units");
             let block_weights = basis_weights_prefix(
-                parameters.block_opening_point(),
+                &parameters.shared_block_opening_point(),
                 parameters.basis(),
                 parameters.group_block_count(),
             )
@@ -891,7 +891,7 @@ mod tests {
                                         .expect("trace coefficient");
                                     let source =
                                         role_subcolumn * group_dims.d_d() + role_coefficient;
-                                    dense[address] += factor * parameters.inner_trace()[source];
+                                    dense[address] += factor * parameters.shared_inner_trace()[source];
                                 }
                             }
                         }

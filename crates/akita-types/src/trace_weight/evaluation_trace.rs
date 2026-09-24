@@ -84,11 +84,6 @@ impl<E: Field> EvaluationTraceGroupParameters<E> {
     }
 
     #[must_use]
-    pub fn block_opening_point(&self) -> &[E] {
-        &self.block_opening_point
-    }
-
-    #[must_use]
     pub fn shared_block_opening_point(&self) -> Arc<[E]> {
         Arc::clone(&self.block_opening_point)
     }
@@ -116,11 +111,6 @@ impl<E: Field> EvaluationTraceGroupParameters<E> {
     #[must_use]
     pub fn shared_opening_digit_weights(&self) -> Arc<[E]> {
         Arc::clone(&self.opening_digit_weights)
-    }
-
-    #[must_use]
-    pub fn inner_trace(&self) -> &[E] {
-        &self.inner_trace
     }
 
     #[must_use]

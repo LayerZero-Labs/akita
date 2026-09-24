@@ -216,11 +216,8 @@ pub use subring_coefficient_packing::{
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
-    build_trace_table_scaled, ensure_trace_stage2_supported, eval_trace_terms_closed,
-    prepare_evaluation_trace_group_parameters, EvaluationTraceGroupParameters,
-    EvaluationTraceInputs, TraceClaim, TraceFieldBlockOpening, TraceOpeningAtPoint,
-    TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable, TraceTerm,
-    TraceTermBatch, TraceWeightLayout,
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    EvaluationTraceGroupParameters, EvaluationTraceInputs,
 };
 pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
