@@ -58,13 +58,16 @@ Akita has two different AVX-512 paths. They must not be described as one
 backend.
 
 The ordinary i32 NTT path uses the scalar reference implementation or the
-runtime selected AVX2 implementation on x86. `AKITA_SCALAR_NTT=1` forces the
-scalar path. A width aware AVX-512 i32 transform also exists. It uses 16 i32
-lanes on stages with a half length of at least 16, 8 lanes at half length 8,
-4 lanes at half length 4, and scalar work for the remaining small stages.
-Production runtime dispatch does not select this wide i32 transform. It is
-kept for direct architecture tests and benchmark experiments because the
-measured AVX2 transform is faster on the target workloads.
+runtime selected x86 implementation. `AKITA_SCALAR_NTT=1` forces the scalar
+path. The x86 transforms are written once over a vector-width trait and
+instantiated at 256 and 512 bits. Both use radix-4 passes whose butterfly
+half length is at least 16, followed (forward) or preceded (inverse) by a
+256-bit kernel that runs the last four or five stages in registers. Degrees
+below 64 use the scalar transforms. Runtime dispatch selects the AVX2
+instantiation. `AKITA_AVX512_NTT=1` opts into the 512-bit transforms and
+pointwise kernels on hosts with `avx512f`, `avx512dq`, and `avx512bw`; on the
+measured AMD Zen 4 host they ran within a few percent of AVX2, so they are not
+the default.
 
 The second path is AVX-512IFMA. It is used for exact signed NTT caches,
 including selected dense q128 commitments whose digits fit in `i8`. The
@@ -126,8 +129,8 @@ change setup bytes, proof bytes, transcript bytes, or setup digests.
 
 **Code:** `crates/akita-algebra/src/ntt/ifma52.rs`,
 `crates/akita-algebra/src/ntt/ifma52/x86.rs`,
-`crates/akita-types/src/ntt_cache/exact.rs`, and
-`crates/akita-algebra/src/ntt/avx/wide512.rs`.
+`crates/akita-types/src/ntt_cache/exact.rs`, and, for the i32 transforms,
+`crates/akita-algebra/src/ntt/avx/transform_i32.rs`.
 
 ## Accumulation capacity and chunking
 

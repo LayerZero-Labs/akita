@@ -15,7 +15,9 @@ use super::NttKernelPlan;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
-fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>(plan: NttKernelPlan) -> bool {
+pub(crate) fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>(
+    plan: NttKernelPlan,
+) -> bool {
     D >= 64 && std::mem::size_of::<W>() == std::mem::size_of::<i32>() && plan.uses_x86_transform()
 }
 
@@ -54,6 +56,9 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) fwd_twiddles: [MontCoeff<W>; D],
     /// Per-position inverse twiddles, same layout as `fwd_twiddles`.
     pub(crate) inv_twiddles: [MontCoeff<W>; D],
+    /// Montgomery quotients of the constant tables for the x86 transforms.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub(crate) quotients: super::avx::MontQuotients<W, D>,
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -135,6 +140,17 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             }
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let quotients = super::avx::MontQuotients::compute(
+            prime,
+            &fwd_twiddles,
+            &inv_twiddles,
+            &psi_pows,
+            &psi_pows_r2,
+            &d_inv_psi_inv,
+            d_inv,
+        );
+
         Self {
             fwd_wlen,
             inv_wlen,
@@ -147,6 +163,8 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             d_inv_psi_inv,
             fwd_twiddles,
             inv_twiddles,
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            quotients,
         }
     }
 }
@@ -180,7 +198,7 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
                 &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
                 *(&prime as *const _ as *const NttPrime<i32>),
                 &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                false,
+                plan.uses_avx512_transform(),
             );
         }
         return;
@@ -264,7 +282,7 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
                 &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
                 *(&prime as *const _ as *const NttPrime<i32>),
                 &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                false,
+                plan.uses_avx512_transform(),
             );
         }
         return;
@@ -336,7 +354,7 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
                 &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
                 *(&prime as *const _ as *const NttPrime<i32>),
                 &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                false,
+                plan.uses_avx512_transform(),
             );
         }
         return;
@@ -404,7 +422,7 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
                 &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
                 *(&prime as *const _ as *const NttPrime<i32>),
                 &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                false,
+                plan.uses_avx512_transform(),
             );
         }
         return;
