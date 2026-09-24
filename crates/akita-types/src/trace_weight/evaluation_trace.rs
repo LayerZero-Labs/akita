@@ -129,22 +129,6 @@ impl<E: Field> EvaluationTraceGroupParameters<E> {
     }
 }
 
-/// Apply one uniform reduction scale to normalized evaluation-trace coefficients.
-pub fn scale_evaluation_trace_claim_coefficients<E: Field>(
-    claim_coefficients: &[E],
-    uniform_scale: E,
-) -> Result<Vec<E>, AkitaError> {
-    if claim_coefficients.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "evaluation trace requires a claim coefficient".into(),
-        ));
-    }
-    Ok(claim_coefficients
-        .iter()
-        .map(|&coefficient| coefficient * uniform_scale)
-        .collect())
-}
-
 /// Checked common inputs from which prover and verifier build separate
 /// evaluation-trace representations.
 pub struct EvaluationTraceInputs<'a, F: Field, E: Field> {

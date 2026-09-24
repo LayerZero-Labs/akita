@@ -74,13 +74,6 @@ impl<E: Field> ExtensionOpeningReductionGroup<E> {
         self.terms.len()
     }
 
-    pub(in crate::opaque::recursive::opening) fn claim(&self) -> Result<E, AkitaError> {
-        self.terms.iter().try_fold(E::zero(), |acc, term| {
-            extension_opening_reduction_claim(&term.witness, &self.factor)
-                .map(|claim| acc + term.coeff * claim)
-        })
-    }
-
     pub(in crate::opaque::recursive::opening) fn final_terms(&self) -> Option<Vec<(E, E, E)>> {
         if self.factor.len() != 1
             || self.extra_round != self.extra_point.len()

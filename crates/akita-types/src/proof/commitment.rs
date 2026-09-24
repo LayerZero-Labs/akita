@@ -114,19 +114,9 @@ impl<F: Field> Commitment<F> {
         Self(rows)
     }
 
-    /// Construct from typed ring elements.
-    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
-        Self(RingVec::from_ring_elems(elems))
-    }
-
     /// Borrow the underlying flat ring-coefficient buffer.
     pub fn rows(&self) -> &RingVec<F> {
         &self.0
-    }
-
-    /// Consume into the underlying flat ring-coefficient buffer.
-    pub fn into_rows(self) -> RingVec<F> {
-        self.0
     }
 }
 
@@ -718,27 +708,6 @@ mod committed_group_tests {
 pub struct RingCommitment<F: Field, const D: usize> {
     /// Outer commitment vector.
     pub u: Vec<CyclotomicRing<F, D>>,
-}
-
-/// Borrow ring rows from commitment-like prover inputs.
-pub trait ProverCommitmentRows<CommitF: Field, const D: usize> {
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
-}
-
-impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
-    for RingCommitment<CommitF, D>
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        &self.u
-    }
-}
-
-impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
-    for [CyclotomicRing<CommitF, D>]
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        self
-    }
 }
 
 impl<F: Field + Valid, const D: usize> Valid for RingCommitment<F, D> {

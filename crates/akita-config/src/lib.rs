@@ -84,10 +84,7 @@ pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-pub use proof_optimized::{
-    ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
-    setup_level_params_from_schedule,
-};
+pub use proof_optimized::{ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;

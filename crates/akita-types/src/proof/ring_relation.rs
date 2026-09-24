@@ -9,7 +9,6 @@ use crate::{
     embed_ring_subfield_scalar, CommittedGroupParams, OpeningFamily, RingMultiplierOpeningPoint,
     RingVec, SubringCoefficientPackingGeometry,
 };
-use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use challenge_validation::validate_packing_challenge_weights;
@@ -450,19 +449,6 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
             }
         }
         Ok(())
-    }
-
-    /// Validate one role carrier against dispatch `D`.
-    pub fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
-        validate_role_dispatch::<D>(self.role_dims, role).map(|_| ())
-    }
-
-    /// Borrow row-coefficient rings at the A-role dimension (`d_a`).
-    pub fn row_coefficient_rings_trusted<const D: usize>(
-        &self,
-    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_role_dim::<D>(RingRole::Inner)?;
-        self.row_coefficient_rings.as_ring_slice::<D>()
     }
 
     /// Validate the mandatory D-row payload shape.

@@ -7,14 +7,6 @@
 use super::crt::GarnerData;
 use super::prime::NttPrime;
 
-/// Polynomial degree for the base ring `Z_q[X]/(X^d + 1)`.
-pub const RING_DEGREE: usize = 64;
-/// Maximum ring degree covered by the CRT parameter sets.
-pub const MAX_CRT_RING_DEGREE: usize = 2048;
-
-/// Minimum `d_a` for sparse fold ring challenges (see [`CHALLENGE_MIN_RING_D`]).
-pub const CHALLENGE_MIN_RING_D: usize = 64;
-
 /// Maximum ring degree for Q128 CRT+NTT profile (challenge-supported paths).
 pub const Q128_MAX_RING_D: usize = 1024;
 /// Maximum ring degree for Q64 CRT+NTT profile (challenge-supported paths).

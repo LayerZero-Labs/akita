@@ -35,7 +35,7 @@ pub use config::{
 };
 pub use cost::{CostValue, EstimateTag, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};
-pub use numeric::{GoldenTrust, NumericBackend, NumericConfig, Probability};
+pub use numeric::{NumericBackend, NumericConfig, Probability};
 pub use params::{
     akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameterUpdate, SisParameters,
 };

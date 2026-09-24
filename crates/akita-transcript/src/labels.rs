@@ -143,11 +143,6 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_TAU1,
 ];
 
-/// Return all Akita-core transcript labels.
-pub fn all_labels() -> &'static [&'static [u8]] {
-    ALL_LABELS
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

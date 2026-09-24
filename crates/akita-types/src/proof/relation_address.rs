@@ -293,11 +293,6 @@ impl CompressionRelationAddressGeometry {
     }
 
     #[must_use]
-    pub const fn digit_witness_domain(self) -> FlatBooleanDomain {
-        self.digit_witness_domain
-    }
-
-    #[must_use]
     pub const fn coefficient_block_len(self) -> usize {
         self.coefficient_block_len
     }
@@ -305,16 +300,6 @@ impl CompressionRelationAddressGeometry {
     #[must_use]
     pub const fn live_lane_count(self) -> usize {
         self.live_witness_coeff_len / self.coefficient_block_len
-    }
-
-    #[must_use]
-    pub const fn lane_capacity(self) -> usize {
-        self.committed_witness_coeff_len / self.coefficient_block_len
-    }
-
-    #[must_use]
-    pub const fn coefficient_variable_count(self) -> usize {
-        self.coefficient_block_len.trailing_zeros() as usize
     }
 }
 

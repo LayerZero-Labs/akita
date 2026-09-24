@@ -17,18 +17,6 @@ impl CommittedGroupParams {
         self.fold_challenge_config().l1_norm()
     }
 
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
-    #[inline]
-    pub fn challenge_infinity_norm(&self) -> usize {
-        self.fold_challenge_config().infinity_norm() as usize
-    }
-
-    /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
-    #[inline]
-    pub fn challenge_l2_sq_max(&self) -> u128 {
-        self.fold_challenge_config().challenge_l2_sq_max()
-    }
-
     /// Fold-challenge coefficient count `inner_width · D`.
     #[inline]
     pub fn num_fold_coeffs(&self) -> u128 {

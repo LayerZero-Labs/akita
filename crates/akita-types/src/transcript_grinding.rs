@@ -261,38 +261,6 @@ impl GrindingSite {
         }
     }
 
-    /// Canonical transcript label for a proof-of-work query.
-    #[must_use]
-    pub const fn proof_of_work_label(self) -> Option<&'static [u8]> {
-        use akita_transcript::labels;
-
-        match self {
-            Self::EvaluationBatch { .. } => Some(labels::CHALLENGE_EVAL_BATCH),
-            Self::ExtensionOpeningPoint { .. } | Self::Stage2Batch { .. } => {
-                Some(labels::CHALLENGE_SUMCHECK_BATCH)
-            }
-            Self::ExtensionOpeningClaimBatch { .. } => Some(labels::CHALLENGE_EOR_CLAIM_BATCH),
-            Self::SumcheckRound { .. } => Some(labels::CHALLENGE_SUMCHECK_ROUND),
-            Self::RingSwitchAlpha { .. } => Some(labels::CHALLENGE_RING_SWITCH),
-            Self::Tau0Point { .. } => Some(labels::CHALLENGE_TAU0),
-            Self::Tau1Point { .. } => Some(labels::CHALLENGE_TAU1),
-            Self::Stage1InterstageBatch { .. } => Some(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH),
-            Self::L2SubclaimBatch { .. } => Some(labels::CHALLENGE_L2_NORM_BATCH),
-            Self::L2NormMerge { .. } => Some(labels::CHALLENGE_L2_NORM_MERGE),
-            Self::L2VirtualBatch { .. } => Some(labels::CHALLENGE_L2_VIRTUAL_BATCH),
-            Self::CompressionBinary { .. } => Some(labels::CHALLENGE_COMPRESSION_BINARY),
-            Self::FoldResponse { .. } | Self::FoldChallengeGroup { .. } => None,
-        }
-    }
-
-    /// Fixed-width canonical encoding used by plan digests and audit events.
-    #[must_use]
-    pub fn canonical_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_canonical_bytes(&mut bytes);
-        bytes
-    }
-
     fn validate(self) -> Result<(), AkitaError> {
         let invalid = match self {
             Self::SumcheckRound {

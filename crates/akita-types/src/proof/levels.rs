@@ -1,7 +1,6 @@
 use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
-use crate::{CommittedGroupParams, SetupContributionMode};
 use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 
 /// One stage in the stage-1 range-check tree.
@@ -55,17 +54,6 @@ pub enum NextWitnessBinding<F: Field> {
     OuterPayload(RingVec<F>),
     /// The following terminal proof's canonical `t` segment is the state.
     TerminalInnerState,
-}
-
-impl<F: Field> NextWitnessBinding<F> {
-    /// Borrow the compressed outer payload when this is an ordinary recursive edge.
-    #[must_use]
-    pub fn outer_payload(&self) -> Option<&RingVec<F>> {
-        match self {
-            Self::OuterPayload(commitment) => Some(commitment),
-            Self::TerminalInnerState => None,
-        }
-    }
 }
 
 /// Intermediate-stage payload for stage 2 of a fold level.
@@ -172,87 +160,14 @@ impl<F: Field, E: Field> FoldLevelProof<F, E> {
         }
     }
 
-    /// Borrow the optional extension-opening reduction payload.
-    pub fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<E>> {
-        self.extension_opening_reduction.as_ref()
-    }
-
-    /// Borrow the compressed opening payload.
-    pub fn opening_payload(&self) -> &RingVec<F> {
-        &self.opening_payload
-    }
-
-    /// Mutably borrow the compressed opening payload.
-    pub fn opening_payload_mut(&mut self) -> &mut RingVec<F> {
-        &mut self.opening_payload
-    }
-
     /// Borrow the stage-1 payload.
     pub fn stage1(&self) -> &AkitaStage1Proof<E> {
         &self.stage1
     }
 
-    /// Mutably borrow the stage-1 payload.
-    pub fn stage1_mut(&mut self) -> &mut AkitaStage1Proof<E> {
-        &mut self.stage1
-    }
-
     /// Borrow the stage-2 payload.
     pub fn stage2(&self) -> &AkitaStage2Proof<F, E> {
         &self.stage2
-    }
-
-    /// Mutably borrow the stage-2 payload.
-    pub fn stage2_mut(&mut self) -> &mut AkitaStage2Proof<F, E> {
-        &mut self.stage2
-    }
-
-    /// Borrow the optional stage-3 setup sumcheck proof.
-    pub fn stage3_sumcheck_proof(&self) -> Option<&SetupSumcheckProof<E>> {
-        self.stage3_sumcheck_proof.as_ref()
-    }
-
-    /// Borrow and validate the optional stage-3 setup sumcheck proof.
-    pub fn stage3_for_mode<'a>(
-        &'a self,
-        mode: SetupContributionMode,
-        next_fold_level_params: Option<&'a CommittedGroupParams>,
-    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a CommittedGroupParams)>, AkitaError> {
-        match (mode, self.stage3_sumcheck_proof.as_ref()) {
-            (SetupContributionMode::Direct, None) => Ok(None),
-            (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
-                "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
-            )),
-            (SetupContributionMode::Recursive, Some(proof)) => {
-                let next_fold_level_params = next_fold_level_params.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive setup-contribution mode is missing next-level params"
-                            .to_string(),
-                    )
-                })?;
-                Ok(Some((proof, next_fold_level_params)))
-            }
-            (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
-                "recursive setup-contribution mode is missing stage3_sumcheck_proof".to_string(),
-            )),
-        }
-    }
-
-    /// Reconstruct the typed opening payload, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored opening payload is not
-    /// well-formed for ring dimension `D`.
-    pub fn try_opening_payload_typed<const D: usize>(
-        &self,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.opening_payload.try_to_vec()
-    }
-
-    /// Borrow the next witness's compressed payload when this level has one.
-    pub fn next_w_payload(&self) -> Option<&RingVec<F>> {
-        self.stage2.next_witness_binding.outer_payload()
     }
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
@@ -310,11 +225,6 @@ impl<F: Field, E: Field> TerminalLevelProof<F, E> {
     /// Borrow the clear terminal response.
     pub fn terminal_response(&self) -> &TerminalResponse<F> {
         &self.terminal_response
-    }
-
-    /// Mutably borrow the clear terminal response.
-    pub fn terminal_response_mut(&mut self) -> &mut TerminalResponse<F> {
-        &mut self.terminal_response
     }
 
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.

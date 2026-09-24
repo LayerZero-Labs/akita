@@ -54,7 +54,7 @@ pub use decomposition_digits::{
     checked_balanced_digit_representable_bounds, compute_num_digits_field_width,
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     num_digits_for_bound, num_digits_for_linf_cap, num_digits_inner, num_digits_inner_for_bound,
-    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
+    num_digits_open, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,

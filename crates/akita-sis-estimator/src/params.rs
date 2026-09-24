@@ -160,13 +160,6 @@ impl SisParameters {
         self
     }
 
-    /// Return a copy with a different column count.
-    #[must_use]
-    pub const fn with_m(mut self, m: Option<u64>) -> Self {
-        self.m = m;
-        self
-    }
-
     /// Return a validated copy with selected fields replaced.
     ///
     /// # Errors

@@ -13,7 +13,6 @@ orchestration lives in `akita-pcs`.
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
-| `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
 | `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |

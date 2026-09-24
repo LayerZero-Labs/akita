@@ -48,8 +48,8 @@ pub use crate::opening_claims::{
 };
 pub use batch::{
     folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
-    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    ring_subfield_packed_extension_opening_point, PreparedOpeningPoint, PreparedRingMultiplier,
+    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
@@ -60,9 +60,7 @@ pub use coefficient_packing_relation::{
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
-pub use commitment::{
-    AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
-};
+pub use commitment::{AkitaCommitment, Commitment, CommittedGroup, DummyProof, RingCommitment};
 pub use compression_relation_weights::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
@@ -77,8 +75,7 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs,
-    compression_relation_claim_from_rhs_extension, generate_relation_rhs,
+    assemble_compressed_relation_rhs, assemble_relation_rhs, generate_relation_rhs,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
     relation_rhs_row_count, relation_row_weight, RelationGroupRows, RelationRhsLayout,
@@ -122,18 +119,14 @@ pub use shapes::{
 };
 pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
-    build_terminal_response, build_terminal_response_from_groups,
-    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
-    raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
-    TerminalResponseShape,
+    build_terminal_response_from_groups, build_terminal_response_from_payload,
+    decode_terminal_z_golomb_payload, raw_field_segment_bytes, terminal_response_upper_bound_bytes,
+    terminal_response_z_payload_bytes, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse,
+    TerminalResponseGroupParts, TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 pub use witness_emission::{
-    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    WitnessCoefficientSink,
+    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, WitnessCoefficientSink,
 };
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
