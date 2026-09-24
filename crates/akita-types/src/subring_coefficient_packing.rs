@@ -454,9 +454,10 @@ mod tests {
                     assert_eq!(geometry.packing_factor(), h);
                     assert_eq!(geometry.subring_embedding_stride(), k * h);
                     assert_eq!(geometry.partial_base_field_width(), k * s);
-                    assert!(geometry
-                        .fold_challenge_config()
-                        .matches_production_ladder(s));
+                    assert_eq!(
+                        Some(geometry.fold_challenge_config()),
+                        SparseChallengeConfig::production_for_ring_dim(s)
+                    );
                 }
             }
         }

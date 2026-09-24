@@ -732,8 +732,8 @@ mod tests {
     use super::*;
     use crate::GrindingRun;
     use akita_challenges::{
-        FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw, NativeVerifierFoldDraw,
-        SparseChallengeConfig,
+        FoldChallengeDrawDomain, FoldDraw, NativePreviewFoldDraw, NativeProverFoldDraw,
+        NativeVerifierFoldDraw, SparseChallengeConfig,
     };
     use akita_transcript::{
         new_native_prover, new_native_verifier, preview_native_grinding_predicate,
@@ -927,20 +927,52 @@ mod tests {
         let (preview_first, preview_second) = {
             let mut preview_state = prover.preview_fold_response(site, nonce).unwrap();
             let first = NativePreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges(64, 0, 2, 1, &config)
+                .draw_folding_challenges_with_rejection(
+                    FoldChallengeDrawDomain::EvaluationTrace,
+                    64,
+                    0,
+                    2,
+                    1,
+                    &config,
+                    None,
+                )
                 .unwrap();
             let second = NativePreviewFoldDraw::new(&mut preview_state)
-                .draw_folding_challenges(64, 1, 1, 2, &config)
+                .draw_folding_challenges_with_rejection(
+                    FoldChallengeDrawDomain::EvaluationTrace,
+                    64,
+                    1,
+                    1,
+                    2,
+                    &config,
+                    None,
+                )
                 .unwrap();
             (first, second)
         };
         prover.commit_fold_response(site, nonce).unwrap();
         let live_first = NativeProverFoldDraw::new(prover.state_mut(), 3, 0)
-            .draw_folding_challenges(64, 0, 2, 1, &config)
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                0,
+                2,
+                1,
+                &config,
+                None,
+            )
             .unwrap();
         prover.record_fold_challenges(3, 0, 2).unwrap();
         let live_second = NativeProverFoldDraw::new(prover.state_mut(), 3, 1)
-            .draw_folding_challenges(64, 1, 1, 2, &config)
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                1,
+                1,
+                2,
+                &config,
+                None,
+            )
             .unwrap();
         prover.record_fold_challenges(3, 1, 2).unwrap();
         assert_eq!(
@@ -953,11 +985,27 @@ mod tests {
         let mut verifier = NativeVerifierGrinding::new(state, &plan);
         assert_eq!(verifier.read_fold_response(site).unwrap(), nonce);
         let verified_first = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 0)
-            .draw_folding_challenges(64, 0, 2, 1, &config)
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                0,
+                2,
+                1,
+                &config,
+                None,
+            )
             .unwrap();
         verifier.record_fold_challenges(3, 0, 2).unwrap();
         let verified_second = NativeVerifierFoldDraw::new(verifier.state_mut(), 3, 1)
-            .draw_folding_challenges(64, 1, 1, 2, &config)
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                1,
+                1,
+                2,
+                &config,
+                None,
+            )
             .unwrap();
         verifier.record_fold_challenges(3, 1, 2).unwrap();
         assert_eq!((verified_first, verified_second), (live_first, live_second));

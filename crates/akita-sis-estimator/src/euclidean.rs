@@ -5,7 +5,7 @@ use num_traits::FromPrimitive;
 
 use crate::{
     config::{EstimateConfig, ReductionCostModel},
-    cost::{CostValue, EstimateTag, LatticeCost},
+    cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     math::log2_biguint,
     params::{Bound, SisParameters},
@@ -77,11 +77,6 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
         d,
         prob: None,
         repetitions: None,
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     })
 }
 
@@ -124,7 +119,7 @@ fn length_bound_exceeds_euclidean_lower_bound(params: &SisParameters, d: u64, lo
 mod tests {
     use crate::{
         config::Adps16Mode,
-        cost_euclidean as public_cost_euclidean, estimate,
+        estimate,
         params::{akita_q128, akita_q32, akita_q64, Bound, SisNorm},
         EstimateConfig, EstimatorError,
     };
@@ -262,10 +257,7 @@ mod tests {
             SisNorm::Euclidean,
         )
         .unwrap();
-        for cost in [
-            estimate(&finite, &config).unwrap(),
-            public_cost_euclidean(&finite, &config).unwrap(),
-        ] {
+        for cost in [estimate(&finite, &config).unwrap()] {
             assert_eq!(cost.beta, Some(953));
             assert_eq!(cost.d, 2_134);
             assert!(matches!(cost.rop, CostValue::Finite(_)));
@@ -279,10 +271,7 @@ mod tests {
             let params =
                 SisParameters::try_new(finite.n, q.clone(), finite.m, bound, SisNorm::Euclidean)
                     .unwrap();
-            for error in [
-                estimate(&params, &config).unwrap_err(),
-                public_cost_euclidean(&params, &config).unwrap_err(),
-            ] {
+            for error in [estimate(&params, &config).unwrap_err()] {
                 assert!(matches!(
                     error,
                     EstimatorError::InvalidParameter {
