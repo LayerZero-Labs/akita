@@ -3,6 +3,8 @@
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod avx;
 mod batched_four_point_policy;
+pub(crate) mod binary;
+pub use binary::BinaryNttStrategy;
 pub mod butterfly;
 pub mod crt;
 mod digit_validation;

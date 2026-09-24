@@ -41,6 +41,9 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     kernel_plan: NttKernelPlan,
 }
 
+mod binary;
+#[cfg(test)]
+mod binary_tests;
 mod convert;
 mod lut;
 mod mixed;

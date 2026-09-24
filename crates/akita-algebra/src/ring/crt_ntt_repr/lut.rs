@@ -1,7 +1,9 @@
+use crate::ntt::binary::BinaryLimbTables;
 use std::array::from_fn;
 use std::marker::PhantomData;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
+use std::sync::{Arc, OnceLock};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx;
@@ -30,6 +32,7 @@ const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
 /// built once per mat-vec and is independent of the decomposition `log_basis`.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
+    pub(super) binary: OnceLock<Arc<[BinaryLimbTables<W>; K]>>,
     vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
     len: usize,
     offset: i16,
@@ -144,7 +147,12 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
                 *dst = prime.from_canonical(W::from_i64(v));
             }
         }
-        Self { vals, len, offset }
+        Self {
+            vals,
+            len,
+            offset,
+            binary: OnceLock::new(),
+        }
     }
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
@@ -208,6 +216,14 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         dst: &mut [MontCoeff<W>; D],
     ) {
         self.debug_assert_active_digits(digits);
+        #[cfg(target_arch = "aarch64")]
+        if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
+            if let Some(strategy) = crate::ntt::binary::default_strategy() {
+                if self.try_fill_binary_limb(k, digits, params, dst, strategy) {
+                    return;
+                }
+            }
+        }
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i32>() {
             let prime = params.primes[k];

@@ -17,7 +17,7 @@ use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 /// Every NTT prime here is `< 2^30`, so neither `2·a·b` nor `2·m·p` saturates
 /// an `int32x4_t` after the `>> 32`.
 #[inline(always)]
-unsafe fn mont_mul_4x_i32(
+pub(super) unsafe fn mont_mul_4x_i32(
     a: int32x4_t,
     b: int32x4_t,
     p_q: int32x4_t,
@@ -40,7 +40,7 @@ unsafe fn mont_mul_4x_i32(
 /// Uses comparison-first approach to avoid the i64 widening that the
 /// scalar `csubp`/`caddp` path requires (since `a - p` can overflow i32).
 #[inline(always)]
-unsafe fn reduce_range_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
+pub(super) unsafe fn reduce_range_4x_i32(a: int32x4_t, p: int32x4_t) -> int32x4_t {
     let zero = vdupq_n_s32(0);
 
     // csubp: subtract p where a >= p
@@ -189,7 +189,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         }
     }
 
-    forward_ntt_i32_from_twisted(a, prime, tw);
+    forward_ntt_i32_from_twisted(a, prime, tw, D / 2);
 }
 
 /// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
@@ -232,22 +232,41 @@ pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
         i += 1;
     }
 
-    forward_ntt_i32_from_twisted(a, prime, tw);
+    forward_ntt_i32_from_twisted(a, prime, tw, D / 2);
 }
 
 /// Forward DIF butterfly stages for an already twisted i32 limb.
 #[inline]
-unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
+pub(super) unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
+    len: usize,
+) {
+    // Select once outside the butterflies; const specialization keeps the
+    // benchmark control branch out of each vector arithmetic operation.
+    static CENTERED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *CENTERED.get_or_init(|| std::env::var("AKITA_NTT_CENTERED_REDUCTION").as_deref() != Ok("0"))
+    {
+        forward_dif_stages_i32::<D, true>(a, prime, tw, len);
+    } else {
+        forward_dif_stages_i32::<D, false>(a, prime, tw, len);
+    }
+}
+
+#[inline]
+unsafe fn forward_dif_stages_i32<const D: usize, const CENTERED: bool>(
+    a: &mut [MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+    mut len: usize,
 ) {
     let p_q = vdupq_n_s32(prime.p);
     let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
+    let reciprocal = vdupq_n_s32((((1u64 << 31) + prime.p as u64 / 2) / prime.p as u64) as i32);
 
     // DIF butterfly stages (4-wide while half-length permits).
-    let mut len = D / 2;
     while len >= 4 {
         let twiddle_base = len - 1;
         let tw_ptr = tw.fwd_twiddles.as_ptr() as *const i32;
@@ -262,7 +281,12 @@ unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
                 let sum = vaddq_s32(u, v);
                 let diff = vsubq_s32(u, v);
 
-                vst1q_s32(a_ptr.add(start + j), reduce_range_4x_i32(sum, p_q));
+                let reduced_sum = if CENTERED {
+                    super::split_binary::centered_reduce(sum, p_q, reciprocal)
+                } else {
+                    reduce_range_4x_i32(sum, p_q)
+                };
+                vst1q_s32(a_ptr.add(start + j), reduced_sum);
                 vst1q_s32(
                     a_ptr.add(start + j + len),
                     mont_mul_4x_i32(diff, w, p_q, pinv_q),

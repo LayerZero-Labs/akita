@@ -7,6 +7,9 @@
 
 use std::sync::OnceLock;
 
+mod binary;
+mod split_binary;
+pub(crate) use binary::forward_binary_i32;
 mod i16_kernels;
 mod i32_kernels;
 
