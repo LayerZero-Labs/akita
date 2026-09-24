@@ -2,7 +2,7 @@
 use akita_types::DigitRangePlan;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Ring};
-use jolt_poly::{NormalizedPoly, UnivariatePoly};
+use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -578,12 +578,12 @@ pub(crate) fn stage2_relation_m_point_values_compressed<E: Field>(
 pub(crate) fn interpolate_eq_factored_q_poly<E: Field + Ring>(
     evals: &[E],
     degree: usize,
-) -> NormalizedPoly<E> {
+) -> OmittedConstantPoly<E> {
     let mut q_poly = UnivariatePoly::from_evals(evals);
     q_poly.trim_trailing_zeros();
     let mut q_coeffs = q_poly.into_coefficients();
     q_coeffs.resize(degree + 1, E::zero());
-    NormalizedPoly::from_q_coefficients(q_coeffs)
+    OmittedConstantPoly::from_q_coefficients(q_coeffs)
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.

@@ -7,7 +7,7 @@
 
 use akita_error::AkitaError;
 use jolt_field::Field;
-use jolt_poly::{NormalizedPoly, UnivariatePoly};
+use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 /// Prover-side sumcheck instance interface.
 ///
@@ -139,7 +139,7 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     fn current_tau(&self) -> E;
 
     /// Compute the eq-factored round message.
-    fn compute_round_eq_factored(&mut self, round: usize) -> NormalizedPoly<E>;
+    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E>;
 
     /// Ingest the verifier challenge `r_round` to fold/bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);

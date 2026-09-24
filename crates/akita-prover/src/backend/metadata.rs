@@ -1,6 +1,6 @@
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
-use jolt_poly::{NormalizedPoly, UnivariatePoly};
+use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 /// Public, coefficient-free description of an accepted fold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,7 +201,7 @@ pub enum Stage1Transition {
 
 #[derive(Clone)]
 pub enum Stage1RoundPolynomial<E: Field> {
-    EqFactored(NormalizedPoly<E>),
+    EqFactored(OmittedConstantPoly<E>),
     Standard(UnivariatePoly<E>),
 }
 

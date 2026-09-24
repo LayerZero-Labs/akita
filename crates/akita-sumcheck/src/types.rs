@@ -4,7 +4,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use jolt_field::Field;
-use jolt_poly::{CompressedPoly, NormalizedPoly};
+use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 use std::io::{Read, Write};
 
 /// Sumcheck proof containing one compressed univariate polynomial per round.
@@ -87,7 +87,7 @@ impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Sum
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EqFactoredSumcheckProof<E: Field> {
     /// One eq-factored inner polynomial per sumcheck round.
-    pub round_polys: Vec<NormalizedPoly<E>>,
+    pub round_polys: Vec<OmittedConstantPoly<E>>,
 }
 
 impl<E: Valid + Field> Valid for EqFactoredSumcheckProof<E> {
@@ -139,7 +139,7 @@ impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             )
         })?;
         for _ in 0..num_rounds {
-            round_polys.push(NormalizedPoly::deserialize_with_mode(
+            round_polys.push(OmittedConstantPoly::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

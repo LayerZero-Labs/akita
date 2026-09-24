@@ -172,7 +172,7 @@ mod tests {
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59, Zero,
     };
-    use jolt_poly::{CompressedPoly, NormalizedPoly};
+    use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::sis::sis_l2_table_key_for_collision_sq;
@@ -281,7 +281,7 @@ mod tests {
     ) -> EqFactoredSumcheckProof<F> {
         EqFactoredSumcheckProof {
             round_polys: (0..rounds)
-                .map(|_| NormalizedPoly::new(vec![F::zero(); degree]))
+                .map(|_| OmittedConstantPoly::new(vec![F::zero(); degree]))
                 .collect(),
         }
     }

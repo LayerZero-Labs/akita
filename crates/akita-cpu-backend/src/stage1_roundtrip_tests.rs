@@ -15,7 +15,7 @@ use jolt_field::{
     Prime32Offset99, Prime64Offset59, Ring, Zero,
 };
 use jolt_field::{Fold, Unreduced};
-use jolt_poly::NormalizedPoly;
+use jolt_poly::OmittedConstantPoly;
 
 type F = Prime128Offset275;
 
@@ -348,7 +348,7 @@ fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
                 .round_polys[0];
             let mut coefficients = round.coefficients().to_vec();
             coefficients.pop();
-            *round = NormalizedPoly::new(coefficients);
+            *round = OmittedConstantPoly::new(coefficients);
             assert_stage1_rejected(&degree_too_low, equality_point.clone(), plan);
 
             let mut degree_too_high = proof.clone();
@@ -357,7 +357,7 @@ fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
                 .round_polys[0];
             let mut coefficients = round.coefficients().to_vec();
             coefficients.push(F::from_u64(0));
-            *round = NormalizedPoly::new(coefficients);
+            *round = OmittedConstantPoly::new(coefficients);
             assert_stage1_rejected(&degree_too_high, equality_point.clone(), plan);
 
             let mut wrong_child_count = proof.clone();

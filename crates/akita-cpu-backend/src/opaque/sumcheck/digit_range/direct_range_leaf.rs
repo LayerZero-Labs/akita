@@ -53,7 +53,7 @@ use akita_types::DigitRangePlan;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};
-use jolt_poly::NormalizedPoly;
+use jolt_poly::OmittedConstantPoly;
 use std::ops::Range;
 
 use crate::sources::packed_digits::{PackedSignedDigitIter, PackedSignedDigits};
@@ -344,7 +344,7 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (E, E) + Sync,
-) -> NormalizedPoly<E> {
+) -> OmittedConstantPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
     let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
@@ -425,14 +425,14 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
     .collect::<Vec<_>>();
 
     let _ = split_eq;
-    NormalizedPoly::from_q_coefficients(q_coeffs)
+    OmittedConstantPoly::from_q_coefficients(q_coeffs)
 }
 
 fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (i16, i16) + Sync,
-) -> NormalizedPoly<E> {
+) -> OmittedConstantPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
@@ -477,7 +477,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unr
     .collect::<Vec<_>>();
 
     let _ = split_eq;
-    NormalizedPoly::from_q_coefficients(q_coeffs)
+    OmittedConstantPoly::from_q_coefficients(q_coeffs)
 }
 
 fn compute_range_round_polynomial_from_compact_image<
@@ -487,7 +487,7 @@ fn compute_range_round_polynomial_from_compact_image<
     split_eq: &GruenSplitEq<E>,
     compact_range_image: &S,
     polynomial_precomputation: &RangePolynomialPrecomputation,
-) -> NormalizedPoly<E> {
+) -> OmittedConstantPoly<E> {
     compute_range_round_polynomial_from_compact_image_pairs(
         split_eq,
         polynomial_precomputation,
@@ -727,7 +727,7 @@ pub struct LowBasisRangeCheckProver<E: Field> {
     basis: usize,
     prefix_tau: Option<Vec<E>>,
     initial_round_prefix: Option<DirectRangePrefixState<E>>,
-    cached_round_poly: Option<NormalizedPoly<E>>,
+    cached_round_poly: Option<OmittedConstantPoly<E>>,
     rounds_completed: usize,
 }
 

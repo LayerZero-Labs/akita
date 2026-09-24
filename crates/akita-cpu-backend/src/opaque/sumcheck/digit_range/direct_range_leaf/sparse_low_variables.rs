@@ -1,5 +1,5 @@
 use super::*;
-use jolt_poly::NormalizedPoly;
+use jolt_poly::OmittedConstantPoly;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[inline]
@@ -14,7 +14,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_round_compact_sparse_x_y<S: CompactRangeImageSource + ?Sized>(
         &self,
         compact_range_image: &S,
-    ) -> NormalizedPoly<E> {
+    ) -> OmittedConstantPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = compact_range_image.len() / self.live_x_cols;
         let y_pairs = y_len / 2;
@@ -43,7 +43,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_round_materialized_sparse_x_y(
         &self,
         range_image: &[E],
-    ) -> NormalizedPoly<E> {
+    ) -> OmittedConstantPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = range_image.len() / self.live_x_cols;
         let y_pairs = y_len / 2;
@@ -70,7 +70,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         &self,
         range_image: &[E],
         r: E,
-    ) -> (Vec<E>, NormalizedPoly<E>) {
+    ) -> (Vec<E>, OmittedConstantPoly<E>) {
         debug_assert!(self.use_sparse_x_y_round());
         debug_assert!(self.next_use_sparse_x_y_round_after_current());
         let live_x_cols = self.live_x_cols;
@@ -195,7 +195,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
         let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
-        let poly = NormalizedPoly::from_q_coefficients(q_coeffs);
+        let poly = OmittedConstantPoly::from_q_coefficients(q_coeffs);
         (out, poly)
     }
 

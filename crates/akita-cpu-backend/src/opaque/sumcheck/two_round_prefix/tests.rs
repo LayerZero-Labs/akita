@@ -11,7 +11,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use jolt_field::{ExtField, Field, FpExt4, One, Prime128Offset275, Prime32Offset99, Ring, Zero};
-use jolt_poly::{NormalizedPoly, UnivariatePoly};
+use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1051,9 +1051,11 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
         let mut bytes = Vec::new();
         poly.serialize_uncompressed(&mut bytes)
             .expect("eq-factored poly should serialize");
-        let decoded =
-            NormalizedPoly::<F>::deserialize_uncompressed(&bytes[..], &STAGE1_B8_Q_POLY_DEGREE)
-                .expect("eq-factored poly should deserialize at degree 4");
+        let decoded = OmittedConstantPoly::<F>::deserialize_uncompressed(
+            &bytes[..],
+            &STAGE1_B8_Q_POLY_DEGREE,
+        )
+        .expect("eq-factored poly should deserialize at degree 4");
         assert_eq!(decoded, poly);
     }
 }

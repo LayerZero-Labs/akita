@@ -1,5 +1,5 @@
 use super::*;
-use jolt_poly::{CompressedPoly, NormalizedPoly};
+use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
@@ -704,7 +704,7 @@ fn dummy_eq_factored_sumcheck<F: Field>(
 ) -> EqFactoredSumcheckProof<F> {
     EqFactoredSumcheckProof {
         round_polys: (0..rounds)
-            .map(|_| NormalizedPoly::new(vec![F::zero(); degree]))
+            .map(|_| OmittedConstantPoly::new(vec![F::zero(); degree]))
             .collect(),
     }
 }

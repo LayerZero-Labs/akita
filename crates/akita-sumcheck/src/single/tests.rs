@@ -1,5 +1,5 @@
 use super::*;
-use jolt_poly::{CompressedPoly, NormalizedPoly, UnivariatePoly};
+use jolt_poly::{CompressedPoly, OmittedConstantPoly, UnivariatePoly};
 
 use akita_algebra::poly::multilinear_eval;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -214,8 +214,8 @@ impl EqFactoredSumcheckInstanceProver<F> for OneRoundEqInstance {
         self.split.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, _round: usize) -> NormalizedPoly<F> {
-        NormalizedPoly::from_q_coefficients(self.q_coeffs.clone())
+    fn compute_round_eq_factored(&mut self, _round: usize) -> OmittedConstantPoly<F> {
+        OmittedConstantPoly::from_q_coefficients(self.q_coeffs.clone())
     }
 
     fn ingest_challenge(&mut self, _round: usize, challenge: F) {
@@ -228,7 +228,7 @@ fn equality_factored_rejects_old_wire_forgery_when_tau_is_zero() {
     let q_coeffs = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
     let instance = OneRoundEqInstance::new(F::zero(), q_coeffs);
     let proof = EqFactoredSumcheckProof {
-        round_polys: vec![NormalizedPoly::new(
+        round_polys: vec![OmittedConstantPoly::new(
             // Under the old `[q_0, q_2]` convention, choosing `q_0 = T`
             // collapsed the scaled claim to zero and left `q_2` unconstrained.
             vec![instance.claim(), F::from_u64(101)],
@@ -258,7 +258,7 @@ fn equality_factored_wire_contains_every_nonconstant_coefficient() {
         F::from_u64(7),
         F::from_u64(11),
     ];
-    let poly = NormalizedPoly::from_q_coefficients(q_coeffs.clone());
+    let poly = OmittedConstantPoly::from_q_coefficients(q_coeffs.clone());
     let mut encoded = Vec::new();
     poly.serialize_uncompressed(&mut encoded).unwrap();
 
@@ -268,7 +268,7 @@ fn equality_factored_wire_contains_every_nonconstant_coefficient() {
     }
     assert_eq!(encoded, expected);
     assert_eq!(
-        NormalizedPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
+        OmittedConstantPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
         poly
     );
 }
@@ -349,7 +349,7 @@ impl EqFactoredSumcheckInstanceProver<F> for EqInstance {
         self.split.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> NormalizedPoly<F> {
+    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<F> {
         let [a, b, c, d] = self.coefficients;
         let coefficients = if round == 0 {
             vec![a + c * self.equality[1], b + d * self.equality[1]]
@@ -357,7 +357,7 @@ impl EqFactoredSumcheckInstanceProver<F> for EqInstance {
             let challenge = self.first_challenge.unwrap();
             vec![a + b * challenge, c + d * challenge]
         };
-        NormalizedPoly::from_q_coefficients(coefficients)
+        OmittedConstantPoly::from_q_coefficients(coefficients)
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: F) {
@@ -407,7 +407,7 @@ fn equality_factored_replay_rejects_late_tampering_after_a_vanished_factor() {
     assert_eq!(replay(&proof), Ok(point.to_vec()));
     let mut coefficients = proof.round_polys[1].coefficients().to_vec();
     coefficients[0] += F::one();
-    proof.round_polys[1] = NormalizedPoly::new(coefficients);
+    proof.round_polys[1] = OmittedConstantPoly::new(coefficients);
     assert_eq!(replay(&proof), Err(AkitaError::InvalidProof));
 }
 

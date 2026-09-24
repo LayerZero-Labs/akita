@@ -11,7 +11,7 @@ use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 use jolt_field::{CanonicalEncoding, Field};
-use jolt_poly::{NormalizedPoly, UnivariatePolynomial};
+use jolt_poly::{OmittedConstantPoly, UnivariatePolynomial};
 
 pub(crate) fn validate_sumcheck_round_messages<E: Field>(
     proof: &SumcheckProof<E>,
@@ -194,7 +194,7 @@ where
 pub fn advance_eq_factored_claim<E: Field>(
     claim: E,
     tau: E,
-    poly: &NormalizedPoly<E>,
+    poly: &OmittedConstantPoly<E>,
     challenge: E,
 ) -> E {
     let constant = claim - tau * poly.nonconstant_term_sum_at_one();

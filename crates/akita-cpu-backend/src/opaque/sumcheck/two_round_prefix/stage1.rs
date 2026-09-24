@@ -3,7 +3,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Unreduced, Zero};
-use jolt_poly::NormalizedPoly;
+use jolt_poly::OmittedConstantPoly;
 #[cfg(test)]
 use jolt_poly::UnivariatePoly;
 
@@ -380,14 +380,14 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
         }
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_eq_poly(),
             Self::B8(state) => state.reconstruct_round0_eq_poly(),
         }
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_eq_poly(r0),
             Self::B8(state) => state.reconstruct_round1_eq_poly(r0),
@@ -415,19 +415,19 @@ impl<E: Field + Ring> Stage1B4PrefixCache<E> {
         coeff_array_to_poly(coeffs)
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.x_row_coeffs[1], self.tau1),
         );
-        NormalizedPoly::from_q_coefficients(q_x.into())
+        OmittedConstantPoly::from_q_coefficients(q_x.into())
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
         let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
-        NormalizedPoly::from_q_coefficients(q_y.into())
+        OmittedConstantPoly::from_q_coefficients(q_y.into())
     }
 }
 
@@ -465,7 +465,7 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
         polynomial
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
         let evals: Vec<E> = (0..=4u64)
@@ -479,7 +479,7 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
         interpolate_eq_factored_q_poly(&evals, STAGE1_B8_Q_POLY_DEGREE)
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> NormalizedPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         let evals: Vec<E> = (0..=4u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);

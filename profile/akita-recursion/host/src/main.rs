@@ -316,7 +316,6 @@ macro_rules! run_selected_guest {
         $trace:ident,
         $preprocess_shared:ident,
         $preprocess_prover:ident,
-        $preprocess_verifier:ident,
         $build_prover:ident,
         $build_verifier:ident
     ) => {{
@@ -339,12 +338,8 @@ macro_rules! run_selected_guest {
         info!(case = %$case, "running shared / prover / verifier preprocessing");
         let shared_preprocessing = guest::$preprocess_shared(&mut program)
             .map_err(|err| format!("shared preprocessing failed: {err}"))?;
-        let prover_preprocessing = guest::$preprocess_prover(shared_preprocessing.clone());
-        let verifier_preprocessing = guest::$preprocess_verifier(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-            None,
-        );
+        let prover_preprocessing = guest::$preprocess_prover(shared_preprocessing);
+        let verifier_preprocessing = prover_preprocessing.verifier_preprocessing();
         let prove = guest::$build_prover(program, prover_preprocessing);
         let verify = guest::$build_verifier(verifier_preprocessing);
 
@@ -399,7 +394,6 @@ fn run() -> Result<(), String> {
             trace_akita_verify_fp32_to_file,
             preprocess_shared_akita_verify_fp32,
             preprocess_prover_akita_verify_fp32,
-            preprocess_verifier_akita_verify_fp32,
             build_prover_akita_verify_fp32,
             build_verifier_akita_verify_fp32
         ),
@@ -411,7 +405,6 @@ fn run() -> Result<(), String> {
             trace_akita_verify_fp64_to_file,
             preprocess_shared_akita_verify_fp64,
             preprocess_prover_akita_verify_fp64,
-            preprocess_verifier_akita_verify_fp64,
             build_prover_akita_verify_fp64,
             build_verifier_akita_verify_fp64
         ),
@@ -423,7 +416,6 @@ fn run() -> Result<(), String> {
             trace_akita_verify_fp128_direct_to_file,
             preprocess_shared_akita_verify_fp128_direct,
             preprocess_prover_akita_verify_fp128_direct,
-            preprocess_verifier_akita_verify_fp128_direct,
             build_prover_akita_verify_fp128_direct,
             build_verifier_akita_verify_fp128_direct
         ),
@@ -435,7 +427,6 @@ fn run() -> Result<(), String> {
             trace_akita_verify_fp128_recursive_to_file,
             preprocess_shared_akita_verify_fp128_recursive,
             preprocess_prover_akita_verify_fp128_recursive,
-            preprocess_verifier_akita_verify_fp128_recursive,
             build_prover_akita_verify_fp128_recursive,
             build_verifier_akita_verify_fp128_recursive
         ),
@@ -447,7 +438,6 @@ fn run() -> Result<(), String> {
             trace_akita_verify_to_file,
             preprocess_shared_akita_verify,
             preprocess_prover_akita_verify,
-            preprocess_verifier_akita_verify,
             build_prover_akita_verify,
             build_verifier_akita_verify
         ),

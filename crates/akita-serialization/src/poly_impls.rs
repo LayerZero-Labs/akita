@@ -3,7 +3,7 @@
 use std::io::{Read, Write};
 
 use jolt_field::Field;
-use jolt_poly::{CompressedPoly, NormalizedPoly, UnivariatePoly};
+use jolt_poly::{CompressedPoly, OmittedConstantPoly, UnivariatePoly};
 
 use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate};
 
@@ -123,13 +123,13 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
     }
 }
 
-impl<F: Field + Valid> Valid for NormalizedPoly<F> {
+impl<F: Field + Valid> Valid for OmittedConstantPoly<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coefficients().iter().try_for_each(Valid::check)
     }
 }
 
-impl<F: Field + AkitaSerialize> AkitaSerialize for NormalizedPoly<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for OmittedConstantPoly<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -149,7 +149,9 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for NormalizedPoly<F> {
     }
 }
 
-impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for NormalizedPoly<F> {
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for OmittedConstantPoly<F>
+{
     /// Number of nonconstant coefficients transmitted; zero is valid.
     type Context = usize;
 
@@ -225,18 +227,18 @@ mod tests {
 
     #[test]
     fn normalized_wire_is_headerless_and_allows_empty_shape() {
-        let poly = NormalizedPoly::new(vec![F::from_u64(5), F::from_u64(0)]);
+        let poly = OmittedConstantPoly::new(vec![F::from_u64(5), F::from_u64(0)]);
         let mut bytes = Vec::new();
         poly.serialize_compressed(&mut bytes).unwrap();
         assert_eq!(bytes, [5, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(poly.compressed_size(), bytes.len());
         assert_eq!(
-            NormalizedPoly::<F>::deserialize_compressed_exact(&bytes, &2).unwrap(),
+            OmittedConstantPoly::<F>::deserialize_compressed_exact(&bytes, &2).unwrap(),
             poly
         );
         assert_eq!(
-            NormalizedPoly::<F>::deserialize_compressed_exact(&[], &0).unwrap(),
-            NormalizedPoly::new(Vec::new())
+            OmittedConstantPoly::<F>::deserialize_compressed_exact(&[], &0).unwrap(),
+            OmittedConstantPoly::new(Vec::new())
         );
     }
 }

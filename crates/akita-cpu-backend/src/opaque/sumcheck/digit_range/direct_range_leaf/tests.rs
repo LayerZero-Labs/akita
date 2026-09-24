@@ -2,11 +2,11 @@ use super::*;
 use akita_sumcheck::multilinear_eval;
 use akita_types::DigitRangeEqualityPoint;
 use jolt_field::Prime128Offset275;
-use jolt_poly::NormalizedPoly;
+use jolt_poly::OmittedConstantPoly;
 
 type F = Prime128Offset275;
 
-fn advance_eq_factored_claim(claim: F, tau: F, poly: &NormalizedPoly<F>, challenge: F) -> F {
+fn advance_eq_factored_claim(claim: F, tau: F, poly: &OmittedConstantPoly<F>, challenge: F) -> F {
     let constant = claim - tau * poly.nonconstant_term_sum_at_one();
     constant + poly.evaluate_nonconstant_terms(challenge)
 }
