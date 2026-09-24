@@ -41,35 +41,43 @@ so pull requests merge by squash or rebase. Any contributor with write access
 can merge once these conditions hold.
 
 `dev` accepts changes only through pull requests with passing CI, and it
-rejects force pushes and deletion. It allows squash merges and merge commits.
-Squash-merge every pull request into `dev` except a sync from `main`, which
-needs a merge commit (see [Sync `main` into `dev`](#sync-main-into-dev)). `dev`
-does not require maintainer-team approval. Any contributor with write access
-can merge into `dev`. Ask another `dev`
-contributor to review changes that modify files from `main` or verifier-reachable
-code.
+rejects force pushes and deletion. A pull request must be up to date with `dev`
+before it merges, so CI has tested the exact result that lands. `dev` allows
+squash merges and merge commits. Squash-merge every pull request into `dev`
+except a sync from `main`, which needs a merge commit (see
+[Sync `main` into `dev`](#sync-main-into-dev)). `dev` does not require
+maintainer-team approval. Any contributor with write access can merge into
+`dev`. Ask another `dev` contributor to review changes that modify files from
+`main` or verifier-reachable code.
 
-CI runs every pull-request workflow for pull requests into any branch,
-including `dev`. Workflows triggered by pushes or schedules, including the
-weekly fuzz and security runs, run only on `main`.
+Every workflow that runs on pull requests into `main` also runs on pull
+requests into `dev`, subject to the same path filters. Workflows triggered by
+pushes or schedules, including the weekly fuzz and security runs, run only on
+`main`.
 
 ## Extension contract
 
-An *existing configuration* is a schedule in the trusted catalog on `main`
-(`artifacts/schedules/`, indexed by `artifacts/schedule-catalog.tsv`), used
-through a public API that `main` provides. A caller *selects* an extension by
-choosing it explicitly at runtime, for example through a configuration type,
-a schedule, or a backend handle.
+An *existing configuration* is any schedule catalog that `main` accepts, used
+through a public API that `main` provides. This includes the trusted catalog
+checked in on `main` (`artifacts/schedules/`, indexed by
+`artifacts/schedule-catalog.tsv`) and every caller-supplied catalog that
+`TrustedScheduleCatalog::new` accepts on `main`. A caller *selects* an
+extension by choosing it explicitly at runtime, for example through a
+configuration type, a schedule, or a backend handle.
 
-1. For every existing configuration, `dev` built with default Cargo features
-   MUST produce the same setup, commitment, and proof bytes, and the same
-   transcript state, as `main` at the merge base.
-2. Rule 1 MUST also hold when every extension Cargo feature is enabled and no
-   extension is selected. Cargo unifies features across a build, so a feature
-   that one dependent enables is enabled for every crate in that build.
+The rules below apply to every existing configuration and every input that
+`main` accepts with it, when no extension is selected.
+
+1. `dev` built with default Cargo features MUST produce the same setup,
+   commitment, and proof bytes, and the same transcript state, as `main` at the
+   merge base.
+2. Rule 1 MUST also hold when every extension Cargo feature is enabled. Cargo
+   unifies features across a build, so a feature that one dependent enables is
+   enabled for every crate in that build.
 3. Enabling a Cargo feature MUST NOT select an extension.
-4. For every existing configuration, the `dev` verifier MUST accept exactly the
-   proofs that the `main` verifier accepts.
+4. Given the same setup, statement, and serialized proof bytes, `dev` MUST
+   decode, validate, and verify them with the same outcome as `main`: `dev`
+   accepts exactly when `main` accepts.
 5. A compute backend MUST produce the same proof bytes as the CPU backend for
    every configuration it supports.
 6. `dev` MUST NOT modify an existing trusted schedule artifact. It MAY add new
@@ -78,14 +86,15 @@ a schedule, or a backend handle.
    [verifier no-panic contract](verifier-contract.md).
 
 Together these rules make every extension conservative: restricted to existing
-configurations, `dev` is `main`.
+configurations with no extension selected, `dev` is `main`.
 
-Rules 1, 2, and 5 compare bytes. The comparison is meaningful because the
-honest prover is deterministic: fold grinding takes the first accepted nonce
+Rules 1, 2, and 5 compare bytes, so they assume a deterministic honest prover.
+Fold grinding is deterministic: it takes the first accepted nonce
 (`first_jointly_accepted_nonce` in
-`crates/akita-prover/src/protocol/fold_grind.rs`). An extension that adds
-prover randomness, such as zero knowledge, affects only the configurations
-that select it.
+`crates/akita-prover/src/protocol/fold_grind.rs`). A byte-comparison test also
+exposes any other nondeterminism, because two runs of `main` would disagree.
+An extension that adds prover randomness, such as zero knowledge, affects only
+the configurations that select it.
 
 Rule 4 cannot be tested exhaustively. Rules 1 and 2 cover honest proofs. The
 tamper and soundness suites in `crates/akita-pcs/tests/`
@@ -152,18 +161,41 @@ copies are identical.
 
 ### Sync `main` into `dev`
 
-1. After each merge into `main`, open a pull request from `main` into `dev`.
-2. Merge it with **Create a merge commit**, not a squash merge. Check the
-   selected merge method before you merge. A merge commit makes `main` a parent
-   of `dev` and moves their merge base forward. After a squash merge, the next
-   sync starts from the old merge base and conflicts on lines that `main` has
-   changed since, and the footprint command below lists changes from `main`.
-3. Resolve conflicts in favor of the `main` code, then reattach the extension at
+Sync after each merge into `main`. Do the merge on a sync branch cut from
+`dev`. Do not open a pull request directly from `main`: GitHub would commit any
+conflict resolution to `main`, which only maintainers can approve.
+
+1. Create the sync branch and merge `main` into it:
+
+   ```bash
+   git fetch origin
+   git switch --no-track -c "sync/main-$(date +%F)" origin/dev
+   git merge origin/main
+   ```
+
+2. Resolve conflicts in favor of the `main` code, then reattach the extension at
    its seam.
-4. Regenerate generated files instead of merging them by hand. Run
+3. Regenerate generated files instead of merging them by hand. Run
    `scripts/generate-schedule-artifacts.sh` for schedule artifacts. For a
    `Cargo.lock` conflict, start from the `main` version and let a Cargo build
    add the `dev` entries. Do not run `cargo update`.
+4. Confirm that no existing schedule artifact changed (rule 6). This command
+   must print nothing:
+
+   ```bash
+   git diff --name-only --diff-filter=MDR origin/main -- artifacts/schedules/
+   ```
+
+   If it lists a file, restore the `main` version and fix the `dev` code that
+   produced different bytes.
+5. Commit the merge and any regenerated files. Push the branch with
+   `git push -u origin HEAD`, and open a pull request from it into `dev`.
+6. Merge that pull request with **Create a merge commit**, not a squash merge.
+   Check the selected merge method before you merge. A merge commit makes
+   `main` an ancestor of `dev` and moves their merge base forward. After a
+   squash merge, the next sync starts from the old merge base and conflicts on
+   lines that `main` has changed since, and the footprint command below lists
+   changes from `main`.
 
 Never rebase, reset, or force-push `dev`.
 
@@ -178,8 +210,8 @@ git diff --stat --diff-filter=MDR origin/main...origin/dev
 
 Each listed file SHOULD be a seam registration, a generated file or lockfile, or
 a carried seam with an open pull request against `main`. Move any other change
-behind a seam. Files that exist only on `dev` do not cause conflicts and are
-not part of the footprint.
+behind a seam. Files that exist only on `dev` are not part of the footprint.
+They conflict only if `main` later adds a file at the same path.
 
 ## Move an extension to `main`
 
