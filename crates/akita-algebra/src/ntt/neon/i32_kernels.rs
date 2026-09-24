@@ -259,24 +259,6 @@ unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // Cached once per process. Const specialization removes this benchmark
-    // control from the vector arithmetic loop. Set the variable to 0 to retain
-    // the previous reduction for reproducible A/B measurements.
-    static CENTERED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *CENTERED.get_or_init(|| std::env::var("AKITA_NTT_CENTERED_REDUCTION").as_deref() != Ok("0"))
-    {
-        forward_dif_stages_i32::<D, true>(a, prime, tw);
-    } else {
-        forward_dif_stages_i32::<D, false>(a, prime, tw);
-    }
-}
-
-#[inline]
-unsafe fn forward_dif_stages_i32<const D: usize, const CENTERED: bool>(
-    a: &mut [MontCoeff<i32>; D],
-    prime: NttPrime<i32>,
-    tw: &NttTwiddles<i32, D>,
-) {
     let p_q = vdupq_n_s32(prime.p);
     let pinv_q = vdupq_n_s32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
@@ -298,12 +280,10 @@ unsafe fn forward_dif_stages_i32<const D: usize, const CENTERED: bool>(
                 let sum = vaddq_s32(u, v);
                 let diff = vsubq_s32(u, v);
 
-                let reduced_sum = if CENTERED {
-                    centered_reduce_4x_i32(sum, p_q, reciprocal)
-                } else {
-                    reduce_range_4x_i32(sum, p_q)
-                };
-                vst1q_s32(a_ptr.add(start + j), reduced_sum);
+                vst1q_s32(
+                    a_ptr.add(start + j),
+                    centered_reduce_4x_i32(sum, p_q, reciprocal),
+                );
                 vst1q_s32(
                     a_ptr.add(start + j + len),
                     mont_mul_4x_i32(diff, w, p_q, pinv_q),

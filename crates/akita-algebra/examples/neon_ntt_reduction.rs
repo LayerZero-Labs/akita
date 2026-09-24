@@ -1,8 +1,7 @@
-//! Single-threaded generic negacyclic NTT comparison, excluding setup.
+//! Single-threaded generic negacyclic NTT benchmark, excluding setup.
 //!
-//! Run the same release executable in separate processes with
-//! `AKITA_NTT_CENTERED_REDUCTION=0` and `=1`. Optional arguments specify
-//! transforms per sample (default 16384) and samples (default 7).
+//! Optional arguments specify transforms per sample (default 16384) and
+//! samples (default 7).
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -10,7 +9,7 @@ use akita_algebra::ntt::butterfly::forward_ntt;
 use akita_algebra::ntt::tables::Q64_PRIMES;
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff};
 
-fn measure<const D: usize>(iterations: usize, samples: usize, centered: bool) {
+fn measure<const D: usize>(iterations: usize, samples: usize) {
     let params = CrtNttParamSet::<_, 3, D>::new(Q64_PRIMES);
     let lut = DigitMontLut::new_with_digit_bound(&params, 128);
     let mut state = 0x39128fa024ce7u64;
@@ -71,23 +70,22 @@ fn measure<const D: usize>(iterations: usize, samples: usize, centered: bool) {
             } else {
                 "general_montgomery"
             };
-            println!("{D},{name},{centered},{sample},{iterations},{ns:.3}");
+            println!("{D},{name},{sample},{iterations},{ns:.3}");
         }
     }
 }
 
 fn main() {
     if !cfg!(target_arch = "aarch64") || std::env::var("AKITA_SCALAR_NTT").as_deref() == Ok("1") {
-        eprintln!("This comparison requires AArch64 NEON with AKITA_SCALAR_NTT unset.");
+        eprintln!("This benchmark requires AArch64 NEON with AKITA_SCALAR_NTT unset.");
         std::process::exit(1);
     }
     let args: Vec<_> = std::env::args().collect();
     let iterations = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(16384);
     let samples = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(7);
-    let centered = std::env::var("AKITA_NTT_CENTERED_REDUCTION").as_deref() != Ok("0");
-    println!("degree,input,centered,sample,iterations,ns_per_ring_three_primes");
-    measure::<128>(iterations, samples, centered);
-    measure::<256>(iterations, samples, centered);
-    measure::<512>(iterations, samples, centered);
-    measure::<1024>(iterations, samples, centered);
+    println!("degree,input,sample,iterations,ns_per_ring_three_primes");
+    measure::<128>(iterations, samples);
+    measure::<256>(iterations, samples);
+    measure::<512>(iterations, samples);
+    measure::<1024>(iterations, samples);
 }
