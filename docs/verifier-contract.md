@@ -28,9 +28,12 @@ honest-prover witness models are not verifier inputs. A proof cannot supply
 schedule bytes.
 
 The accepted proof topology is structural: a root fold, zero or more recursive
-folds, and one terminal cleartext witness. The verifier rejects proof-shape
-mismatches before transcript replay. Every terminal uses predecessor-bound
-inner `t` and the `consistency | A` relation. The root may be that predecessor;
+folds, and one terminal cleartext witness. The proof carries no shape header.
+The verifier derives every message count and length from the schedule, so a
+proof with another topology either fails a message read during replay or
+reaches the end with the grinding plan unfinished or bytes unread; the final
+plan-completion and EOF check rejects the latter two. Every terminal uses
+predecessor-bound inner `t` and the `consistency | A` relation. The root may be that predecessor;
 there is no separate fallback proof form, final outer `u`, or terminal B/D
 block to validate.
 

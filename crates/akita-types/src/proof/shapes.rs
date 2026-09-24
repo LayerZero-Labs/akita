@@ -1,8 +1,6 @@
 use super::*;
 use crate::OpeningClaimsLayout;
-use akita_sumcheck::{
-    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
-};
+use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -24,13 +22,6 @@ pub struct ExtensionOpeningReductionShape {
     /// Number of individual terminal claims serialized after the sumcheck.
     pub final_claims: usize,
     /// One compact coefficient count per round of the batched reduction.
-    pub sumcheck: SumcheckProofShape,
-}
-
-/// Public shape of the native setup-product sumcheck messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupProductSumcheckShape {
-    /// Product-sumcheck shape: one compact coefficient count per round.
     pub sumcheck: SumcheckProofShape,
 }
 
@@ -74,22 +65,6 @@ pub fn canonical_extension_opening_reduction_shape(
     ))
 }
 
-impl Valid for SetupProductSumcheckShape {
-    fn check(&self) -> Result<(), SerializationError> {
-        checked_shape_sequence_len(self.sumcheck.len())?;
-        for &degree in &self.sumcheck {
-            checked_shape_len(degree)?;
-            if degree != SETUP_SUMCHECK_DEGREE {
-                return Err(SerializationError::InvalidData(format!(
-                    "setup product sumcheck degree {} does not match expected degree {}",
-                    degree, SETUP_SUMCHECK_DEGREE
-                )));
-            }
-        }
-        Ok(())
-    }
-}
-
 impl Valid for ExtensionOpeningReductionShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.partials)?;
@@ -113,46 +88,6 @@ impl Valid for ExtensionOpeningReductionShape {
     }
 }
 
-/// Public layout of a terminal level's native messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalLevelProofShape {
-    /// Shape of the optional extension-opening reduction payload.
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Shape of the terminal cleartext witness.
-    pub terminal_response: TerminalResponseShape,
-}
-
-/// Shape-selected outgoing witness binding for an intermediate fold.
-///
-/// This tag is serialized only in the proof-shape descriptor. The proof body
-/// itself remains tag-free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NextWitnessBindingShape {
-    /// Number of base-field coefficients in the compressed outer payload.
-    OuterPayload { coeffs: usize },
-    /// The following terminal proof owns the canonical `t` state bytes.
-    TerminalInnerState,
-}
-
-/// Public layout of one fold level's native messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LevelProofShape {
-    /// Shape of the optional extension-opening reduction payload.
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Number of field coefficients in the compressed opening payload.
-    pub opening_payload_coeffs: usize,
-    /// Stage-1 tree stage shapes in root-to-leaf order.
-    pub stage1_stages: Vec<AkitaStage1StageShape>,
-    /// Shape of the optional schedule-selected physical norm payload.
-    pub stage1_norm: Option<PhysicalL2NormProofWireShape>,
-    /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
-    pub stage2_sumcheck_proof: SumcheckProofShape,
-    /// Shape of the optional stage-3 setup product-sumcheck payload.
-    pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
-    /// Shape-selected outgoing witness binding.
-    pub next_witness_binding: NextWitnessBindingShape,
-}
-
 /// Public layout of the native physical-L2 messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhysicalL2NormProofWireShape {
@@ -164,59 +99,28 @@ pub struct PhysicalL2NormProofWireShape {
     pub sumcheck: SumcheckProofShape,
 }
 
-pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
-    sc.round_polys
-        .iter()
-        .map(|p| p.coeffs_except_linear_term.len())
-        .collect()
-}
-
-fn eq_factored_sumcheck_shape<F: Field>(
-    sc: &EqFactoredSumcheckProof<F>,
-) -> EqFactoredSumcheckProofShape {
-    let degree = sc
-        .round_polys
-        .first()
-        .map_or(0, |p| p.coeffs_except_constant_term.len());
-    (sc.round_polys.len(), degree)
-}
-
-pub(super) fn level_proof_shape<F: Field, E: Field>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    opening_payload: &RingVec<F>,
-    stage1: &AkitaStage1Proof<E>,
-    stage2: &AkitaStage2Proof<F, E>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
-) -> LevelProofShape {
-    LevelProofShape {
-        extension_opening_reduction: extension_opening_reduction
-            .map(ExtensionOpeningReductionProof::shape),
-        opening_payload_coeffs: opening_payload.coeff_len(),
-        stage1_stages: stage1
-            .stages
-            .iter()
-            .map(|stage| AkitaStage1StageShape {
-                sumcheck_proof: eq_factored_sumcheck_shape(&stage.sumcheck_proof),
-                child_claims: stage.child_claims.len(),
-            })
-            .collect(),
-        stage1_norm: stage1
-            .norm_proof
-            .as_ref()
-            .map(|proof| PhysicalL2NormProofWireShape {
-                subclaims: proof.subclaims.len(),
-                virtual_evaluations: proof.virtual_evaluations.len(),
-                sumcheck: sumcheck_shape(&proof.sumcheck),
-            }),
-        stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
-        stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
-        next_witness_binding: match &stage2.next_witness_binding {
-            NextWitnessBinding::OuterPayload(commitment) => NextWitnessBindingShape::OuterPayload {
-                coeffs: commitment.coeff_len(),
-            },
-            NextWitnessBinding::TerminalInnerState => NextWitnessBindingShape::TerminalInnerState,
-        },
+impl Valid for AkitaStage1StageShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.sumcheck_proof.0)?;
+        checked_shape_len(self.sumcheck_proof.1)?;
+        checked_shape_len(self.child_claims)?;
+        Ok(())
     }
 }
 
-mod serialization;
+impl Valid for PhysicalL2NormProofWireShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.subclaims)?;
+        checked_shape_len(self.virtual_evaluations)?;
+        if self.virtual_evaluations == 0 {
+            return Err(SerializationError::InvalidData(
+                "L2 norm proof shape requires a virtual evaluation".into(),
+            ));
+        }
+        checked_shape_sequence_len(self.sumcheck.len())?;
+        for &degree in &self.sumcheck {
+            checked_shape_len(degree)?;
+        }
+        Ok(())
+    }
+}

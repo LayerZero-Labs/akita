@@ -279,7 +279,6 @@ fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E>,
     rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
     setup_claim: Option<E>,
     opening_semantics: Stage2OpeningSemantics<'_, E>,
     replay: Stage2RoundReplay<E>,
@@ -291,7 +290,6 @@ where
     let witness_eval = replay.witness_eval;
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
-        stage1.range_image_evaluation,
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
@@ -299,7 +297,6 @@ where
         setup.expanded(),
         rs.alpha,
         setup_claim,
-        relation_claim,
         rs.relation_address_geometry.relation_lane_variable_count(),
         rs.relation_address_geometry
             .relation_coefficient_variable_count(),
@@ -308,10 +305,7 @@ where
         stage1.physical_l2_families,
     )?;
 
-    let expected = akita_sumcheck::SumcheckInstanceVerifier::expected_output_claim(
-        &stage2_verifier,
-        &replay.challenges,
-    )?;
+    let expected = stage2_verifier.expected_output_claim(&replay.challenges)?;
     if replay.output_claim != expected {
         return Err(AkitaError::InvalidProof);
     }
@@ -659,7 +653,6 @@ where
         setup,
         stage1_replay,
         &rs,
-        relation_claim,
         setup_claim,
         opening_semantics,
         stage2_replay,
