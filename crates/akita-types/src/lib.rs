@@ -180,7 +180,7 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
+    ensure_setup_envelope, shared_setup_fold_gadget, DirectScan, PreparedCoefficientFunctional,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
     SetupProjectionGeometry,
 };

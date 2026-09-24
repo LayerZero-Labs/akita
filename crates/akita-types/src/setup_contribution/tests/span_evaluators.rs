@@ -17,6 +17,7 @@ fn projection_scales(alpha: F, base_d: usize, role_d: usize) -> Vec<F> {
 #[allow(clippy::too_many_arguments)]
 fn projected_setup_weight_reference(
     plan: &SetupContributionPlan<F>,
+    scan: &DirectScan<F>,
     rho: &[F],
     required: usize,
     physical_b_override: Option<&[F]>,
@@ -32,7 +33,7 @@ fn projected_setup_weight_reference(
         .iter()
         .enumerate()
         .map(|(group_index, group)| {
-            let direct = plan.direct_scan_state.weights(group_index).unwrap();
+            let direct = scan.mode.weights(group_index).unwrap();
             group.physical_b.contract_logical_column_weights(&direct.t)
         })
         .collect::<Result<Vec<_>, _>>()
@@ -41,11 +42,8 @@ fn projected_setup_weight_reference(
     for base_idx in 0..required {
         let mut weight = F::zero();
         for (group_index, group) in plan.groups.iter().enumerate() {
-            let (e_eq_slice, _t_eq_slice, z_eq_slice) = plan
-                .direct_scan_state
-                .weights(group_index)
-                .unwrap()
-                .slices();
+            let (e_eq_slice, _t_eq_slice, z_eq_slice) =
+                scan.mode.weights(group_index).unwrap().slices();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -366,7 +364,8 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         geometry,
     )
     .unwrap();
-    plan.materialize_direct_scan(
+    let scan = DirectScan::new(
+        &plan,
         PreparedCoefficientFunctional::reduced_evaluation(alpha, &coefficient_point, geometry)
             .unwrap(),
     )
@@ -406,7 +405,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         );
         assert_ne!(expected, F::zero());
         assert_eq!(
-            plan.evaluate_reduced_structured_group::<F>(group_id, blocks, &opening)
+            plan.evaluate_reduced_structured_group::<F>(&scan, group_id, blocks, &opening)
                 .unwrap(),
             expected
         );
@@ -501,9 +500,20 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
         let opening_a_evals = (0..group.num_positions_per_block)
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
-        let direct = full.direct_scan_state.weights(0).unwrap();
+        let scan = lifted_test_scan(&full);
+        let direct = scan.mode.weights(0).unwrap();
         let reference =
             structured_slice_reference(group, direct, &block_challenges, &opening_a_evals, alpha);
+        assert_eq!(
+            full.evaluate_structured_group_cached::<F>(
+                &scan,
+                group.group_id,
+                &block_challenges,
+                &opening_a_evals,
+            )
+            .unwrap(),
+            reference
+        );
         assert_eq!(
             full.evaluate_structured_group::<F>(
                 group.group_id,
@@ -549,7 +559,7 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     let relation_point = (0..relation_geometry.relation_lane_variable_count())
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -562,8 +572,8 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     )
     .unwrap();
     let alpha = test_scalar(3);
-    plan.materialize_direct_scan(PreparedCoefficientFunctional::lifted_power(alpha))
-        .unwrap();
+    DirectScan::new(&plan, PreparedCoefficientFunctional::lifted_power(alpha))
+        .expect("bridged plan prepares a lifted direct scan");
 
     assert_eq!(
         plan.relation_address_geometry()
@@ -592,7 +602,8 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
             slice_count,
         );
         let group = &plan.groups[0];
-        let direct = plan.direct_scan_state.weights(0).unwrap();
+        let scan = lifted_test_scan(&plan);
+        let direct = scan.mode.weights(0).unwrap();
         let expected = naive_sliced_physical_b_weights(group, &direct.t);
         assert_eq!(
             group
@@ -620,8 +631,9 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
         let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
         assert_eq!(
-            plan.evaluate_direct::<F>(&setup).unwrap(),
+            plan.evaluate_direct::<F>(&scan, &setup).unwrap(),
             plan.evaluate_direct_by_rows::<F>(
+                &scan,
                 &setup,
                 &alpha_pows_a,
                 &alpha_pows_b,
@@ -638,6 +650,7 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
             plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
             projected_setup_weight_reference(
                 &plan,
+                &scan,
                 &rho,
                 plan.required(),
                 Some(&expected),
@@ -718,8 +731,10 @@ fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
         let (_, _, _, plan, _, _, _) = structured_weight_fixture(8, ownership_widths, role_dims);
         let rho = rho_for_required(plan.required());
         let got = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
+        let scan = lifted_test_scan(&plan);
         let expected = projected_setup_weight_reference(
             &plan,
+            &scan,
             &rho,
             plan.required(),
             None,

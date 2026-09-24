@@ -51,8 +51,18 @@ fn embedded_terminal_functionals<E: Field>(
 impl<E: Field> SetupContributionPlan<E> {
     /// Contract one reduced-evaluation group's structured E/T/Z terms with
     /// their genuine public ring multipliers.
+    ///
+    /// The reduced alpha and role functionals are the ones `scan` was
+    /// prepared for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] if `scan` is not a reduced scan
+    /// for this plan or the group is not evaluation-trace, and
+    /// [`AkitaError::InvalidProof`] if the challenges do not match the group.
     pub fn evaluate_reduced_structured_group<F>(
         &self,
+        scan: &DirectScan<E>,
         group_id: usize,
         challenges: &Challenges,
         opening_multiplier: &crate::PreparedRingMultiplier<E>,
@@ -61,25 +71,29 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
+        scan.check_plan(self)?;
+        let DirectScanMode::Reduced {
+            alpha,
+            groups: scan_groups,
+        } = &scan.mode
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "reduced structured contraction requires a reduced direct scan".into(),
+            ));
+        };
+        let alpha = *alpha;
         let group_index = self
             .groups
             .iter()
             .position(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
-        let group = &self.groups[group_index];
-        let (alpha, weights) = match &self.direct_scan_state {
-            DirectScanState::Reduced { alpha, groups, .. } => (
-                *alpha,
-                groups.get(group_index).ok_or_else(|| {
-                    AkitaError::InvalidSetup("reduced direct-scan group is missing".into())
-                })?,
-            ),
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "reduced structured contraction requires prepared reduced state".into(),
-                ));
-            }
-        };
+        let group = self
+            .groups
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let weights = scan_groups.get(group_index).ok_or_else(|| {
+            AkitaError::InvalidSetup("reduced direct-scan group is missing".into())
+        })?;
         if !matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace) {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured contraction disagrees with its prepared mode".into(),

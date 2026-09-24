@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
-    let plan = finalize_test_plan(
+    let (plan, scan) = finalize_test_plan(
         2,
         5,
         vec![
@@ -61,8 +61,8 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
+        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
         .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
+    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
     assert_eq!(got, expected);
 }

@@ -1,5 +1,5 @@
 use super::plan::{
-    DirectScanState, DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights,
+    DirectScanMode, DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights,
     ReducedRoleCoefficientState, SetupContributionGroupPlan,
 };
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeighting};
@@ -18,6 +18,7 @@ use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 mod address_spans;
 mod direct_evaluation_regressions;
 mod fused_scan;
+mod packed_direct;
 mod prepare;
 mod span_evaluators;
 
@@ -399,7 +400,7 @@ fn prepare_test_plan(
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
     let relation_address_geometry =
         crate::RelationAddressGeometry::new(role_dims, role_dims.d_a(), opening_source_len)?;
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -409,16 +410,22 @@ fn prepare_test_plan(
         PreparedRelationAddress::new(full_vec_randomness)?,
         fold_gadget,
         relation_address_geometry,
-    )?;
-    plan.materialize_direct_scan(PreparedCoefficientFunctional::lifted_power(test_scalar(3)))?;
-    Ok(plan)
+    )
+}
+/// Lifted direct scan at the fixed test alpha used by every direct oracle.
+fn lifted_test_scan(plan: &SetupContributionPlan<F>) -> DirectScan<F> {
+    DirectScan::new(
+        plan,
+        PreparedCoefficientFunctional::lifted_power(test_scalar(3)),
+    )
+    .expect("lifted test scan")
 }
 fn finalize_test_plan(
     d_rows: usize,
     d_physical_cols: usize,
     groups: Vec<(SetupContributionGroupPlan<F>, DirectScanWeights<F>)>,
     role_dims: CommitmentRingDims,
-) -> SetupContributionPlan<F> {
+) -> (SetupContributionPlan<F>, DirectScan<F>) {
     let (groups, direct_groups): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
     let a_footprint = groups
         .iter()
@@ -457,9 +464,8 @@ fn finalize_test_plan(
         )
         .unwrap(),
         projection_geometry,
-        direct_scan_state: DirectScanState::Unprepared,
     };
-    for (group, weights) in plan.groups.iter_mut().zip(&direct_groups) {
+    for group in &mut plan.groups {
         group.role_dims = role_dims;
         group
             .set_projection_ratios(
@@ -468,15 +474,16 @@ fn finalize_test_plan(
                     .relation_coefficient_block_len(),
             )
             .expect("valid test group projection");
-        group
-            .refresh_segments(weights, &plan.d_weights, plan.d_rows, plan.d_physical_cols)
-            .expect("valid cached setup scan segments");
     }
-    plan.direct_scan_state = DirectScanState::Lifted {
-        alpha: test_scalar(3),
-        groups: direct_groups,
-    };
-    plan
+    let scan = DirectScan::with_mode(
+        &plan,
+        DirectScanMode::Lifted {
+            alpha: test_scalar(3),
+            groups: direct_groups,
+        },
+    )
+    .expect("valid cached setup scan segments");
+    (plan, scan)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -532,8 +539,6 @@ fn test_group_plan(
         z_cols,
         n_a,
         physical_b,
-        required: 0,
-        segments: Vec::new().into(),
         a_row_weights: a_row_weights.into(),
         fold_gadget: vec![F::one()].into(),
         active_unit_ranges: Vec::new().into(),
@@ -552,8 +557,8 @@ fn test_group_plan(
 }
 
 #[test]
-fn structured_evaluation_rejects_alpha_mismatch_after_direct_materialization() {
-    let plan = finalize_test_plan(
+fn cached_structured_evaluation_rejects_reduced_scan() {
+    let (plan, lifted) = finalize_test_plan(
         1,
         1,
         vec![test_group_plan(
@@ -570,8 +575,29 @@ fn structured_evaluation_rejects_alpha_mismatch_after_direct_materialization() {
         )],
         CommitmentRingDims::uniform(TEST_D),
     );
+    let DirectScanMode::Lifted { groups, .. } = lifted.mode else {
+        unreachable!("finalize_test_plan builds a lifted scan");
+    };
+    let role = ReducedRoleCoefficientState {
+        functional: vec![F::one()].into(),
+        equality: vec![F::one()].into(),
+    };
+    let reduced = DirectScan::with_mode(
+        &plan,
+        DirectScanMode::Reduced {
+            alpha: test_scalar(3),
+            groups: groups
+                .into_iter()
+                .map(|weights| ReducedDirectScanWeights {
+                    weights,
+                    roles: [role.clone(), role.clone(), role.clone()],
+                })
+                .collect(),
+        },
+    )
+    .unwrap();
     assert!(matches!(
-        plan.evaluate_structured_group::<F>(0, &[], &[], test_scalar(17)),
+        plan.evaluate_structured_group_cached::<F>(&reduced, 0, &[], &[]),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -771,7 +797,7 @@ fn structured_weight_fixture_with_slices(
         a_row_start: 1,
         b_row_start: 1 + n_a,
     }];
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -783,8 +809,6 @@ fn structured_weight_fixture_with_slices(
         relation_address_geometry,
     )
     .unwrap();
-    plan.materialize_direct_scan(PreparedCoefficientFunctional::lifted_power(test_scalar(3)))
-        .unwrap();
     (
         inputs,
         groups,
@@ -942,7 +966,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         relation_point: full_vec_randomness,
         fold_gadget,
     } = heterogeneous_setup_fixture();
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -954,8 +978,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         relation_address_geometry,
     )
     .unwrap();
-    plan.materialize_direct_scan(PreparedCoefficientFunctional::lifted_power(test_scalar(3)))
-        .unwrap();
+    let scan = lifted_test_scan(&plan);
     assert_eq!(
         plan.groups
             .iter()
@@ -1000,10 +1023,22 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             .collect::<Vec<_>>();
         let reference = span_evaluators::structured_slice_reference(
             group,
-            plan.direct_scan_state.weights(group_index).unwrap(),
+            scan.mode.weights(group_index).unwrap(),
             &block_challenges,
             &opening_a_evals,
             alpha,
+        );
+        assert_eq!(
+            plan.evaluate_structured_group_cached::<F>(
+                &scan,
+                group.group_id,
+                &block_challenges,
+                &opening_a_evals,
+            )
+            .unwrap(),
+            reference,
+            "cached structured evaluation must match group {} dense oracle",
+            group.group_id
         );
         assert_eq!(
             plan.evaluate_structured_group::<F>(
@@ -1014,7 +1049,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             )
             .unwrap(),
             reference,
-            "full structured evaluation must match group {} dense oracle",
+            "closed-form structured evaluation must match group {} dense oracle",
             group.group_id
         );
     }
@@ -1077,7 +1112,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-    let z_eq_slice = plan.group_column_eq_slices(0).unwrap().2;
+    let scan = lifted_test_scan(&plan);
+    let z_eq_slice = scan.group_column_eq_slices(&plan, 0).unwrap().2;
     assert_eq!(z_eq_slice, expected);
     assert_ne!(
         z_eq_slice, wrong_with_commit_gadget,
@@ -1219,6 +1255,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
+    let scan = lifted_test_scan(&plan);
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -1235,232 +1272,8 @@ fn single_group_plan_supports_multi_chunk_weights() {
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
+        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
         .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn packed_direct_matches_row_fallback_with_d_offset() {
-    let plan = finalize_test_plan(
-        2,
-        5,
-        vec![test_group_plan(
-            2..4,
-            4,
-            3,
-            2,
-            2,
-            vec![test_scalar(2), test_scalar(3)],
-            vec![
-                test_scalar(5),
-                test_scalar(7),
-                test_scalar(11),
-                test_scalar(13),
-            ],
-            vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            vec![test_scalar(29), test_scalar(31)],
-            vec![test_scalar(37), test_scalar(41)],
-        )],
-        CommitmentRingDims::uniform(TEST_D),
-    );
-    let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
-    );
-    let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
-    assert_eq!(got, expected);
-}
-#[test]
-fn multi_group_packed_direct_matches_row_fallback() {
-    let plan = finalize_test_plan(
-        2,
-        5,
-        vec![
-            test_group_plan(
-                2..4,
-                4,
-                3,
-                2,
-                2,
-                vec![test_scalar(2), test_scalar(3)],
-                vec![
-                    test_scalar(5),
-                    test_scalar(7),
-                    test_scalar(11),
-                    test_scalar(13),
-                ],
-                vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-                vec![test_scalar(29), test_scalar(31)],
-                vec![test_scalar(37), test_scalar(41)],
-            ),
-            test_group_plan(
-                0..2,
-                4,
-                3,
-                2,
-                2,
-                vec![test_scalar(53), test_scalar(59)],
-                vec![
-                    test_scalar(61),
-                    test_scalar(67),
-                    test_scalar(71),
-                    test_scalar(73),
-                ],
-                vec![test_scalar(79), test_scalar(83), test_scalar(89)],
-                vec![test_scalar(97), test_scalar(101)],
-                vec![test_scalar(103), test_scalar(107)],
-            ),
-        ],
-        CommitmentRingDims::uniform(TEST_D),
-    );
-    let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
-    );
-    let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
-    assert_eq!(got, expected);
-}
-#[test]
-fn packed_direct_matches_row_fallback_with_nested_role_dims() {
-    const D: usize = 128;
-    const D_B: usize = 64;
-    const D_D: usize = 64;
-    let plan = finalize_test_plan(
-        2,
-        5,
-        vec![test_group_plan(
-            2..4,
-            4,
-            3,
-            2,
-            2,
-            vec![test_scalar(2), test_scalar(3)],
-            vec![
-                test_scalar(5),
-                test_scalar(7),
-                test_scalar(11),
-                test_scalar(13),
-            ],
-            vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            vec![test_scalar(29), test_scalar(31)],
-            vec![test_scalar(37), test_scalar(41)],
-        )],
-        CommitmentRingDims {
-            inner: D,
-            outer: D_B,
-            opening: D_D,
-        },
-    );
-    let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
-    );
-    let alpha = test_scalar(3);
-    let alpha_pows_a = scalar_powers(alpha, D);
-    let alpha_pows_b = scalar_powers(alpha, D_B);
-    let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn packed_direct_accepts_d_footprint_at_nested_d_d() {
-    // D-role columns are counted at d_d; comparing `required` against
-    // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
-    // d_d < d_a and the D footprint dominates.
-    const D_A: usize = 128;
-    const D_B: usize = 128;
-    const D_D: usize = 64;
-    let plan = finalize_test_plan(
-        2,
-        11,
-        vec![test_group_plan(
-            0..2,
-            4,
-            3,
-            2,
-            2,
-            vec![test_scalar(2), test_scalar(3)],
-            vec![
-                test_scalar(5),
-                test_scalar(7),
-                test_scalar(11),
-                test_scalar(13),
-            ],
-            vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            vec![test_scalar(29), test_scalar(31)],
-            vec![test_scalar(37), test_scalar(41)],
-        )],
-        CommitmentRingDims {
-            inner: D_A,
-            outer: D_B,
-            opening: D_D,
-        },
-    );
-    let setup_ring_elements = 20usize;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_ring_elements * D_A,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_ring_elements * D_A)
-                .map(|idx| test_scalar(311 + idx as u128))
-                .collect(),
-        ),
-    );
-    let alpha = test_scalar(3);
-    let alpha_pows_a = scalar_powers(alpha, D_A);
-    let alpha_pows_b = scalar_powers(alpha, D_B);
-    let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D_A)
-        .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
+    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
     assert_eq!(got, expected);
 }

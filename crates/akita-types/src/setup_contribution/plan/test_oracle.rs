@@ -4,6 +4,7 @@ use super::*;
 impl<E: Field> SetupContributionPlan<E> {
     pub(crate) fn evaluate_direct_by_rows<F>(
         &self,
+        scan: &DirectScan<E>,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
@@ -23,8 +24,8 @@ impl<E: Field> SetupContributionPlan<E> {
                     .shared_matrix
                     .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for (group_index, group) in self.groups.iter().enumerate() {
-                let (e_eq_slice, _, _) = self
-                    .direct_scan_state
+                let (e_eq_slice, _, _) = scan
+                    .mode
                     .weights(group_index)
                     .ok_or(AkitaError::InvalidProof)?
                     .slices();
@@ -45,8 +46,8 @@ impl<E: Field> SetupContributionPlan<E> {
         }
 
         for (group_index, group) in self.groups.iter().enumerate() {
-            let direct = self
-                .direct_scan_state
+            let direct = scan
+                .mode
                 .weights(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             let (_, _t_eq_slice, z_eq_slice) = direct.slices();
