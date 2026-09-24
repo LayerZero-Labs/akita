@@ -23,7 +23,6 @@ pub mod setup;
 pub mod setup_envelope;
 pub mod setup_prefix;
 pub mod stage1;
-pub mod terminal_witness;
 
 mod containers;
 
@@ -116,15 +115,11 @@ pub use shapes::{
 };
 pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
-    build_terminal_response_from_groups, build_terminal_response_from_payload,
-    decode_terminal_z_golomb_payload, raw_field_segment_bytes, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape,
+    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
+    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponse, TerminalResponseShape,
 };
-pub use terminal_witness::TerminalWitnessTranscriptParts;
-pub use witness_emission::{
-    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, WitnessCoefficientSink,
-};
+pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, WitnessCoefficientSink};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;

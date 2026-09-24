@@ -1,8 +1,9 @@
 use super::*;
+use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::SisModulusProfileId;
 use akita_challenges::SparseChallengeConfig;
 use jolt_field::CanonicalEncoding;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_field::{Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
@@ -157,7 +158,7 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     )
     .unwrap()
     .layout;
-    let z_bytes = terminal_response_z_payload_bytes(&layout);
+    let z_bytes = layout.z_payload_bytes();
     let group = layout.groups[0];
     assert_eq!(z_bytes, z_payload_budget_from_cap(group.z_coords, cap));
 }
@@ -184,45 +185,6 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 }
 
 #[test]
-fn direct_terminal_builder_constructs_z_e_t_segments() {
-    let lp = test_lp();
-    let field_bits = F::MODULUS_BITS;
-    let layout = TerminalResponseShape::from_groups(
-        &lp,
-        field_bits,
-        [(
-            lp.final_group_scalar().expect("scalar final group"),
-            1usize,
-            1usize,
-            1usize,
-            TEST_ADMISSION_CAP,
-        )],
-    )
-    .expect("direct terminal layout")
-    .layout;
-    let group_layout = layout.groups[0];
-    let e_folded = RingVec::from_coeffs(vec![F::zero(); group_layout.e_field_elems]);
-    let recomposed_inner_rows = RingVec::from_coeffs(vec![F::zero(); group_layout.t_field_elems]);
-    let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
-    let group = TerminalResponseGroupParts {
-        params: lp.final_group_scalar().expect("scalar final group"),
-        num_w_vectors: 1,
-        num_t_vectors: 1,
-        num_z_segments: 1,
-        e_folded: &e_folded,
-        recomposed_inner_rows: &recomposed_inner_rows,
-        z_folded_centered_flat: &z_folded_centered_flat,
-    };
-    let scheduled_shape = TerminalResponseShape {
-        layout: layout.clone(),
-    };
-    let witness = build_terminal_response_from_groups(lp.d_a(), &[group], &lp, &scheduled_shape)
-        .expect("direct terminal witness");
-
-    assert_eq!(witness.layout, layout);
-}
-
-#[test]
 fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
     use jolt_field::CanonicalEncoding;
@@ -230,7 +192,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     let lp = test_lp();
     let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
-    let scheduled_z_bytes = terminal_response_z_payload_bytes(&layout);
+    let scheduled_z_bytes = layout.z_payload_bytes();
     assert!(
         scheduled_z_bytes > 16,
         "test expects scheduled z budget to exceed a tight payload"
@@ -270,54 +232,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
 }
 
 #[test]
-fn terminal_e_absorb_matches_emitted_field_segment() {
-    let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
-    let group = layout.groups[0];
-    let e_fields = RingVec::from_coeffs(
-        (0..group.e_field_elems)
-            .map(|index| F::from_u128_reduced(index as u128 + 1))
-            .collect(),
-    );
-    let witness = TerminalResponse {
-        layout: layout.clone(),
-        z_payloads: vec![vec![0]],
-        e_fields: e_fields.clone(),
-        t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-    };
-
-    assert_eq!(
-        witness.terminal_transcript_parts().unwrap().e_folded,
-        raw_field_segment_bytes(&e_fields).unwrap(),
-    );
-}
-
-#[test]
-fn terminal_transcript_parts_separate_t_state_from_z_response() {
-    let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
-    let group = layout.groups[0];
-    let t_fields = RingVec::from_coeffs(
-        (0..group.t_field_elems)
-            .map(|index| F::from_u128_reduced(index as u128 + 9))
-            .collect(),
-    );
-    let z = vec![3, 1, 4, 1];
-    let witness = TerminalResponse {
-        layout,
-        z_payloads: vec![z.clone()],
-        e_fields: RingVec::from_coeffs(vec![F::one(); group.e_field_elems]),
-        t_fields: t_fields.clone(),
-    };
-
-    let parts = witness.terminal_transcript_parts().unwrap();
-    assert_eq!(parts.response, z);
-}
-
-#[test]
 fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
-    use crate::golomb_rice::golomb_rice_encode_vec;
-
     let cap = TEST_ADMISSION_CAP;
     let rice_low_bits = wire_rice_low_bits(cap);
     let zigzag_w = golomb_rice_zigzag_width(cap);
@@ -340,8 +255,6 @@ fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
 
 #[test]
 fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
-    use crate::golomb_rice::golomb_rice_encode_vec;
-
     let cap = TEST_ADMISSION_CAP;
     let rice_low_bits = wire_rice_low_bits(cap);
     let zigzag_w = golomb_rice_zigzag_width(cap);
