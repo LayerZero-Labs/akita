@@ -13,7 +13,7 @@ use akita_serialization::AkitaSerialize;
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
     setup_prefix_coverage_eval_len, AkitaVerifierSetup, CommittedGroupParams,
-    PreparedRelationAddress, SetupContributionPlan, SETUP_SUMCHECK_DEGREE,
+    PreparedRelationAddress, SetupIndexWeightMle, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(test)]
 use jolt_field::solinas::parallel::*;
@@ -22,12 +22,12 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
 ///
-/// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
-/// evaluation plan and sumcheck round count from the ring-switch row
-/// evaluation, then call [`verify_stage3`](Self::verify_stage3)
+/// Construct with [`SetupSumcheckVerifier::new`], which derives the
+/// setup-index weight polynomial and sumcheck round count from the ring-switch
+/// row evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: Field> {
-    setup_contribution_plan: SetupContributionPlan<E>,
+    setup_index_weight: SetupIndexWeightMle<E>,
     alpha: E,
     ring_bits: usize,
     rounds: usize,
@@ -42,8 +42,9 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     /// Prepare the setup-product sumcheck verifier for the setup contribution
     /// at `x_challenges`.
     ///
-    /// Derives the setup evaluation plan (and thus the per-round shape) from
-    /// the relation-matrix evaluation; must be called before
+    /// Derives the setup-contribution plan, and from it the setup-index weight
+    /// polynomial and per-round shape, from the relation-matrix evaluation;
+    /// must be called before
     /// [`verify_stage3`](Self::verify_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F>(
@@ -60,9 +61,11 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             PreparedRelationAddress::new(x_challenges)?,
             fold_gadget.as_deref(),
         )?;
-        let geometry = plan.projection_geometry();
+        let setup_index_weight =
+            SetupIndexWeightMle::new(&plan, relation_matrix_evaluator.witness_layout()?)?;
+        let geometry = setup_index_weight.projection_geometry();
         Ok(Self {
-            setup_contribution_plan: plan,
+            setup_index_weight,
             alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
@@ -81,10 +84,8 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
     {
-        let ring_d = self
-            .setup_contribution_plan
-            .projection_geometry()
-            .base_ring_dim();
+        let geometry = self.setup_index_weight.projection_geometry();
+        let ring_d = geometry.base_ring_dim();
         if ring_d == 0 {
             return Err(AkitaError::InvalidSetup(
                 "Stage 3 setup ring dimension must be nonzero".into(),
@@ -93,9 +94,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
         setup_eval_len_native(
             setup,
             next_fold_level_params,
-            self.setup_contribution_plan
-                .projection_geometry()
-                .natural_field_len(),
+            geometry.natural_field_len(),
             ring_d,
             grinding,
             level,
@@ -117,8 +116,8 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             akita_types::native_stage3_verifier_prefix_eval::<F, E>(grinding, level)?;
         let (rho_y, rho_setup_idx) = replay.challenges.split_at(self.ring_bits);
         let setup_index_weight = self
-            .setup_contribution_plan
-            .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?;
+            .setup_index_weight
+            .evaluate(rho_setup_idx, self.alpha)?;
         let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         if replay.output_claim != setup_prefix_eval * setup_index_weight * alpha_val {
             return Err(AkitaError::InvalidProof);

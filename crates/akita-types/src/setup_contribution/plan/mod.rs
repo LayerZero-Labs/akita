@@ -38,6 +38,7 @@ mod types;
 
 pub use direct_scan::DirectScan;
 pub(crate) use direct_scan::{DirectScanMode, GroupScanPartition};
+pub use setup_index_weight::SetupIndexWeightMle;
 pub(crate) use types::validate_setup_inputs;
 pub(crate) use types::ReducedRoleCoefficientState;
 pub(crate) use types::{

@@ -305,10 +305,7 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
-    pub(crate) setup_relation_address: PreparedRelationAddress<E>,
-    pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
 }
@@ -419,7 +416,6 @@ pub(crate) struct PhysicalBSetupPlan<E: Field> {
     pub(super) logical_row_weights: Arc<[E]>,
     pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
     pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> PhysicalBSetupPlan<E> {
@@ -445,7 +441,6 @@ impl<E: Field> PhysicalBSetupPlan<E> {
             logical_row_weights,
             weight_segments: weight_segments.into(),
             relation_tensors: Vec::new(),
-            setup_tensors: Vec::new(),
         })
     }
 

@@ -6,7 +6,7 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
-    SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
+    SetupIndexWeightMle, SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
 use std::hint::black_box;
 
@@ -21,7 +21,7 @@ type F = Prime128OffsetA7F7;
 const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
-    plan: SetupContributionPlan<F>,
+    mle: SetupIndexWeightMle<F>,
     dense_weights: Vec<F>,
     rho: Vec<F>,
     alpha: F,
@@ -203,12 +203,10 @@ fn make_case_with_shape(
         .fold(F::zero(), |acc, (index, weight)| {
             acc + eq_eval_at_index(&rho, index) * weight
         });
-    assert_eq!(
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
-        dense
-    );
+    let mle = SetupIndexWeightMle::new(&plan, &layout).unwrap();
+    assert_eq!(mle.evaluate(&rho, alpha).unwrap(), dense);
     SetupIndexWeightBenchCase {
-        plan,
+        mle,
         dense_weights,
         rho,
         alpha,
@@ -236,11 +234,8 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 |b, case| {
                     b.iter(|| {
                         black_box(
-                            case.plan
-                                .evaluate_setup_index_weight_mle(
-                                    black_box(&case.rho),
-                                    black_box(case.alpha),
-                                )
+                            case.mle
+                                .evaluate(black_box(&case.rho), black_box(case.alpha))
                                 .unwrap(),
                         )
                     })
@@ -323,11 +318,8 @@ fn bench_setup_index_weight(c: &mut Criterion) {
             |b, case| {
                 b.iter(|| {
                     black_box(
-                        case.plan
-                            .evaluate_setup_index_weight_mle(
-                                black_box(&case.rho),
-                                black_box(case.alpha),
-                            )
+                        case.mle
+                            .evaluate(black_box(&case.rho), black_box(case.alpha))
                             .unwrap(),
                     )
                 })

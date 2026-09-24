@@ -202,7 +202,10 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             e_eq_slice.to_vec(),
             t_eq_slice.to_vec(),
             z_eq_slice.to_vec(),
-            plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
+            SetupIndexWeightMle::new(&plan, &witness_layout)
+                .unwrap()
+                .evaluate(&rho, alpha)
+                .unwrap(),
         );
         if let Some(expected) = &expected {
             assert_eq!(&observed, expected);

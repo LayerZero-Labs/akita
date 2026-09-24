@@ -453,10 +453,7 @@ fn finalize_test_plan(
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
-        setup_index_tensors: Vec::new(),
         relation_address: PreparedRelationAddress::new(&[]).unwrap(),
-        setup_relation_address: PreparedRelationAddress::new(&[]).unwrap(),
-        relation_base_bridge_point: Vec::new().into(),
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
             role_dims.d_a(),
@@ -1009,7 +1006,9 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
     assert_eq!(
-        plan.evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
+        SetupIndexWeightMle::new(&plan, &witness_layout)
+            .unwrap()
+            .evaluate(&rho_setup_idx, alpha)
             .unwrap(),
         dense_mle,
         "multi-group setup-index MLE must match the full plan"

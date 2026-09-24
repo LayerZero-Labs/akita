@@ -1,3 +1,4 @@
+use super::setup_index_weight::build_group_role_tensors;
 use super::*;
 
 impl<E: Field> SetupContributionPlan<E> {
@@ -253,45 +254,26 @@ impl<E: Field> SetupContributionPlan<E> {
         )?;
         let setup_base = projection_geometry.base_ring_dim();
         let relation_base = relation_address_geometry.relation_coefficient_block_len();
-        let relation_base_bridge = setup_base
-            .checked_div(relation_base)
-            .filter(|ratio| {
-                relation_base != 0
-                    && setup_base.is_multiple_of(relation_base)
-                    && ratio.is_power_of_two()
-            })
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "Stage 3 setup base does not decompose over the Stage 2 relation base".into(),
-                )
-            })?;
-        let bridge_bits = relation_base_bridge.trailing_zeros() as usize;
-        let bridge_point = relation_address
-            .point()
-            .get(..bridge_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        let setup_address_point = relation_address
-            .point()
-            .get(bridge_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
-        let setup_relation_address = PreparedRelationAddress::new(setup_address_point)?;
-        let relation_base_bridge_point: std::sync::Arc<[E]> = bridge_point.to_vec().into();
         for group in &mut dynamic_groups {
             group.set_projection_ratios(setup_base, relation_base)?;
+            let [d_tensors, b_tensors, a_tensors] =
+                build_group_role_tensors(relation_address_geometry, group, witness_layout)?;
+            group.d_tensors = d_tensors;
+            group.physical_b.relation_tensors = b_tensors;
+            group.a_tensors = a_tensors;
         }
-        let mut plan = SetupContributionPlan {
+        let plan = SetupContributionPlan {
             groups: dynamic_groups,
             d_rows,
             d_physical_cols,
             d_weights,
-            setup_index_tensors: Vec::new(),
             relation_address,
-            setup_relation_address,
-            relation_base_bridge_point,
             relation_address_geometry,
             projection_geometry,
         };
-        plan.setup_index_tensors = plan.prepare_setup_index_tensors(witness_layout)?;
+        // Stage 3 bridges the relation base up to the setup base; reject a
+        // relation address that cannot be split that way before any use.
+        plan.relation_base_bridge_split()?;
         Ok(plan)
     }
 
