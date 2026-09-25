@@ -151,7 +151,10 @@ malloc_limit_mb = 6144
 kind = "end_to_end"
 description = "Determinism: identical proofs across Rayon thread counts and concurrent proofs"
 weight = 1.0
-threads = 4
+# Under ASan, proofs slow down as internal threads grow (23 s at 4 threads vs
+# 11 s at 1 on a 32-core host), so the lane pool stays small; the target
+# still re-proves inside 1-8 thread scoped pools.
+threads = 2
 max_len = 16384
 timeout_s = 300
 rss_limit_mb = 8192
