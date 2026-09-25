@@ -3,7 +3,8 @@ use super::openings::RetainedOpeningSource;
 use super::source::PreparedExtensionOpeningGroup;
 use super::OperationBinding;
 use crate::opaque::*;
-use akita_algebra::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
@@ -16,7 +17,7 @@ pub(crate) trait ExtensionOpeningSession<E: Field>: Send {
         &mut self,
         round: usize,
         previous_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
     fn finish(self: Box<Self>) -> Result<Vec<(E, E, E)>, AkitaError>;
 }
@@ -61,9 +62,9 @@ pub struct CpuEorSession<E: Field> {
     num_rounds: usize,
     round: usize,
     claim: E,
-    pending: Option<UniPoly<E>>,
+    pending: Option<UnivariatePoly<E>>,
     group_claims: Vec<E>,
-    group_pending: Vec<UniPoly<E>>,
+    group_pending: Vec<UnivariatePoly<E>>,
     challenges: Vec<E>,
 }
 impl<F, E, Cfg> OpaqueEorKernel<F, E> for CpuBackend<Cfg>
@@ -317,7 +318,7 @@ where
         session: &mut Self::EorSessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round
             || round >= session.num_rounds
@@ -329,16 +330,16 @@ where
         let mut coefficients = vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE + 1];
         for (group, claim) in session.groups.iter_mut().zip(&session.group_claims) {
             let polynomial = group.round_polynomial(round, *claim)?;
-            if polynomial.coeffs.len() > coefficients.len() {
+            if polynomial.coefficients().len() > coefficients.len() {
                 return Err(AkitaError::InvalidProof);
             }
-            for (sum, value) in coefficients.iter_mut().zip(&polynomial.coeffs) {
+            for (sum, value) in coefficients.iter_mut().zip(polynomial.coefficients()) {
                 *sum += *value;
             }
             session.group_pending.push(polynomial);
         }
-        let polynomial = UniPoly::from_coeffs(coefficients);
-        if polynomial.evaluate(&E::zero()) + polynomial.evaluate(&E::one()) != claim {
+        let polynomial = UnivariatePoly::new(coefficients);
+        if polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidProof);
         }
         session.pending = Some(polynomial.clone());
@@ -362,10 +363,10 @@ where
             .zip(&mut session.group_claims)
             .zip(session.group_pending.drain(..))
         {
-            *claim = polynomial.evaluate(&challenge);
+            *claim = polynomial.evaluate(challenge);
             group.bind_challenge(round, challenge)?;
         }
-        session.claim = polynomial.evaluate(&challenge);
+        session.claim = polynomial.evaluate(challenge);
         session.challenges.push(challenge);
         session.round += 1;
         Ok(())

@@ -5,6 +5,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 mod field_impls;
+mod poly_impls;
 
 use std::io::{Cursor, Read, Write};
 
