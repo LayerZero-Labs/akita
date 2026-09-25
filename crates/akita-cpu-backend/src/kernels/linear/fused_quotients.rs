@@ -89,6 +89,25 @@ where
         Ok(())
     }
 
+    /// Prefetches one column of a `rows`-by-`width` cached matrix: its cyclic
+    /// entries, plus the negacyclic ones when `pair` is set.
+    ///
+    /// Run-batched kernels read a whole run of entries only after
+    /// transforming the run's right-hand sides; prefetching each column before
+    /// its transform overlaps those loads with the transform.
+    #[inline(always)]
+    fn prefetch_column(&self, rows: usize, width: usize, column: usize, pair: bool) {
+        if let Self::Cached { negacyclic, cyclic } = self {
+            for row in 0..rows {
+                let index = row * width + column;
+                cyclic[index].prefetch();
+                if pair {
+                    negacyclic[index].prefetch();
+                }
+            }
+        }
+    }
+
     /// Adds `matrix[row, column_start..] · rhs` in cyclic form into each row
     /// accumulator of a `width`-column matrix.
     #[inline(always)]
@@ -345,9 +364,12 @@ fn fused_split_eq_quotients_one_shot<
                     |j| is_zero_plane(&t_hat[j]),
                     |run| {
                         rhs_cyc.clear();
-                        rhs_cyc.extend(t_hat[run.clone()].iter().map(|digits| {
-                            CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, lut)
-                        }));
+                        for j in run.clone() {
+                            source.prefetch_column(plan.n_b, plan.t_len, j, false);
+                            rhs_cyc.push(CyclotomicCrtNtt::from_i8_cyclic_with_lut(
+                                &t_hat[j], params, lut,
+                            ));
+                        }
                         source.accumulate_cyclic_run(
                             &mut accs.b,
                             plan.t_len,
@@ -366,13 +388,15 @@ fn fused_split_eq_quotients_one_shot<
                 |run| {
                     rhs_neg.clear();
                     rhs_cyc.clear();
-                    for row in &z_folded_rings[run.clone()] {
+                    for j in run.clone() {
+                        source.prefetch_column(plan.n_a, plan.z_len, j, true);
                         // SAFETY: `plan_fused_quotients` computed
                         // `z_bounds.lut` from these `plan.z_len` rows, the run
                         // stays below `plan.z_len`, and `centered_lut` was
                         // built for that inclusive coefficient bound.
-                        let (neg, cyc) =
-                            unsafe { centered_pair_ntt(row, params, centered_lut.as_ref()) };
+                        let (neg, cyc) = unsafe {
+                            centered_pair_ntt(&z_folded_rings[j], params, centered_lut.as_ref())
+                        };
                         rhs_neg.push(neg);
                         rhs_cyc.push(cyc);
                     }
@@ -510,9 +534,12 @@ fn accumulate_cyclic_i8_rows<
                 |j| is_zero_plane(&rhs[j]),
                 |run| {
                     ntt_rhs.clear();
-                    ntt_rhs.extend(rhs[run.clone()].iter().map(|digits| {
-                        CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, &lut)
-                    }));
+                    for j in run.clone() {
+                        source.prefetch_column(num_rows, rhs_len, j, false);
+                        ntt_rhs.push(CyclotomicCrtNtt::from_i8_cyclic_with_lut(
+                            &rhs[j], params, &lut,
+                        ));
+                    }
                     source.accumulate_cyclic_run(&mut accs, rhs_len, run.start, &ntt_rhs, params);
                 },
             );
@@ -601,13 +628,15 @@ fn accumulate_centered_quotient_rows<
                 |run| {
                     rhs_neg.clear();
                     rhs_cyc.clear();
-                    for row in &z_folded_rings[run.clone()] {
+                    for j in run.clone() {
+                        source.prefetch_column(num_rows, plan.z_len, j, true);
                         // SAFETY: `plan_fused_quotients` computed
                         // `z_bounds.lut` from these `plan.z_len` rows, the run
                         // stays below `plan.z_len`, and `centered_lut` was
                         // built for that inclusive coefficient bound.
-                        let (neg, cyc) =
-                            unsafe { centered_pair_ntt(row, params, centered_lut.as_ref()) };
+                        let (neg, cyc) = unsafe {
+                            centered_pair_ntt(&z_folded_rings[j], params, centered_lut.as_ref())
+                        };
                         rhs_neg.push(neg);
                         rhs_cyc.push(cyc);
                     }
@@ -746,7 +775,15 @@ fn centered_quotient_rows_with_i16_tail_params<
                     z_cyc.clear();
                     z_tail_neg.clear();
                     z_tail_cyc.clear();
-                    for z_ring in &z_folded_rings[run.clone()] {
+                    for j in run.clone() {
+                        for row in 0..num_rows {
+                            let index = row * width + j;
+                            neg[index].prefetch();
+                            cyc[index].prefetch();
+                            tail_neg[index].prefetch();
+                            tail_cyc[index].prefetch();
+                        }
+                        let z_ring = &z_folded_rings[j];
                         // SAFETY: `actual_bound` bounds every centered
                         // coefficient in `z_folded_rings`, and `base_lut` is
                         // built for that bound.

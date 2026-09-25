@@ -125,6 +125,32 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Ok(accumulators)
     }
 
+    /// Hint the CPU to load every cache line of `self` into L1.
+    ///
+    /// Batched kernels that read prepared matrix entries only after a burst
+    /// of transform work call this before that work, so the loads overlap it.
+    /// The hint has no architectural effect. It is emitted only on x86: Apple
+    /// cores already prefetch these streams, and explicit `prfm` hints
+    /// measured slower there.
+    #[inline(always)]
+    pub fn prefetch(&self) {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::{_mm_prefetch, _MM_HINT_T0};
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            const LINE: usize = 64;
+
+            let base = self.limbs.as_ptr().cast::<i8>();
+            for offset in (0..size_of::<Self>()).step_by(LINE) {
+                // SAFETY: `offset` stays inside `self`, and a prefetch hint
+                // never faults or writes memory.
+                unsafe { _mm_prefetch::<_MM_HINT_T0>(base.add(offset)) };
+            }
+        }
+    }
+
     /// Accumulate a short pointwise dot product in CRT+NTT domain.
     ///
     /// The prepared backend chooses whether to fuse the products or apply the
