@@ -138,9 +138,9 @@ pub struct WitnessQuotientRowLayout {
 }
 
 impl WitnessUnitLayout {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_for_test(
+    pub fn new_for_test(
         group_index: usize,
         chunk_index: usize,
         global_block_start: usize,
@@ -352,8 +352,8 @@ impl WitnessUnitLayout {
 }
 
 impl WitnessQuotientRowLayout {
-    #[cfg(test)]
-    pub(crate) fn new_for_test(geometry: RelationRowGeometry, range: Range<usize>) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(geometry: RelationRowGeometry, range: Range<usize>) -> Self {
         Self { geometry, range }
     }
 
@@ -420,8 +420,8 @@ impl CompressionWitnessLayerLayout {
 }
 
 impl WitnessLayout {
-    #[cfg(test)]
-    pub(crate) fn new_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(
         units: Vec<WitnessUnitLayout>,
         r_rows: Vec<WitnessQuotientRowLayout>,
         quotient_depth: usize,

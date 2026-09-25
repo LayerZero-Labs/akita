@@ -144,8 +144,8 @@ impl GroupCommitPhaseParams {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_params_unchecked_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_params_unchecked_for_test(
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
     ) -> Self {
