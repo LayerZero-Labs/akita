@@ -5,12 +5,11 @@ use super::{
     CompressionOperation, PortableCompressionState,
 };
 use crate::opaque::{CpuBackend, CpuCompressionOperation};
-use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{field_modulus, Commitment, CommittedGroup, GroupCommitPhaseParams, RingVec};
 use jolt_field::{CanonicalEncoding, Field};
 
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+impl<F: Field, E> CpuBackend<F, E> {
     /// Finish a root commitment whose canonical outer image `u` was computed
     /// by another arithmetic backend.
     ///
@@ -26,13 +25,12 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     /// Returns an error if the field, frozen profile, setup capacity, or outer
     /// image shape disagrees with the root commitment plan, or if compression
     /// fails to produce valid retained state.
-    pub fn compress_root_outer_image<F>(
+    pub fn compress_root_outer_image(
         &self,
         profile: GroupCommitPhaseParams,
         outer_image: RingVec<F>,
     ) -> Result<(CommittedGroup<F>, PortableCompressionState<F>), AkitaError>
     where
-        Cfg: CommitmentConfig<Field = F>,
         F: Field + CanonicalEncoding + 'static,
     {
         let prepared = self.prepared()?;

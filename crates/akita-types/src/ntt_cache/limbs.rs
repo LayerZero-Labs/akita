@@ -122,7 +122,11 @@ pub(super) fn limb_plan<F: Field + CanonicalEncoding, const D: usize>(
         ExactCachePlan::Q32Ifma52 { .. } => (true, (2 + tail) * (IFMA52_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q64Ifma52 { .. } => (true, 4 * (IFMA52_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q128Ifma52 { params, .. } => {
-            let tail = if params.has_tail::<i32>() { 2 } else { tail };
+            let tail = if params.has_tail(q128_primes()[0]) {
+                2
+            } else {
+                tail
+            };
             (true, (6 + tail) * (IFMA52_TRANSFORM_DOTS + rows))
         }
         ExactCachePlan::Limbs(_) => return Ok(None),
@@ -261,7 +265,9 @@ impl<const D: usize> PreparedLimbMatrix<D> {
         let row_len = self.split.count * self.width;
         let tails = match &self.residues {
             LimbResidues::I32 { .. } => false,
-            LimbResidues::Ifma52(neg) => neg.has_tail::<i16>() || neg.has_tail::<i32>(),
+            LimbResidues::Ifma52(neg) => {
+                neg.has_tail(I16_TAIL_PRIME) || neg.has_tail(q128_primes()[0])
+            }
         };
         if self.width == 0 || self.len() == 0 || !self.len().is_multiple_of(row_len) || tails {
             return Err(AkitaError::InvalidSetup(

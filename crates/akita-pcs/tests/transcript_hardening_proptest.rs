@@ -47,8 +47,7 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .collect();
 
     let setup = scheme.setup_prover(num_vars, total_claims).unwrap();
-    let stack =
-        CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
@@ -56,6 +55,7 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )

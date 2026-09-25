@@ -208,7 +208,7 @@ fn fused_external_encoder_appends_without_ordinary_submission() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let mut builder =
         CommitmentExecutorBuilder::new(setup.expanded.as_ref(), NoRetainedStatePolicy);

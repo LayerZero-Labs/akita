@@ -58,10 +58,7 @@ let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
 )?;
 let setup = scheme.setup_prover(NUM_VARS, 1)?;
-let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
 
 The prepared backend holds reproducible compute state such as transformed
@@ -77,6 +74,7 @@ and no earlier groups.
 ```rust
 let source = backend.import_source(vec![polynomial])?;
 let commit_output = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;

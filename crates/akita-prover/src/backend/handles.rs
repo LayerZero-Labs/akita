@@ -140,9 +140,15 @@ pub trait RecursiveWitnessHandle: Send + Sync + 'static {
     fn manifest(&self) -> RecursiveWitnessManifest;
 }
 
-/// Public dimensions of reusable, immutable committed source storage.
+/// Public dimensions and producer provenance of reusable, immutable committed
+/// source storage.
 pub trait CommitmentHandleMetadata {
     fn metadata(&self) -> SourceMetadata;
+    /// The committed-source contract that admitted this group at commit time.
+    ///
+    /// Proof bytes do not bind it. Trusted planning code compares it with the
+    /// contract a schedule row was planned under.
+    fn producer_contract(&self) -> akita_types::sis::CommittedSourceContract;
 }
 
 /// A protocol input selected from the backend's opaque handle family.
