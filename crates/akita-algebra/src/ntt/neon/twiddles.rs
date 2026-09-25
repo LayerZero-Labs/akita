@@ -26,9 +26,12 @@ pub(crate) struct BarrettTable<W: PrimeWidth, const D: usize> {
 }
 
 /// Barrett-form tables consumed by the NEON transforms.
+///
+/// Only `i32` builds these (see `PrimeWidth::NeonTables`); the type is `pub`
+/// because it names that public associated type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct BarrettTwiddles<W: PrimeWidth, const D: usize> {
+pub struct BarrettTwiddles<W: PrimeWidth, const D: usize> {
     /// Forward stage twiddles, packed like `NttTwiddles::fwd_twiddles`.
     pub(crate) fwd: BarrettTable<W, D>,
     /// Inverse stage twiddles, packed like `NttTwiddles::inv_twiddles`.
@@ -58,28 +61,35 @@ impl<W: PrimeWidth, const D: usize> BarrettTwiddles<W, D> {
         d_inv_psi_inv: &[MontCoeff<W>; D],
         d_inv: MontCoeff<W>,
     ) -> Self {
-        let p = i128::from(prime.p.to_i64());
-        let plain = |value: MontCoeff<W>| i128::from(prime.to_canonical(value).to_i64());
-        let constant = |value: i128| {
+        // With p < 2^31, a centered value shifted by R_LOG <= 32 bits and a
+        // product of two residues both stay below 2^62.
+        let p = prime.p.to_i64();
+        let plain = |value: MontCoeff<W>| prime.to_canonical(value).to_i64();
+        let constant = |value: i64| {
             let value = value.rem_euclid(p);
             let value = if value > p / 2 { value - p } else { value };
             // round(value * 2^(R_LOG - 1) / p) = floor((2 * value * 2^(R_LOG - 1) + p) / 2p).
             let quotient = ((value << W::R_LOG) + p).div_euclid(2 * p);
             BarrettConstant {
-                value: W::from_i64(value as i64),
-                quotient: W::from_i64(quotient as i64),
+                value: W::from_i64(value),
+                quotient: W::from_i64(quotient),
             }
         };
-        let table = |entry: &dyn Fn(usize) -> i128| {
-            let entries: [BarrettConstant<W>; D] = std::array::from_fn(|i| constant(entry(i)));
-            BarrettTable {
-                values: entries.map(|entry| entry.value),
-                quotients: entries.map(|entry| entry.quotient),
+        let table = |entry: &dyn Fn(usize) -> i64| {
+            let mut table = BarrettTable {
+                values: [W::default(); D],
+                quotients: [W::default(); D],
+            };
+            for i in 0..D {
+                let constant = constant(entry(i));
+                table.values[i] = constant.value;
+                table.quotients[i] = constant.quotient;
             }
+            table
         };
 
         let half = D / 2;
-        let r = (1i128 << W::R_LOG) % p;
+        let r = (1i64 << W::R_LOG) % p;
         let twist_entry = |i: usize| {
             if i < half {
                 plain(psi_pows[i])
