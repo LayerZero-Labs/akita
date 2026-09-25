@@ -35,7 +35,7 @@ rejected; there is no two-pass `i8` fallback. Exact CRT reconstruction is
 selected from the actual field, ring degree, matrix width, and signed bound.
 Portable, AVX2, and NEON hosts retain the homogeneous i32 CRT profile and add
 one 14-bit residue modulo 12289 only when required. AVX-512IFMA hosts at D64
-through D512 may instead use the exact homogeneous 50-bit profile selected for
+through D2048 may instead use the exact homogeneous 50-bit profile selected for
 Q32, Q64, or Q128. The Q32 and Q128 IFMA forms can add the 12289 tail when
 their base product is insufficient; Q128 instead adds the 30-bit prime
 1073707009 as an i32 tail when base plus 12289 is also insufficient. The Q64

@@ -65,9 +65,10 @@ half length is at least 16, followed (forward) or preceded (inverse) by a
 256-bit kernel that runs the last four or five stages in registers. Degrees
 below 64 use the scalar transforms. Runtime dispatch selects the AVX2
 instantiation. `AKITA_AVX512_NTT=1` opts into the 512-bit transforms and
-pointwise kernels on hosts with `avx512f`, `avx512dq`, and `avx512bw`; on the
-measured AMD Zen 4 host they ran within a few percent of AVX2, so they are not
-the default.
+pointwise kernels on hosts with `avx512f`, `avx512dq`, and `avx512bw`. On the
+measured AMD Zen 4 host, whose 512-bit units are double-pumped, the 512-bit
+transforms were slower than AVX2 up to `D256` and at most 2% faster at `D1024`,
+and single-threaded proving did not get faster, so they are not the default.
 
 The second path is AVX-512IFMA. It is used for exact signed NTT caches,
 including selected dense q128 commitments whose digits fit in `i8`. The

@@ -14,10 +14,10 @@
 //!
 //! Every radix-4 pass therefore has a butterfly half-length of at least 16, so
 //! the passes are generic over [`Lanes`]: `i32` runs at 256 or 512 bits and
-//! `i16` at 256 bits. Stored values stay in `[0, 2p)` between passes; see
-//! [`super::lanes`]. Constant multiplies use the precomputed quotients in
-//! [`super::twiddles`]. The tail and head are specific to the element width,
-//! see [`Width`].
+//! `i16` at 256 bits. Forward passes store sums in `[0, 2p)` and products in
+//! `(-p, p)`; inverse passes store `[0, 2p)`. See [`super::lanes`]. Constant
+//! multiplies use the precomputed quotients in [`super::twiddles`]. The tail
+//! and head are specific to the element width, see [`Width`].
 //!
 //! Range contracts: the negacyclic forward transform accepts any input, the
 //! cyclic forward transform and both inverses accept `(-p, p)`. Forward output
@@ -63,7 +63,8 @@ impl<E: Copy> Table<E> {
 /// The register-resident ends of the transform for one element width.
 trait Width: PrimeWidth {
     /// Last four (or, with `FIVE`, five) forward stages, 32 values at a time,
-    /// from `[0, 2p)` to canonical `[0, p)`.
+    /// from the last pass's `[0, 2p)` sums and `(-p, p)` products to canonical
+    /// `[0, p)`.
     unsafe fn forward_tail<const D: usize, const FIVE: bool>(
         a: *mut Self,
         fwd: Table<Self>,

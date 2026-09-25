@@ -5,10 +5,10 @@
 //! Every method is `#[inline(always)]`, so the intrinsics are inlined into the
 //! target-feature caller.
 //!
-//! Stored transform values stay in `[0, 2p)` between passes. The helpers on
-//! [`Modulus`] move values between that range and the signed ranges the
-//! Montgomery product returns, each with one add or subtract and one unsigned
-//! minimum. `NttPrime` bounds `p` below `2^30` for `i32` and below `2^14` for
+//! Between forward passes, butterfly sums are stored in `[0, 2p)` and products
+//! in `(-p, p)`; between inverse passes, every value is in `[0, 2p)`. The
+//! helpers on [`Modulus`] move values between these ranges, each with one add
+//! or subtract and one unsigned minimum. `NttPrime` bounds `p` below `2^30` for `i32` and below `2^14` for
 //! `i16`, so `4p` fits the unsigned lane, `2p` fits the signed lane, and no
 //! intermediate below wraps.
 
