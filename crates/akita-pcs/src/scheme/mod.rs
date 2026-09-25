@@ -68,11 +68,12 @@ where
     where
         Cfg::Field: AkitaDeserialize<Context = ()> + WithCommitAccumulator,
     {
-        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+        let requirements = akita_config::SetupRequirements::from_catalog::<Cfg>(
             &self.schedules,
             max_num_vars,
             max_num_batched_polys,
-        )
+        )?;
+        akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
     }
 
     /// Derive a verifier setup that preserves the prover's full matrix prefix.
@@ -129,10 +130,10 @@ where
         opening: SelectedProverOpeningData<
             'a,
             Cfg::ExtField,
-            CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
             Cfg::Field,
         >,
-        backend: &CpuBackend<Cfg>,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
         session: &[u8],
         basis: BasisMode,
     ) -> Result<Vec<u8>, AkitaError>
@@ -140,10 +141,10 @@ where
         Cfg::Field: WithCommitAccumulator + 'static,
         Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        CpuBackend<Cfg>: ProverBackend<
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
             Cfg::Field,
             Cfg::ExtField,
-            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
         >,
     {
         let started = Instant::now();
@@ -154,7 +155,7 @@ where
         )?;
         let prefix_slots =
             backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
-        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg>>(
+        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg::Field, Cfg::ExtField>>(
             setup.expanded.descriptor(),
             &prefix_slots,
             &self.schedules,

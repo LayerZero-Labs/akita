@@ -48,7 +48,9 @@ the committed profiles, which the validated catalog retains for lookup. Resolvin
 a key, profile, or selection borrows the catalog's row.
 
 `SetupRequirements::from_catalog` computes the matrix capacity and recursive
-prefix slots together. Setup construction reuses those requirements when loading,
+prefix slots together, and records the capacity bound it was computed at.
+`SetupRequirements::union` combines requirements from several catalogs at the
+same bound. Setup construction reuses those requirements when loading,
 repairing, or generating a setup. Independently supported precommitted groups still
 contribute to matrix capacity when their larger grouped schedule exceeds the
 requested bounds.

@@ -8,7 +8,6 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
-mod coefficient_functional;
 mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
@@ -50,14 +49,17 @@ pub use batch::{
     prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
     PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
-pub use coefficient_functional::ReducedCoefficientFunctional;
+#[cfg(any(test, feature = "test-support"))]
 pub use coefficient_packing_relation::{
-    prepare_coefficient_packing_batch_semantics,
-    prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
-    CoefficientPackingBatchSemantics, CoefficientPackingCompactFactors,
+    coefficient_packing_fixture, coefficient_packing_multigroup_fixture, CoefficientPackingFixture,
+    CoefficientPackingMultigroupFixture,
+};
+pub use coefficient_packing_relation::{
+    prepare_coefficient_packing_batch_semantics, validate_coefficient_packing_batch_groups,
+    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
-    CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
+    ValidatedCoefficientPackingGroup,
 };
 pub use commitment::{Commitment, CommittedGroup};
 pub use compression_relation_weights::{

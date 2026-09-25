@@ -47,6 +47,15 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
                 ));
             }
         }
+        // The proving catalog plans its final group under `Cfg`'s contract.
+        // Precommitted producers are not recorded in the row, so planning
+        // code compares those handles against its own producer declarations.
+        let final_handle = handles.last().ok_or(AkitaError::InvalidProof)?;
+        if final_handle.producer_contract() != Cfg::committed_source_contract()? {
+            return Err(AkitaError::InvalidInput(
+                "final group was committed under a different producer contract".into(),
+            ));
+        }
         let groups = claims
             .groups()
             .iter()

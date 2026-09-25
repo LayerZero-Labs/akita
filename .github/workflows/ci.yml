@@ -210,6 +210,9 @@ jobs:
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- heterogeneous::bounded_
           cargo test --release -p akita-config --test bounded_dense_source
+      - name: Combined-family setup at exact capacities
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
