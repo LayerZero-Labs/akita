@@ -2,7 +2,8 @@
 use super::{
     FoldProbeOutcome, OpeningSource, PreparedGroupOpening, ProofContext, ProverHandleFamily,
 };
-use akita_algebra::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_error::AkitaError;
 use akita_types::OpeningClaimsLayout;
 use jolt_field::{CanonicalEncoding, Field};
@@ -55,7 +56,7 @@ pub trait OpaqueEorKernel<F: Field + CanonicalEncoding, E: Field>:
         session: &mut Self::EorSessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
     fn bind_eor_round(
         &self,
         session: &mut Self::EorSessionHandle,

@@ -2,7 +2,8 @@
 
 use super::digit_range::class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use super::digit_range::exact_prefix::ExactPrefixTable;
-use akita_algebra::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_error::AkitaError;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_types::{reconstruct_l2_sq_from_gram, PhysicalL2NormProofShape, PhysicalResponsePlan};
@@ -169,7 +170,7 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRang
         self.input_claim
     }
 
-    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UnivariatePoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         let q_coefficients = self.range.round_q_coefficients(round);
         let (factor_at_zero, factor_at_one) = self.range.current_full_eq_factor_evals();
@@ -188,7 +189,7 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRang
         {
             *destination += self.norm_merge * coefficient;
         }
-        UniPoly::from_coeffs(coefficients[..=self.degree_bound()].to_vec())
+        UnivariatePoly::new(coefficients[..=self.degree_bound()].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {

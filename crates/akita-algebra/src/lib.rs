@@ -19,7 +19,6 @@ pub mod offset_eq;
 pub mod poly;
 pub mod ring;
 pub mod split_eq;
-pub mod uni_poly;
 
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
@@ -39,7 +38,6 @@ pub use ring::{
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
 };
 pub use split_eq::GruenSplitEq;
-pub use uni_poly::{CompressedUniPoly, UniPoly};
 
 /// Fallible parallel fold-reduce over a range.
 ///
