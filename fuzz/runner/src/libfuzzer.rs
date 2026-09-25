@@ -44,6 +44,9 @@ pub fn fuzz_args(
     );
     args.extend([
         format!("-max_len={}", lane.max_len),
+        // Slow-unit artifacts are informational; report them only at the
+        // timeout so they never masquerade as failures.
+        format!("-report_slow_units={}", lane.timeout_s),
         "-print_final_stats=1".into(),
         "-reload=1".into(),
         "-close_fd_mask=1".into(),
@@ -148,7 +151,17 @@ pub fn parse_status(line: &str, status: &mut Status) {
 
 pub fn artifact_path(line: &str) -> Option<PathBuf> {
     let rest = &line[line.find("Test unit written to ")? + "Test unit written to ".len()..];
-    rest.split_whitespace().next().map(PathBuf::from)
+    rest.split_whitespace()
+        .next()
+        .map(PathBuf::from)
+        .filter(|path| is_failure_artifact(path))
+}
+
+/// libFuzzer failure artifacts; `slow-unit-*` files are informational.
+pub fn is_failure_artifact(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| !name.starts_with("slow-unit-"))
 }
 
 pub fn classify(lines: &[String], artifact: Option<&Path>) -> &'static str {
@@ -163,8 +176,6 @@ pub fn classify(lines: &[String], artifact: Option<&Path>) -> &'static str {
         "oom"
     } else if name.starts_with("leak-") || has("LeakSanitizer") {
         "leak"
-    } else if name.starts_with("slow-unit-") {
-        "slow"
     } else if has("ERROR: AddressSanitizer") {
         "asan"
     } else if has("panicked at") {
@@ -321,6 +332,7 @@ mod tests {
             Some(PathBuf::from("/o/artifacts/x/crash-abc"))
         );
         assert_eq!(artifact_path("no artifact here"), None);
+        assert_eq!(artifact_path("Test unit written to /o/slow-unit-abc"), None);
     }
 
     #[test]

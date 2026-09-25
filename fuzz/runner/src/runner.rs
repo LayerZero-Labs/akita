@@ -566,7 +566,7 @@ impl Runner {
                 .ok()?
                 .flatten()
                 .map(|entry| entry.path())
-                .find(|path| path.is_file())
+                .find(|path| path.is_file() && libfuzzer::is_failure_artifact(path))
         });
         if job.purpose == Purpose::Replay {
             self.finish_replay(&job, code, &tail);
@@ -582,7 +582,10 @@ impl Runner {
             }
             state.cov = state.cov.max(job.status.cov);
             state.ft = state.ft.max(job.status.ft);
-            if job.purpose == Purpose::Baseline {
+            // A baseline cut short by shutdown is neither passed nor failed;
+            // it runs again on resume.
+            let interrupted = job.terminated_at.is_some() && code != 0;
+            if job.purpose == Purpose::Baseline && !interrupted {
                 state.baseline = Some(
                     json!({"ok": code == 0, "seconds": elapsed.round(), "at": now(), "execs": job.status.execs}),
                 );
