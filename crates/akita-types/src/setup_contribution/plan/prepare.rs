@@ -288,10 +288,104 @@ impl<E: Field> SetupContributionPlan<E> {
 
     /// Canonical relation-address geometry used by every setup contribution
     /// tensor.
-    #[cfg(test)]
     #[must_use]
     pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
         self.relation_address_geometry
+    }
+
+    /// Per-group plans in setup-group order.
+    #[must_use]
+    pub fn groups(&self) -> &[SetupContributionGroupPlan<E>] {
+        &self.groups
+    }
+
+    /// Mutable per-group plans, for tests that perturb one prepared group.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn groups_mut_for_test(&mut self) -> &mut [SetupContributionGroupPlan<E>] {
+        &mut self.groups
+    }
+
+    /// Number of shared physical D rows.
+    #[must_use]
+    pub const fn d_rows(&self) -> usize {
+        self.d_rows
+    }
+
+    /// Physical D width shared by every group's column range.
+    #[must_use]
+    pub const fn d_physical_cols(&self) -> usize {
+        self.d_physical_cols
+    }
+
+    /// Row weights of the shared physical D rows.
+    #[must_use]
+    pub fn d_weights(&self) -> &[E] {
+        &self.d_weights
+    }
+
+    /// Relation-address point and equality window the plan was prepared for.
+    #[must_use]
+    pub const fn relation_address(&self) -> &PreparedRelationAddress<E> {
+        &self.relation_address
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<E: Field> SetupContributionPlan<E> {
+    /// Assemble a plan from hand-built groups for setup-scan fixtures.
+    ///
+    /// Every group is retargeted to `role_dims`, the projection geometry is
+    /// the common-base footprint of the groups, and the relation address is
+    /// empty, so only tensor-free direct scans are meaningful on the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the groups' footprints or `role_dims` do not form
+    /// a valid projection geometry.
+    pub fn from_test_groups(
+        d_physical_cols: usize,
+        d_weights: std::sync::Arc<[E]>,
+        mut groups: Vec<SetupContributionGroupPlan<E>>,
+        role_dims: crate::CommitmentRingDims,
+    ) -> Result<Self, AkitaError> {
+        let d_rows = d_weights.len();
+        let mut a_footprint = 0usize;
+        let mut b_footprint = 0usize;
+        for group in &groups {
+            let group_a = checked::product([group.n_a, group.z_cols])
+                .ok_or_else(|| AkitaError::InvalidSetup("test A footprint overflow".into()))?;
+            a_footprint = a_footprint.max(group_a);
+            b_footprint = b_footprint.max(group.physical_b.physical_footprint()?);
+        }
+        let d_footprint = checked::product([d_rows, d_physical_cols])
+            .ok_or_else(|| AkitaError::InvalidSetup("test D footprint overflow".into()))?;
+        let projection_geometry = SetupProjectionGeometry::from_role_footprints(
+            role_dims,
+            a_footprint,
+            b_footprint,
+            d_footprint,
+        )?;
+        let relation_address_geometry = RelationAddressGeometry::new(
+            role_dims,
+            role_dims.d_a(),
+            role_dims.common_relation_coeff_count(),
+        )?;
+        for group in &mut groups {
+            group.role_dims = role_dims;
+            group.set_projection_ratios(
+                projection_geometry.base_ring_dim(),
+                relation_address_geometry.relation_coefficient_block_len(),
+            )?;
+        }
+        Ok(Self {
+            groups,
+            d_rows,
+            d_physical_cols,
+            d_weights,
+            relation_address: PreparedRelationAddress::new(&[])?,
+            relation_address_geometry,
+            projection_geometry,
+        })
     }
 }
 

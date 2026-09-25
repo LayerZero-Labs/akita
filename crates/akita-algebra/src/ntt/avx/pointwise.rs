@@ -3,9 +3,10 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use super::lanes::mont_mul;
 use super::montgomery::{
-    mont_mul_16x_i16_avx2, mont_mul_16x_i32_avx512, mont_mul_8x_i32_avx2,
-    reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512, reduce_range_8x_i32_avx2,
+    mont_mul_16x_i16_avx2, reduce_range_16x_i16_avx2, reduce_range_16x_i32_avx512,
+    reduce_range_8x_i32_avx2,
 };
 use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 
@@ -145,7 +146,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
             let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
             let l = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
             let r = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
-            let prod = mont_mul_8x_i32_avx2(l, r, p_v, pinv_v);
+            let prod = mont_mul(l, r, p_v, pinv_v);
             let sum = _mm256_add_epi32(a, prod);
             _mm256_storeu_si256(
                 acc.add(i) as *mut __m256i,
@@ -198,7 +199,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
             let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
             let l = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
             let r = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
-            let prod = mont_mul_16x_i32_avx512(l, r, p_v, pinv_v);
+            let prod = mont_mul(l, r, p_v, pinv_v);
             let sum = _mm512_add_epi32(a, prod);
             _mm512_storeu_si512(
                 acc.add(i) as *mut __m512i,

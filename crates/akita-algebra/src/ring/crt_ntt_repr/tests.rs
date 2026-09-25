@@ -1,7 +1,7 @@
-use super::lut::{centered_prime_residue_i128, centered_prime_residue_i64};
+use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
 use crate::ntt::prime::NttPrime;
-use crate::ntt::tables::Q32_PRIMES;
+use crate::ntt::tables::{I16_TAIL_PRIME, Q128_RAW_PRIMES, Q32_PRIMES, Q64_PRIMES};
 
 const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
 
@@ -13,32 +13,61 @@ fn synthetic_i16_primes() -> [NttPrime<i16>; SYNTHETIC_I16_NUM_PRIMES] {
     ]
 }
 
-#[test]
-fn centered_prime_residue_keeps_positive_half_boundary() {
-    let primes = synthetic_i16_primes();
-    let prime16 = primes[0];
-    let half16 = i64::from(prime16.p) / 2;
-    assert_eq!(centered_prime_residue_i64(prime16, half16), half16 as i16);
-    assert_eq!(
-        centered_prime_residue_i64(prime16, half16 + 1),
-        (half16 + 1 - i64::from(prime16.p)) as i16
-    );
+fn reducer_cases() -> Vec<i128> {
+    let mut cases = vec![0, 1, -1, i128::MAX, i128::MIN + 1, i128::MIN];
+    for shift in [15, 16, 31, 32, 33, 63, 64, 95, 96, 97, 126] {
+        for offset in [-1i128, 0, 1] {
+            cases.push((1i128 << shift) + offset);
+            cases.push(-(1i128 << shift) + offset);
+        }
+    }
+    let mut state = 0x9e37_79b9_7f4a_7c15_u128;
+    for _ in 0..512 {
+        state = state
+            .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645)
+            .wrapping_add(0x5851_f42d_4c95_7f2d_1405_7b7e_f767_814f);
+        cases.push((state as i128) >> (state % 97));
+    }
+    cases
+}
 
-    let prime32 = Q32_PRIMES[0];
-    let half32 = i64::from(prime32.p) / 2;
-    assert_eq!(centered_prime_residue_i64(prime32, half32), half32 as i32);
-    assert_eq!(
-        centered_prime_residue_i64(prime32, half32 + 1),
-        (half32 + 1 - i64::from(prime32.p)) as i32
-    );
-    assert_eq!(
-        centered_prime_residue_i128(prime32, i128::from(half32)),
-        half32 as i32
-    );
-    assert_eq!(
-        centered_prime_residue_i128(prime32, i128::from(half32 + 1)),
-        (half32 + 1 - i64::from(prime32.p)) as i32
-    );
+fn check_reducer<W: PrimeWidth>(prime: NttPrime<W>) {
+    let p = prime.p.to_i64();
+    let reducer = CenteredMontReducer::new(prime);
+    for value in reducer_cases() {
+        let limbs = balanced_limbs(value);
+        let rebuilt = limbs.iter().rev().fold(0i128, |acc, &limb| {
+            (acc << 32).wrapping_add(i128::from(limb))
+        });
+        assert_eq!(rebuilt, value);
+        assert!(limbs[..3].iter().all(|&limb| i32::try_from(limb).is_ok()));
+        assert!(limbs[3].abs() <= 1 << 31);
+
+        let mont = reducer.reduce_limbs(limbs);
+        assert!(mont.raw().to_i64().abs() < p);
+        let expected = value.rem_euclid(i128::from(p)) as i64;
+        assert_eq!(prime.to_canonical(mont).to_i64(), expected, "{value}");
+
+        let narrow = value as i32;
+        let mont = reducer.reduce_i32(narrow);
+        assert!(mont.raw().to_i64().abs() < p);
+        let expected = i64::from(narrow).rem_euclid(p);
+        assert_eq!(prime.to_canonical(mont).to_i64(), expected, "{narrow}");
+    }
+}
+
+#[test]
+fn centered_mont_reducer_matches_euclidean_residues() {
+    for prime in synthetic_i16_primes() {
+        check_reducer(prime);
+    }
+    check_reducer(I16_TAIL_PRIME);
+    for prime in Q32_PRIMES.into_iter().chain(Q64_PRIMES) {
+        check_reducer(prime);
+    }
+    for p in Q128_RAW_PRIMES.into_iter().chain([1_073_707_009]) {
+        check_reducer(NttPrime::compute(p));
+    }
 }
 
 #[test]
@@ -50,15 +79,14 @@ fn centered_mont_lut_matches_centered_residue_boundary() {
     let half = i32::from(prime.p) / 2;
     let lut = CenteredMontLut::<i16, SYNTHETIC_I16_NUM_PRIMES>::new(&params, half + 1);
 
-    let boundary = centered_prime_residue_i64(prime, i64::from(half));
-    let past_boundary = centered_prime_residue_i64(prime, i64::from(half + 1));
-    assert_eq!(boundary, half as i16);
-    assert_eq!(past_boundary, (half + 1 - i32::from(prime.p)) as i16);
-    assert_eq!(lut.get(0, half), Some(prime.from_canonical(boundary)));
+    let canonical = |value| lut.get(0, value).map(|mont| prime.to_canonical(mont));
+    assert_eq!(canonical(half), Some(half as i16));
+    assert_eq!(canonical(half + 1), Some((half + 1) as i16));
     assert_eq!(
-        lut.get(0, half + 1),
-        Some(prime.from_canonical(past_boundary))
+        canonical(-half - 1),
+        Some((i32::from(prime.p) - half - 1) as i16)
     );
+    assert_eq!(lut.get(0, half + 2), None);
 }
 
 #[test]
