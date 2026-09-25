@@ -10,6 +10,21 @@ Severity: **High** (soundness, completeness, or memory safety), **Medium**
 (public-boundary misbehavior), **Low** (documentation, error classification,
 or unreachable API corners).
 
+## Validation runs
+
+Host: 32-core x86_64 (AVX2, AVX-512 IFMA), Ubuntu 26.04, 121 GB RAM; campaign
+budget 24 CPUs with hard per-worker cgroup memory limits; ASan build.
+
+| Run | Duration | Result |
+|---|---|---|
+| 1 (build `e6de32ee`) | 30 min, stopped with `SIGTERM` | All startup baselines passed. Exposed runner bugs (slow-unit reports and an interrupted baseline treated as failures); fixed before run 2. |
+| 2 (build `850f2a96`, resumed run 1's directory) | 1 h | Baselines passed for all 20 lanes. End-to-end lanes executed 1.2k–2.8k fresh cases each (`pcs_dense` 1241, `pcs_onehot` 2770, `pcs_batch` 1241, `pcs_reject` 1185, `prover_boundary` 1457) plus 357k `verifier_boundary` inputs; primitive lanes 1.6M–16M executions. Findings: F-4 (x526, three field variants) and F-5 (two sites, x18). No completeness, determinism, soundness-mutation, sanitizer, timeout, or memory findings. Zero startup or infrastructure failures. |
+| Finding-pipeline check | 2 min, `pcs_dense` with an injected `-malloc_limit_mb=16` | OOM findings were recorded, deduplicated (x4), their inputs quarantined, and replayed in a fresh process ("not reproducible", as expected without the injected limit). `reproduce` and `export` worked on the result. |
+
+Observation (not a defect): under ASan, proving gets slower as Rayon threads
+increase (one `pcs_parallel` seed: 11 s at 1 thread, 23 s at 4), so the
+parallel lane uses 2 internal threads.
+
 ## F-5 (Medium, robustness): schedule-artifact admission panics on a zero terminal `log_basis`
 
 `TrustedScheduleCatalog::from_artifact_bytes` panics instead of returning an
