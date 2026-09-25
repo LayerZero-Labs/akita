@@ -35,9 +35,7 @@ where
             "extension-opening tensor split exceeds polynomial arity".to_string(),
         ));
     }
-    let expected_len = 1usize
-        .checked_shl(original_num_vars as u32)
-        .ok_or_else(|| AkitaError::InvalidInput("witness table length overflow".to_string()))?;
+    let expected_len = reduction_table_len(original_num_vars)?;
     if base_evals.len() != expected_len {
         return Err(AkitaError::InvalidSize {
             expected: expected_len,
@@ -45,7 +43,9 @@ where
         });
     }
 
-    let tail_len = 1usize << (original_num_vars - split_bits);
+    // `width = 2^split_bits` with `split_bits <= original_num_vars`, so this is
+    // the exact tail-table length `2^(original_num_vars - split_bits)`.
+    let tail_len = expected_len / width;
     // Pure order-preserving map; the indexed parallel collect yields the same
     // ordering as the serial loop, so the packed table is byte-identical.
     #[cfg(feature = "parallel")]
@@ -101,9 +101,7 @@ where
             actual: logical_point.len(),
         });
     }
-    let expected_len = 1usize
-        .checked_shl(original_num_vars as u32)
-        .ok_or_else(|| AkitaError::InvalidInput("witness table length overflow".to_string()))?;
+    let expected_len = reduction_table_len(original_num_vars)?;
     if base_evals.len() != expected_len {
         return Err(AkitaError::InvalidSize {
             expected: expected_len,
@@ -369,23 +367,24 @@ pub(crate) fn reduction_table_len(num_vars: usize) -> Result<usize, AkitaError> 
 
 pub(crate) fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {
     if len == 0 || !len.is_power_of_two() {
-        return Err(AkitaError::InvalidSize {
-            expected: len.max(1).next_power_of_two(),
-            actual: len,
-        });
+        return Err(AkitaError::InvalidInput(format!(
+            "extension-opening reduction table length {len} is not a nonzero power of two"
+        )));
     }
     Ok(len.trailing_zeros() as usize)
 }
 
-#[cfg(all(test, debug_assertions))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use jolt_field::{Ext2, One, Prime64Offset59};
 
+    #[cfg(debug_assertions)]
     struct MalformedSource {
         row_len: usize,
     }
 
+    #[cfg(debug_assertions)]
     impl TensorColumnSource<Prime64Offset59> for MalformedSource {
         type Row<'a> = std::vec::IntoIter<Prime64Offset59>;
 
@@ -394,6 +393,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn contract_malformed_source(row_len: usize) {
         type F = Prime64Offset59;
         type E = Ext2<F>;
@@ -403,14 +403,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "tensor column source row must yield exactly width items")]
     fn tensor_column_source_rejects_short_rows_in_debug_builds() {
         contract_malformed_source(1);
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "tensor column source row must yield exactly width items")]
     fn tensor_column_source_rejects_long_rows_in_debug_builds() {
         contract_malformed_source(3);
+    }
+
+    /// An arity above `u32::MAX` must not be truncated before the table-length
+    /// check: `(2^32 + 1) as u32 == 1` would accept a two-entry table and then
+    /// shift by `2^32` when sizing the tail.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn packed_witness_rejects_arity_that_truncates_to_a_small_shift() {
+        type F = Prime64Offset59;
+        let base_evals = [F::one(), F::one()];
+        let result = tensor_packed_witness_evals::<F, Ext2<F>>((1usize << 32) + 1, &base_evals);
+        assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn table_round_count_rejects_every_non_power_of_two_length() {
+        for len in [0, 3, 6, usize::MAX] {
+            assert!(matches!(
+                num_rounds_from_table_len(len),
+                Err(AkitaError::InvalidInput(_))
+            ));
+        }
+        assert_eq!(num_rounds_from_table_len(1).unwrap(), 0);
+        assert_eq!(num_rounds_from_table_len(8).unwrap(), 3);
     }
 }
