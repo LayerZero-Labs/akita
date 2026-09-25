@@ -668,6 +668,34 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     pinv: i32,
 ) {
     debug_assert!(count <= I32_LAZY_DOT_BATCH);
+    macro_rules! dispatch_count {
+        ($count:literal) => {
+            pointwise_dot_acc_i32_count::<$count>(acc, lhs, rhs, d, p, pinv)
+        };
+    }
+    match count {
+        0 => {}
+        1 => dispatch_count!(1),
+        2 => dispatch_count!(2),
+        3 => dispatch_count!(3),
+        4 => dispatch_count!(4),
+        5 => dispatch_count!(5),
+        6 => dispatch_count!(6),
+        _ => unreachable!("pointwise dot exceeds lazy reduction bound"),
+    }
+}
+
+#[inline(always)]
+unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
+    acc: *mut i32,
+    lhs: *const *const i32,
+    rhs: *const *const i32,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    let lhs: [*const i32; COUNT] = core::array::from_fn(|product| *lhs.add(product));
+    let rhs: [*const i32; COUNT] = core::array::from_fn(|product| *rhs.add(product));
     let m = Modulus::new(p);
     let p_d = vdup_n_s32(p);
     let pinv_d = vdup_n_s32(pinv);
@@ -675,11 +703,11 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     while i + 4 <= d {
         let mut low_sum = vdupq_n_s64(0);
         let mut high_sum = vdupq_n_s64(0);
-        for product in 0..count {
-            let l = vld1q_s32((*lhs.add(product)).add(i));
-            let r = vld1q_s32((*rhs.add(product)).add(i));
-            low_sum = vaddq_s64(low_sum, vmull_s32(vget_low_s32(l), vget_low_s32(r)));
-            high_sum = vaddq_s64(high_sum, vmull_high_s32(l, r));
+        for product in 0..COUNT {
+            let l = vld1q_s32(lhs[product].add(i));
+            let r = vld1q_s32(rhs[product].add(i));
+            low_sum = vmlal_s32(low_sum, vget_low_s32(l), vget_low_s32(r));
+            high_sum = vmlal_high_s32(high_sum, l, r);
         }
 
         let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
@@ -699,9 +727,8 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
         let prime = NttPrime::compute(p);
         while i < d {
             let mut raw_sum = 0_i64;
-            for product in 0..count {
-                raw_sum +=
-                    i64::from(*(*lhs.add(product)).add(i)) * i64::from(*(*rhs.add(product)).add(i));
+            for product in 0..COUNT {
+                raw_sum += i64::from(*lhs[product].add(i)) * i64::from(*rhs[product].add(i));
             }
             let correction = (raw_sum as i32).wrapping_mul(pinv);
             let reduced = ((raw_sum - i64::from(correction) * i64::from(p)) >> 32) as i32;
