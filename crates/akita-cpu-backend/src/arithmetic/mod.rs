@@ -2,6 +2,7 @@
 
 pub(crate) mod backend;
 pub(crate) mod coefficient_packing;
+pub(crate) mod coefficient_packing_fold;
 mod commitment;
 mod commitment_stage;
 #[cfg(test)]
@@ -16,6 +17,7 @@ mod digit_rows;
 mod exact_i16;
 #[cfg(test)]
 mod exact_i16_tests;
+pub(crate) mod extension_opening_reduction;
 pub(crate) mod field_reduction;
 #[cfg(test)]
 mod kernel_tests;

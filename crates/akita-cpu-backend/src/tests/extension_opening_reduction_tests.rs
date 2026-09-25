@@ -1,10 +1,12 @@
 #![allow(missing_docs)]
 
+use crate::arithmetic::extension_opening_reduction::{
+    tensor_column_partials_from_base_evals, tensor_equality_factor_evals,
+    tensor_packed_witness_evals,
+};
 use akita_types::{
-    derive_tensor_extension_opening_claim_from_partials, tensor_column_partials_from_base_evals,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_packed_witness_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, ExtensionOpeningTensorPartials,
+    derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
 use jolt_field::{Ext2, ExtField, Field, Prime64Offset59, Ring, Zero};
 
@@ -43,18 +45,12 @@ fn tensor_partials_recompose_logical_extension_opening() {
     let column_partials =
         tensor_column_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
     let row_partials = tensor_row_partials_from_columns::<B, E>(&column_partials).unwrap();
-    let partials = ExtensionOpeningTensorPartials {
-        column_partials,
-        row_partials,
-    };
-    assert_eq!(partials.column_partials.len(), <E as ExtField<B>>::DEGREE);
-    assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::DEGREE);
+    assert_eq!(column_partials.len(), <E as ExtField<B>>::DEGREE);
+    assert_eq!(row_partials.len(), <E as ExtField<B>>::DEGREE);
 
-    let logical_claim = derive_tensor_extension_opening_claim_from_partials::<B, E>(
-        &point,
-        &partials.column_partials,
-    )
-    .unwrap();
+    let logical_claim =
+        derive_tensor_extension_opening_claim_from_partials::<B, E>(&point, &column_partials)
+            .unwrap();
     assert_eq!(logical_claim, lifted_multilinear_eval(&base_evals, &point));
 }
 
@@ -81,11 +77,7 @@ fn tensor_row_reduction_matches_dense_sumcheck_claim() {
     let column_partials =
         tensor_column_partials_from_base_evals::<B, E>(num_vars, &base_evals, &point).unwrap();
     let row_partials = tensor_row_partials_from_columns::<B, E>(&column_partials).unwrap();
-    let partials = ExtensionOpeningTensorPartials {
-        column_partials,
-        row_partials,
-    };
-    let row_claim = tensor_reduction_claim_from_rows::<B, E>(&partials.row_partials, &eta).unwrap();
+    let row_claim = tensor_reduction_claim_from_rows::<B, E>(&row_partials, &eta).unwrap();
     let factor_evals = tensor_equality_factor_evals::<B, E>(&point[1..], &eta).unwrap();
 
     assert_eq!(packed_witness.len(), factor_evals.len());

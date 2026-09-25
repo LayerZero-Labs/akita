@@ -173,14 +173,15 @@ where
         let [partials] = partials_by_claim.as_slice() else {
             return Err(AkitaError::InvalidProof);
         };
-        let scalar = akita_types::coefficient_packing_scalar_opening::<F, E>(
-            geometry,
-            point.num_live_blocks(),
-            core::slice::from_ref(partials),
-            &[E::one()],
-            point.live_block_weights(),
-            point.tail_weights(),
-        )?;
+        let scalar =
+            crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
+                geometry,
+                point.num_live_blocks(),
+                core::slice::from_ref(partials),
+                &[E::one()],
+                point.live_block_weights(),
+                point.tail_weights(),
+            )?;
         return Ok(crate::opaque::prepared_opening::coefficient_packing(
             binding,
             opening_source,

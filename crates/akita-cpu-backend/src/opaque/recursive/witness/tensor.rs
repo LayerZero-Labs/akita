@@ -1,9 +1,12 @@
 //! Tensor extension-opening inputs for compact recursive witnesses.
 
 use super::SuffixWitnessView;
+use crate::arithmetic::extension_opening_reduction::{
+    tensor_column_partials_split_fold, TensorColumnSource,
+};
 use akita_algebra::SplitEqEvals;
 use akita_error::AkitaError;
-use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
+use akita_types::tensor_opening_split;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -161,7 +164,11 @@ mod tests {
         let packed = view
             .tensor_packed_extension_evals::<E>()
             .expect("direct packed suffix");
-        let expected_packed = akita_types::tensor_packed_witness_evals::<F, E>(6, &base_evals)
+        let expected_packed =
+            crate::arithmetic::extension_opening_reduction::tensor_packed_witness_evals::<F, E>(
+                6,
+                &base_evals,
+            )
             .expect("reference packed suffix");
         assert_eq!(packed, expected_packed);
 
@@ -174,7 +181,7 @@ mod tests {
             .tensor_extension_column_partials::<E>(&point)
             .expect("direct suffix partials");
         let expected_partials =
-            akita_types::tensor_column_partials_from_base_evals::<F, E>(6, &base_evals, &point)
+            crate::arithmetic::extension_opening_reduction::tensor_column_partials_from_base_evals::<F, E>(6, &base_evals, &point)
                 .expect("reference suffix partials");
         assert_eq!(partials, expected_partials);
     }

@@ -50,7 +50,7 @@ impl<F: Field + CanonicalEncoding> RingRelationGroupWitness<F> {
     pub(crate) fn from_coefficient_packing_parts(
         fold: crate::opaque::CpuAcceptedFold<F>,
         e_hat: DigitBlocks,
-        product: akita_types::CoefficientPackingFoldProduct<F>,
+        product: crate::arithmetic::coefficient_packing_fold::CoefficientPackingFoldProduct<F>,
         inner_relation: crate::opaque::OpaqueInnerRelationState<F>,
         role_dims: CommitmentRingDims,
     ) -> Self {

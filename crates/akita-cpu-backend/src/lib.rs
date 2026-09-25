@@ -62,6 +62,7 @@ pub mod custom_source {
 /// Arithmetic entry points exercised by the crate's standalone kernel benchmarks.
 #[doc(hidden)]
 pub mod benchmark_support {
+    pub use crate::arithmetic::extension_opening_reduction::tensor_column_partials_from_base_evals;
     pub use crate::kernels::linear::{
         decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
         mat_vec_mul_ntt_i8_dense_single_row,
