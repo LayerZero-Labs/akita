@@ -48,21 +48,20 @@ fn embedded_terminal_functionals<E: Field>(
         .collect()
 }
 
-impl<E: Field> SetupContributionPlan<E> {
+impl<E: Field> DirectScan<E> {
     /// Contract one reduced-evaluation group's structured E/T/Z terms with
     /// their genuine public ring multipliers.
     ///
-    /// The reduced alpha and role functionals are the ones `scan` was
+    /// The reduced alpha and role functionals are the ones this scan was
     /// prepared for.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] if `scan` is not a reduced scan
-    /// for this plan or the group is not evaluation-trace, and
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a reduced scan or
+    /// the group is not evaluation-trace, and
     /// [`AkitaError::InvalidProof`] if the challenges do not match the group.
     pub fn evaluate_reduced_structured_group<F>(
         &self,
-        scan: &DirectScan<E>,
         group_id: usize,
         challenges: &Challenges,
         opening_multiplier: &crate::PreparedRingMultiplier<E>,
@@ -71,23 +70,23 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        scan.check_plan(self)?;
+        let plan = &self.plan;
         let DirectScanMode::Reduced {
             alpha,
             groups: scan_groups,
-        } = &scan.mode
+        } = &self.mode
         else {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured contraction requires a reduced direct scan".into(),
             ));
         };
         let alpha = *alpha;
-        let group_index = self
+        let group_index = plan
             .groups
             .iter()
             .position(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
-        let group = self
+        let group = plan
             .groups
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;

@@ -32,26 +32,22 @@ pub struct SetupIndexWeightMle<E: Field> {
 }
 
 impl<E: Field> SetupIndexWeightMle<E> {
-    /// Build the setup-index weight tensors for `plan` over `witness_layout`.
+    /// Build the setup-index weight tensors for `plan`.
     ///
-    /// `witness_layout` must be the layout `plan` was prepared from; the B
-    /// setup tensors are rebuilt from it here instead of being stored on the
-    /// plan.
+    /// The B setup tensors are rebuilt here from the witness units the plan
+    /// retained at preparation, instead of being stored on the plan.
     ///
     /// # Errors
     ///
-    /// Returns an error if the layout disagrees with the plan's groups or any
-    /// relation tensor fails to align to the Stage-3 setup base.
-    pub fn new(
-        plan: &SetupContributionPlan<E>,
-        witness_layout: &WitnessLayout,
-    ) -> Result<Self, AkitaError> {
+    /// Returns an error if any relation tensor fails to align to the Stage-3
+    /// setup base.
+    pub fn new(plan: &SetupContributionPlan<E>) -> Result<Self, AkitaError> {
         let (relation_base_bridge_point, setup_relation_point) =
             plan.relation_base_bridge_split()?;
         let mut tensors = Vec::<ProjectedEqPairTensor<E>>::new();
         for group in &plan.groups {
             plan.append_d_tensors(group, &mut tensors)?;
-            plan.append_b_tensors(group, witness_layout, &mut tensors)?;
+            plan.append_b_tensors(group, &mut tensors)?;
             plan.append_a_tensors(group, &mut tensors)?;
         }
         for batch in &mut tensors {
@@ -409,14 +405,12 @@ impl<E: Field> SetupContributionPlan<E> {
     fn append_b_tensors(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        witness_layout: &WitnessLayout,
         batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
         if group.physical_b.physical_rows == 0 {
             return Ok(());
         }
-        let setup_tensors =
-            build_group_b_setup_tensors(self.relation_address_geometry, group, witness_layout)?;
+        let setup_tensors = build_group_b_setup_tensors(self.relation_address_geometry, group)?;
         let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
             setup_tensors
         } else {

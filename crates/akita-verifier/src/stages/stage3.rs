@@ -61,8 +61,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             PreparedRelationAddress::new(x_challenges)?,
             fold_gadget.as_deref(),
         )?;
-        let setup_index_weight =
-            SetupIndexWeightMle::new(&plan, relation_matrix_evaluator.witness_layout()?)?;
+        let setup_index_weight = SetupIndexWeightMle::new(&plan)?;
         let geometry = setup_index_weight.projection_geometry();
         Ok(Self {
             setup_index_weight,

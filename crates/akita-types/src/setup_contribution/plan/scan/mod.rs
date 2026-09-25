@@ -16,45 +16,42 @@ enum DirectScanKernel<'a, E: Field> {
     },
 }
 
-impl<E: Field> SetupContributionPlan<E> {
-    /// Evaluate the setup contribution by scanning the packed setup with the
-    /// weights and partition prepared in `scan`.
+impl<E: Field> DirectScan<E> {
+    /// Evaluate this scan's setup contribution by scanning the packed setup
+    /// with its prepared weights and partition.
     ///
     /// # Errors
     ///
-    /// Returns an error if `scan` was prepared for a different plan or the
-    /// shared setup matrix is too small for this plan.
-    pub fn evaluate_direct<F>(
-        &self,
-        scan: &DirectScan<E>,
-        setup: &AkitaExpandedSetup<F>,
-    ) -> Result<E, AkitaError>
+    /// Returns an error if the shared setup matrix is too small for the plan.
+    pub fn evaluate_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        scan.check_plan(self)?;
-        match &scan.mode {
+        let plan = &self.plan;
+        match &self.mode {
             DirectScanMode::Lifted { alpha, groups } => {
-                let geometry = self.projection_geometry;
+                let geometry = plan.projection_geometry;
                 let alpha_pows_a = scalar_powers(*alpha, geometry.role_dims().d_a());
                 let alpha_pows_b = scalar_powers(*alpha, geometry.role_dims().d_b());
                 let alpha_pows_d = scalar_powers(*alpha, geometry.role_dims().d_d());
-                self.evaluate_role_dims_direct(
+                plan.evaluate_role_dims_direct(
                     setup,
                     &alpha_pows_a,
                     &alpha_pows_b,
                     &alpha_pows_d,
                     groups,
-                    &scan.partitions,
+                    &self.partitions,
                 )
             }
             DirectScanMode::Reduced { groups, .. } => {
-                self.evaluate_reduced_direct(setup, groups, &scan.partitions)
+                plan.evaluate_reduced_direct(setup, groups, &self.partitions)
             }
         }
     }
+}
 
+impl<E: Field> SetupContributionPlan<E> {
     fn evaluate_reduced_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,

@@ -2,12 +2,15 @@ use super::*;
 
 /// Challenge-dependent state of one direct setup scan.
 ///
-/// A scan is built from one prepared [`SetupContributionPlan`] and one
-/// coefficient functional. It owns the per-group E/T/Z column weights and the
-/// packed D/B/A segment partition that the scan kernels walk. The plan itself
-/// stays functional-free, so the deferred (closed-form) verifier path never
-/// pays for, or can observe, a partially prepared scan.
+/// A scan takes ownership of one prepared [`SetupContributionPlan`] and binds
+/// it to one coefficient functional. It owns the per-group E/T/Z column
+/// weights and the packed D/B/A segment partition that the scan kernels walk.
+/// Every evaluation reads the plan the scan was built from, so a scan cannot
+/// be evaluated against a different plan. The plan itself stays
+/// coefficient-functional-free, so the deferred (closed-form) verifier path
+/// never pays for, or can observe, a partially prepared scan.
 pub struct DirectScan<E: Field> {
+    pub(crate) plan: SetupContributionPlan<E>,
     pub(crate) mode: DirectScanMode<E>,
     pub(crate) partitions: Vec<GroupScanPartition<E>>,
 }
@@ -48,14 +51,15 @@ impl<E: Field> DirectScanMode<E> {
 }
 
 impl<E: Field> DirectScan<E> {
-    /// Materialize the column weights and packed segments for `functional`.
+    /// Bind `plan` to `functional` and materialize the column weights and
+    /// packed segments for it.
     ///
     /// # Errors
     ///
     /// Returns an error if the plan's tensors or projection geometry are
     /// malformed for the requested functional.
     pub fn new(
-        plan: &SetupContributionPlan<E>,
+        plan: SetupContributionPlan<E>,
         functional: PreparedCoefficientFunctional<E>,
     ) -> Result<Self, AkitaError> {
         let mode = match functional {
@@ -99,7 +103,7 @@ impl<E: Field> DirectScan<E> {
 
     /// Partition `plan`'s packed setup for already materialized weights.
     pub(crate) fn with_mode(
-        plan: &SetupContributionPlan<E>,
+        plan: SetupContributionPlan<E>,
         mode: DirectScanMode<E>,
     ) -> Result<Self, AkitaError> {
         if mode.group_count() != plan.groups.len() {
@@ -107,7 +111,6 @@ impl<E: Field> DirectScan<E> {
                 "direct setup scan group count disagrees with its plan".into(),
             ));
         }
-        let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
         let partitions = plan
             .groups
             .iter()
@@ -116,6 +119,7 @@ impl<E: Field> DirectScan<E> {
                 let weights = mode.weights(group_index).ok_or_else(|| {
                     AkitaError::InvalidSetup("direct setup group is missing".into())
                 })?;
+                let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
                 group.scan_partition(
                     weights.e.len(),
                     &plan.d_weights,
@@ -124,19 +128,17 @@ impl<E: Field> DirectScan<E> {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { mode, partitions })
+        Ok(Self {
+            plan,
+            mode,
+            partitions,
+        })
     }
 
-    /// Verify that this scan was partitioned for a plan with `plan`'s groups.
-    pub(crate) fn check_plan(&self, plan: &SetupContributionPlan<E>) -> Result<(), AkitaError> {
-        if self.partitions.len() != plan.groups.len()
-            || self.mode.group_count() != plan.groups.len()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "direct setup scan was prepared for a different plan".into(),
-            ));
-        }
-        Ok(())
+    /// The plan this scan was built from.
+    #[must_use]
+    pub const fn plan(&self) -> &SetupContributionPlan<E> {
+        &self.plan
     }
 
     /// Prepared D/B/A column equality slices for `group_id`.
@@ -149,12 +151,9 @@ impl<E: Field> DirectScan<E> {
     /// Tests compare these slices against independent address oracles.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn group_column_eq_slices(
-        &self,
-        plan: &SetupContributionPlan<E>,
-        group_id: usize,
-    ) -> Option<(&[E], &[E], &[E])> {
-        let group_index = plan
+    pub(crate) fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
+        let group_index = self
+            .plan
             .groups
             .iter()
             .position(|group| group.group_id == group_id)?;

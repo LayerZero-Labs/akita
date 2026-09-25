@@ -145,7 +145,6 @@ impl<E: Field> PhysicalBSetupPlan<E> {
 pub(super) fn build_group_b_setup_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
-    witness_layout: &WitnessLayout,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
     let physical_b = &group.physical_b;
     let geometry = physical_b.geometry();
@@ -183,7 +182,7 @@ pub(super) fn build_group_b_setup_tensors<E: Field>(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut tensors = Vec::new();
-    for unit in witness_layout.units_for_group(group.group_id)? {
+    for unit in group.active_units.iter() {
         let unit_start = unit.global_block_start();
         let unit_end = unit_start
             .checked_add(unit.num_live_blocks())

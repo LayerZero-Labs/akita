@@ -166,13 +166,10 @@ impl<E: Field> SetupContributionPlan<E> {
                         .ok_or(AkitaError::InvalidProof)?;
                     let num_physical_units =
                         witness_layout.units_for_group(group.group_id)?.count();
-                    let active_unit_ranges = witness_layout
+                    let active_units = witness_layout
                         .units_for_group(group.group_id)?
                         .filter(|unit| unit.num_live_blocks() != 0)
-                        .map(|unit| SetupUnitRange {
-                            global_block_start: unit.global_block_start(),
-                            num_live_blocks: unit.num_live_blocks(),
-                        })
+                        .cloned()
                         .collect::<Vec<_>>()
                         .into();
                     drop(geometry_span);
@@ -226,7 +223,7 @@ impl<E: Field> SetupContributionPlan<E> {
                         physical_b,
                         a_row_weights,
                         fold_gadget,
-                        active_unit_ranges,
+                        active_units,
                         num_physical_units,
                         d_tensors: Vec::new(),
                         a_tensors: Vec::new(),

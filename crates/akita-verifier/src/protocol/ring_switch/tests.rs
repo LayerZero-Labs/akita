@@ -291,20 +291,20 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
         .setup_contribution_fold_gadget::<MixedF>()
         .unwrap()
         .unwrap();
-    let direct_plan = evaluator
-        .setup_contribution_plan::<MixedF>(
-            PreparedRelationAddress::new(address_point).unwrap(),
-            Some(&fold_gadget),
-        )
-        .unwrap();
+    let direct_plan = || {
+        evaluator
+            .setup_contribution_plan::<MixedF>(
+                PreparedRelationAddress::new(address_point).unwrap(),
+                Some(&fold_gadget),
+            )
+            .unwrap()
+    };
     let scan = akita_types::DirectScan::new(
-        &direct_plan,
+        direct_plan(),
         akita_types::PreparedCoefficientFunctional::lifted_power(alpha),
     )
     .unwrap();
-    let setup_claim = direct_plan
-        .evaluate_direct::<MixedF>(&scan, &setup)
-        .unwrap();
+    let setup_claim = scan.evaluate_direct::<MixedF>(&setup).unwrap();
 
     let direct = evaluator
         .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
@@ -317,13 +317,11 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
     // A setup claim scanned under another alpha must not stand in for the
     // exact claim on the deferred path.
     let wrong_alpha_scan = akita_types::DirectScan::new(
-        &direct_plan,
+        direct_plan(),
         akita_types::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
     )
     .unwrap();
-    let wrong_alpha_claim = direct_plan
-        .evaluate_direct::<MixedF>(&wrong_alpha_scan, &setup)
-        .unwrap();
+    let wrong_alpha_claim = wrong_alpha_scan.evaluate_direct::<MixedF>(&setup).unwrap();
     assert_ne!(wrong_alpha_claim, setup_claim);
     let wrong_deferred = evaluator
         .eval_flat_at_point_with_deferred_setup::<MixedF>(&point, alpha, wrong_alpha_claim)
@@ -369,7 +367,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         )
         .unwrap();
     let scan = akita_types::DirectScan::new(
-        &plan,
+        plan,
         akita_types::PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             coefficient_point,
@@ -385,8 +383,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .iter()
         .try_fold(MixedF::zero(), |sum, group| {
             Ok::<_, AkitaError>(
-                sum + plan.evaluate_reduced_structured_group::<MixedF>(
-                    &scan,
+                sum + scan.evaluate_reduced_structured_group::<MixedF>(
                     group.group_id,
                     &group.multipliers.challenges,
                     &group.multipliers.opening,
@@ -394,7 +391,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             )
         })
         .unwrap();
-    let expected = structured + plan.evaluate_direct::<MixedF>(&scan, &setup).unwrap();
+    let expected = structured + scan.evaluate_direct::<MixedF>(&setup).unwrap();
     let got = evaluator
         .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
         .unwrap();

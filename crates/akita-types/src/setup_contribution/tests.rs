@@ -413,7 +413,7 @@ fn prepare_test_plan(
     )
 }
 /// Lifted direct scan at the fixed test alpha used by every direct oracle.
-fn lifted_test_scan(plan: &SetupContributionPlan<F>) -> DirectScan<F> {
+fn lifted_test_scan(plan: SetupContributionPlan<F>) -> DirectScan<F> {
     DirectScan::new(
         plan,
         PreparedCoefficientFunctional::lifted_power(test_scalar(3)),
@@ -425,7 +425,7 @@ fn finalize_test_plan(
     d_physical_cols: usize,
     groups: Vec<(SetupContributionGroupPlan<F>, DirectScanWeights<F>)>,
     role_dims: CommitmentRingDims,
-) -> (SetupContributionPlan<F>, DirectScan<F>) {
+) -> DirectScan<F> {
     let (groups, direct_groups): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
     let a_footprint = groups
         .iter()
@@ -472,15 +472,14 @@ fn finalize_test_plan(
             )
             .expect("valid test group projection");
     }
-    let scan = DirectScan::with_mode(
-        &plan,
+    DirectScan::with_mode(
+        plan,
         DirectScanMode::Lifted {
             alpha: test_scalar(3),
             groups: direct_groups,
         },
     )
-    .expect("valid cached setup scan segments");
-    (plan, scan)
+    .expect("valid cached setup scan segments")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -538,7 +537,7 @@ fn test_group_plan(
         physical_b,
         a_row_weights: a_row_weights.into(),
         fold_gadget: vec![F::one()].into(),
-        active_unit_ranges: Vec::new().into(),
+        active_units: Vec::new().into(),
         num_physical_units: 0,
         d_tensors: Vec::new(),
         a_tensors: Vec::new(),
@@ -555,7 +554,7 @@ fn test_group_plan(
 
 #[test]
 fn cached_structured_evaluation_rejects_reduced_scan() {
-    let (plan, lifted) = finalize_test_plan(
+    let lifted = finalize_test_plan(
         1,
         1,
         vec![test_group_plan(
@@ -572,7 +571,12 @@ fn cached_structured_evaluation_rejects_reduced_scan() {
         )],
         CommitmentRingDims::uniform(TEST_D),
     );
-    let DirectScanMode::Lifted { groups, .. } = lifted.mode else {
+    let DirectScan {
+        plan,
+        mode: DirectScanMode::Lifted { groups, .. },
+        ..
+    } = lifted
+    else {
         unreachable!("finalize_test_plan builds a lifted scan");
     };
     let role = ReducedRoleCoefficientState {
@@ -580,7 +584,7 @@ fn cached_structured_evaluation_rejects_reduced_scan() {
         equality: vec![F::one()].into(),
     };
     let reduced = DirectScan::with_mode(
-        &plan,
+        plan,
         DirectScanMode::Reduced {
             alpha: test_scalar(3),
             groups: groups
@@ -594,7 +598,7 @@ fn cached_structured_evaluation_rejects_reduced_scan() {
     )
     .unwrap();
     assert!(matches!(
-        plan.evaluate_structured_group_cached::<F>(&reduced, 0, &[], &[]),
+        reduced.evaluate_structured_group_cached::<F>(0, &[], &[]),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -975,7 +979,8 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         relation_address_geometry,
     )
     .unwrap();
-    let scan = lifted_test_scan(&plan);
+    let scan = lifted_test_scan(plan);
+    let plan = scan.plan();
     assert_eq!(
         plan.groups
             .iter()
@@ -1006,7 +1011,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
     assert_eq!(
-        SetupIndexWeightMle::new(&plan, &witness_layout)
+        SetupIndexWeightMle::new(plan)
             .unwrap()
             .evaluate(&rho_setup_idx, alpha)
             .unwrap(),
@@ -1028,8 +1033,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             alpha,
         );
         assert_eq!(
-            plan.evaluate_structured_group_cached::<F>(
-                &scan,
+            scan.evaluate_structured_group_cached::<F>(
                 group.group_id,
                 &block_challenges,
                 &opening_a_evals,
@@ -1111,8 +1115,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-    let scan = lifted_test_scan(&plan);
-    let z_eq_slice = scan.group_column_eq_slices(&plan, 0).unwrap().2;
+    let scan = lifted_test_scan(plan);
+    let z_eq_slice = scan.group_column_eq_slices(0).unwrap().2;
     assert_eq!(z_eq_slice, expected);
     assert_ne!(
         z_eq_slice, wrong_with_commit_gadget,
@@ -1254,7 +1258,8 @@ fn single_group_plan_supports_multi_chunk_weights() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
-    let scan = lifted_test_scan(&plan);
+    let scan = lifted_test_scan(plan);
+    let plan = scan.plan();
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -1270,9 +1275,9 @@ fn single_group_plan_supports_multi_chunk_weights() {
         ),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(&scan, &setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
+    let expected = scan
+        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D)
         .unwrap();
-    let got = plan.evaluate_direct::<F>(&scan, &setup).unwrap();
+    let got = scan.evaluate_direct::<F>(&setup).unwrap();
     assert_eq!(got, expected);
 }

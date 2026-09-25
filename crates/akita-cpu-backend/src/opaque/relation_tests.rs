@@ -308,7 +308,7 @@ fn structured_reduced_evaluation(
     )
     .expect("setup contribution plan");
     let scan = DirectScan::new(
-        &setup_plan,
+        setup_plan,
         PreparedCoefficientFunctional::reduced_evaluation(
             fixture.alpha,
             &fixture.point[..coefficient_bits],
@@ -317,9 +317,8 @@ fn structured_reduced_evaluation(
         .expect("reduced coefficient functional"),
     )
     .expect("reduced direct scan");
-    let structured = setup_plan
+    let structured = scan
         .evaluate_reduced_structured_group::<ReducedF>(
-            &scan,
             0,
             instance
                 .group_ambient_a_challenges(0)
@@ -348,8 +347,8 @@ fn structured_reduced_evaluation(
         ReducedF::zero()
     };
     structured
-        + setup_plan
-            .evaluate_direct::<ReducedF>(&scan, setup)
+        + scan
+            .evaluate_direct::<ReducedF>(setup)
             .expect("direct reduced setup evaluation")
         + compression
 }

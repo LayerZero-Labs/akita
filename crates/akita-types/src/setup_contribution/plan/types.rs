@@ -505,18 +505,14 @@ pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) physical_b: PhysicalBSetupPlan<E>,
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    /// Exact non-empty block ranges used by the partitioned E and T roles.
-    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// The non-empty witness units of this group, in layout order. The E and
+    /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
+    /// are rebuilt from them, so no second layout is ever consulted.
+    pub(crate) active_units: Arc<[crate::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SetupUnitRange {
-    pub(crate) global_block_start: usize,
-    pub(crate) num_live_blocks: usize,
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {

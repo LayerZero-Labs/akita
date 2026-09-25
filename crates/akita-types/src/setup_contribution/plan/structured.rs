@@ -91,20 +91,20 @@ impl<E: Field> SetupContributionPlan<E> {
             z_cols,
         })
     }
+}
 
+impl<E: Field> DirectScan<E> {
     /// Contract one group's structured E/T/Z terms against the E/T/Z column
     /// weights already materialized by a lifted direct scan.
     ///
-    /// The lifted alpha is the one `scan` was prepared for.
+    /// The lifted alpha is the one this scan was prepared for.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] if `scan` is not a lifted scan for
-    /// this plan, and [`AkitaError::InvalidProof`] if the challenge vectors do
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a lifted scan, and [`AkitaError::InvalidProof`] if the challenge vectors do
     /// not match the group's shape.
     pub fn evaluate_structured_group_cached<F>(
         &self,
-        scan: &DirectScan<E>,
         group_id: usize,
         block_challenges: &[E],
         opening_a_evals: &[E],
@@ -113,11 +113,11 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        scan.check_plan(self)?;
+        let plan = &self.plan;
         let DirectScanMode::Lifted {
             alpha,
             groups: scan_groups,
-        } = &scan.mode
+        } = &self.mode
         else {
             return Err(AkitaError::InvalidSetup(
                 "cached structured relation requires a lifted direct scan".into(),
@@ -139,7 +139,7 @@ impl<E: Field> SetupContributionPlan<E> {
             e_len,
             t_len,
             z_cols,
-        } = self.structured_group_shape::<F>(group_id, block_challenges, opening_a_evals)?;
+        } = plan.structured_group_shape::<F>(group_id, block_challenges, opening_a_evals)?;
         let weights = scan_groups.get(group_index).ok_or_else(|| {
             AkitaError::InvalidSetup("lifted direct-scan group is missing".into())
         })?;
@@ -289,7 +289,9 @@ impl<E: Field> SetupContributionPlan<E> {
             et
         })
     }
+}
 
+impl<E: Field> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms in closed form through its
     /// canonical relation-column tensors, without a materialized direct scan.
     ///
@@ -358,7 +360,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 "structured role tensor families disagree".into(),
             ));
         }
-        let active_unit_count = group.active_unit_ranges.len();
+        let active_unit_count = group.active_units.len();
         if active_unit_count == 0 || group.num_physical_units == 0 {
             return Err(AkitaError::InvalidSetup(
                 "structured tensor partition is empty".into(),
@@ -405,11 +407,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 )
             };
             let unit = group
-                .active_unit_ranges
+                .active_units
                 .get(unit_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            let global_block_start = unit.global_block_start;
-            let unit_blocks = unit.num_live_blocks;
+            let global_block_start = unit.global_block_start();
+            let unit_blocks = unit.num_live_blocks();
             let setup_block = claim
                 .checked_mul(group.num_live_blocks)
                 .and_then(|block| block.checked_add(global_block_start))
