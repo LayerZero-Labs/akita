@@ -832,9 +832,10 @@ fn combined_family_setup_matches_per_family_proofs() {
         let combined_setup =
             akita_setup::new_prover_setup::<F>(&combined_requirements).expect("combined setup");
         assert_eq!(
-            combined_setup.expanded.shared_matrix().num_field_elements(),
+            combined_requirements.matrix_capacity.num_field_elements,
             dense_fields.max(onehot_fields)
         );
+        assert_setup_capacity(&combined_setup, dense_fields.max(onehot_fields));
         let backend = CpuBackend::new(combined_setup.expanded.clone()).expect("backend");
 
         let dense_evals = dense_field_evals(DENSE_NV, 0x5e70_0001);
@@ -868,10 +869,7 @@ fn combined_family_setup_matches_per_family_proofs() {
         );
 
         let dense_setup = dense_scheme.setup_prover(MAX_NV, 1).expect("dense setup");
-        assert_eq!(
-            dense_setup.expanded.shared_matrix().num_field_elements(),
-            dense_fields
-        );
+        assert_setup_capacity(&dense_setup, dense_fields);
         let (dense_commitment, dense_proof) = commit_prove_verify_single_group(
             &dense_scheme,
             &dense_setup,
@@ -884,10 +882,7 @@ fn combined_family_setup_matches_per_family_proofs() {
         let onehot_setup = onehot_scheme
             .setup_prover(MAX_NV, 1)
             .expect("one-hot setup");
-        assert_eq!(
-            onehot_setup.expanded.shared_matrix().num_field_elements(),
-            onehot_fields
-        );
+        assert_setup_capacity(&onehot_setup, onehot_fields);
         let (onehot_commitment, onehot_proof) = commit_prove_verify_single_group(
             &onehot_scheme,
             &onehot_setup,
@@ -903,4 +898,18 @@ fn combined_family_setup_matches_per_family_proofs() {
         assert_eq!(combined_dense_proof, dense_proof);
         assert_eq!(combined_onehot_proof, onehot_proof);
     });
+}
+
+/// A setup always covers the capacity it was requested at. Without
+/// `disk-persistence` it is generated at exactly that capacity, so the
+/// per-family and combined setups really differ in size. With it, a cached
+/// covering matrix may be loaded instead.
+fn assert_setup_capacity(setup: &akita_cpu_backend::AkitaProverSetup<F>, required: usize) {
+    let actual = setup.expanded.shared_matrix().num_field_elements();
+    assert!(
+        actual >= required,
+        "setup must cover {required} field elements"
+    );
+    #[cfg(not(feature = "disk-persistence"))]
+    assert_eq!(actual, required);
 }
