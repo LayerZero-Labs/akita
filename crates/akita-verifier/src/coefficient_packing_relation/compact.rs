@@ -364,22 +364,11 @@ pub(super) fn prepare_compact_factors<F: Field, E: Field>(
     let kh = group.geometry().subring_embedding_stride();
     let d_a = group.geometry().a_ring_dimension();
     let partial_width = group.geometry().partial_base_field_width();
-    if group.prepared_point().geometry() != group.geometry()
-        || group.group_claim_coefficients().len() != group.num_claims()
-        || group.challenge_alpha_values().len()
-            != group
-                .num_claims()
-                .checked_mul(group.num_live_blocks())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("packing challenge count overflow".into())
-                })?
-        || group.alpha_powers().len() != s
-        || group.basis().len() != k
-        || group.d_d() == 0
-        || !partial_width.is_multiple_of(group.d_d())
-    {
+    // The validated group fixes the point geometry, claim count, challenge
+    // count, alpha powers and basis. Only the digit split is compact-specific.
+    if group.d_d() == 0 || !partial_width.is_multiple_of(group.d_d()) {
         return Err(AkitaError::InvalidSetup(
-            "coefficient-packing compact factors disagree with their geometry".into(),
+            "coefficient-packing digit dimension does not divide the partial width".into(),
         ));
     }
 
