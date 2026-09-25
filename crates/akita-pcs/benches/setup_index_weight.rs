@@ -6,8 +6,9 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupIndexWeightMle, SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
+    SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
+use akita_verifier::SetupIndexWeightMle;
 use std::hint::black_box;
 
 use criterion::measurement::WallTime;

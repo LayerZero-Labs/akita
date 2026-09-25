@@ -22,12 +22,12 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    DigitRangePlan, DirectScan, OpeningClaimsLayout, PreparedCoefficientFunctional,
-    PreparedRelationAddress, RelationAddressGeometry, RelationRangeImagePlan,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingRelationInstance,
-    RingRelationMode, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupMatrixCapacity, SisModulusProfileId,
+    DigitRangePlan, OpeningClaimsLayout, PreparedRelationAddress, RelationAddressGeometry,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
+    RingRelationInstance, RingRelationMode, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
+use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 

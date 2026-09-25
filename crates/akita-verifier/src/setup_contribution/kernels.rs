@@ -118,7 +118,7 @@ pub(super) fn role_projection<E: Field>(
     Some(RoleProjection::Projected {
         scales,
         shift: ratio.trailing_zeros() as usize,
-        mask: ratio - 1,
+        mask: ratio.checked_sub(1)?,
     })
 }
 
@@ -370,7 +370,7 @@ where
     Base: Field,
     E: ExtField<Base> + MulBaseUnreduced<Base>,
 {
-    use super::super::checked_slice;
+    use super::checked_slice;
 
     let ring_d = alpha_pows.len();
     let mut acc = E::zero();

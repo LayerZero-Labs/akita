@@ -63,7 +63,8 @@ impl<E: Field> ReducedCoefficientFunctional<E> {
         &self.weights
     }
 
-    pub(crate) fn into_weights(self) -> Arc<[E]> {
+    #[must_use]
+    pub fn into_weights(self) -> Arc<[E]> {
         self.weights
     }
 }

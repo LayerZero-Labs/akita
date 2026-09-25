@@ -5,7 +5,7 @@ use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Field};
 
-use crate::WitnessLayout;
+use akita_types::WitnessLayout;
 
 /// Per-role relation lane geometry for building canonical setup column weights.
 ///
@@ -410,8 +410,10 @@ where
                         0,
                     )? / base_ring_dimension;
                     if spec.is_uniform() {
-                        let opening_index =
-                            crate::checked_opening_source_index(opening_source_len, first_lane)?;
+                        let opening_index = akita_types::checked_opening_source_index(
+                            opening_source_len,
+                            first_lane,
+                        )?;
                         weight -= eq_window.eval(opening_index).mul_base(fold);
                     } else {
                         // Per-role: α-lane-summed canonical `eq` (subcolumn 0).
