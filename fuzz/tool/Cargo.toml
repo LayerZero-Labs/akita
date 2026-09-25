@@ -1,0 +1,18 @@
+[package]
+name = "akita-fuzz-tool"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Uninstrumented companion to the fuzz targets: seed generation, case
+# listing, and replay/smoke runs through the same engine-independent code.
+[[bin]]
+name = "akita-fuzz-tool"
+path = "src/main.rs"
+
+[dependencies]
+akita-fuzz = { path = "..", default-features = false }
+
+[features]
+default = ["parallel"]
+parallel = ["akita-fuzz/parallel"]
