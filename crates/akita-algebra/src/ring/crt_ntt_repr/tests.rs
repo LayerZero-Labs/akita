@@ -5,7 +5,7 @@ use super::*;
 use crate::ntt::prime::NttPrime;
 use crate::ntt::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
-    Q64_PRIMES,
+    Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use crate::CyclotomicRing;
 
@@ -221,4 +221,186 @@ fn q128_parameters_build_on_a_2_mib_stack() {
         .expect("spawn")
         .join()
         .expect("build Q128 parameters");
+}
+
+/// Deterministic centered values in `[-bound, bound]`, including both ends.
+fn centered_probe(seed: usize, bound: i128) -> i128 {
+    match seed % 5 {
+        0 => bound,
+        1 => -bound,
+        _ => {
+            let mixed = (seed as u64)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .rotate_left(17);
+            i128::from(mixed).rem_euclid(2 * bound + 1) - bound
+        }
+    }
+}
+
+/// Exact `matrix * rhs` over `Z[X] / (X^D + 1)` by schoolbook multiplication.
+fn schoolbook_mat_vec<const D: usize>(
+    matrix: &[[i128; D]],
+    num_rows: usize,
+    rhs: &[[i16; D]],
+) -> Vec<[i128; D]> {
+    matrix
+        .chunks_exact(rhs.len())
+        .take(num_rows)
+        .map(|row| {
+            let mut out = [0i128; D];
+            for (entry, digits) in row.iter().zip(rhs) {
+                for (i, &lhs) in entry.iter().enumerate() {
+                    for (j, &digit) in digits.iter().enumerate() {
+                        let term = lhs * i128::from(digit);
+                        if i + j < D {
+                            out[i + j] += term;
+                        } else {
+                            out[i + j - D] -= term;
+                        }
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+fn assert_matches_schoolbook<F: Field + CanonicalEncoding, const D: usize>(
+    actual: &[CyclotomicRing<F, D>],
+    expected: &[[i128; D]],
+    modulus: i128,
+) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        let expected = expected.map(|value| {
+            let residue = value.rem_euclid(modulus);
+            if residue > modulus / 2 {
+                residue - modulus
+            } else {
+                residue
+            }
+        });
+        assert_eq!(actual.centered_coefficients_i128(), expected, "D={D}");
+    }
+}
+
+fn rings<F: Field + CanonicalEncoding, const D: usize>(
+    entries: &[[i128; D]],
+) -> Vec<CyclotomicRing<F, D>> {
+    entries
+        .iter()
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(
+                entry.map(|value| F::from_i64(i64::try_from(value).expect("probe fits i64"))),
+            )
+        })
+        .collect()
+}
+
+/// Full-range fp64 entries through the three-prime i32 profile, whose
+/// worst case `2 * 3 * D * floor(q / 2) * 128` stays below 2^84 at D = 2048.
+fn assert_i32_mat_vec_matches_schoolbook<const D: usize>() {
+    type F = Prime64Offset59;
+    const Q: i128 = (1 << 64) - 59;
+    let (num_rows, num_cols) = (2, 3);
+    let params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| from_fn(|index| centered_probe(entry * D + index, Q / 2)))
+        .collect::<Vec<[i128; D]>>();
+    let rhs = (0..num_cols)
+        .map(|column| from_fn(|index| centered_probe(7 + column * D + index, 128) as i16))
+        .collect::<Vec<[i16; D]>>();
+    let matrix = rings::<F, D>(&entries)
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect::<Vec<_>>();
+    let actual = CyclotomicCrtNtt::mat_vec_i16::<F>(&matrix, num_rows, num_cols, &rhs, &params)
+        .expect("i32 matvec");
+    assert_matches_schoolbook(&actual, &schoolbook_mat_vec(&entries, num_rows, &rhs), Q);
+}
+
+#[test]
+fn i32_crt_mat_vec_matches_schoolbook() {
+    assert_i32_mat_vec_matches_schoolbook::<256>();
+    assert_i32_mat_vec_matches_schoolbook::<1024>();
+    assert_i32_mat_vec_matches_schoolbook::<2048>();
+}
+
+/// A pure i16 profile of about 2^41.2 with `|A| <= 2^20` and `|x| <= 4`.
+fn assert_i16_mat_vec_matches_schoolbook<const D: usize>() {
+    type F = Prime32Offset99;
+    const Q: i128 = (1 << 32) - 99;
+    let (num_rows, num_cols) = (2, 2);
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| from_fn(|index| centered_probe(entry * D + index, 1 << 20)))
+        .collect::<Vec<[i128; D]>>();
+    let rhs = (0..num_cols)
+        .map(|column| from_fn(|index| centered_probe(3 + column * D + index, 4) as i16))
+        .collect::<Vec<[i16; D]>>();
+    let matrix = rings::<F, D>(&entries)
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect::<Vec<_>>();
+    let actual = CyclotomicCrtNtt::mat_vec_i16::<F>(&matrix, num_rows, num_cols, &rhs, &params)
+        .expect("i16 matvec");
+    assert_matches_schoolbook(&actual, &schoolbook_mat_vec(&entries, num_rows, &rhs), Q);
+}
+
+#[test]
+fn i16_crt_mat_vec_matches_schoolbook() {
+    assert_i16_mat_vec_matches_schoolbook::<256>();
+    assert_i16_mat_vec_matches_schoolbook::<512>();
+}
+
+/// Row 0 is the aligned worst case: constant `floor(q / 2)` entries against
+/// constant `-2^15` digits reach `4 * (D - 2) * floor(q / 2) * 2^15`, about
+/// 2^91 at D = 2048, past the three i32 primes and within the i16 tail.
+#[test]
+fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
+    const D: usize = 2048;
+    type F = Prime64Offset59;
+    const Q: i128 = (1 << 64) - 59;
+    let (num_rows, num_cols) = (2, 4);
+    let wide = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let tail = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| {
+            from_fn(|index| {
+                if entry < num_cols {
+                    Q / 2
+                } else {
+                    centered_probe(entry * D + index, Q / 2)
+                }
+            })
+        })
+        .collect::<Vec<[i128; D]>>();
+    let rhs = vec![[i16::MIN; D]; num_cols];
+    let rings = rings::<F, D>(&entries);
+    let wide_matrix = rings
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &wide))
+        .collect::<Vec<_>>();
+    let tail_matrix = rings
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail))
+        .collect::<Vec<_>>();
+    let expected = schoolbook_mat_vec(&entries, num_rows, &rhs);
+
+    let actual = mat_vec_i16_with_tail::<F, Q64_NUM_PRIMES, D>(
+        &wide_matrix,
+        &tail_matrix,
+        num_rows,
+        num_cols,
+        &rhs,
+        &I16TailParams::new(wide.clone(), tail),
+    )
+    .expect("tail matvec");
+    assert_matches_schoolbook(&actual, &expected, Q);
+
+    // The wide primes alone wrap on the aligned row, so the tail is load-bearing.
+    let wide_only =
+        CyclotomicCrtNtt::mat_vec_i16::<F>(&wide_matrix, num_rows, num_cols, &rhs, &wide)
+            .expect("wide matvec");
+    assert_ne!(wide_only[0], actual[0]);
 }
