@@ -161,7 +161,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         .expect("select generated schedule row")
         .selection();
 
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let verifier = scheme
+        .verifier(scheme.setup_verifier(&setup).expect("verifier setup"))
+        .expect("verifier");
 
     let mode_label = "direct";
     group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -208,10 +210,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
-            scheme
+            verifier
                 .batched_verify(
                     black_box(&proof),
-                    black_box(&verifier_setup),
                     b"bench",
                     black_box(verifier_claims(
                         selection,
@@ -229,10 +230,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     // the per-fold Stage-2 spans nested inside the public verification call.
     if measure_stage2 {
         relation_phase_timing::report(label, nv, 3, || {
-            scheme
+            verifier
                 .batched_verify(
                     &proof,
-                    &verifier_setup,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &commitments[0]),
                     BasisMode::Lagrange,
@@ -243,10 +243,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         group.bench_function(format!("verify_all_stage2/{mode_label}"), |b| {
             b.iter_custom(|iterations| {
                 relation_phase_timing::measure_complete_stage2(iterations, || {
-                    scheme
+                    verifier
                         .batched_verify(
                             black_box(&proof),
-                            black_box(&verifier_setup),
                             b"bench",
                             black_box(verifier_claims(
                                 selection,
@@ -284,10 +283,9 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     BasisMode::Lagrange,
                 )
                 .unwrap();
-            scheme
+            verifier
                 .batched_verify(
                     &pf,
-                    &verifier_setup,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
@@ -394,7 +392,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         .expect("select generated schedule row")
         .selection();
 
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let verifier = scheme
+        .verifier(scheme.setup_verifier(&setup).expect("verifier setup"))
+        .expect("verifier");
 
     let mode_label = "direct";
     group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -441,10 +441,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 
     group.bench_function(format!("verify/{mode_label}"), |b| {
         b.iter(|| {
-            scheme
+            verifier
                 .batched_verify(
                     black_box(&proof),
-                    black_box(&verifier_setup),
                     b"bench",
                     black_box(verifier_claims(
                         selection,
@@ -480,10 +479,9 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                     BasisMode::Lagrange,
                 )
                 .unwrap();
-            scheme
+            verifier
                 .batched_verify(
                     &pf,
-                    &verifier_setup,
                     b"bench",
                     verifier_claims(selection, &pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,

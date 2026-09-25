@@ -21,7 +21,7 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_types::{prepared_verifier_ntt_cache_metadata, BasisMode};
-use akita_verifier::{batched_verify, build_riscv64_terminal_ntt_cache};
+use akita_verifier::{build_riscv64_terminal_ntt_cache, AkitaVerifier};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -155,10 +155,15 @@ macro_rules! strict_decode_and_verify {
         let decoded =
             AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>(inner_blob, &schedules)
                 .map_err(|err| format!("strict input decode failed: {err}"))?;
-        batched_verify::<$cfg>(
+        AkitaVerifier::for_selection(
+            decoded.verifier_setup.clone(),
+            schedules.clone(),
+            decoded.schedule_selection,
+            None,
+        )
+        .map_err(|err| format!("strict host verifier setup failed: {err}"))?
+        .batched_verify(
             &decoded.proof,
-            &decoded.verifier_setup,
-            &schedules,
             &decoded.transcript_domain,
             decoded
                 .verifier_statement()
@@ -182,17 +187,15 @@ macro_rules! strict_fp128_preflight {
             decoded.schedule_selection.row_digest,
         )
         .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
-        decoded
-            .verifier_setup
-            .install_trusted_prepared_verifier_ntt_cache(
-                &cache,
-                decoded.schedule_selection.row_digest,
-            )
-            .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
-        batched_verify::<$cfg>(
+        AkitaVerifier::for_selection(
+            decoded.verifier_setup.clone(),
+            schedules.clone(),
+            decoded.schedule_selection,
+            Some(&cache),
+        )
+        .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
+        .batched_verify(
             &decoded.proof,
-            &decoded.verifier_setup,
-            &schedules,
             &decoded.transcript_domain,
             decoded
                 .verifier_statement()

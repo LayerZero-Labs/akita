@@ -366,13 +366,15 @@ fn fp128_onehot_batched() {
             .expect("prove");
 
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("onehot nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
@@ -429,13 +431,15 @@ fn fp128_dense_batched() {
             .expect("prove");
 
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("dense nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
@@ -520,13 +524,20 @@ fn fp128_onehot_oversized_setup() {
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    verify_input::<OneHotCfg>(
+                        &pt[..],
+                        &openings[..],
+                        &commitment,
+                        scheme.schedules(),
+                    ),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| {
                 panic!("oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}): {e:?}")
             });
@@ -585,13 +596,20 @@ fn fp128_dense_monomial_basis() {
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Monomial,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    verify_input::<DenseCfg>(
+                        &pt[..],
+                        &openings[..],
+                        &commitment,
+                        scheme.schedules(),
+                    ),
+                    BasisMode::Monomial,
+                )
+            })
             .expect("monomial verify");
     });
 }

@@ -5,11 +5,13 @@ use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
 use akita_types::{
     decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
-    AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    TerminalFoldParams, TerminalResponse,
+    FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint, TerminalFoldParams,
+    TerminalResponse,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+
+use crate::prepared_cache::TerminalNttCache;
 
 fn sparse_challenge_mul_accumulate<F, const D: usize>(
     challenge: &SparseChallenge,
@@ -72,13 +74,12 @@ where
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
+    terminal_ntt: &TerminalNttCache,
     t: &[CyclotomicRing<F, D>],
     z: &[[i16; D]],
     challenges: &Challenges,
     n_a: usize,
     n_a_cols: usize,
-    prepared_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -94,7 +95,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let (rhs, lhs) = cfg_join!(
-        || super::terminal_ntt::centered_rows(setup, n_a, z, prepared_prefix_len),
+        || super::terminal_ntt::centered_rows(terminal_ntt, n_a, z),
         || {
             let _span = tracing::info_span!(
                 "terminal_direct_a_lhs",
@@ -131,7 +132,7 @@ where
 /// Check reduced consistency and A rows for a quotient-free terminal witness.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(super) fn verify_terminal_ring_relations<F>(
-    setup: &AkitaVerifierSetup<F>,
+    terminal_ntt: &TerminalNttCache,
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
@@ -274,15 +275,7 @@ where
                     Ok::<_, AkitaError>((folded, reduced))
                 },
                 || {
-                    check_a_rows::<F, D_A>(
-                        setup,
-                        t,
-                        z_centered,
-                        challenges,
-                        n_a,
-                        n_a_cols,
-                        n_a.checked_mul(n_a_cols).ok_or(AkitaError::InvalidProof)?,
-                    )
+                    check_a_rows::<F, D_A>(terminal_ntt, t, z_centered, challenges, n_a, n_a_cols)
                 }
             );
             let (folded, reduced) = consistency?;

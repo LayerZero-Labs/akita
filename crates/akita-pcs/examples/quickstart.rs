@@ -57,20 +57,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BasisMode::Lagrange,
     )?;
 
-    let verifier_setup = scheme.setup_verifier(&setup)?;
+    let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
     let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
         vec![evaluation],
         &commit_output.committed_group,
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
-    scheme.batched_verify(
-        &proof,
-        &verifier_setup,
-        TRANSCRIPT_DOMAIN,
-        statement,
-        BasisMode::Lagrange,
-    )?;
+    verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 
     println!("Akita proof verified");
     Ok(())

@@ -89,20 +89,21 @@ where
     )
 }
 
-/// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
+/// Whether a concrete schedule's direct verifier matrix uses fit setup.
 ///
 /// Offloaded producer edges are covered by verifier-visible setup-prefix
 /// commitments and do not require their full committed source prefixes here.
-pub fn ensure_verifier_schedule_fits_setup(
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when sizing `schedule` overflows.
+pub fn verifier_schedule_fits_setup(
     setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
-) -> Result<(), AkitaError> {
+) -> Result<bool, AkitaError> {
     let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout)?;
-    ensure_required_setup_field_elements(
-        required.num_field_elements,
-        setup.shared_matrix.as_field_slice().len(),
-    )
+    Ok(required.num_field_elements <= setup.shared_matrix.as_field_slice().len())
 }
 
 fn ensure_required_setup_field_elements(

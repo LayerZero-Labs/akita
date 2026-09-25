@@ -1,4 +1,5 @@
 use super::*;
+use crate::prepared_cache::TerminalNttCache;
 use akita_types::OpeningClaimsLayout;
 
 pub(super) struct NativeSuffixVerifierState<F: Field, E: Field> {
@@ -286,6 +287,7 @@ where
 
 pub(super) fn verify_suffix_native<F, E>(
     setup: &AkitaVerifierSetup<F>,
+    terminal_ntt: &TerminalNttCache,
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     schedule: &FoldSchedule,
     mut current_state: NativeSuffixVerifierState<F, E>,
@@ -321,7 +323,7 @@ where
         };
     }
     verify_terminal_suffix_native(
-        setup,
+        terminal_ntt,
         grinding,
         u32::try_from(schedule.recursive_folds.len() + 1).map_err(|_| AkitaError::InvalidProof)?,
         &current_state,
@@ -330,7 +332,7 @@ where
 }
 
 fn verify_terminal_suffix_native<F, E>(
-    setup: &AkitaVerifierSetup<F>,
+    terminal_ntt: &TerminalNttCache,
     grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
     current_state: &NativeSuffixVerifierState<F, E>,
@@ -496,7 +498,7 @@ where
         t_fields: current_state.witness.clone(),
     };
     super::terminal_direct::verify_terminal_ring_relations(
-        setup,
+        terminal_ntt,
         &challenges,
         &prepared_point.ring_multiplier_point,
         scheduled,

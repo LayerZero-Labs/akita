@@ -159,12 +159,15 @@ where
                 num_field_elements: verifier_capacity.num_field_elements - 1,
             })
             .expect("construct undersized verifier fixture");
-        akita_config::ensure_verifier_schedule_fits_setup(
-            undersized.expanded().as_ref(),
-            &schedule,
-            &opening_layout,
-        )
-        .expect_err("one-field-short verifier setup must reject");
+        assert!(
+            !akita_config::verifier_schedule_fits_setup(
+                undersized.expanded().as_ref(),
+                &schedule,
+                &opening_layout,
+            )
+            .expect("fit check"),
+            "one-field-short verifier setup must not fit"
+        );
     }
 
     let akita_cpu_backend::CommitOutput {
@@ -200,18 +203,20 @@ where
         )
         .expect("prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
 }
 
@@ -318,18 +323,20 @@ where
         )
         .expect("prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
 
     assert!(
@@ -339,36 +346,40 @@ where
     let mut tampered = proof.clone();
     *tampered.last_mut().expect("nonempty proof") ^= 1;
     scheme
-        .batched_verify(
-            &tampered,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &tampered,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("tampering the terminal response must be rejected");
 
     let mut wrong_binding = proof.clone();
     let binding_probe = wrong_binding.len() / 2;
     wrong_binding[binding_probe] ^= 1;
     scheme
-        .batched_verify(
-            &wrong_binding,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &wrong_binding,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("schedule/proof binding mismatch must reject without panic");
 }
 
@@ -456,18 +467,20 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         )
         .expect("batched prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("batched verify");
 }
 
@@ -559,18 +572,20 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         )
         .expect("batched onehot prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("batched onehot verify");
 }
 

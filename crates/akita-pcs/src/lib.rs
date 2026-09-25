@@ -64,6 +64,7 @@ pub use akita_setup::new_prover_setup;
 pub use akita_types::{
     BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
+pub use akita_verifier::AkitaVerifier;
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };

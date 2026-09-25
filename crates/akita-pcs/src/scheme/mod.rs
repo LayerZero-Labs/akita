@@ -7,9 +7,9 @@ use akita_prover::{ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
-    SetupMatrixCapacity,
+    BasisMode, FoldSchedule, FpExtEncoding, OpeningClaimsLayout, SetupMatrixCapacity,
 };
+use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
@@ -172,31 +172,20 @@ where
         Ok(proof)
     }
 
-    /// Verify the canonical native Spongefish argument stream.
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    pub fn batched_verify(
+    /// Build a verifier for `setup` over this scheme's schedule catalog.
+    ///
+    /// The verifier admits every catalog row `setup` supports and prepares
+    /// their terminal matrices once; see [`AkitaVerifier::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
+    /// admitted row fails.
+    pub fn verifier(
         &self,
-        proof: &[u8],
-        setup: &AkitaVerifierSetup<Cfg::Field>,
-        session: &[u8],
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        basis: BasisMode,
-    ) -> Result<(), AkitaError> {
-        let started = Instant::now();
-        akita_verifier::batched_verify::<Cfg>(
-            proof,
-            setup,
-            &self.schedules,
-            session,
-            statement,
-            basis,
-        )?;
-        tracing::info!(
-            proof_bytes = proof.len(),
-            elapsed_s = started.elapsed().as_secs_f64(),
-            "akita batched verify complete"
-        );
-        Ok(())
+        setup: AkitaVerifierSetup<Cfg::Field>,
+    ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
+        AkitaVerifier::new(setup, self.schedules.clone())
     }
 
     /// Protocol identifier.

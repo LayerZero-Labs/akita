@@ -120,13 +120,15 @@ where
         .expect("verifier group")])
         .expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                transcript_domain,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    transcript_domain,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .expect("recursive direct verify");
     });
 }
@@ -188,13 +190,15 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
     }
 }
@@ -246,13 +250,15 @@ where
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
     }
 }
@@ -370,13 +376,15 @@ where
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| {
                 panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });
@@ -470,13 +478,15 @@ where
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| {
                 panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });

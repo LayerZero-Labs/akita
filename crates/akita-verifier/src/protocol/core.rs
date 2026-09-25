@@ -39,8 +39,6 @@ mod suffix;
 mod terminal_direct;
 mod terminal_ntt;
 
-pub use verify::batched_verify;
-
 pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 
 pub(in crate::protocol::core) use fold::{

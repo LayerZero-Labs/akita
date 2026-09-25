@@ -187,13 +187,15 @@ fn heterogeneous_group_types() {
         ])
         .expect("verifier claims");
         onehot_scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .expect("heterogeneous verify");
     });
 }
@@ -348,13 +350,15 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         ])
         .expect("verifier claims");
         onehot_scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .expect("mixed-bound verify");
 
         // Proves the verification above is load-bearing: the same proof against a
@@ -376,13 +380,13 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         .expect("tampered claims");
         assert!(
             onehot_scheme
-                .batched_verify(
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
-                    &verifier_setup,
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "a tampered bounded-group opening must not verify"
         );
@@ -820,23 +824,25 @@ fn explicit_commitment_transfer_between_backends() {
         )
         .expect("heterogeneous prove");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                GroupBatchStatement::new(
-                    selection,
-                    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                        pt.clone(),
-                        vec![expected_opening],
-                        &commitments[0],
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    GroupBatchStatement::new(
+                        selection,
+                        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                            pt.clone(),
+                            vec![expected_opening],
+                            &commitments[0],
+                        )
+                        .expect("verifier group")])
+                        .expect("verifier claims"),
                     )
-                    .expect("verifier group")])
-                    .expect("verifier claims"),
+                    .expect("statement"),
+                    BasisMode::Lagrange,
                 )
-                .expect("statement"),
-                BasisMode::Lagrange,
-            )
+            })
             .expect("heterogeneous verify");
     });
 }
@@ -877,13 +883,20 @@ where
         .expect("prove");
     let openings = [opening];
     scheme
-        .batched_verify(
-            &proof,
-            &scheme.setup_verifier(setup).expect("verifier setup"),
-            session,
-            verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
-            BasisMode::Lagrange,
+        .verifier(
+            scheme
+                .setup_verifier(setup)
+                .expect("verifier setup")
+                .clone(),
         )
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
     (commitment, proof)
 }

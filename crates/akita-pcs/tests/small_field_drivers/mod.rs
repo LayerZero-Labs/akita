@@ -118,13 +118,15 @@ where
     .expect("verifier group")])
     .expect("verifier claims");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            label,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                label,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
 
     SingleGroupRoundtrip {
@@ -201,12 +203,14 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     .expect("verifier claims");
 
     scheme
-        .batched_verify(
-            proof,
-            verifier_setup,
-            label,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                proof,
+                label,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .unwrap_or_else(|e| panic!("{what}: {e:?}"));
 }
