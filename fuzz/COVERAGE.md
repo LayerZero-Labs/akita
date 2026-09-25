@@ -43,7 +43,7 @@ planned rows are:
 
 Caps are `AKITA_FUZZ_MAX_CASE_COEFFS` (per process) with defaults 2^17
 (reject, parallel), 2^18 (dense), 2^20 (one-hot, batch), 2^21 (recursive),
-2^16 (boundary targets). `akita-fuzz cases 20` prints the exact list.
+2^16 (boundary targets). `akita-fuzz-dev cases 20` prints the exact list.
 Production-sized rows (nv ≥ 22 and most multi-chunk and recursive rows) are
 not fuzzed: one case would take minutes and gigabytes under ASan. They are
 covered only by the workspace's ignored release tests.

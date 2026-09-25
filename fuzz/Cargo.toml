@@ -8,7 +8,7 @@ publish = false
 cargo-fuzz = true
 
 [workspace]
-members = [".", "runner"]
+members = [".", "runner", "devtool"]
 
 [lib]
 path = "src/lib.rs"

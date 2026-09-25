@@ -1,5 +1,12 @@
-//! Uninstrumented companion commands: seed generation, case listing, and
-//! smoke/replay runs through the same engine-independent target code.
+//! `akita-fuzz-dev`: uninstrumented developer commands over the harness.
+//!
+//! ```text
+//! akita-fuzz-dev list                      library target names
+//! akita-fuzz-dev cases [LOG2_COST]         planned and excluded catalog cases
+//! akita-fuzz-dev seeds OUT_DIR             deterministic seed corpora
+//! akita-fuzz-dev smoke TARGET [N] [SEED]   pseudo-random inputs, no libFuzzer
+//! akita-fuzz-dev replay TARGET FILE...     run inputs once
+//! ```
 
 use akita_fuzz::input::SplitMix64;
 use akita_fuzz::pcs::{Limits, Selector};
@@ -154,4 +161,46 @@ pub fn seeds(out: &Path) {
 
 fn registry_for(limits: Limits) -> akita_fuzz::pcs::Registry {
     akita_fuzz::pcs::Registry::load(limits)
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let arg = |index: usize| args.get(index).map(String::as_str);
+    let result = match arg(0) {
+        Some("list") => {
+            list();
+            Ok(())
+        }
+        Some("cases") => {
+            cases(arg(1).and_then(|v| v.parse().ok()).unwrap_or(20));
+            Ok(())
+        }
+        Some("seeds") => match arg(1) {
+            Some(dir) => {
+                seeds(Path::new(dir));
+                Ok(())
+            }
+            None => Err("seeds OUT_DIR".to_string()),
+        },
+        Some("smoke") => match arg(1) {
+            Some(target) => smoke(
+                target,
+                arg(2).and_then(|v| v.parse().ok()).unwrap_or(100),
+                arg(3).and_then(|v| v.parse().ok()).unwrap_or(1),
+            ),
+            None => Err("smoke TARGET [N] [SEED]".to_string()),
+        },
+        Some("replay") => match arg(1) {
+            Some(target) => replay(
+                target,
+                &args[2..].iter().map(PathBuf::from).collect::<Vec<_>>(),
+            ),
+            None => Err("replay TARGET FILE...".to_string()),
+        },
+        _ => Err("usage: akita-fuzz-dev list|cases|seeds|smoke|replay ...".to_string()),
+    };
+    if let Err(message) = result {
+        eprintln!("akita-fuzz-dev: {message}");
+        std::process::exit(2);
+    }
 }

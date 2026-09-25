@@ -96,10 +96,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-fuzz-runner"
+name = "akita-fuzz-dev"
 version = "0.0.0"
 dependencies = [
  "akita-fuzz",
+]
+
+[[package]]
+name = "akita-fuzz-runner"
+version = "0.0.0"
+dependencies = [
  "clap",
  "flate2",
  "libc",

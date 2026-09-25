@@ -12,7 +12,6 @@ mod registry;
 mod resources;
 mod runner;
 mod store;
-mod tools;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -122,28 +121,6 @@ enum Cmd {
     Validate,
     /// List registry lanes.
     Targets,
-    /// Developer: write deterministic seed corpora (uninstrumented).
-    Seeds { out: PathBuf },
-    /// Developer: list planned and excluded catalog cases.
-    Cases {
-        #[arg(default_value_t = 20)]
-        log2_cost: u32,
-    },
-    /// Developer: run pseudo-random inputs through a target without libFuzzer.
-    Smoke {
-        target: String,
-        #[arg(default_value_t = 100)]
-        count: usize,
-        #[arg(default_value_t = 1)]
-        seed: u64,
-    },
-    /// Developer: run inputs once through a target without libFuzzer.
-    Replay {
-        target: String,
-        inputs: Vec<PathBuf>,
-    },
-    /// Developer: print the library's target names.
-    LibraryTargets,
 }
 
 fn dist_dir(explicit: Option<PathBuf>) -> PathBuf {
@@ -321,24 +298,6 @@ fn execute(dist: &Path, command: Cmd) -> Result<u8, String> {
                     lane.description
                 );
             }
-            Ok(0)
-        }
-        Cmd::Seeds { out } => {
-            tools::seeds(&out);
-            Ok(0)
-        }
-        Cmd::Cases { log2_cost } => {
-            tools::cases(log2_cost);
-            Ok(0)
-        }
-        Cmd::Smoke {
-            target,
-            count,
-            seed,
-        } => tools::smoke(&target, count, seed).map(|()| 0),
-        Cmd::Replay { target, inputs } => tools::replay(&target, &inputs).map(|()| 0),
-        Cmd::LibraryTargets => {
-            tools::list();
             Ok(0)
         }
     }

@@ -1,7 +1,7 @@
 //! `akita-fuzz prepare`: build instrumented targets and package a distribution.
 //!
 //! Run from the source tree (`cargo run --release -p akita-fuzz-runner --
-//! prepare --out DIR`). A plain `cargo build --release` produces no fuzzing
+//! prepare --out DIR`); seeds come from `akita-fuzz-dev` (built here). A plain `cargo build --release` produces no fuzzing
 //! instrumentation; this command runs `cargo fuzz build` (nightly, libFuzzer,
 //! AddressSanitizer, SanitizerCoverage, debug assertions, overflow checks)
 //! and copies the results with everything the campaign needs offline.
@@ -92,9 +92,19 @@ pub fn run(options: Prepare) -> Result<(), String> {
     let repo = fuzz.join("..");
     let lanes = registry::load(&fuzz.join("campaign/targets.toml"))?;
     let registered: BTreeSet<String> = registry::targets(&lanes).into_iter().collect();
-    let library: BTreeSet<String> = akita_fuzz::targets::ALL
-        .iter()
-        .map(|(name, _)| name.to_string())
+    // The developer tool links the harness library; the runner does not.
+    let build_dev = Command::new("cargo")
+        .args(["build", "--release", "-p", "akita-fuzz-dev"])
+        .current_dir(&fuzz)
+        .status()
+        .map_err(|e| format!("build akita-fuzz-dev: {e}"))?;
+    if !build_dev.success() {
+        return Err("cargo build -p akita-fuzz-dev failed".into());
+    }
+    let dev = fuzz.join("target/release/akita-fuzz-dev");
+    let library: BTreeSet<String> = output(Command::new(&dev).arg("list"))?
+        .lines()
+        .map(str::to_string)
         .collect();
     let binaries: BTreeSet<String> = output(
         Command::new("cargo")
@@ -183,12 +193,16 @@ pub fn run(options: Prepare) -> Result<(), String> {
 
     // Seeds use the packaged artifacts so their case selectors match the
     // catalogs the campaign will load.
-    std::env::set_var(
-        akita_fuzz::env::ARTIFACTS_ENV,
-        dist.join("artifacts/schedules"),
-    );
     println!("generating seeds");
-    crate::tools::seeds(&dist.join("seeds"));
+    let seeded = Command::new(&dev)
+        .arg("seeds")
+        .arg(dist.join("seeds"))
+        .env("AKITA_FUZZ_ARTIFACTS", dist.join("artifacts/schedules"))
+        .status()
+        .map_err(|e| format!("akita-fuzz-dev seeds: {e}"))?;
+    if !seeded.success() {
+        return Err("seed generation failed".into());
+    }
 
     let git = |args: &[&str]| {
         output(Command::new("git").args(args).current_dir(&repo)).unwrap_or_default()

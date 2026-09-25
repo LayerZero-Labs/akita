@@ -130,12 +130,6 @@ mod tests {
         assert!(ring
             .iter()
             .any(|lane| lane.env.get("AKITA_SCALAR_NTT").map(String::as_str) == Some("1")));
-        let names: std::collections::BTreeSet<String> = targets(&lanes).into_iter().collect();
-        let library: std::collections::BTreeSet<String> = akita_fuzz::targets::ALL
-            .iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-        assert_eq!(names, library, "registry and library disagree");
     }
 
     #[test]

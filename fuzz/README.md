@@ -2,8 +2,9 @@
 
 A standalone, resumable, multi-day fuzzing campaign for Akita built on
 cargo-fuzz/libFuzzer. Everything is Rust: the targets and their generators
-and oracles live in the `akita-fuzz` library (`src/`), and the campaign runner
-is the `akita-fuzz` binary (`runner/`).
+and oracles live in the `akita-fuzz` library (`src/`); the campaign runner is
+the `akita-fuzz` binary (`runner/`, which does not link Akita); developer
+commands over the library are the `akita-fuzz-dev` binary (`devtool/`).
 
 - What is tested, how, and what is not: [`COVERAGE.md`](COVERAGE.md)
 - Findings from development runs: [`FINDINGS.md`](FINDINGS.md)
@@ -200,11 +201,11 @@ dist/akita-fuzz minimize  --output /data/akita-fuzz <finding-id> [--seconds 300]
 lane's environment and `RUST_BACKTRACE=full`. `minimize` runs libFuzzer's
 `-minimize_crash` and writes `minimized-<time>.input` next to the original.
 
-From a source checkout, the uninstrumented runner can replay any input
-through the same target code, which is convenient under a debugger:
+From a source checkout, `akita-fuzz-dev` replays any input through the same
+target code without instrumentation, which is convenient under a debugger:
 
 ```bash
-cd fuzz && cargo run --release -p akita-fuzz-runner -- replay pcs_dense input.bin
+cd fuzz && cargo run --release -p akita-fuzz-dev -- replay pcs_dense input.bin
 ```
 
 Rust panics are symbolized by the standard library from the binaries' line
@@ -216,10 +217,13 @@ for function names; `prepare` bundles one when it is on `PATH`.
 | Command | Purpose |
 |---|---|
 | `akita-fuzz targets` | Registry lanes and limits |
-| `akita-fuzz cases [LOG2]` | Catalog rows planned or excluded at a cost limit |
-| `akita-fuzz smoke TARGET N [SEED]` | N pseudo-random inputs, no libFuzzer |
-| `akita-fuzz replay TARGET FILE...` | Run inputs once, no libFuzzer |
-| `akita-fuzz seeds DIR` | Regenerate seed corpora |
+| `akita-fuzz-dev cases [LOG2]` | Catalog rows planned or excluded at a cost limit |
+| `akita-fuzz-dev smoke TARGET [N] [SEED]` | N pseudo-random inputs, no libFuzzer |
+| `akita-fuzz-dev replay TARGET FILE...` | Run inputs once, no libFuzzer |
+| `akita-fuzz-dev seeds DIR` | Regenerate seed corpora |
+| `akita-fuzz-dev list` | Library target names |
+
+Run them with `cargo run --release -p akita-fuzz-dev -- <command>` from `fuzz/`.
 
 `cargo fuzz run <target>` also works directly from `fuzz/` for quick local
 sessions; it reads the schedule artifacts from the source tree.
