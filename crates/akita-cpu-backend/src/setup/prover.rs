@@ -129,62 +129,6 @@ impl<F: Field> AkitaProverSetup<F> {
         }
         AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
-
-    /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
-    ///
-    /// Use this when the caller has already run strict setup validation, for
-    /// example through checked setup deserialization. This still re-checks
-    /// seed-to-matrix derivation at the trust boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the expanded setup does not match its seed.
-    pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
-    where
-        F: Field + CanonicalEncoding + Valid,
-    {
-        expanded.check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}"))
-        })?;
-        Self::from_seed_validated_expanded(expanded)
-    }
-
-    /// Wrap a seed-validated [`AkitaExpandedSetup`] in a prover setup.
-    ///
-    /// This skips seed-to-matrix rederivation. Use it only when the caller
-    /// just verified the matrix with `validate_public_matrix_matches_seed` in
-    /// the same trust boundary, such as the disk-cache loader in
-    /// `akita-setup`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the seed and matrix disagree or their internal shape
-    /// metadata is malformed.
-    pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
-    where
-        F: Field + CanonicalEncoding + Valid,
-    {
-        expanded.descriptor().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "expanded setup descriptor validation failed: {err}"
-            ))
-        })?;
-        expanded.shared_matrix().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
-        })?;
-        if expanded.shared_matrix().num_field_elements() != expanded.descriptor().num_field_elements
-        {
-            return Err(AkitaError::InvalidSetup(
-                "expanded setup matrix field count does not match setup descriptor".to_string(),
-            ));
-        }
-        let setup_seed = expanded.descriptor().setup_seed.clone();
-        let expanded = Arc::new(expanded);
-        Ok(Self {
-            expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
-        })
-    }
 }
 
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {

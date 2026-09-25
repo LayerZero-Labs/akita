@@ -3,6 +3,7 @@ use crate::opaque::sumcheck::{digit_range, relation_range_image};
 use akita_error::AkitaError;
 use digit_range::DigitRangeProver;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 
 pub struct CpuStage2SessionHandle<E: Field> {
     binding: crate::opaque::OperationBinding,
@@ -10,7 +11,7 @@ pub struct CpuStage2SessionHandle<E: Field> {
     prover: relation_range_image::RelationRangeImageProver<E>,
     claim: E,
     next_round: usize,
-    pub(super) pending: Option<akita_algebra::uni_poly::UniPoly<E>>,
+    pub(super) pending: Option<UnivariatePoly<E>>,
 }
 
 #[cfg(test)]
@@ -40,7 +41,7 @@ pub(crate) struct CpuExtensionOpeningSession<E: Field> {
     prover: crate::opaque::recursive::opening::ExtensionOpeningReductionProver<E>,
     claim: E,
     next_round: usize,
-    pending: Option<akita_algebra::uni_poly::UniPoly<E>>,
+    pending: Option<UnivariatePoly<E>>,
     num_terms: usize,
 }
 
@@ -190,7 +191,7 @@ where
         &mut self,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         if round != self.next_round
             || round >= self.num_rounds()
             || self.pending.is_some()
@@ -206,7 +207,7 @@ where
             previous_claim,
         );
         if polynomial.degree() > akita_types::EXTENSION_OPENING_REDUCTION_DEGREE
-            || polynomial.evaluate(&E::zero()) + polynomial.evaluate(&E::one()) != previous_claim
+            || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
         {
             return Err(AkitaError::InvalidInput(
                 "extension-opening session returned an invalid round polynomial".into(),
@@ -225,7 +226,7 @@ where
         let polynomial = self.pending.take().ok_or_else(|| {
             AkitaError::InvalidInput("extension-opening session challenge arrived early".into())
         })?;
-        self.claim = polynomial.evaluate(&challenge);
+        self.claim = polynomial.evaluate(challenge);
         akita_sumcheck::SumcheckInstanceProver::ingest_challenge(
             &mut self.prover,
             round,
@@ -264,7 +265,7 @@ where
         &mut self,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         if round != self.next_round
             || round >= self.num_rounds()
             || self.pending.is_some()
@@ -280,7 +281,7 @@ where
             previous_claim,
         );
         if polynomial.degree() > 3
-            || polynomial.evaluate(&E::zero()) + polynomial.evaluate(&E::one()) != previous_claim
+            || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
         {
             return Err(AkitaError::InvalidInput(
                 "relation session returned an invalid round polynomial".into(),
@@ -299,7 +300,7 @@ where
         let polynomial = self.pending.take().ok_or_else(|| {
             AkitaError::InvalidInput("relation session challenge arrived early".into())
         })?;
-        self.claim = polynomial.evaluate(&challenge);
+        self.claim = polynomial.evaluate(challenge);
         akita_sumcheck::SumcheckInstanceProver::ingest_challenge(
             &mut self.prover,
             round,

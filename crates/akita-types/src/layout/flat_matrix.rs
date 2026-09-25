@@ -173,33 +173,6 @@ impl<'a, F: Field> FlatRingMatrixView<'a, F> {
             .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
-
-    /// Coefficients of the ring element at `(row, col)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the position lies outside the view.
-    pub fn elem(&self, row: usize, col: usize) -> Result<&'a [F], AkitaError> {
-        if col >= self.num_cols {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring matrix column {col} out of range (num_cols {})",
-                self.num_cols
-            )));
-        }
-        let idx = row
-            .checked_mul(self.num_cols)
-            .and_then(|base| base.checked_add(col))
-            .and_then(|elem| elem.checked_mul(self.ring_d))
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("ring matrix element index overflow".to_string())
-            })?;
-        let end = idx.checked_add(self.ring_d).ok_or_else(|| {
-            AkitaError::InvalidInput("ring matrix element index overflow".to_string())
-        })?;
-        self.data
-            .get(idx..end)
-            .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
-    }
 }
 
 impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
@@ -526,7 +499,6 @@ mod tests {
 
         let dynamic = flat.ring_view_dyn(1, 1, 1).unwrap();
         assert!(dynamic.row_flat(usize::MAX).is_err());
-        assert!(dynamic.elem(usize::MAX, 0).is_err());
     }
 
     #[test]

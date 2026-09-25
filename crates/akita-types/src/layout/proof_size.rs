@@ -9,16 +9,6 @@ pub fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
 
-/// Ring vector bytes without a length prefix.
-pub fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    ring_len.saturating_mul(ring_dim).saturating_mul(elem_bytes)
-}
-
-/// Packed digit bytes without a length/tag prefix.
-pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
-    num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
-}
-
 /// Serialized byte size for a terminal direct witness shape.
 pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -> usize {
     crate::proof::terminal_response_upper_bound_bytes(

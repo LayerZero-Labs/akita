@@ -9,6 +9,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-field",
+ "jolt-poly",
  "rand_core 0.6.4",
  "tracing",
 ]
@@ -37,6 +38,7 @@ name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-poly",
  "thiserror",
 ]
 
@@ -49,6 +51,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "jolt-field",
+ "jolt-poly",
 ]
 
 [[package]]
@@ -223,13 +226,35 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=72dc6451628d8b1dd794147a1f1cc40be0d77963#72dc6451628d8b1dd794147a1f1cc40be0d77963"
+source = "git+https://github.com/a16z/jolt?rev=e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c#e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c"
 dependencies = [
  "cc",
  "num-traits",
  "rand_core 0.6.4",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "jolt-poly"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c#e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c"
+dependencies = [
+ "jolt-field",
+ "jolt-utils",
+ "num-traits",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-utils"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c#e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

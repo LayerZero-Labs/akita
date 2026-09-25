@@ -384,19 +384,6 @@ impl CompressionWitnessSpan {
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }
-
-    fn coefficient_index(&self, row: usize, coefficient: usize) -> Result<usize, AkitaError> {
-        if row >= self.map.input_width() || coefficient >= self.map.ring_dimension() {
-            return Err(AkitaError::InvalidInput(
-                "compression witness semantic index out of range".into(),
-            ));
-        }
-        let local = row
-            .checked_mul(self.map.ring_dimension())
-            .and_then(|base| base.checked_add(coefficient))
-            .ok_or_else(|| AkitaError::InvalidSetup("compression witness index overflow".into()))?;
-        checked_range_index(&self.range, local, "compression witness")
-    }
 }
 
 impl CompressionWitnessLayerLayout {
@@ -708,40 +695,6 @@ impl WitnessLayout {
     #[must_use]
     pub fn compression_alignment_ranges(&self) -> &[Range<usize>] {
         &self.compression_alignment_ranges
-    }
-
-    /// F digit coefficient address for one group and map.
-    pub fn f_compression_coefficient_index(
-        &self,
-        group_index: usize,
-        map_index: usize,
-        row: usize,
-        coefficient: usize,
-    ) -> Result<usize, AkitaError> {
-        let layer = self
-            .compression_layers
-            .get(map_index)
-            .ok_or_else(|| AkitaError::InvalidInput("compression map index is invalid".into()))?;
-        let span = layer
-            .f_spans
-            .iter()
-            .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-            .ok_or_else(|| AkitaError::InvalidInput("compression group index is invalid".into()))?;
-        span.coefficient_index(row, coefficient)
-    }
-
-    /// Shared H digit coefficient address for one map.
-    pub fn h_compression_coefficient_index(
-        &self,
-        map_index: usize,
-        row: usize,
-        coefficient: usize,
-    ) -> Result<usize, AkitaError> {
-        self.compression_layers
-            .get(map_index)
-            .ok_or_else(|| AkitaError::InvalidInput("compression map index is invalid".into()))?
-            .h_span
-            .coefficient_index(row, coefficient)
     }
 
     pub fn r_rows(&self) -> &[WitnessQuotientRowLayout] {
@@ -1086,17 +1039,6 @@ impl MultiChunkProfileId {
         self as usize
     }
 
-    /// Resolve a profile from its stable index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index >= COUNT` (test-only helper; presets use the named
-    /// variants or [`Self::PRODUCTION`]).
-    pub const fn from_index(index: usize) -> Self {
-        assert!(index < Self::COUNT);
-        Self::ALL[index]
-    }
-
     pub const fn num_chunks(self) -> usize {
         match self {
             Self::W2R1 | Self::W2R2 => 2,
@@ -1170,13 +1112,6 @@ impl ChunkedWitnessCfg {
     /// Build a config from a canonical [`MultiChunkProfileId`].
     pub const fn from_profile(profile: MultiChunkProfileId) -> Self {
         profile.cfg()
-    }
-
-    /// Recover the profile id when this config matches a grid entry.
-    pub fn profile_id(self) -> Option<MultiChunkProfileId> {
-        MultiChunkProfileId::ALL
-            .into_iter()
-            .find(|profile| profile.cfg() == self)
     }
 
     /// Layout-only validation (no dependency on planner internals).

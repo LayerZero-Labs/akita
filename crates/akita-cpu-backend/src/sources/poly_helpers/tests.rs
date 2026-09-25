@@ -352,8 +352,9 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
     let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
     for (block, challenge) in challenges.iter().enumerate() {
         for position in 0..POSITIONS {
-            let digits = rings[block * POSITIONS + position]
-                .balanced_decompose_pow2_i16(num_digits, log_basis);
+            let mut digits = vec![[0i16; D]; num_digits];
+            rings[block * POSITIONS + position]
+                .balanced_decompose_pow2_i16_into(&mut digits, log_basis);
             for digit in 0..num_digits {
                 sparse_mul_acc_i16_scalar(
                     &digits[digit],
@@ -425,8 +426,9 @@ fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
     let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
     for (block, challenge) in challenges.iter().enumerate() {
         for position in 0..POSITIONS {
-            let digits = rings[block * POSITIONS + position]
-                .balanced_decompose_pow2_i16(num_digits, log_basis);
+            let mut digits = vec![[0i16; D]; num_digits];
+            rings[block * POSITIONS + position]
+                .balanced_decompose_pow2_i16_into(&mut digits, log_basis);
             for digit in 0..num_digits {
                 sparse_mul_acc_i16_scalar(
                     &digits[digit],
@@ -740,7 +742,12 @@ fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
     let mut actual_digits = vec![[0i8; D]; num_digits];
     decompose_ring_interleaved::<F, D>(&ring, &mut actual_digits, num_digits, &params);
     let mut expected_digits = vec![[0i8; D]; num_digits];
-    ring.balanced_decompose_pow2_i8_into(&mut expected_digits, log_basis);
+    ring.balanced_decompose_pow2_i8_into_with_params(
+        &mut expected_digits,
+        &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
+            num_digits, log_basis, q,
+        ),
+    );
     assert_eq!(actual_digits, expected_digits);
 
     let mut generic_acc = vec![[0i32; D]; num_digits];

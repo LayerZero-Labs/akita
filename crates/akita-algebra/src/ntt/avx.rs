@@ -16,10 +16,7 @@ mod twiddles;
 
 pub use runtime::{avx_ntt_mode, use_avx2_transform_ntt, AvxNttMode};
 
-pub use pointwise::{
-    add_reduce_i16, add_reduce_i32, add_reduce_i32_avx512, neg_reduce_i32, neg_reduce_i32_avx512,
-    pointwise_mul_i32, pointwise_mul_i32_avx512, sub_reduce_i32, sub_reduce_i32_avx512,
-};
+pub use pointwise::{add_reduce_i16, add_reduce_i32, add_reduce_i32_avx512};
 pub(crate) use pointwise::{
     pointwise_dot_acc_i32, pointwise_mul_acc_i16, pointwise_mul_acc_i32,
     pointwise_mul_acc_i32_avx512,

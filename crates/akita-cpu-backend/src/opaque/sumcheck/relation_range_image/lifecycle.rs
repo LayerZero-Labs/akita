@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 fn stage2_geometry(
     lane_bits: usize,
@@ -274,7 +275,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         Ok(virtual_claim + ordinary_relation + linear_claim + additional)
     }
 
-    pub(super) fn additional_round_polynomial(&self) -> Option<UniPoly<E>> {
+    pub(super) fn additional_round_polynomial(&self) -> Option<UnivariatePoly<E>> {
         let additional = self.additional_relation_terms.as_ref()?;
         Some(match &self.witness_state {
             WitnessState::CompactPrefix(compact_witness) => {
@@ -375,7 +376,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn norm_poly_from_terms(&self, virt_terms: NormRoundTerms<E>) -> UniPoly<E> {
+    pub(super) fn norm_poly_from_terms(&self, virt_terms: NormRoundTerms<E>) -> UnivariatePoly<E> {
         match virt_terms {
             NormRoundTerms::Full(virt_q_coeffs) => {
                 self.split_eq.gruen_mul(&coeffs_to_poly(virt_q_coeffs))
@@ -392,7 +393,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         virt_terms: NormRoundTerms<E>,
         rel_coeffs: [E; 3],
-    ) -> (UniPoly<E>, UniPoly<E>) {
+    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
         let virt_poly = self.norm_poly_from_terms(virt_terms);
         let rel_poly = coeffs_to_poly(rel_coeffs);
         (virt_poly, rel_poly)
@@ -401,18 +402,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     pub(super) fn combine_polys(
         &self,
-        virt_poly: &UniPoly<E>,
-        relation_poly: &UniPoly<E>,
-    ) -> UniPoly<E> {
-        let max_len = virt_poly.coeffs.len().max(relation_poly.coeffs.len());
+        virt_poly: &UnivariatePoly<E>,
+        relation_poly: &UnivariatePoly<E>,
+    ) -> UnivariatePoly<E> {
+        let max_len = virt_poly
+            .coefficients()
+            .len()
+            .max(relation_poly.coefficients().len());
         let mut combined = vec![E::zero(); max_len];
-        for (i, c) in virt_poly.coeffs.iter().enumerate() {
+        for (i, c) in virt_poly.coefficients().iter().enumerate() {
             combined[i] += *c;
         }
-        for (i, c) in relation_poly.coeffs.iter().enumerate() {
+        for (i, c) in relation_poly.coefficients().iter().enumerate() {
             combined[i] += *c;
         }
-        UniPoly::from_coeffs(combined)
+        UnivariatePoly::new(combined)
     }
 
     #[inline]
@@ -420,7 +424,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &mut self,
         virt_terms: NormRoundTerms<E>,
         rel_coeffs: [E; 3],
-    ) -> UniPoly<E> {
+    ) -> UnivariatePoly<E> {
         let (virt_poly, relation_poly) = self.polys_from_terms(virt_terms, rel_coeffs);
         let combined = self.combine_polys(&virt_poly, &relation_poly);
         self.prev_norm_poly = Some(virt_poly);

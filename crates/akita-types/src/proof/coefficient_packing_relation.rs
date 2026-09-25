@@ -4,10 +4,13 @@ use std::ops::Range;
 
 #[cfg(test)]
 use akita_algebra::offset_eq::eq_eval_at_index;
+#[cfg(any(test, feature = "test-support"))]
 use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
+#[cfg(any(test, feature = "test-support"))]
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_error::{checked, AkitaError};
+#[cfg(any(test, feature = "test-support"))]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
 

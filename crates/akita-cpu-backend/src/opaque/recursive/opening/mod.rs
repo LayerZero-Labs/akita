@@ -5,7 +5,7 @@
 //! witness and factor tables.
 
 use akita_algebra::poly::fold_evals_in_place;
-use akita_algebra::uni_poly::UniPoly;
+
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{

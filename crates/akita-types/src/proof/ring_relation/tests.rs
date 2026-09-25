@@ -1,5 +1,3 @@
-#[path = "tests/dimension_tests.rs"]
-mod dimension_tests;
 #[path = "tests/support.rs"]
 mod support;
 
@@ -8,9 +6,8 @@ use crate::layout::GroupOpenPhaseParams;
 use crate::r_decomp_levels;
 use crate::DigitBlocks;
 use crate::{
-    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, RingOpeningPoint,
+    emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
@@ -214,14 +211,6 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     let num_claims = 3;
     let lp = chunk_test_level_params(1, num_claims);
     assert_eq!(lp.witness_chunk.num_chunks, 1);
-    let _lens = ring_relation_segment_lengths::<F>(
-        &lp,
-        RingRelationOpeningCounts {
-            num_claims,
-            num_t_vectors: num_claims,
-        },
-    )
-    .expect("lengths");
 
     let resolved = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
@@ -568,7 +557,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             .expect("group layout")
             .num_polynomials();
         let num_live_blocks = params.num_live_blocks();
-        let depth_witness = params.num_digits_inner();
         let depth_commit = params.num_digits_outer();
         let depth_open = params.num_digits_open();
         let n_a = params.a_rows_len();
@@ -590,7 +578,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             MULTI_GROUP_D,
         )
         .expect("T digits");
-        let depth_fold = params.num_digits_fold();
         for unit in layout.units_for_group(group_index).expect("units") {
             emit_witness_e_planes::<MULTI_GROUP_D>(
                 &mut emitted,
@@ -612,22 +599,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
                 num_live_blocks,
             )
             .expect("emit T");
-            let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
-                .map(|index| {
-                    marker::<MULTI_GROUP_D>(500 * group_index + 100 * unit.chunk_index() + index)
-                })
-                .collect::<Vec<_>>();
-            emit_witness_z_planes::<MULTI_GROUP_D>(
-                &mut emitted,
-                unit,
-                params.num_positions_per_block(),
-                depth_witness,
-                depth_fold,
-                &z_source,
-            )
-            .expect("emit Z");
-            let z_range = unit.z_range();
-            assert_eq!(&emitted[z_range], flatten_markers(z_source).as_slice());
 
             let mut expected_e = Vec::new();
             for claim in 0..num_claims {

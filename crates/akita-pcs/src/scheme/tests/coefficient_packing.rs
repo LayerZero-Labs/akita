@@ -78,10 +78,6 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         .params
         .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
-    assert_eq!(
-        prefix.source_encoding(),
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-    );
     assert!(matches!(
         prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
@@ -188,15 +184,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()
                 .slot_id()
                 .expect("setup prefix group");
-            assert_eq!(
-                setup_prefix.d_setup(),
-                setup_prefix
-                    .commitment_profile
-                    .inner
-                    .matrix
-                    .ring_dimension(),
-                "the prefix dispatcher must use its frozen A-ring dimension"
-            );
             let prefix_backend =
                 CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
             let artifacts = prefix_backend

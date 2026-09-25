@@ -1,19 +1,18 @@
 //! Exact terminal coefficient functionals for reduced ring relations.
 
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, terminal_residue_kernel};
+use akita_algebra::ring::terminal_residue_kernel;
 use akita_error::{checked, AkitaError};
-use jolt_field::{ExtField, Field, MulBaseUnreduced};
-use std::{ops::Range, sync::Arc};
+use jolt_field::Field;
+use std::sync::Arc;
 
 /// Checked terminal residue functional for one physical native window.
 ///
 /// The weights already include the exact multilinear equality contraction for
-/// `physical_range`. Callers must therefore use them as the complete native
+/// the physical window. Callers must therefore use them as the complete native
 /// coefficient functional; there is no additional common-alpha factor.
 #[derive(Clone, Debug)]
 pub struct ReducedCoefficientFunctional<E: Field> {
-    physical_range: Range<usize>,
     weights: Arc<[E]>,
 }
 
@@ -41,7 +40,7 @@ impl<E: Field> ReducedCoefficientFunctional<E> {
                 actual: equality.variable_count(),
             });
         }
-        let physical_range = checked::range(physical_start, ring_dimension)
+        checked::range(physical_start, ring_dimension)
             .filter(|range| range.end <= physical_field_len)
             .ok_or_else(|| {
                 AkitaError::InvalidInput(
@@ -55,58 +54,8 @@ impl<E: Field> ReducedCoefficientFunctional<E> {
         equality_weights.resize(ring_dimension, E::zero());
         equality.fill_interval(physical_start, &mut equality_weights)?;
         Ok(Self {
-            physical_range,
             weights: terminal_residue_kernel(&equality_weights, alpha)?.into(),
         })
-    }
-
-    /// Evaluate one public native multiplier against this functional.
-    pub fn evaluate_multiplier<F>(&self, coefficients: &[F]) -> Result<E, AkitaError>
-    where
-        F: Field,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        if coefficients.len() != self.weights.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.weights.len(),
-                actual: coefficients.len(),
-            });
-        }
-        Ok(eval_flat_ring_at_pows_fast(coefficients, &self.weights))
-    }
-
-    /// Evaluate a canonical sparse public multiplier in `O(h)` work after the
-    /// shared terminal kernel has been prepared.
-    pub fn evaluate_sparse_multiplier<F>(
-        &self,
-        coefficients: &[(usize, F)],
-    ) -> Result<E, AkitaError>
-    where
-        F: Field,
-        E: ExtField<F>,
-    {
-        let mut previous = None;
-        coefficients
-            .iter()
-            .try_fold(E::zero(), |evaluation, &(index, coefficient)| {
-                if previous.is_some_and(|prior| index <= prior) {
-                    return Err(AkitaError::InvalidInput(
-                        "sparse multiplier positions must be strictly increasing".into(),
-                    ));
-                }
-                previous = Some(index);
-                let weight = self
-                    .weights
-                    .get(index)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
-                Ok(evaluation + weight.mul_base(coefficient))
-            })
-    }
-
-    #[must_use]
-    pub fn physical_range(&self) -> Range<usize> {
-        self.physical_range.clone()
     }
 
     #[must_use]
@@ -123,7 +72,8 @@ impl<E: Field> ReducedCoefficientFunctional<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use jolt_field::{Fp32, FpExt2, NegOneNr, One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use akita_algebra::ring::eval_flat_ring_at_pows_fast;
+    use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     fn quadratic_reduced_evaluation(
         multiplier: &[F],
@@ -164,7 +114,7 @@ mod tests {
                 .map(|index| F::from_u64(211 + 3 * index as u64))
                 .collect::<Vec<_>>();
             assert_eq!(
-                functional.evaluate_multiplier(&dense).unwrap(),
+                eval_flat_ring_at_pows_fast(&dense, functional.weights()),
                 quadratic_reduced_evaluation(&dense, alpha, &point, physical_start)
             );
 
@@ -178,15 +128,8 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
-                functional.evaluate_multiplier(&sparse).unwrap(),
+                eval_flat_ring_at_pows_fast(&sparse, functional.weights()),
                 quadratic_reduced_evaluation(&sparse, alpha, &point, physical_start)
-            );
-            let sparse_entries = [(1, sparse[1]), (6, sparse[6])];
-            assert_eq!(
-                functional
-                    .evaluate_sparse_multiplier(&sparse_entries)
-                    .unwrap(),
-                functional.evaluate_multiplier(&sparse).unwrap()
             );
         }
     }
@@ -200,18 +143,12 @@ mod tests {
         let second =
             ReducedCoefficientFunctional::prepare(&equality, 32, 11, 8, F::from_u64(11)).unwrap();
         assert_ne!(first.weights(), second.weights());
-        assert_eq!(first.physical_range(), 3..11);
         let short_equality = OffsetEqWindow::new(&point[..4]).unwrap();
         assert!(
             ReducedCoefficientFunctional::prepare(&short_equality, 32, 3, 8, F::one()).is_err()
         );
         assert!(ReducedCoefficientFunctional::prepare(&equality, 32, 27, 8, F::one()).is_err());
         assert!(ReducedCoefficientFunctional::prepare(&equality, 32, 0, 6, F::one()).is_err());
-        assert!(first.evaluate_multiplier::<F>(&[F::one(); 4]).is_err());
-        assert!(first
-            .evaluate_sparse_multiplier(&[(2, F::one()), (2, F::one())])
-            .is_err());
-        assert!(first.evaluate_sparse_multiplier(&[(8, F::one())]).is_err());
     }
 
     #[test]
@@ -248,7 +185,7 @@ mod tests {
             evaluation + eq_eval_at_index(&point, 5 + witness_coefficient) * residue
         });
         assert_eq!(
-            functional.evaluate_multiplier(&multiplier).unwrap(),
+            eval_flat_ring_at_pows_fast(&multiplier, functional.weights()),
             expected
         );
     }

@@ -212,7 +212,7 @@ fn public_stage2_dispatch_rejects_exhausted_round_and_preserves_finish() {
         )
         .unwrap();
         let challenge = F::from_u64(round as u64 + 7);
-        claim = polynomial.evaluate(&challenge);
+        claim = polynomial.evaluate(challenge);
         OpaqueStage2Kernel::<F, F>::bind_stage2_challenge(&backend, &mut session, round, challenge)
             .unwrap();
     }

@@ -36,18 +36,6 @@ fn bench_profile<const K: usize, const D: usize>(
     let rhs = input::<K, D>(&primes, 93);
     let mut group = c.benchmark_group(format!("{profile}_crt_ntt_ops"));
 
-    group.bench_with_input(BenchmarkId::new("add", D), &D, |b, _| {
-        b.iter(|| black_box(lhs.add_reduced(black_box(&rhs), black_box(&params))))
-    });
-    group.bench_with_input(BenchmarkId::new("sub", D), &D, |b, _| {
-        b.iter(|| black_box(lhs.sub_reduced(black_box(&rhs), black_box(&params))))
-    });
-    group.bench_with_input(BenchmarkId::new("neg", D), &D, |b, _| {
-        b.iter(|| black_box(lhs.neg_reduced(black_box(&params))))
-    });
-    group.bench_with_input(BenchmarkId::new("mul", D), &D, |b, _| {
-        b.iter(|| black_box(lhs.pointwise_mul(black_box(&rhs), black_box(&params))))
-    });
     group.bench_with_input(BenchmarkId::new("mac", D), &D, |b, _| {
         b.iter_batched(
             || lhs.clone(),

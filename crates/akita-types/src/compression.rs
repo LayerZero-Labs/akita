@@ -183,20 +183,6 @@ impl CommitmentPayloadGeometry {
     pub const fn transcript_ring_dimension(self) -> usize {
         self.transcript_ring_dimension
     }
-
-    /// Number of transmitted rows at the transcript ring dimension.
-    pub fn transmitted_rows(self) -> Result<usize, AkitaError> {
-        if self.transcript_ring_dimension == 0
-            || !self
-                .transmitted_coefficients
-                .is_multiple_of(self.transcript_ring_dimension)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "commitment payload does not align with its transcript ring dimension".into(),
-            ));
-        }
-        Ok(self.transmitted_coefficients / self.transcript_ring_dimension)
-    }
 }
 
 /// Stable identity of the commitment-compression protocol.
@@ -659,10 +645,6 @@ mod tests {
         let packed = PackedNegativeBinary::from_coefficients(plan.maps()[0], &values).unwrap();
         assert_eq!(packed.recompose::<F>().unwrap(), values);
         assert_eq!(packed.bytes().len(), plan.maps()[0].real_digit_count() / 8);
-        assert_eq!(
-            plan.unpacked_witness_bytes().unwrap(),
-            plan.packed_witness_bytes().unwrap() * 8
-        );
     }
 
     #[test]
@@ -775,14 +757,12 @@ mod tests {
         assert_eq!(compressed.source_coefficients(), 64);
         assert_eq!(compressed.transmitted_coefficients(), 8);
         assert_eq!(compressed.transcript_ring_dimension(), 8);
-        assert_eq!(compressed.transmitted_rows().unwrap(), 1);
 
         let raw = CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Raw, profile, 4, 16)
             .unwrap();
         assert_eq!(raw.source_coefficients(), 64);
         assert_eq!(raw.transmitted_coefficients(), 64);
         assert_eq!(raw.transcript_ring_dimension(), 16);
-        assert_eq!(raw.transmitted_rows().unwrap(), 4);
 
         let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
         assert!(CommitmentPayloadGeometry::new(5, 16, Some(&plan)).is_err());
