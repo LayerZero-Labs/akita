@@ -16,37 +16,47 @@ enum DirectScanKernel<'a, E: Field> {
     },
 }
 
-impl<E: Field> SetupContributionPlan<E> {
+impl<E: Field> DirectScan<E> {
+    /// Evaluate this scan's setup contribution by scanning the packed setup
+    /// with its prepared weights and partition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shared setup matrix is too small for the plan.
     pub fn evaluate_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        match &self.direct_scan_state {
-            DirectScanState::Unprepared => Err(AkitaError::InvalidSetup(
-                "direct setup scan is not prepared".into(),
-            )),
-            DirectScanState::Lifted { alpha, groups } => {
-                let geometry = self.projection_geometry;
+        let plan = &self.plan;
+        match &self.mode {
+            DirectScanMode::Lifted { alpha, groups } => {
+                let geometry = plan.projection_geometry;
                 let alpha_pows_a = scalar_powers(*alpha, geometry.role_dims().d_a());
                 let alpha_pows_b = scalar_powers(*alpha, geometry.role_dims().d_b());
                 let alpha_pows_d = scalar_powers(*alpha, geometry.role_dims().d_d());
-                self.evaluate_role_dims_direct(
+                plan.evaluate_role_dims_direct(
                     setup,
                     &alpha_pows_a,
                     &alpha_pows_b,
                     &alpha_pows_d,
                     groups,
+                    &self.partitions,
                 )
             }
-            DirectScanState::Reduced { groups, .. } => self.evaluate_reduced_direct(setup, groups),
+            DirectScanMode::Reduced { groups, .. } => {
+                plan.evaluate_reduced_direct(setup, groups, &self.partitions)
+            }
         }
     }
+}
 
+impl<E: Field> SetupContributionPlan<E> {
     fn evaluate_reduced_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         weights: &[ReducedDirectScanWeights<E>],
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -61,6 +71,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 self.evaluate_direct_typed::<F, BASE_D>(
                     setup,
                     DirectScanKernel::ReducedEvaluation { weights },
+                    partitions,
                 )
             }
         )
@@ -73,6 +84,7 @@ impl<E: Field> SetupContributionPlan<E> {
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
         weights: &[DirectScanWeights<E>],
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -145,6 +157,7 @@ impl<E: Field> SetupContributionPlan<E> {
                         projections: &projections,
                         weights,
                     },
+                    partitions,
                 )
             }
         )
@@ -154,6 +167,7 @@ impl<E: Field> SetupContributionPlan<E> {
         &self,
         setup: &AkitaExpandedSetup<F>,
         kernel: DirectScanKernel<'_, E>,
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -161,10 +175,9 @@ impl<E: Field> SetupContributionPlan<E> {
     {
         let fused_groups = self.groups.len() > 1;
         let reduced_evaluation = matches!(&kernel, DirectScanKernel::ReducedEvaluation { .. });
-        let logical_group_rings = self
-            .groups
-            .iter()
-            .fold(0usize, |sum, group| sum.saturating_add(group.required));
+        let logical_group_rings = partitions.iter().fold(0usize, |sum, partition| {
+            sum.saturating_add(partition.required)
+        });
         let physical_ring_evaluations = if fused_groups || reduced_evaluation {
             self.projection_geometry.required()
         } else {
@@ -175,9 +188,9 @@ impl<E: Field> SetupContributionPlan<E> {
                 .required()
                 .div_ceil(super::segments::SETUP_SCAN_JOB_RINGS)
         } else {
-            self.groups
+            partitions
                 .iter()
-                .map(|group| group.segments.len())
+                .map(|partition| partition.segments.len())
                 .sum::<usize>()
         };
         let _span = tracing::info_span!(
@@ -211,7 +224,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 weights,
             } => (base_powers, projections, weights),
             DirectScanKernel::ReducedEvaluation { weights } => {
-                return self.evaluate_groups_reduced(&setup_view, weights);
+                return self.evaluate_groups_reduced(&setup_view, weights, partitions);
             }
         };
         if base_powers.len() != BASE_D {
@@ -226,13 +239,26 @@ impl<E: Field> SetupContributionPlan<E> {
                 base_powers,
                 projections,
                 weights,
+                partitions,
             );
         }
+        if partitions.len() != self.groups.len() || weights.len() != self.groups.len() {
+            return Err(AkitaError::InvalidSetup(
+                "cached setup scan geometry is malformed".into(),
+            ));
+        }
         let mut acc = E::zero();
-        for ((group, projection), weights) in self.groups.iter().zip(projections).zip(weights) {
+        for (((group, projection), weights), partition) in self
+            .groups
+            .iter()
+            .zip(projections)
+            .zip(weights)
+            .zip(partitions)
+        {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
                 weights,
+                partition,
                 base_powers,
                 &self.d_weights,
                 &projection[0],
@@ -251,6 +277,7 @@ impl<E: Field> SetupContributionPlan<E> {
         base_pows: &[E],
         projections: &[[RoleProjection<E>; 3]],
         direct_weights: &[DirectScanWeights<E>],
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -258,7 +285,10 @@ impl<E: Field> SetupContributionPlan<E> {
     {
         let setup_flat = setup_view.as_slice();
         let required = self.projection_geometry.required();
-        if self.d_weights.len() != self.d_rows {
+        if self.d_weights.len() != self.d_rows
+            || direct_weights.len() != self.groups.len()
+            || partitions.len() != self.groups.len()
+        {
             return Err(AkitaError::InvalidSetup(
                 "cached setup scan geometry is malformed".into(),
             ));
@@ -273,13 +303,14 @@ impl<E: Field> SetupContributionPlan<E> {
                 let hi = lo.saturating_add(job_rings).min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
-                for ((group, projection), direct) in
-                    self.groups.iter().zip(projections).zip(direct_weights)
+                for ((projection, direct), partition) in
+                    projections.iter().zip(direct_weights).zip(partitions)
                 {
                     let (e_eq_slice, t_eq_slice, z_eq_slice) =
                         (&direct.e[..], &direct.t[..], &direct.z[..]);
-                    let first = group.segments.partition_point(|segment| segment.hi <= lo);
-                    for segment in group.segments.iter().skip(first) {
+                    let segments = &partition.segments;
+                    let first = segments.partition_point(|segment| segment.hi <= lo);
+                    for segment in segments.iter().skip(first) {
                         if segment.lo >= hi {
                             break;
                         }
