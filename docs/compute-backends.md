@@ -100,3 +100,8 @@ extracts or deserializes retained CPU material.
 Cross-backend commitment transfer is similarly explicit:
 `backend.import_commitment(&foreign_handle)` validates the retained source and
 commitment under the receiving setup before creating a new owner-bound handle.
+A backend that needs a group from another schedule family in its own opening
+commits it directly with `backend.commit_in_family(family_catalog, ..)`.
+Admission then uses that family's producer contract, and the handle is owned by
+the calling backend. No second backend, prepared cache, or recomputation is
+involved.

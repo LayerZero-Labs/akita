@@ -89,6 +89,36 @@ fn heterogeneous_group_types() {
             )
             .expect("dense precommit");
 
+        // The one-hot backend's own family refuses the dense sources at the
+        // producer boundary even under the dense profile, while committing
+        // them in the dense family on the same backend reproduces the dense
+        // backend's public commitment without a second owner.
+        let refused = stack
+            .commit(
+                &stack.import_source(dense_polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::explicit(&dense_commitment.profile),
+            )
+            .expect_err("one-hot family must refuse dense sources");
+        assert!(
+            matches!(
+                &refused,
+                akita_error::AkitaError::InvalidInput(message)
+                    if message.contains("not a unit one-hot representation")
+            ),
+            "unexpected refusal: {refused:?}"
+        );
+        let akita_cpu_backend::CommitOutput {
+            committed_group: in_family_commitment,
+            private_handle: in_family_hint,
+        } = stack
+            .commit_in_family(
+                dense_scheme.schedules(),
+                &stack.import_source(dense_polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("in-family dense precommit");
+        assert_eq!(in_family_commitment, dense_commitment);
+
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![
             onehot_pre_commitment.profile,
             dense_commitment.profile,
@@ -141,6 +171,8 @@ fn heterogeneous_group_types() {
             .expect("final prover group"),
         ])
         .expect("prover claims");
+        let in_family_claims = prover_claims.clone();
+        let in_family_hints = vec![onehot_pre_hint.clone(), in_family_hint, final_hint.clone()];
         let dense_hint = stack
             .import_commitment(&dense_hint)
             .expect("validated dense transfer");
@@ -172,6 +204,24 @@ fn heterogeneous_group_types() {
         let proof = onehot_scheme
             .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("heterogeneous prove");
+        let in_family_proof = onehot_scheme
+            .batched_prove(
+                &setup,
+                SelectedProverOpeningData::from_committed_claims::<OneHotCfg>(
+                    in_family_claims,
+                    in_family_hints,
+                    onehot_scheme.schedules(),
+                )
+                .expect("in-family prover data"),
+                &stack,
+                session,
+                BasisMode::Lagrange,
+            )
+            .expect("in-family prove");
+        assert_eq!(
+            in_family_proof, proof,
+            "in-family commit must match commit + import"
+        );
 
         let verifier_setup = onehot_scheme
             .setup_verifier(&setup)

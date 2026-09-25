@@ -125,6 +125,38 @@ an existing commitment deliberately, use `backend.import_commitment(&handle)`.
 The receiving backend checks the source and commitment material against its
 own setup before issuing a fresh handle owned by that backend.
 
+## Groups from another schedule family
+
+Admission reads the backend's own configuration. A `CpuBackend<Cfg>` accepts
+only sources that fit `Cfg`'s declared source class and coefficient interval,
+because its catalog prices the honest response for exactly those sources. A
+grouped opening can still contain a precommitted group from a different family
+over the same field and extension, for example a dense group inside a one hot
+batch, or a group with a wider coefficient bound. The planner prices such a
+group under its producer's contract.
+
+Commit that group on the opening backend under its producer family:
+
+```rust
+let source = backend.import_source(wide_polynomials)?;
+let output = backend.commit_in_family(
+    wide_scheme.schedules(),
+    &source,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+```
+
+`commit_in_family` selects the profile from the family's catalog and admits the
+source under that family's contract. It computes the commitment once, with the
+opening backend's setup and caches, and returns a handle owned by the opening
+backend. The result is the handle that committing on a `CpuBackend<FamilyCfg>`
+and importing it would produce. `backend.commit(..)` is
+`backend.commit_in_family(own_catalog, ..)`.
+
+Use `import_commitment` for a commitment that another backend produced, for
+example one reused from an earlier proof. Its recomputation checks the foreign
+setup against the receiving one.
+
 ## Explicit commitment parameters
 
 Normal applications use trusted catalog selection. A caller that already owns

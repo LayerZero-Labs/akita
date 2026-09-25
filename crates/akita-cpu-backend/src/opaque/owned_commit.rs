@@ -88,6 +88,41 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
         Cfg::ExtField: FpExtEncoding<Cfg::Field> + 'static,
     {
+        self.commit_in_family(self.schedules()?, source, context)
+    }
+
+    /// Commit a source on this backend under another schedule family's commit
+    /// parameters and producer contract.
+    ///
+    /// `family` selects the commit profile (a catalog row, or the explicit
+    /// profile in `context`) and supplies the source class and coefficient
+    /// interval that admission enforces, exactly as `CpuBackend<FamilyCfg>`
+    /// would. The commitment is computed once with this backend's prepared
+    /// setup and caches. The returned handle is owned by this backend, so it
+    /// can be a precommitted group of this backend's openings.
+    ///
+    /// The handle equals what [`Self::import_commitment`] returns for the same
+    /// source committed by a `CpuBackend<FamilyCfg>`, without the second
+    /// commitment or the second backend. Use `import_commitment` for handles
+    /// produced elsewhere: its recomputation is what checks a foreign setup
+    /// against this one.
+    pub fn commit_in_family<FamilyCfg>(
+        &self,
+        family: &akita_config::TrustedScheduleCatalog<FamilyCfg>,
+        source: &SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+        context: GroupContext<'_>,
+    ) -> Result<CommitOutput<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
+    where
+        FamilyCfg: CommitmentConfig<Field = Cfg::Field, ExtField = Cfg::ExtField>,
+        Cfg::Field: Field
+            + CanonicalEncoding
+            + AkitaSerialize
+            + Unreduced
+            + WithCommitAccumulator
+            + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
+        Cfg::ExtField: FpExtEncoding<Cfg::Field> + 'static,
+    {
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(
                 "source belongs to another backend".into(),
@@ -103,10 +138,10 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         )?;
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
-        let profile = crate::commitment::resolve_commit_params::<Cfg, _>(
+        let profile = crate::commitment::resolve_commit_params::<FamilyCfg, _>(
             &sources,
             &prepared.expanded,
-            self.schedules()?,
+            family,
             context,
         )?;
         let (committed_group, prover_state) =
