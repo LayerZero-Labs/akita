@@ -5,10 +5,10 @@
 //! target, so `cargo fuzz run fuzz_all` fuzzes all of them together. The
 //! campaign ships this binary instead of one ~1.4 GiB sanitizer build per target.
 
-use akita_fuzz::targets::{by_name, ALL};
+use akita_fuzz::targets::{by_name, Target, ALL};
 use std::sync::OnceLock;
 
-static TARGET: OnceLock<Option<fn(&[u8])>> = OnceLock::new();
+static TARGET: OnceLock<Option<Target>> = OnceLock::new();
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     let selected = TARGET.get_or_init(|| {

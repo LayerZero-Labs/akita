@@ -13,7 +13,10 @@ pub mod sumcheck;
 pub mod transcript;
 
 /// Every engine-independent target, keyed by its libFuzzer binary name.
-pub const ALL: &[(&str, fn(&[u8]))] = &[
+/// A target's engine-independent entry point.
+pub type Target = fn(&[u8]);
+
+pub const ALL: &[(&str, Target)] = &[
     ("field_arith", field::run),
     ("ring_ntt", ring::run),
     ("decompose", decompose::run),
@@ -35,7 +38,7 @@ pub const ALL: &[(&str, fn(&[u8]))] = &[
     ("prover_boundary", boundary::prover),
 ];
 
-pub fn by_name(name: &str) -> Option<fn(&[u8])> {
+pub fn by_name(name: &str) -> Option<Target> {
     ALL.iter()
         .find(|(candidate, _)| *candidate == name)
         .map(|(_, run)| *run)

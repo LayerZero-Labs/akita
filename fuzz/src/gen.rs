@@ -217,7 +217,7 @@ pub fn table<F: Field + CanonicalEncoding>(
                 }
                 8 => {
                     let r = rng.next_u64();
-                    if r % 16 == 0 {
+                    if r.is_multiple_of(16) {
                         F::from_u128_reduced(rng.next_u128())
                     } else {
                         F::zero()
@@ -288,7 +288,8 @@ pub fn onehot_indices(
             5 => Some((chunk % chunk_size) as u8),
             6 => {
                 let r = rng.next_u64();
-                (r % 16 == 0).then_some(((r >> 4) % chunk_size as u64) as u8)
+                r.is_multiple_of(16)
+                    .then_some(((r >> 4) % chunk_size as u64) as u8)
             }
             _ => (chunk % 2 == 0).then_some(last),
         })

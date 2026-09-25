@@ -11,9 +11,9 @@ use crate::gen::{self, modulus, Domain};
 use crate::input::Reader;
 use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_field::{One, 
-    CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne,
-    Unreduced, WithCommitAccumulator, Zero,
+use jolt_field::{
+    CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, One,
+    PseudoMersenne, Unreduced, WithCommitAccumulator, Zero,
 };
 use num_bigint::{BigInt, BigUint};
 
@@ -291,7 +291,7 @@ where
     assert_eq!(a * b, b * a, "commutativity");
     assert_eq!((a * b) * c, a * (b * c), "associativity");
     assert_eq!(a * (b + c), a * b + a * c, "distributivity");
-    assert_eq!(a - a, E::zero(), "additive inverse");
+    assert_eq!(a + (-a), E::zero(), "additive inverse");
     assert_eq!(a.square(), a * a, "square");
     match a.inverse() {
         Some(inverse) => assert_eq!(a * inverse, E::one(), "inverse"),

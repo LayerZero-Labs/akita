@@ -3,14 +3,14 @@
 //! boundary documents; anything else is a finding.
 
 use super::family::{honest_statement, statement_of, FamilyImpl, Honest};
-use super::ops::PcsOps;
+use super::ops::{ClaimRow, PcsOps};
 use super::{Origin, SourceSpec};
 use crate::gen::{self, Domain};
 use crate::input::{Reader, SplitMix64};
 use crate::stats;
 use akita_cpu_backend::{DensePoly, GroupContext, OneHotPoly};
 use akita_error::AkitaError;
-use akita_types::{CommittedGroup, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims};
+use akita_types::{OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims};
 use jolt_field::{CanonicalEncoding, Field, One, Zero};
 use std::sync::Arc;
 
@@ -156,11 +156,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             }
             2 => {
                 // Statement shape and content chosen by the input.
-                let groups: Vec<(
-                    Vec<Cfg::ExtField>,
-                    Vec<Cfg::ExtField>,
-                    &CommittedGroup<Cfg::Field>,
-                )> = fixture
+                let groups: Vec<ClaimRow<'_, Cfg>> = fixture
                     .groups
                     .iter()
                     .map(|group| {

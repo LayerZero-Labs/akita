@@ -32,6 +32,18 @@ pub type Claims<'a, Cfg> = OpeningClaims<
     <Cfg as CommitmentConfig>::ExtField,
     CommittedGroup<<Cfg as CommitmentConfig>::Field>,
 >;
+/// One group's `(point, evaluations, commitment)` in a verifier statement.
+pub type ClaimRow<'a, Cfg> = (
+    Vec<<Cfg as CommitmentConfig>::ExtField>,
+    Vec<<Cfg as CommitmentConfig>::ExtField>,
+    &'a CommittedGroup<<Cfg as CommitmentConfig>::Field>,
+);
+pub type Opening<'a, Cfg> = SelectedProverOpeningData<
+    'a,
+    <Cfg as CommitmentConfig>::ExtField,
+    Handle<Cfg>,
+    <Cfg as CommitmentConfig>::Field,
+>;
 pub type Statement<'a, Cfg> =
     GroupBatchStatement<'a, <Cfg as CommitmentConfig>::ExtField, <Cfg as CommitmentConfig>::Field>;
 
@@ -89,12 +101,12 @@ pub trait PcsOps: CommitmentConfig {
         claims: Claims<'a, Self>,
         handles: Vec<Handle<Self>>,
         scheme: &AkitaCommitmentScheme<Self>,
-    ) -> Result<SelectedProverOpeningData<'a, Self::ExtField, Handle<Self>, Self::Field>, AkitaError>;
+    ) -> Result<Opening<'a, Self>, AkitaError>;
 
     fn prove(
         scheme: &AkitaCommitmentScheme<Self>,
         setup: &AkitaProverSetup<Self::Field>,
-        opening: SelectedProverOpeningData<'_, Self::ExtField, Handle<Self>, Self::Field>,
+        opening: Opening<'_, Self>,
         backend: &CpuBackend<Self>,
         session: &[u8],
         basis: BasisMode,
@@ -205,8 +217,7 @@ where
         claims: Claims<'a, Self>,
         handles: Vec<Handle<Self>>,
         scheme: &AkitaCommitmentScheme<Self>,
-    ) -> Result<SelectedProverOpeningData<'a, Self::ExtField, Handle<Self>, Self::Field>, AkitaError>
-    {
+    ) -> Result<Opening<'a, Self>, AkitaError> {
         SelectedProverOpeningData::from_committed_claims::<Self>(
             claims,
             handles,
@@ -217,7 +228,7 @@ where
     fn prove(
         scheme: &AkitaCommitmentScheme<Self>,
         setup: &AkitaProverSetup<Self::Field>,
-        opening: SelectedProverOpeningData<'_, Self::ExtField, Handle<Self>, Self::Field>,
+        opening: Opening<'_, Self>,
         backend: &CpuBackend<Self>,
         session: &[u8],
         basis: BasisMode,

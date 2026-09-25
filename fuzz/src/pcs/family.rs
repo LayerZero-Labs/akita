@@ -1,6 +1,6 @@
 //! One schedule family: planning, honest proofs, and the checks run on them.
 
-use super::ops::{Claims, Handle, PcsOps, Proved, Statement};
+use super::ops::{ClaimRow, Claims, Handle, PcsOps, Proved, Statement};
 use super::registry::{IndexedProfile, Limits};
 use super::{Case, GroupPlan, Origin, SourceSpec};
 use crate::gen::{self, Domain};
@@ -404,7 +404,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         let imported = matches!(plan.origin, Origin::Imported { .. });
         let onehot_chunk = plan.source.onehot_only.or_else(|| {
             let chunk = akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
-            (!imported && reader.u8() % 4 == 0 && len >= chunk).then_some(chunk)
+            (!imported && reader.u8().is_multiple_of(4) && len >= chunk).then_some(chunk)
         });
         let tables = stats::time("generate", || match onehot_chunk {
             Some(chunk) => Tables::OneHot {
@@ -731,28 +731,18 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 self.name()
             ),
         };
-        let verify_with = |groups: &[(
-            Vec<Cfg::ExtField>,
-            Vec<Cfg::ExtField>,
-            &CommittedGroup<Cfg::Field>,
-        )],
-                           proof: &[u8],
-                           session: &[u8],
-                           basis: BasisMode| {
-            let statement = statement_of::<Cfg>(
-                honest.proved.selection,
-                groups.iter().map(|(point, evals, commitment)| {
-                    (point.as_slice(), evals.as_slice(), *commitment)
-                }),
-            )
-            .expect("mutated statement keeps a valid shape");
-            self.verify(proof, setup, session, statement, basis)
-        };
-        let mut claims: Vec<(
-            Vec<Cfg::ExtField>,
-            Vec<Cfg::ExtField>,
-            &CommittedGroup<Cfg::Field>,
-        )> = honest
+        let verify_with =
+            |groups: &[ClaimRow<'_, Cfg>], proof: &[u8], session: &[u8], basis: BasisMode| {
+                let statement = statement_of::<Cfg>(
+                    honest.proved.selection,
+                    groups.iter().map(|(point, evals, commitment)| {
+                        (point.as_slice(), evals.as_slice(), *commitment)
+                    }),
+                )
+                .expect("mutated statement keeps a valid shape");
+                self.verify(proof, setup, session, statement, basis)
+            };
+        let mut claims: Vec<ClaimRow<'_, Cfg>> = honest
             .groups
             .iter()
             .map(|group| (group.point.clone(), group.evals.clone(), &group.commitment))

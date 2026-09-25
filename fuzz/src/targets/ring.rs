@@ -213,7 +213,7 @@ fn case<F, const K: usize, const D: usize>(
             stats::count("ring_centered_i32");
         }
         3 | 4 => {
-            let with_tail = reader.u8() % 2 == 0;
+            let with_tail = reader.u8().is_multiple_of(2);
             let rows = 1 + usize::from(reader.u8() % 3);
             let cols = 1 + usize::from(reader.u8() % 6);
             let bound = 1 + i64::from(reader.u16() % i16::MAX as u16);
