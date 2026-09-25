@@ -166,7 +166,7 @@ pub(super) fn find_schedule(
     akita_schedules::planner_support::validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
-    let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
+    let input_witness_len = checked::pow2(key.num_vars()).ok_or_else(|| {
         AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
     })?;
     let (min_log_basis, max_log_basis) = crate::policy::log_basis_search_range_at_level(policy, 0);
