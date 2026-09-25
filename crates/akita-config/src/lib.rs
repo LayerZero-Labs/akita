@@ -84,7 +84,7 @@ pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-pub use proof_optimized::{ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup};
+pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
@@ -199,12 +199,90 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
         &self.catalog
     }
 
+    /// Rows whose complete opening key fits a setup's public polynomial capacity.
+    ///
+    /// Setup sizing prices exactly these rows. The verifier admits the subset
+    /// whose direct matrix uses its setup holds; see [`Self::verifier_admits`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a row's polynomial count overflows.
+    pub fn rows_within_setup_capacity(
+        &self,
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<Vec<&ResolvedScheduleRow>, AkitaError> {
+        let mut rows = Vec::new();
+        for row in self.rows() {
+            if row_fits_setup_capacity(row, max_num_vars, max_num_batched_polys)? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Whether a verifier holding `setup` can check proofs for `row`.
+    ///
+    /// A row is admitted when its opening key fits the setup descriptor's
+    /// polynomial capacity and its direct verifier matrix uses fit the
+    /// materialized public matrix. These are exactly the rows whose proofs can
+    /// pass the verifier's setup checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sizing an in-capacity row overflows.
+    pub fn verifier_admits(
+        setup: &akita_types::AkitaExpandedSetup<Cfg::Field>,
+        row: &ResolvedScheduleRow,
+    ) -> Result<bool, AkitaError> {
+        let descriptor = setup.descriptor();
+        Ok(row_fits_setup_capacity(
+            row,
+            descriptor.max_num_vars,
+            descriptor.max_num_batched_polys,
+        )? && verifier_schedule_fits_setup(
+            setup,
+            row.schedule(),
+            &row.profiles().opening_layout()?,
+        )?)
+    }
+
+    /// Rows [`Self::verifier_admits`] accepts for `setup`, in catalog digest order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sizing an in-capacity row overflows.
+    pub fn verifier_admitted_rows(
+        &self,
+        setup: &akita_types::AkitaExpandedSetup<Cfg::Field>,
+    ) -> Result<Vec<&ResolvedScheduleRow>, AkitaError> {
+        let mut rows = Vec::new();
+        for row in self.rows() {
+            if Self::verifier_admits(setup, row)? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
     fn from_validated(catalog: ValidatedScheduleCatalog) -> Self {
         Self {
             catalog: Arc::new(catalog),
             _cfg: PhantomData,
         }
     }
+}
+
+fn row_fits_setup_capacity(
+    row: &ResolvedScheduleRow,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<bool, AkitaError> {
+    akita_types::AkitaScheduleLookupKey {
+        final_group: row.profiles().final_group.group,
+        precommitteds: row.profiles().precommitteds.clone(),
+    }
+    .fits_setup_capacity(max_num_vars, max_num_batched_polys)
 }
 
 impl<Cfg: CommitmentConfig> Deref for TrustedScheduleCatalog<Cfg> {

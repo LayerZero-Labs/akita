@@ -252,7 +252,10 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                 scheme
-                    .batched_verify(proof.as_slice(), &verifier_setup, label, statement, basis)
+                    .verifier(verifier_setup.clone())
+                    .and_then(|verifier| {
+                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                    })
                     .unwrap();
 
                 if basis == BasisMode::Lagrange {
@@ -268,13 +271,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                     assert!(scheme
-                        .batched_verify(
+                        .verifier(verifier_setup.clone())
+                        .and_then(|verifier| verifier.batched_verify(
                             malformed.as_slice(),
-                            &verifier_setup,
                             label,
                             statement,
-                            basis,
-                        )
+                            basis
+                        ))
                         .is_err());
 
                     macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {

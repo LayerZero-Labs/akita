@@ -29,6 +29,12 @@ pub(crate) fn run_timings<S, P, F>(
             eprintln!("[{label}] verify {verify_mode} FAILED: {elapsed_s:.6}s ({error})");
             panic!("[{label}] {failure_context} {verify_mode} verification failed: {error}");
         }
+        tracing::info!(
+            label,
+            verify_mode,
+            elapsed_s,
+            "akita batched verify complete"
+        );
         report_timing(label, &format!("verify {verify_mode} OK"), elapsed_s);
 
         let (phase_result, measurements) = crate::relation_phase_timing::capture(|| {

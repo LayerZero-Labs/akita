@@ -224,13 +224,14 @@ where
         "valid native proof exceeds its schedule-derived parser bound"
     );
     let verify = |candidate: &[u8], claimed: Cfg::ExtField, session: &[u8]| {
-        scheme.batched_verify(
-            candidate,
-            &setup,
-            session,
-            verify_input::<Cfg>(selection, &point, claimed, &commitment),
-            BasisMode::Lagrange,
-        )
+        scheme.verifier(setup.clone()).and_then(|verifier| {
+            verifier.batched_verify(
+                candidate,
+                session,
+                verify_input::<Cfg>(selection, &point, claimed, &commitment),
+                BasisMode::Lagrange,
+            )
+        })
     };
 
     verify(&proof, opening, label).expect("honest native proof must verify");

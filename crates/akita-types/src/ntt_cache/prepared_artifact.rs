@@ -257,7 +257,18 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     Ok(bytes)
 }
 
-pub(crate) fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
+/// Decode a scalar Q128 artifact whose bytes have trusted provenance.
+///
+/// This checks the header, the expected setup and schedule identities, the
+/// exact payload length, and every residue range. It cannot prove that the
+/// transformed payload was derived from the named setup seed. Callers must
+/// bind the bytes to trusted setup provisioning or to the verifier program
+/// identity.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] for any malformed or mismatched artifact.
+pub fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &[u8],
     expected_binding: PreparedVerifierNttCacheBinding,
 ) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
@@ -461,85 +472,5 @@ mod tests {
             decode_riscv64_scalar_q128_cache::<F, D>(&bytes, expected),
             Err(AkitaError::InvalidSetup(_))
         ));
-    }
-
-    #[test]
-    fn verifier_setup_installs_only_its_bound_artifact() {
-        std::thread::Builder::new()
-            .name("prepared-verifier-ntt-cache-test".into())
-            .stack_size(64 * 1024 * 1024)
-            .spawn(verifier_setup_installs_only_its_bound_artifact_inner)
-            .expect("spawn prepared-cache test")
-            .join()
-            .expect("prepared-cache test thread");
-    }
-
-    fn verifier_setup_installs_only_its_bound_artifact_inner() {
-        let matrix = matrix();
-        let seed: crate::AkitaSetupSeed = [9; 32].into();
-        let setup = crate::AkitaVerifierSetup::from_parts(
-            Arc::new(
-                crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    crate::AkitaSetupDescriptor {
-                        max_num_vars: 8,
-                        max_num_batched_polys: 1,
-                        num_field_elements: WIDTH * D,
-                        setup_seed: seed.clone(),
-                    },
-                    crate::FlatMatrix::from_ring_slice(&matrix),
-                ),
-            ),
-            crate::SetupPrefixVerifierRegistry::new(seed.clone()),
-        )
-        .expect("verifier setup");
-        let schedule = ScheduleRowDigest::from_bytes([11; 32]);
-        let setup_binding = PreparedVerifierNttCacheBinding {
-            setup_seed_digest: crate::setup_seed_digest(&seed).expect("seed digest"),
-            schedule_row_digest: schedule,
-            setup_field_elements: WIDTH * D,
-        };
-        let artifact = build_riscv64_scalar_q128_cache_artifact(
-            setup
-                .expanded()
-                .shared_matrix()
-                .ring_view::<D>(1, WIDTH)
-                .expect("matrix view"),
-            WIDTH,
-            RHS_ABS_BOUND,
-            setup_binding,
-        )
-        .expect("prepared artifact");
-
-        setup
-            .install_trusted_prepared_verifier_ntt_cache(&artifact, schedule)
-            .expect("install bound artifact");
-        assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            WIDTH * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
-        );
-
-        let other_setup = crate::AkitaVerifierSetup::from_parts(
-            Arc::new(
-                crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    crate::AkitaSetupDescriptor {
-                        max_num_vars: 8,
-                        max_num_batched_polys: 1,
-                        num_field_elements: WIDTH * D,
-                        setup_seed: [10; 32].into(),
-                    },
-                    crate::FlatMatrix::from_ring_slice(&matrix),
-                ),
-            ),
-            crate::SetupPrefixVerifierRegistry::new([10; 32].into()),
-        )
-        .expect("other verifier setup");
-        assert!(matches!(
-            other_setup.install_trusted_prepared_verifier_ntt_cache(&artifact, schedule),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        assert_eq!(
-            other_setup.verifier_ntt_cache_bytes().expect("empty cache"),
-            0
-        );
     }
 }

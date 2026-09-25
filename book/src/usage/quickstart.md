@@ -155,7 +155,7 @@ and the selected schedule row. It does not receive the polynomial or private
 prover state.
 
 ```rust
-let verifier_setup = scheme.setup_verifier(&setup)?;
+let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
 let verifier_claims = OpeningClaims::from_groups(vec![
     PolynomialGroupClaims::new(
         point,
@@ -165,13 +165,7 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-scheme.batched_verify(
-    &proof_bytes,
-    &verifier_setup,
-    TRANSCRIPT_DOMAIN,
-    statement,
-    BasisMode::Lagrange,
-)?;
+verifier.batched_verify(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 ```
 
 Akita constructs fresh native prover and verifier states and binds the complete

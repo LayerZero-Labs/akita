@@ -1,9 +1,13 @@
-//! Target cache construction for persistent and recursive verifiers.
+//! Terminal matrix NTT caches for persistent and recursive verifiers.
+
+use std::any::Any;
+use std::collections::BTreeMap;
 
 use akita_error::AkitaError;
 use akita_types::{
-    build_riscv64_scalar_q128_cache_artifact, dispatch_for_field, setup_seed_digest,
-    AkitaVerifierSetup, FoldSchedule, PreparedVerifierNttCacheBinding, ScheduleRowDigest,
+    build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache, dispatch_for_field,
+    prepare_ntt_cache, setup_seed_digest, AkitaVerifierSetup, FoldSchedule, NttCacheMode,
+    PreparedNttCache, PreparedVerifierNttCacheBinding, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -38,6 +42,156 @@ pub(crate) fn terminal_ntt_cache_requirement(
         prefix_len,
         width,
     })
+}
+
+/// One prepared terminal `A` prefix, erased over its ring dimension.
+struct TerminalNttEntry {
+    requirement: TerminalNttCacheRequirement,
+    cache_bytes: usize,
+    cache: Box<dyn Any + Send + Sync>,
+}
+
+/// Exact negacyclic terminal `A` prefixes, one per ring dimension.
+///
+/// Each entry covers the longest prefix and the widest row among the
+/// requirements at its dimension. A shorter or narrower product reads a prefix
+/// of the same entry, and exact CRT capacity is monotone in the row width.
+#[derive(Default)]
+pub(crate) struct TerminalNttCache {
+    entries: BTreeMap<usize, TerminalNttEntry>,
+}
+
+impl core::fmt::Debug for TerminalNttCache {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_map()
+            .entries(
+                self.entries
+                    .iter()
+                    .map(|(ring_d, entry)| (ring_d, (entry.requirement, entry.cache_bytes))),
+            )
+            .finish()
+    }
+}
+
+impl TerminalNttCache {
+    /// Join requirements into one covering requirement per ring dimension.
+    fn join(
+        requirements: impl IntoIterator<Item = TerminalNttCacheRequirement>,
+    ) -> BTreeMap<usize, TerminalNttCacheRequirement> {
+        let mut joined = BTreeMap::<usize, TerminalNttCacheRequirement>::new();
+        for requirement in requirements {
+            joined
+                .entry(requirement.ring_dimension)
+                .and_modify(|covering| {
+                    covering.prefix_len = covering.prefix_len.max(requirement.prefix_len);
+                    covering.width = covering.width.max(requirement.width);
+                })
+                .or_insert(requirement);
+        }
+        joined
+    }
+
+    /// Prepare every entry from the setup's public matrix.
+    pub(crate) fn prepare<F: Field + CanonicalEncoding>(
+        setup: &AkitaVerifierSetup<F>,
+        requirements: impl IntoIterator<Item = TerminalNttCacheRequirement>,
+    ) -> Result<Self, AkitaError> {
+        let mut entries = BTreeMap::new();
+        for (ring_d, requirement) in Self::join(requirements) {
+            let entry = dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                F,
+                ring_d,
+                |D| {
+                    let matrix = setup
+                        .expanded()
+                        .shared_matrix()
+                        .ring_view::<D>(1, requirement.prefix_len)?;
+                    let prepared = prepare_ntt_cache(
+                        matrix,
+                        NttCacheMode::ExactNegacyclic {
+                            width: requirement.width,
+                            rhs_abs_bound: TERMINAL_I16_ABS_BOUND,
+                        },
+                    )?;
+                    Ok::<_, AkitaError>(TerminalNttEntry {
+                        requirement,
+                        cache_bytes: prepared.cache_bytes(),
+                        cache: Box::new(prepared),
+                    })
+                }
+            )?;
+            entries.insert(ring_d, entry);
+        }
+        Ok(Self { entries })
+    }
+
+    /// Install one trusted scalar Q128 artifact as the only entry.
+    ///
+    /// The artifact must carry the setup and schedule identities and exactly
+    /// the geometry of `requirement`.
+    pub(crate) fn install_trusted<F: Field + CanonicalEncoding>(
+        setup: &AkitaVerifierSetup<F>,
+        requirement: TerminalNttCacheRequirement,
+        schedule_row_digest: ScheduleRowDigest,
+        artifact: &[u8],
+    ) -> Result<Self, AkitaError> {
+        let expected_binding = PreparedVerifierNttCacheBinding {
+            setup_seed_digest: setup_seed_digest(&setup.expanded().descriptor.setup_seed).map_err(
+                |error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")),
+            )?,
+            schedule_row_digest,
+            setup_field_elements: setup.expanded().descriptor.num_field_elements,
+        };
+        let entry = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            requirement.ring_dimension,
+            |D| {
+                let (metadata, prepared) =
+                    decode_riscv64_scalar_q128_cache::<F, D>(artifact, expected_binding)?;
+                if metadata.base_prefix_len != requirement.prefix_len
+                    || metadata.width != requirement.width
+                    || metadata.rhs_abs_bound != TERMINAL_I16_ABS_BOUND
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "trusted prepared terminal cache geometry does not match its schedule"
+                            .into(),
+                    ));
+                }
+                Ok::<_, AkitaError>(TerminalNttEntry {
+                    requirement,
+                    cache_bytes: prepared.cache_bytes(),
+                    cache: Box::new(prepared),
+                })
+            }
+        )?;
+        Ok(Self {
+            entries: BTreeMap::from([(requirement.ring_dimension, entry)]),
+        })
+    }
+
+    /// Borrow the prepared entry for ring dimension `D`.
+    pub(crate) fn get<const D: usize>(&self) -> Result<&PreparedNttCache<D>, AkitaError> {
+        self.entries
+            .get(&D)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "verifier has no prepared terminal matrix at ring dimension {D}"
+                ))
+            })?
+            .cache
+            .downcast_ref::<PreparedNttCache<D>>()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("prepared terminal matrix type mismatch".into())
+            })
+    }
+
+    /// In-memory byte footprint of every prepared entry.
+    pub(crate) fn cache_bytes(&self) -> usize {
+        self.entries.values().map(|entry| entry.cache_bytes).sum()
+    }
 }
 
 /// Build the scalar Q128 prepared terminal cache consumed by a RISC V verifier.
@@ -139,9 +293,23 @@ mod tests {
         assert_eq!(metadata.width, requirement.width);
         assert_eq!(metadata.binding.schedule_row_digest, selection.row_digest);
 
-        setup
-            .install_trusted_prepared_verifier_ntt_cache(&artifact, selection.row_digest)
-            .expect("install terminal cache");
-        assert!(setup.verifier_ntt_cache_bytes().expect("cache bytes") > 0);
+        let installed =
+            TerminalNttCache::install_trusted(&setup, requirement, selection.row_digest, &artifact)
+                .expect("install terminal cache");
+        assert!(installed.cache_bytes() > 0);
+
+        let other_row = ScheduleRowDigest::from_bytes([0xa5; 32]);
+        assert!(matches!(
+            TerminalNttCache::install_trusted(&setup, requirement, other_row, &artifact),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        let narrower = TerminalNttCacheRequirement {
+            width: requirement.width - 1,
+            ..requirement
+        };
+        assert!(matches!(
+            TerminalNttCache::install_trusted(&setup, narrower, selection.row_digest, &artifact),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 }

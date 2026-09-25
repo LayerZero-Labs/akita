@@ -163,6 +163,15 @@ removed_api_patterns=(
   'ReducedCoefficientFunctional'
   'CompactFactorInputs'
   'prepare_coefficient_packing_batch_groups'
+  'install_trusted_prepared_verifier_ntt_cache'
+  'prepared_verifier_ntt_prefix'
+  'verifier_ntt_cache_bytes\(\)'
+  'ensure_verifier_schedule_fits_setup'
+  'VerifierNttCache'
+  'ErasedVerifierNttCache'
+  'warm_for_schedule'
+  'prepare_ntt_cache_with_tail_prefix'
+  'akita_verifier::batched_verify'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

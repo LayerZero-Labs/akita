@@ -143,13 +143,15 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 scheme
-                    .batched_verify(
-                        proof,
-                        &verifier_setup,
-                        LABEL,
-                        statement(selection, &point, opening, &commitment),
-                        BasisMode::Lagrange,
-                    )
+                    .verifier(verifier_setup.clone())
+                    .and_then(|verifier| {
+                        verifier.batched_verify(
+                            proof,
+                            LABEL,
+                            statement(selection, &point, opening, &commitment),
+                            BasisMode::Lagrange,
+                        )
+                    })
                     .unwrap_or_else(|error| panic!("honest {name} proof must verify: {error:?}"));
             }
 
@@ -168,13 +170,16 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    scheme.batched_verify(
-                        proof,
-                        &verifier_setup,
-                        LABEL,
-                        statement(wrong_selection, &point, opening, &commitment),
-                        BasisMode::Lagrange,
-                    )
+                    scheme
+                        .verifier(verifier_setup.clone())
+                        .and_then(|verifier| {
+                            verifier.batched_verify(
+                                proof,
+                                LABEL,
+                                statement(wrong_selection, &point, opening, &commitment),
+                                BasisMode::Lagrange,
+                            )
+                        })
                 }));
                 assert!(
                     matches!(outcome, Ok(Err(_))),

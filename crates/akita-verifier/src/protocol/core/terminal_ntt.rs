@@ -2,53 +2,15 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{
-    dispatch_for_field, ntt_cache_requires_exactness_tail, AkitaVerifierSetup, FoldSchedule,
-};
 use jolt_field::{CanonicalEncoding, Field};
 
-use crate::prepared_cache::{
-    terminal_ntt_cache_requirement, TERMINAL_I16_ABS_BOUND, TERMINAL_I16_LOG_BASIS,
-};
-
-/// Warm every exact terminal i16 representation selected by a validated schedule.
-pub(super) fn warm_for_schedule<
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
->(
-    setup: &AkitaVerifierSetup<F>,
-    schedule: &FoldSchedule,
-) -> Result<(), AkitaError> {
-    let requirement = terminal_ntt_cache_requirement(schedule)?;
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        F,
-        requirement.ring_dimension,
-        |D| {
-            let tail_prefix_len = if ntt_cache_requires_exactness_tail::<F, D>(
-                requirement.width,
-                TERMINAL_I16_ABS_BOUND,
-            )? {
-                requirement.prefix_len
-            } else {
-                0
-            };
-            setup.prepared_verifier_ntt_prefix::<D>(
-                requirement.prefix_len,
-                tail_prefix_len,
-                requirement.width,
-                TERMINAL_I16_ABS_BOUND,
-            )?;
-            Ok::<(), AkitaError>(())
-        }
-    )
-}
+use crate::prepared_cache::{TerminalNttCache, TERMINAL_I16_LOG_BASIS};
 
 /// Compute the terminal prepared negacyclic matrix product for signed-i16 rings.
 pub(super) fn centered_rows<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
+    terminal_ntt: &TerminalNttCache,
     num_rows: usize,
     rhs: &[[i16; D]],
-    prepared_prefix_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
@@ -57,50 +19,30 @@ where
         "terminal_ntt_a_product",
         ring_d = D,
         num_rows,
-        num_cols = rhs.len(),
-        prepared_prefix_len
+        num_cols = rhs.len()
     )
     .entered();
-    let required = num_rows
-        .checked_mul(rhs.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    if prepared_prefix_len < required {
-        return Err(AkitaError::InvalidSetup(
-            "verifier A cache prefix is undersized".into(),
-        ));
-    }
     if num_rows == 0 || rhs.is_empty() {
         return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
-
-    let slot = {
-        let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
-        let tail_prefix_len =
-            if ntt_cache_requires_exactness_tail::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)? {
-                prepared_prefix_len
-            } else {
-                0
-            };
-        setup.prepared_verifier_ntt_prefix::<D>(
-            prepared_prefix_len,
-            tail_prefix_len,
-            rhs.len(),
-            TERMINAL_I16_ABS_BOUND,
-        )?
-    };
-    let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate").entered();
-    slot.mat_vec_i16(TERMINAL_I16_LOG_BASIS, num_rows, rhs)
+    terminal_ntt
+        .get::<D>()?
+        .mat_vec_i16(TERMINAL_I16_LOG_BASIS, num_rows, rhs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prepared_cache::{
+        terminal_ntt_cache_requirement, TerminalNttCacheRequirement, TERMINAL_I16_ABS_BOUND,
+    };
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::proof_optimized::fp128::OneHot;
     use akita_types::{
-        prepare_ntt_cache, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
-        FlatMatrix, NttCacheMode, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
+        ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,
+        AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaVerifierSetup, FlatMatrix, NttCacheMode,
+        PolynomialGroupLayout, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
     use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
@@ -201,6 +143,21 @@ mod tests {
             .collect()
     }
 
+    fn terminal_cache<F: Field + CanonicalEncoding>(
+        setup: &AkitaVerifierSetup<F>,
+        prefix_len: usize,
+        width: usize,
+    ) -> Result<TerminalNttCache, AkitaError> {
+        TerminalNttCache::prepare(
+            setup,
+            [TerminalNttCacheRequirement {
+                ring_dimension: D,
+                prefix_len,
+                width,
+            }],
+        )
+    }
+
     #[test]
     fn terminal_i16_path_materializes_the_selected_exact_profile() {
         let matrix = matrix();
@@ -219,14 +176,15 @@ mod tests {
         let needs_tail =
             ntt_cache_requires_exactness_tail::<F, D>(centered.len(), TERMINAL_I16_ABS_BOUND)
                 .expect("tail capability");
+        let cache = terminal_cache(&setup, 10, centered.len()).expect("terminal cache");
         assert_eq!(
-            centered_rows(&setup, 2, &centered, 10).expect("mixed i16 terminal matvec"),
+            centered_rows(&cache, 2, &centered).expect("mixed i16 terminal matvec"),
             expected(&matrix, &centered_rings(&centered))
         );
         // Both the IFMA52 and scalar profiles cover this shape with the
         // 14-bit tail.
         assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("cache bytes"),
+            cache.cache_bytes(),
             q128_base_cache_bytes(10)
                 + usize::from(needs_tail) * 10 * D * core::mem::size_of::<i16>()
         );
@@ -236,9 +194,8 @@ mod tests {
     fn terminal_cache_rejects_an_undersized_setup_without_panicking() {
         let matrix = matrix();
         let setup = verifier_setup(&matrix[..1]);
-        let centered = vec![[1i16; D]; 5];
         assert!(matches!(
-            centered_rows(&setup, 2, &centered, 10),
+            terminal_cache(&setup, 10, 5),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -271,7 +228,8 @@ mod tests {
         let needs_tail =
             ntt_cache_requires_exactness_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
                 .expect("q32 terminal capability");
-        let actual = centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        let cache = terminal_cache(&setup, 10, rhs.len()).expect("q32 terminal cache");
+        let actual = centered_rows(&cache, 2, &rhs).expect("q32 i16 terminal matvec");
         let centered_rhs = rhs
             .iter()
             .map(|ring| {
@@ -296,7 +254,7 @@ mod tests {
         };
         let tail_bytes_per_coefficient = usize::from(needs_tail) * core::mem::size_of::<i16>();
         assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("cache bytes"),
+            cache.cache_bytes(),
             10 * D * (base_bytes_per_coefficient + tail_bytes_per_coefficient)
         );
     }
@@ -331,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
+    fn schedule_requirement_prepares_one_terminal_entry() {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
             .expect("workspace schedule catalog");
         let group = PolynomialGroupLayout::new(15, 1);
@@ -340,15 +298,10 @@ mod tests {
             .expect("adaptive schedule")
             .schedule()
             .clone();
-        let params = &schedule.terminal;
-        let prefix_len = params
-            .inner
-            .matrix
-            .output_rank()
-            .checked_mul(params.inner_width())
-            .expect("terminal prefix");
-        let field_len = prefix_len
-            .checked_mul(params.d_a())
+        let requirement = terminal_ntt_cache_requirement(&schedule).expect("requirement");
+        let field_len = requirement
+            .prefix_len
+            .checked_mul(requirement.ring_dimension)
             .expect("terminal setup field length");
         let setup = AkitaVerifierSetup::from_parts(
             Arc::new(
@@ -366,19 +319,14 @@ mod tests {
         )
         .expect("matching public-matrix identity");
 
-        assert_eq!(setup.verifier_ntt_cache_bytes().expect("empty cache"), 0);
-        warm_for_schedule(&setup, &schedule).expect("warm cache");
-        let warmed_bytes = setup.verifier_ntt_cache_bytes().expect("warmed cache");
-        assert!(warmed_bytes > 0);
-        warm_for_schedule(&setup, &schedule).expect("reuse warm cache");
-        assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("reused cache"),
-            warmed_bytes
-        );
+        let cache =
+            TerminalNttCache::prepare(&setup, [requirement, requirement]).expect("terminal cache");
+        assert!(cache.cache_bytes() > 0);
+        assert!(TerminalNttCache::default().cache_bytes() == 0);
     }
 
     #[test]
-    fn distinct_exact_plans_preserve_smaller_flat_matrix_geometry() {
+    fn wide_entry_serves_a_shorter_narrower_product() {
         let matrix = matrix();
         let setup = verifier_setup(&matrix);
         let wide_rhs = (0..5)
@@ -386,59 +334,45 @@ mod tests {
                 std::array::from_fn(|coefficient| ((column * 7 + coefficient) % 17) as i16 - 8)
             })
             .collect::<Vec<_>>();
-        centered_rows(&setup, 2, &wide_rhs, 10).expect("wide cached product");
-        let wide_cache_bytes = setup.verifier_ntt_cache_bytes().expect("wide cache bytes");
+        let narrow = TerminalNttCacheRequirement {
+            ring_dimension: D,
+            prefix_len: 6,
+            width: 3,
+        };
+        let wide = TerminalNttCacheRequirement {
+            prefix_len: 10,
+            width: 5,
+            ..narrow
+        };
+        let cache = TerminalNttCache::prepare(&setup, [narrow, wide]).expect("joined cache");
+        assert_eq!(
+            cache.cache_bytes(),
+            terminal_cache(&setup, 10, 5).unwrap().cache_bytes()
+        );
 
+        assert_eq!(
+            centered_rows(&cache, 2, &wide_rhs).expect("wide product"),
+            expected(&matrix, &centered_rings(&wide_rhs)),
+        );
         let narrow_rhs = &wide_rhs[..3];
         assert_eq!(
-            centered_rows(&setup, 2, narrow_rhs, 6).expect("narrow cached product"),
+            centered_rows(&cache, 2, narrow_rhs).expect("narrow product"),
             expected(&matrix[..6], &centered_rings(narrow_rhs)),
-        );
-        let distinct_plan_bytes = setup
-            .verifier_ntt_cache_bytes()
-            .expect("distinct plan cache bytes");
-        assert!(distinct_plan_bytes > wide_cache_bytes);
-        centered_rows(&setup, 2, narrow_rhs, 6).expect("reuse narrow exact plan");
-        assert_eq!(
-            setup
-                .verifier_ntt_cache_bytes()
-                .expect("reused exact plans"),
-            distinct_plan_bytes,
         );
     }
 
     #[test]
-    fn exact_capabilities_do_not_alias_cache_entries() {
+    fn missing_ring_dimension_is_an_invalid_setup() {
         let setup = verifier_setup(&matrix());
-        let initial_needs_tail =
-            ntt_cache_requires_exactness_tail::<F, D>(4, TERMINAL_I16_ABS_BOUND)
-                .expect("initial exactness requirement");
-        let initial_tail_len = usize::from(initial_needs_tail) * 4;
-
-        let initial_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, initial_tail_len, 4, TERMINAL_I16_ABS_BOUND)
-            .expect("initial exact prefix");
-        assert_eq!(initial_tail.has_exactness_tail(), initial_needs_tail);
-
-        let combined = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, TERMINAL_I16_ABS_BOUND)
-            .expect("larger base-only prefix");
-        assert!(!combined.has_exactness_tail());
-        assert!(!Arc::ptr_eq(&initial_tail, &combined));
-        assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("separate bytes"),
-            q128_base_cache_bytes(4)
-                + initial_tail_len * D * core::mem::size_of::<i16>()
-                + q128_base_cache_bytes(10)
-        );
-        let other_basis = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 1 << 14)
-            .expect("distinct exact bound");
-        assert!(!Arc::ptr_eq(&combined, &other_basis));
-
-        let reused_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, initial_tail_len, 4, TERMINAL_I16_ABS_BOUND)
-            .expect("reused exact prefix");
-        assert!(Arc::ptr_eq(&initial_tail, &reused_tail));
+        let cache = terminal_cache(&setup, 10, 5).expect("terminal cache");
+        let rhs = vec![[1i16; 32]; 5];
+        assert!(matches!(
+            centered_rows::<F, 32>(&cache, 2, &rhs),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            centered_rows::<F, D>(&TerminalNttCache::default(), 2, &[[1i16; D]; 5]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 }

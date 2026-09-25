@@ -76,13 +76,16 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         )
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
-        scheme.batched_verify(
-            candidate,
-            &verifier_setup,
-            TRANSCRIPT_LABEL,
-            selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
-            BasisMode::Lagrange,
-        )
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    candidate,
+                    TRANSCRIPT_LABEL,
+                    selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
+                    BasisMode::Lagrange,
+                )
+            })
     };
     verify(&proof).expect("valid L2 proof");
 

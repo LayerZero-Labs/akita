@@ -53,13 +53,20 @@ fn commit_prove_verify<Cfg, P>(
     .expect("verifier group")])
     .expect("verifier claims");
     scheme
-        .batched_verify(
-            &proof,
-            &scheme.setup_verifier(setup).expect("verifier setup"),
-            label,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
+        .verifier(
+            scheme
+                .setup_verifier(setup)
+                .expect("verifier setup")
+                .clone(),
         )
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                label,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
 }
 

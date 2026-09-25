@@ -27,9 +27,10 @@ mod prepared_cache;
 mod protocol;
 mod setup_contribution;
 mod stages;
+mod verifier;
 
 pub use prepared_cache::build_riscv64_terminal_ntt_cache;
-pub use protocol::{batched_verify, RelationMatrixEvaluator};
+pub use protocol::RelationMatrixEvaluator;
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use protocol::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
 #[cfg(feature = "benchmark-support")]
@@ -39,3 +40,4 @@ pub use protocol::{
 };
 pub use setup_contribution::{DirectScan, PreparedCoefficientFunctional, SetupIndexWeightMle};
 pub use stages::stage1::AkitaStage1Verifier;
+pub use verifier::AkitaVerifier;
