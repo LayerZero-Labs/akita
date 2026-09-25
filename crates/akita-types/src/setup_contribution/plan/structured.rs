@@ -4,16 +4,31 @@ use akita_algebra::{
     ring::scalar_powers_with_stride,
 };
 
+/// Validated shape shared by the closed-form and cached structured paths.
+struct StructuredGroupShape<'a, E: Field> {
+    group_index: usize,
+    group: &'a SetupContributionGroupPlan<E>,
+    uses_evaluation_trace_consistency: bool,
+    opening_gadget: Vec<E>,
+    commitment_gadget: Vec<E>,
+    witness_gadget: Vec<E>,
+    outer_subcolumns: usize,
+    opening_subcolumns: usize,
+    block_claims: usize,
+    e_stride: usize,
+    t_stride: usize,
+    e_len: usize,
+    t_len: usize,
+    z_cols: usize,
+}
+
 impl<E: Field> SetupContributionPlan<E> {
-    /// Contract one group's structured E/T/Z terms through its canonical
-    /// relation-column tensors.
-    pub fn evaluate_structured_group<F>(
+    fn structured_group_shape<F>(
         &self,
         group_id: usize,
         block_challenges: &[E],
         opening_a_evals: &[E],
-        alpha: E,
-    ) -> Result<E, AkitaError>
+    ) -> Result<StructuredGroupShape<'_, E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
@@ -23,21 +38,12 @@ impl<E: Field> SetupContributionPlan<E> {
             .iter()
             .position(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
-        let group = &self.groups[group_index];
+        let group = self
+            .groups
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
         let uses_evaluation_trace_consistency =
             matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace);
-        let direct_weights = match &self.direct_scan_state {
-            DirectScanState::Unprepared => None,
-            DirectScanState::Lifted {
-                alpha: prepared,
-                groups,
-            } if *prepared == alpha => groups.get(group_index),
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "structured relation requires matching lifted direct-scan state".into(),
-                ));
-            }
-        };
         let block_claims = group
             .num_claims
             .checked_mul(group.num_live_blocks)
@@ -68,164 +74,256 @@ impl<E: Field> SetupContributionPlan<E> {
             .num_positions_per_block
             .checked_mul(group.depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("structured Z width overflow".into()))?;
+        Ok(StructuredGroupShape {
+            group_index,
+            group,
+            uses_evaluation_trace_consistency,
+            opening_gadget,
+            commitment_gadget,
+            witness_gadget,
+            outer_subcolumns,
+            opening_subcolumns,
+            block_claims,
+            e_stride,
+            t_stride,
+            e_len,
+            t_len,
+            z_cols,
+        })
+    }
+}
 
-        if let Some(weights) = direct_weights {
-            if weights.e.len() != e_len
-                || weights.t.len() != t_len
-                || weights.z.len() != z_cols
-                || group.a_row_weights.len() != group.n_a
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-            let projected_opening_gadget = (opening_subcolumns != 1)
-                .then(|| {
-                    scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns)
-                })
-                .transpose()?
-                .map(|scales| {
-                    scales
-                        .iter()
-                        .flat_map(|&scale| opening_gadget.iter().map(move |&gadget| scale * gadget))
-                        .collect::<Vec<_>>()
-                });
-            let projected_commitment_gadget = (outer_subcolumns != 1)
-                .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
-                .transpose()?
-                .map(|scales| {
-                    scales
-                        .iter()
-                        .flat_map(|&scale| {
-                            commitment_gadget.iter().map(move |&gadget| scale * gadget)
-                        })
-                        .collect::<Vec<_>>()
-                });
-            let direct_opening_gadget = projected_opening_gadget
-                .as_deref()
-                .unwrap_or(&opening_gadget);
-            let direct_commitment_gadget = projected_commitment_gadget
-                .as_deref()
-                .unwrap_or(&commitment_gadget);
-            let direct_witness_gadget = &witness_gadget;
-            let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structured T row stride overflow".into())
-                })?;
-            if direct_opening_gadget.len() != e_stride
-                || direct_commitment_gadget.len() != t_row_stride
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-            // E and T share the block-claim index space, so they stay one
-            // fused fold gated on their combined width, and Z keeps its own
-            // gate. Splitting E from T would drop the multi-core reduce
-            // whenever each side alone sits under the threshold but the pair
-            // clears it.
-            let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
-                let e_start = block_claim
-                    .checked_mul(e_stride)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let e_eq =
-                    checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
-                let e = e_eq
-                    .iter()
-                    .zip(direct_opening_gadget)
-                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-
-                let t_start = block_claim
-                    .checked_mul(t_stride)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let t_eq =
-                    checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
-                let t = t_eq
-                    .chunks_exact(t_row_stride)
-                    .zip(group.a_row_weights.iter())
-                    .fold(E::zero(), |sum, (row, &row_weight)| {
-                        sum + row_weight
-                            * row
-                                .iter()
-                                .zip(direct_commitment_gadget)
-                                .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
-                    });
-                let block_challenge = *block_challenges
-                    .get(block_claim)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let consistency = if uses_evaluation_trace_consistency {
-                    group.consistency_weight * e
-                } else {
-                    E::zero()
-                };
-                Ok(acc? + block_challenge * (consistency + t))
-            };
-            const PARALLEL_THRESHOLD: usize = 1 << 14;
-            let et_work = e_len
-                .checked_add(t_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
-            let run_et = || -> Result<E, AkitaError> {
-                if et_work >= PARALLEL_THRESHOLD {
-                    cfg_fold_reduce!(
-                        0..block_claims,
-                        || Ok(E::zero()),
-                        fold_et,
-                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                    )
-                } else {
-                    (0..block_claims).fold(Ok(E::zero()), fold_et)
-                }
-            };
-            let fold_z = |acc: Result<E, AkitaError>, position: usize| {
-                let start = position
-                    .checked_mul(group.depth_witness)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let eq = checked_slice(
-                    &weights.z,
-                    start,
-                    group.depth_witness,
-                    "structured direct Z slice",
-                )?;
-                let inner = eq
-                    .iter()
-                    .zip(direct_witness_gadget)
-                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-                Ok(acc?
-                    + *opening_a_evals
-                        .get(position)
-                        .ok_or(AkitaError::InvalidProof)?
-                        * inner)
-            };
-            let run_z = || -> Result<E, AkitaError> {
-                if z_cols >= PARALLEL_THRESHOLD {
-                    cfg_fold_reduce!(
-                        0..group.num_positions_per_block,
-                        || Ok(E::zero()),
-                        fold_z,
-                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                    )
-                } else {
-                    (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
-                }
-            };
-            // Running E/T against Z costs one `rayon::join`, and that cost
-            // grows with the pool size, so it has to be repaid by both sides
-            // at once. Requiring the smaller of the two to clear the same
-            // threshold its own reduce uses keeps the fork on groups where
-            // each side is independently worth a parallel reduce; a group
-            // with one large and one small side runs them in sequence.
-            let (et, z) = if et_work.min(z_cols) >= PARALLEL_THRESHOLD {
-                let (et, z) = cfg_join!(run_et, run_z);
-                (et?, z?)
-            } else {
-                (run_et()?, run_z()?)
-            };
-            // Z carries the group's consistency weight on every position;
-            // applying it once after reduction drops one field multiplication
-            // per position and leaves the contracted equation auditable.
-            return Ok(if uses_evaluation_trace_consistency {
-                et + group.consistency_weight * z
-            } else {
-                et
-            });
+impl<E: Field> DirectScan<E> {
+    /// Contract one group's structured E/T/Z terms against the E/T/Z column
+    /// weights already materialized by a lifted direct scan.
+    ///
+    /// The lifted alpha is the one this scan was prepared for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a lifted scan, and [`AkitaError::InvalidProof`] if the challenge vectors do
+    /// not match the group's shape.
+    pub fn evaluate_structured_group_cached<F>(
+        &self,
+        group_id: usize,
+        block_challenges: &[E],
+        opening_a_evals: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let plan = &self.plan;
+        let DirectScanMode::Lifted {
+            alpha,
+            groups: scan_groups,
+        } = &self.mode
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "cached structured relation requires a lifted direct scan".into(),
+            ));
+        };
+        let alpha = *alpha;
+        let StructuredGroupShape {
+            group_index,
+            group,
+            uses_evaluation_trace_consistency,
+            opening_gadget,
+            commitment_gadget,
+            witness_gadget,
+            outer_subcolumns,
+            opening_subcolumns,
+            block_claims,
+            e_stride,
+            t_stride,
+            e_len,
+            t_len,
+            z_cols,
+        } = plan.structured_group_shape::<F>(group_id, block_challenges, opening_a_evals)?;
+        let weights = scan_groups.get(group_index).ok_or_else(|| {
+            AkitaError::InvalidSetup("lifted direct-scan group is missing".into())
+        })?;
+        if weights.e.len() != e_len
+            || weights.t.len() != t_len
+            || weights.z.len() != z_cols
+            || group.a_row_weights.len() != group.n_a
+        {
+            return Err(AkitaError::InvalidProof);
         }
+        let projected_opening_gadget = (opening_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
+            .transpose()?
+            .map(|scales| {
+                scales
+                    .iter()
+                    .flat_map(|&scale| opening_gadget.iter().map(move |&gadget| scale * gadget))
+                    .collect::<Vec<_>>()
+            });
+        let projected_commitment_gadget = (outer_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+            .transpose()?
+            .map(|scales| {
+                scales
+                    .iter()
+                    .flat_map(|&scale| commitment_gadget.iter().map(move |&gadget| scale * gadget))
+                    .collect::<Vec<_>>()
+            });
+        let direct_opening_gadget = projected_opening_gadget
+            .as_deref()
+            .unwrap_or(&opening_gadget);
+        let direct_commitment_gadget = projected_commitment_gadget
+            .as_deref()
+            .unwrap_or(&commitment_gadget);
+        let direct_witness_gadget = &witness_gadget;
+        let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
+            .ok_or_else(|| AkitaError::InvalidSetup("structured T row stride overflow".into()))?;
+        if direct_opening_gadget.len() != e_stride || direct_commitment_gadget.len() != t_row_stride
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        // E and T share the block-claim index space, so they stay one
+        // fused fold gated on their combined width, and Z keeps its own
+        // gate. Splitting E from T would drop the multi-core reduce
+        // whenever each side alone sits under the threshold but the pair
+        // clears it.
+        let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
+            let e_start = block_claim
+                .checked_mul(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_eq = checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
+            let e = e_eq
+                .iter()
+                .zip(direct_opening_gadget)
+                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
 
+            let t_start = block_claim
+                .checked_mul(t_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let t_eq = checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
+            let t = t_eq
+                .chunks_exact(t_row_stride)
+                .zip(group.a_row_weights.iter())
+                .fold(E::zero(), |sum, (row, &row_weight)| {
+                    sum + row_weight
+                        * row
+                            .iter()
+                            .zip(direct_commitment_gadget)
+                            .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
+                });
+            let block_challenge = *block_challenges
+                .get(block_claim)
+                .ok_or(AkitaError::InvalidProof)?;
+            let consistency = if uses_evaluation_trace_consistency {
+                group.consistency_weight * e
+            } else {
+                E::zero()
+            };
+            Ok(acc? + block_challenge * (consistency + t))
+        };
+        const PARALLEL_THRESHOLD: usize = 1 << 14;
+        let et_work = e_len
+            .checked_add(t_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
+        let run_et = || -> Result<E, AkitaError> {
+            if et_work >= PARALLEL_THRESHOLD {
+                cfg_fold_reduce!(
+                    0..block_claims,
+                    || Ok(E::zero()),
+                    fold_et,
+                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                )
+            } else {
+                (0..block_claims).fold(Ok(E::zero()), fold_et)
+            }
+        };
+        let fold_z = |acc: Result<E, AkitaError>, position: usize| {
+            let start = position
+                .checked_mul(group.depth_witness)
+                .ok_or(AkitaError::InvalidProof)?;
+            let eq = checked_slice(
+                &weights.z,
+                start,
+                group.depth_witness,
+                "structured direct Z slice",
+            )?;
+            let inner = eq
+                .iter()
+                .zip(direct_witness_gadget)
+                .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+            Ok(acc?
+                + *opening_a_evals
+                    .get(position)
+                    .ok_or(AkitaError::InvalidProof)?
+                    * inner)
+        };
+        let run_z = || -> Result<E, AkitaError> {
+            if z_cols >= PARALLEL_THRESHOLD {
+                cfg_fold_reduce!(
+                    0..group.num_positions_per_block,
+                    || Ok(E::zero()),
+                    fold_z,
+                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                )
+            } else {
+                (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
+            }
+        };
+        // Running E/T against Z costs one `rayon::join`, and that cost
+        // grows with the pool size, so it has to be repaid by both sides
+        // at once. Requiring the smaller of the two to clear the same
+        // threshold its own reduce uses keeps the fork on groups where
+        // each side is independently worth a parallel reduce; a group
+        // with one large and one small side runs them in sequence.
+        let (et, z) = if et_work.min(z_cols) >= PARALLEL_THRESHOLD {
+            let (et, z) = cfg_join!(run_et, run_z);
+            (et?, z?)
+        } else {
+            (run_et()?, run_z()?)
+        };
+        // Z carries the group's consistency weight on every position;
+        // applying it once after reduction drops one field multiplication
+        // per position and leaves the contracted equation auditable.
+        Ok(if uses_evaluation_trace_consistency {
+            et + group.consistency_weight * z
+        } else {
+            et
+        })
+    }
+}
+
+impl<E: Field> SetupContributionPlan<E> {
+    /// Contract one group's structured E/T/Z terms in closed form through its
+    /// canonical relation-column tensors, without a materialized direct scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if the challenge vectors do not
+    /// match the group's shape, and [`AkitaError::InvalidSetup`] if the plan's
+    /// tensors are malformed.
+    pub fn evaluate_structured_group<F>(
+        &self,
+        group_id: usize,
+        block_challenges: &[E],
+        opening_a_evals: &[E],
+        alpha: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let StructuredGroupShape {
+            group,
+            uses_evaluation_trace_consistency,
+            opening_gadget,
+            commitment_gadget,
+            witness_gadget,
+            outer_subcolumns,
+            opening_subcolumns,
+            e_stride,
+            t_stride,
+            z_cols,
+            ..
+        } = self.structured_group_shape::<F>(group_id, block_challenges, opening_a_evals)?;
         let opening_scales = (opening_subcolumns != 1)
             .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
             .transpose()?;
@@ -262,7 +360,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 "structured role tensor families disagree".into(),
             ));
         }
-        let active_unit_count = group.active_unit_ranges.len();
+        let active_unit_count = group.active_units.len();
         if active_unit_count == 0 || group.num_physical_units == 0 {
             return Err(AkitaError::InvalidSetup(
                 "structured tensor partition is empty".into(),
@@ -309,11 +407,11 @@ impl<E: Field> SetupContributionPlan<E> {
                 )
             };
             let unit = group
-                .active_unit_ranges
+                .active_units
                 .get(unit_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            let global_block_start = unit.global_block_start;
-            let unit_blocks = unit.num_live_blocks;
+            let global_block_start = unit.global_block_start();
+            let unit_blocks = unit.num_live_blocks();
             let setup_block = claim
                 .checked_mul(group.num_live_blocks)
                 .and_then(|block| block.checked_add(global_block_start))

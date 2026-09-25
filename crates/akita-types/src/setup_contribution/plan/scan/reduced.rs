@@ -88,6 +88,7 @@ impl<E: Field> SetupContributionPlan<E> {
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         weights: &[ReducedDirectScanWeights<E>],
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -100,12 +101,14 @@ impl<E: Field> SetupContributionPlan<E> {
                 setup_view,
                 &functional_classes,
                 &scan_groups,
+                partitions,
             )
         } else {
             self.evaluate_groups_reduced_with::<F, BASE_D, CanonicalProductSum<E>>(
                 setup_view,
                 &functional_classes,
                 &scan_groups,
+                partitions,
             )
         }
     }
@@ -175,6 +178,7 @@ impl<E: Field> SetupContributionPlan<E> {
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         functional_classes: &[ReducedFunctionalClass<'_, E>],
         scan_groups: &[ReducedScanGroup<'_, E>],
+        partitions: &[GroupScanPartition<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -182,7 +186,10 @@ impl<E: Field> SetupContributionPlan<E> {
         A: ProductSum<E>,
     {
         let required = self.projection_geometry.required();
-        if self.d_weights.len() != self.d_rows || scan_groups.len() != self.groups.len() {
+        if self.d_weights.len() != self.d_rows
+            || scan_groups.len() != self.groups.len()
+            || partitions.len() != self.groups.len()
+        {
             return Err(AkitaError::InvalidSetup(
                 "cached setup scan geometry is malformed".into(),
             ));
@@ -200,10 +207,13 @@ impl<E: Field> SetupContributionPlan<E> {
                     .ok_or(AkitaError::InvalidProof)?
                     .min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
-                let mut segment_cursors = self
-                    .groups
+                let mut segment_cursors = partitions
                     .iter()
-                    .map(|group| group.segments.partition_point(|segment| segment.hi <= lo))
+                    .map(|partition| {
+                        partition
+                            .segments
+                            .partition_point(|segment| segment.hi <= lo)
+                    })
                     .collect::<Vec<_>>();
                 let mut class_scalars = (0..functional_classes.len())
                     .map(|_| A::zero())
@@ -211,20 +221,17 @@ impl<E: Field> SetupContributionPlan<E> {
                 let mut term = A::zero();
                 for (offset, ring) in setup.iter().enumerate() {
                     let base_idx = lo.checked_add(offset).ok_or(AkitaError::InvalidProof)?;
-                    for ((group, direct), cursor) in self
-                        .groups
-                        .iter()
-                        .zip(scan_groups)
-                        .zip(&mut segment_cursors)
+                    for ((partition, direct), cursor) in
+                        partitions.iter().zip(scan_groups).zip(&mut segment_cursors)
                     {
-                        while group
+                        while partition
                             .segments
                             .get(*cursor)
                             .is_some_and(|segment| segment.hi <= base_idx)
                         {
                             *cursor += 1;
                         }
-                        let Some(segment) = group.segments.get(*cursor) else {
+                        let Some(segment) = partition.segments.get(*cursor) else {
                             continue;
                         };
                         if base_idx < segment.lo || base_idx >= segment.hi {
