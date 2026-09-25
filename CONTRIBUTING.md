@@ -4,6 +4,12 @@ See [AUTHORS.md](AUTHORS.md) for maintainers and contributors.
 
 Akita uses a lightweight spec-driven workflow for major features and architectural changes.
 
+## Choosing A Base Branch
+
+Open pull requests against `main` for fixes, refactors, performance work, and documentation that keep the current protocol unchanged.
+Open pull requests against `dev` for new protocol extensions, opt-in features, and compute backends.
+[`docs/branches.md`](docs/branches.md) defines the extension contract and how the two branches stay in sync.
+
 ## When To Write A Spec
 
 Open a direct PR for bug fixes, small improvements, documentation, and tightly scoped cleanups.

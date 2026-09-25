@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     fn finish_ingested_round(&mut self, fold_started: Instant) {
@@ -21,7 +22,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         }
     }
 
-    pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
+    pub(super) fn compute_current_round_poly_from_state(&mut self) -> UnivariatePoly<E> {
         let t_scan = Instant::now();
         let (poly, norm_poly) = match &self.relation_state {
             RelationRoundState::ReducedDense { weights: dense } => match &self.witness_state {
@@ -54,7 +55,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     fn compute_quotient_round_from_state(
         &self,
         weights: &RelationWeightFactorization<E>,
-    ) -> (UniPoly<E>, UniPoly<E>) {
+    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
         if self.using_deferred_compact_prefix() {
             if let Some(prefix) = self.deferred_compact_prefix() {
                 let (virt_poly, rel_poly) = match prefix.phase {
@@ -201,19 +202,22 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
         self.input_claim
     }
 
-    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UnivariatePoly<E> {
         let mut polynomial = if let Some(poly) = self.cached_round_poly.take() {
             poly
         } else {
             self.compute_current_round_poly_from_state()
         };
         if let Some(additional) = self.additional_round_polynomial() {
-            if polynomial.coeffs.len() < additional.coeffs.len() {
-                polynomial.coeffs.resize(additional.coeffs.len(), E::zero());
+            let mut coefficients = polynomial.into_coefficients();
+            coefficients.resize(
+                coefficients.len().max(additional.coefficients().len()),
+                E::zero(),
+            );
+            for (coefficient, addition) in coefficients.iter_mut().zip(additional.coefficients()) {
+                *coefficient += *addition;
             }
-            for (coefficient, addition) in polynomial.coeffs.iter_mut().zip(additional.coeffs) {
-                *coefficient += addition;
-            }
+            polynomial = UnivariatePoly::new(coefficients);
         }
         polynomial
     }
@@ -225,7 +229,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             additional.bind(r);
         }
         if let Some(prev_norm_poly) = self.prev_norm_poly.take() {
-            self.prev_norm_claim = prev_norm_poly.evaluate(&r);
+            self.prev_norm_claim = prev_norm_poly.evaluate(r);
         }
 
         if matches!(self.relation_state, RelationRoundState::ReducedDense { .. }) {

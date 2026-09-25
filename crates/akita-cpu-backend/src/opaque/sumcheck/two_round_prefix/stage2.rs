@@ -1,9 +1,10 @@
 use super::common::*;
 use crate::opaque::PreparedProverLinearTerms;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_sumcheck::{reduce_signed_accum, UniPoly};
+use akita_sumcheck::reduce_signed_accum;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Unreduced, Zero};
+use jolt_poly::UnivariatePoly;
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -461,7 +462,7 @@ impl<E: Field> Stage2PrefixCache<E> {
 
 impl<E: Field + Ring> Stage2PrefixCache<E> {
     #[inline]
-    pub(crate) fn reconstruct_round0_polys(&self) -> (UniPoly<E>, UniPoly<E>) {
+    pub(crate) fn reconstruct_round0_polys(&self) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
         let norm_q = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.norm_x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.norm_x_row_coeffs[1], self.tau1),
@@ -473,13 +474,13 @@ impl<E: Field + Ring> Stage2PrefixCache<E> {
         let relation_coeffs =
             add_quadratic_coeffs(self.relation_x_row_coeffs[0], self.relation_x_row_coeffs[1]);
         (
-            UniPoly::from_coeffs(norm_coeffs.to_vec()),
-            UniPoly::from_coeffs(relation_coeffs.to_vec()),
+            UnivariatePoly::new(norm_coeffs.to_vec()),
+            UnivariatePoly::new(relation_coeffs.to_vec()),
         )
     }
 
     #[inline]
-    pub(crate) fn reconstruct_round1_polys(&self, r0: E) -> (UniPoly<E>, UniPoly<E>) {
+    pub(crate) fn reconstruct_round1_polys(&self, r0: E) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
         let norm_y_values: [E; 3] = std::array::from_fn(|y_idx| {
             eval_quadratic_from_coeffs(self.norm_x_row_coeffs[y_idx], r0)
         });
@@ -499,8 +500,8 @@ impl<E: Field + Ring> Stage2PrefixCache<E> {
             relation_rhs_values[2],
         );
         (
-            UniPoly::from_coeffs(norm_coeffs.to_vec()),
-            UniPoly::from_coeffs(relation_coeffs.to_vec()),
+            UnivariatePoly::new(norm_coeffs.to_vec()),
+            UnivariatePoly::new(relation_coeffs.to_vec()),
         )
     }
 }

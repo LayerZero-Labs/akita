@@ -441,10 +441,11 @@ where
 mod tests {
     use super::*;
 
-    use akita_sumcheck::{SumcheckInstanceProver, UniPoly};
+    use akita_sumcheck::SumcheckInstanceProver;
     use akita_transcript::{new_native_prover, new_native_verifier};
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use jolt_field::{FpExt4, Prime32Offset99, Zero};
+    use jolt_poly::UnivariatePoly;
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -466,8 +467,8 @@ mod tests {
             E::zero()
         }
 
-        fn compute_round_univariate(&mut self, _round: usize, _claim: E) -> UniPoly<E> {
-            UniPoly::from_coeffs(vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE + 1])
+        fn compute_round_univariate(&mut self, _round: usize, _claim: E) -> UnivariatePoly<E> {
+            UnivariatePoly::new(vec![E::zero(); EXTENSION_OPENING_REDUCTION_DEGREE + 1])
         }
 
         fn ingest_challenge(&mut self, _round: usize, _challenge: E) {}
