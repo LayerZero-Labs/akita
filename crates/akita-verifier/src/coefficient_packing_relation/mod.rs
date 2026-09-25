@@ -43,10 +43,9 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let groups = validate_coefficient_packing_batch_groups(&inputs)?
-        .iter()
-        .map(prepare_coefficient_packing_verifier_group)
-        .collect::<Result<_, _>>()?;
+    let groups = validate_coefficient_packing_batch_groups(&inputs, |group| {
+        prepare_coefficient_packing_verifier_group(&group)
+    })?;
     Ok(CoefficientPackingVerifierBatchSemantics { groups })
 }
 
