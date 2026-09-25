@@ -59,15 +59,15 @@ has already factored the relation coordinates. This state is encoded by the
 
 ## Direct Stage 2 mode
 
-In direct mode, the verifier builds a `DirectScan` from the plan and the
-prepared coefficient functional. The scan owns the per-group E, T, and Z column
-weights and the packed D, B, and A segment partition; the plan itself carries
-no functional state. `SetupContributionPlan::evaluate_direct` walks the
-required public setup prefix with that scan. For each setup ring it evaluates
-the ring against the functional (the powers of `alpha` in quotient-lift mode),
-multiplies by the structured index weight, and accumulates the result. The
-structured group terms reuse the same cached column weights. A scan built for
-a different plan is rejected with `InvalidSetup`.
+In direct mode, the verifier moves the plan into a `DirectScan` together with
+the prepared coefficient functional. The scan owns the plan, the per-group E,
+T, and Z column weights, and the packed D, B, and A segment partition; the plan
+itself carries no functional state. `DirectScan::evaluate_direct` walks the
+required public setup prefix. For each setup ring it evaluates the ring against
+the functional (the powers of `alpha` in quotient-lift mode), multiplies by the
+structured index weight, and accumulates the result. The structured group terms
+reuse the same cached column weights. Because every evaluation reads the plan
+the scan owns, a scan cannot be evaluated against a different plan.
 
 The scan is linear in the required public setup size. This is necessary because
 the setup coefficients are arbitrary. The verifier factors the setup equality
@@ -109,7 +109,10 @@ The first factor comes from the public setup or from an authenticated setup
 prefix opening. The second factor is `SetupIndexWeightMle`, the compact MLE of
 the setup-index weight. Stage 3 builds it from a `SetupContributionPlan`
 prepared from the same Stage 2 challenge point and witness layout, so it uses
-the same address rules as the Stage 2 plan. Only the verifier builds these
+the same address rules as the Stage 2 plan. The plan keeps the group's live
+witness units, and the B-role tensors are rebuilt from those, so the
+constructor takes the plan alone and cannot be handed a second layout. Only
+the verifier builds these
 paired-equality tensors; the prover materializes the dense setup-index weights
 instead. The final factor evaluates the powers of `alpha` inside one ring.
 
