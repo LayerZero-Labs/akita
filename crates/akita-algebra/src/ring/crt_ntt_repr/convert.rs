@@ -168,17 +168,37 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        Self::from_centered_coefficients(&ring.centered_coefficients_i128(), params)
+    }
 
+    /// Convert centered integer coefficients into negacyclic CRT+NTT form.
+    ///
+    /// Primes whose centered range holds every coefficient skip the wide
+    /// reduction.
+    pub fn from_centered_coefficients(
+        centered_coeffs: &[i128; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let max_abs = centered_coeffs
+            .iter()
+            .map(|value| value.unsigned_abs())
+            .max()
+            .unwrap_or(0);
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            if max_abs <= u128::from((prime.p.to_i64() / 2).unsigned_abs()) {
+                for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                    *dst = prime.from_canonical(W::from_i64(*centered as i64));
+                }
+            } else {
+                let reducer = CenteredPrimeWideReducer::new(*prime);
+                for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                    *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+                }
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }

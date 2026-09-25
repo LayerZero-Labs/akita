@@ -1,3 +1,4 @@
+use super::limbs::{limb_plan, LimbPlan};
 use super::*;
 
 pub(super) fn ifma52_cache_enabled<const D: usize>() -> bool {
@@ -51,22 +52,40 @@ pub(super) enum ExactCachePlan<const D: usize> {
         params: Box<Ifma52Params<3, D>>,
         needs_tail: bool,
     },
+    Limbs(LimbPlan<D>),
 }
 
 impl<const D: usize> ExactCachePlan<D> {
-    const fn needs_tail(&self) -> bool {
+    pub(super) const fn needs_tail(&self) -> bool {
         match self {
             Self::Q32 { needs_tail, .. }
             | Self::Q32Ifma52 { needs_tail, .. }
             | Self::Q64 { needs_tail, .. }
             | Self::Q128 { needs_tail, .. }
             | Self::Q128Ifma52 { needs_tail, .. } => *needs_tail,
-            Self::Q64Ifma52 { .. } => false,
+            Self::Q64Ifma52 { .. } | Self::Limbs(_) => false,
         }
     }
 }
 
+/// Plan an exact signed-i16 cache. With `limb_rows`, the number of rows the
+/// prepared matrix holds, a limb split replaces the base plan when cheaper.
 pub(super) fn exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
+    selected: ProtocolCrtNttParams<D>,
+    width: usize,
+    rhs_abs_bound: u64,
+    limb_rows: Option<usize>,
+) -> Result<ExactCachePlan<D>, AkitaError> {
+    let base = base_exact_cache_plan::<F, D>(selected, width, rhs_abs_bound)?;
+    if let Some(rows) = limb_rows {
+        if let Some(plan) = limb_plan::<F, D>(&base, width, rhs_abs_bound, rows)? {
+            return Ok(ExactCachePlan::Limbs(plan));
+        }
+    }
+    Ok(base)
+}
+
+fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
     selected: ProtocolCrtNttParams<D>,
     width: usize,
     rhs_abs_bound: u64,
@@ -165,7 +184,7 @@ pub fn ntt_cache_requires_exactness_tail<F: Field + CanonicalEncoding, const D: 
     };
     validate_cache_mode(mode)?;
     Ok(
-        exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
+        exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound, None)?
             .needs_tail(),
     )
 }
@@ -251,6 +270,14 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
                 .transpose()?;
             let neg = Ifma52NttMatrix::prepare(matrix.as_slice(), &params);
             PreparedNttCacheRepr::Q128Ifma52 { neg, tail }
+        }
+        ExactCachePlan::Limbs(plan) => {
+            if tail_prefix_len.is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "limb-split exact cache does not take a tail prefix".into(),
+                ));
+            }
+            PreparedNttCacheRepr::Limbs(PreparedLimbMatrix::prepare(matrix, plan))
         }
     };
     prepared.validate()?;

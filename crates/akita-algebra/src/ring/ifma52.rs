@@ -5,10 +5,15 @@ use crate::ntt::ifma52::{
     forward, ifma52_enabled, inverse, pointwise_dot_accumulate, Ifma52Prime, Ifma52Twiddles,
 };
 use crate::{
-    CanonicalEncoding, CenteredMontLut, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt,
-    CyclotomicRing, Field,
+    cfg_into_iter, CanonicalEncoding, CenteredMontLut, CrtCapacity, CrtNttParamSet,
+    CyclotomicCrtNtt, CyclotomicRing, Field,
 };
 use akita_error::AkitaError;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Matrix entries transformed per parallel preparation task.
+const PREPARE_TILE_ENTRIES: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Ifma52Tail<const K: usize> {
@@ -224,20 +229,47 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         rings: &[CyclotomicRing<F, D>],
         params: &Ifma52Params<K, D>,
     ) -> Self {
-        let mut limbs: [Vec<[u64; D]>; K] =
-            std::array::from_fn(|_| Vec::with_capacity(rings.len()));
-        for ring in rings {
-            let centered = ring.centered_coefficients_i128();
-            for (limb, (prime, twiddles)) in limbs
-                .iter_mut()
-                .zip(params.primes.iter().zip(&params.twiddles))
-            {
-                let mut transformed =
-                    centered.map(|value| value.rem_euclid(i128::from(prime.modulus)) as u64);
-                forward(&mut transformed, *prime, twiddles, params.use_ifma);
-                limb.push(transformed);
+        Self::prepare_centered(
+            rings.len(),
+            |index| rings[index].centered_coefficients_i128(),
+            params,
+        )
+    }
+
+    /// Prepare `len` flat row-major entries, given by their centered integer
+    /// coefficients, in negacyclic NTT form.
+    pub fn prepare_centered(
+        len: usize,
+        entry: impl Fn(usize) -> [i128; D] + Sync,
+        params: &Ifma52Params<K, D>,
+    ) -> Self {
+        let mut limbs: [Vec<[u64; D]>; K] = std::array::from_fn(|_| vec![[0; D]; len]);
+        // Tile `t` owns entries `t * T..` of every CRT limb.
+        let mut tiles: Vec<Vec<&mut [[u64; D]]>> = (0..len.div_ceil(PREPARE_TILE_ENTRIES))
+            .map(|_| Vec::with_capacity(K))
+            .collect();
+        for limb in &mut limbs {
+            for (tile, entries) in tiles.iter_mut().zip(limb.chunks_mut(PREPARE_TILE_ENTRIES)) {
+                tile.push(entries);
             }
         }
+        cfg_into_iter!(tiles)
+            .enumerate()
+            .for_each(|(tile_index, mut tile)| {
+                let tile_len = tile.first().map_or(0, |entries| entries.len());
+                for offset in 0..tile_len {
+                    let centered = entry(tile_index * PREPARE_TILE_ENTRIES + offset);
+                    for (entries, (prime, twiddles)) in tile
+                        .iter_mut()
+                        .zip(params.primes.iter().zip(&params.twiddles))
+                    {
+                        let transformed = &mut entries[offset];
+                        *transformed = centered
+                            .map(|value| value.rem_euclid(i128::from(prime.modulus)) as u64);
+                        forward(transformed, *prime, twiddles, params.use_ifma);
+                    }
+                }
+            });
         Self {
             limbs,
             params: params.clone(),

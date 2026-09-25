@@ -161,6 +161,60 @@ storage choices for the same centered CRT contract.
 `crates/akita-types/src/ntt_cache/`, and
 `docs/crt-ntt-capacity-profile.md`.
 
+## Limb-split exact products
+
+A field-sized CRT product pays for the full width of every matrix entry. For a
+q128 exact product that is six i32 primes, plus a tail, or three IFMA primes.
+Each prime costs one RHS transform per column and one pointwise product per
+output row. When a matrix has only a few output rows, the RHS transforms
+dominate, and a narrower representation is cheaper.
+
+A prover exact cache can therefore store each public entry as balanced limbs.
+Let \(n\) be the bit length of \(q\). A centered entry \(A\), with
+\(|A| < q/2\), is written as
+
+\[
+A = \sum_{l=0}^{L-1} 2^{bl} A_l, \qquad |A_l| \le 2^{b-1},
+\qquad bL \ge n + 1.
+\]
+
+Each limb row accumulates exactly under two CRT primes. The capacity condition
+above applies with \(2^b\) in place of \(q\), so the limb bound replaces the
+field bound. Portable, AVX2, and NEON hosts use the two i32 Q32 primes. Eligible
+AVX-512IFMA hosts use the first two 50 bit IFMA primes. The matvec
+reconstructs every limb product \(y_l = A_l \cdot v\) as an exact integer and
+returns \(\sum_l 2^{bl} y_l\) in the protocol field.
+
+The selector picks the smallest \(L \ge 2\) whose limbs fit the two-prime
+capacity. At the q128 modulus with \(D = 512\), a width of 1536, and an
+11 bit signed digit, the i32 primes need \(L = 5\) limbs of 26 bits. The IFMA
+primes need \(L = 2\) limbs of 65 bits.
+
+The limb form transforms the RHS under two primes instead of the full CRT set.
+It also computes \(L\) times as many pointwise products per output row. The
+selector compares both plans in units of one prime-row pointwise product. It
+charges 6 units for an i32 prime transform and 2 units for an IFMA prime
+transform. It uses limbs only when their estimated cost is strictly lower. With
+these weights, limbs win for few-row q128 and q64 products and lose once many
+rows share each RHS transform. The q32 base product uses only two i32 primes and
+a tail, so at the example shape limbs win only for a single row.
+
+Limbs also change the memory footprint:
+
+| Profile | Base residue bytes per coefficient | Limb residue bytes per coefficient |
+| --- | ---: | ---: |
+| i32, q128 | 26 with the 12289 tail | 40 at \(L = 5\) |
+| IFMA, q128 | 28 with the 30 bit tail | 32 at \(L = 2\) |
+
+The limb form is used only for prover caches prepared without a verifier tail
+prefix. Verifier warmed caches, compression caches, and the prepared verifier
+artifact keep the base representation. The choice therefore changes prover
+time and prepared-cache memory, but not setup bytes, commitment bytes, proof
+bytes, transcript bytes, or setup digests.
+
+**Code:** `crates/akita-types/src/ntt_cache/limbs.rs` and
+`crates/akita-types/src/ntt_cache/exact.rs`.
+
 ## Smooth-subgroup FFT for Reed--Solomon encoding
 
 The CRT transforms above accelerate multiplication in
