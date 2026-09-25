@@ -54,8 +54,9 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     assert_eq!(scan.group_column_eq_slices(0).unwrap().2, expected);
 }
 
-#[test]
-fn deferred_structured_setup_supports_empty_chunk_slots() {
+/// Direct and deferred plans for three claims over eight chunk slots, three
+/// of them live, with nonempty B.
+fn empty_chunk_slot_plans() -> (SetupContributionPlan<F>, SetupContributionPlan<F>) {
     let num_live_blocks = 3;
     let num_chunks = 8;
     let num_claims = 3;
@@ -143,6 +144,13 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
         akita_types::RelationAddressGeometry::new(role_dims, TEST_D, opening_source_len).unwrap(),
     )
     .unwrap();
+    (direct, deferred)
+}
+
+#[test]
+fn deferred_structured_setup_supports_empty_chunk_slots() {
+    let (num_live_blocks, num_chunks, num_claims, num_positions_per_block) = (3, 8, 3, 4);
+    let (direct, deferred) = empty_chunk_slot_plans();
 
     let deferred_group = &deferred.groups()[0];
     assert_eq!(deferred_group.active_units().len(), num_live_blocks);
@@ -178,4 +186,42 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
             .unwrap(),
         expected
     );
+}
+
+#[test]
+fn structured_evaluation_rejects_tensor_offsets_off_their_setup_block() {
+    let (_, honest) = empty_chunk_slot_plans();
+    let group = &honest.groups()[0];
+    let block_challenges = (0..group.num_claims() * group.num_live_blocks())
+        .map(|index| test_scalar(1501 + index as u128))
+        .collect::<Vec<_>>();
+    let opening_a_evals = (0..group.num_positions_per_block())
+        .map(|index| test_scalar(1601 + index as u128))
+        .collect::<Vec<_>>();
+    let evaluate = |plan: &SetupContributionPlan<F>| {
+        evaluate_structured_group::<F, _>(
+            plan,
+            0,
+            &block_challenges,
+            &opening_a_evals,
+            test_scalar(3),
+        )
+    };
+    assert!(evaluate(&honest).is_ok());
+    for (role, expected) in [
+        (0, "structured D tensor offset"),
+        (1, "structured B tensor offset"),
+    ] {
+        let (_, mut plan) = empty_chunk_slot_plans();
+        let tensors = plan.groups_mut_for_test()[0].role_tensors_mut_for_test();
+        let family = tensors[role].last_mut().expect("fixture has live families");
+        family.left_offset += 1;
+        match evaluate(&plan) {
+            Err(AkitaError::InvalidSetup(message)) => assert!(
+                message.starts_with(expected),
+                "unexpected InvalidSetup message: {message}"
+            ),
+            other => panic!("expected InvalidSetup for {expected}, got {other:?}"),
+        }
+    }
 }

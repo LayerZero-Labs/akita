@@ -503,6 +503,15 @@ impl<E: Field> SetupContributionGroupPlan<E> {
     pub fn set_consistency_weight_for_test(&mut self, weight: E) {
         self.consistency_weight = weight;
     }
+
+    /// Mutable D, B and A role tensor families, for tests that perturb them.
+    pub fn role_tensors_mut_for_test(&mut self) -> [&mut [EqPairTensorFamily<E>]; 3] {
+        [
+            &mut self.d_tensors,
+            &mut self.physical_b.relation_tensors,
+            &mut self.a_tensors,
+        ]
+    }
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
