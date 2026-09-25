@@ -803,23 +803,37 @@ mod tests {
                             let _ = fs::remove_file(&registry_path);
                             let _ = fs::remove_file(&matrix_path);
                         };
+                        // Slot ids of the registry on disk, decoded as the loader does.
+                        let persisted_slot_ids = || {
+                            let mut reader =
+                                std::io::BufReader::new(fs::File::open(&registry_path).unwrap());
+                            akita_cpu_backend::SetupPrefixProverRegistry::<TestF>::deserialize_with_mode(
+                                &mut reader,
+                                Compress::Yes,
+                                Validate::Yes,
+                                &(),
+                            )
+                            .unwrap()
+                            .iter()
+                            .map(|(id, _)| id.clone())
+                            .collect::<Vec<_>>()
+                        };
                         remove_cached();
 
                         let generated = new_prover_setup::<TestF>(&combined).expect("cold setup");
-                        assert!(registry_path.exists() && matrix_path.exists());
-                        let stored: std::collections::BTreeSet<_> = generated
-                            .prefix_slots
-                            .iter()
-                            .map(|(id, _)| id.clone())
-                            .collect();
-                        assert!(stored.iter().eq(combined.prefix_slot_ids()));
+                        assert!(matrix_path.exists());
+                        assert_eq!(persisted_slot_ids(), combined.prefix_slot_ids());
 
-                        let loaded = new_prover_setup::<TestF>(&combined).expect("warm setup");
+                        // Load directly: `new_prover_setup` would hide a failed load by
+                        // regenerating the same deterministic material.
+                        let loaded = load_prover_setup::<TestF>(&combined)
+                            .expect("complete combined cache must load without regeneration");
                         assert_eq!(loaded.expanded, generated.expanded);
                         assert_eq!(loaded.prefix_slots, generated.prefix_slots);
 
-                        // One backend imports each family's own slots from the shared
-                        // registry, recomputing every artifact it did not produce.
+                        // One backend imports each family's own slots from the decoded
+                        // registry. Decoded artifacts are not backend-validated, so
+                        // import recomputes each one and compares it.
                         let backend = akita_cpu_backend::CpuBackend::<TestF, TestF>::new(
                             loaded.expanded.clone(),
                         )
@@ -844,9 +858,11 @@ mod tests {
                                 .unwrap(),
                         };
                         save_prover_setup::<TestF>(&partial, &combined).unwrap();
-                        let repaired =
-                            new_prover_setup::<TestF>(&combined).expect("repaired setup");
+                        assert_eq!(persisted_slot_ids(), onehot.prefix_slot_ids());
+                        let repaired = load_prover_setup::<TestF>(&combined)
+                            .expect("loader must repair the incomplete combined registry");
                         assert_eq!(repaired.prefix_slots, generated.prefix_slots);
+                        assert_eq!(persisted_slot_ids(), combined.prefix_slot_ids());
 
                         remove_cached();
                     })

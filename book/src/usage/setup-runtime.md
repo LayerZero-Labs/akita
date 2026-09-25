@@ -78,8 +78,8 @@ algebra, the family's decomposition and SIS profile, the setup seed, the
 selected schedule row, the grinding plan, and the call layout. It binds no
 provisioned capacity: neither the setup's variable and polynomial bounds nor
 its materialized matrix length. Commitments read the same seed-derived matrix
-prefix under either setup. Each commitment and proof still names its own
-family's catalog.
+prefix under either setup. Each commitment call uses its producer catalog.
+Each opening selects a row from, and is admitted against, its opening catalog.
 
 `SetupRequirements<F>` is tied to the field and has no public constructor
 other than `from_catalog` and `union`, so every requirement passed to
