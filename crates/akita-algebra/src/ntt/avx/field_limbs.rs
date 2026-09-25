@@ -62,14 +62,28 @@ pub(crate) unsafe fn field_residues_i32<const L: usize, const K: usize, const D:
                 _mm256_unpackhi_epi64(b, d),
             ]
         };
-        // Unsigned lexicographic `c > ⌊q/2⌋` from the top word down.
+        // Unsigned lexicographic `c > ⌊q/2⌋`: an equal word defers to the
+        // words below it. Coefficients lie below `2^(26 L)`, so word `j >= L`
+        // is zero on both sides.
         let gt = |word: __m256i, index: usize| {
             _mm256_cmpgt_epi32(_mm256_xor_si256(word, sign), half_flipped[index])
         };
-        let eq = |word: __m256i, index: usize| _mm256_cmpeq_epi32(word, half[index]);
-        let low = _mm256_or_si256(gt(w1, 1), _mm256_and_si256(eq(w1, 1), gt(w0, 0)));
-        let mid = _mm256_or_si256(gt(w2, 2), _mm256_and_si256(eq(w2, 2), low));
-        let center = _mm256_or_si256(gt(w3, 3), _mm256_and_si256(eq(w3, 3), mid));
+        let defer = |center: __m256i, word: __m256i, index: usize| {
+            _mm256_or_si256(
+                gt(word, index),
+                _mm256_and_si256(_mm256_cmpeq_epi32(word, half[index]), center),
+            )
+        };
+        let mut center = gt(w0, 0);
+        if L > 1 {
+            center = defer(center, w1, 1);
+        }
+        if L > 2 {
+            center = defer(center, w2, 2);
+        }
+        if L > 3 {
+            center = defer(center, w3, 3);
+        }
 
         let slices = [
             _mm256_and_si256(w0, mask),

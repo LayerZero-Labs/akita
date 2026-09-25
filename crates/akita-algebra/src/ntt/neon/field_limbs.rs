@@ -39,19 +39,22 @@ pub(crate) unsafe fn field_residues_i32<const L: usize, const K: usize, const D:
         // coefficients `block..block + 4` are in bounds.
         let words = unsafe { vld4q_u32(src.add(4 * block)) };
         let (w0, w1, w2, w3) = (words.0, words.1, words.2, words.3);
-        // Unsigned lexicographic `c > ⌊q/2⌋` from the top word down.
-        let low = vorrq_u32(
-            vcgtq_u32(w1, half[1]),
-            vandq_u32(vceqq_u32(w1, half[1]), vcgtq_u32(w0, half[0])),
-        );
-        let mid = vorrq_u32(
-            vcgtq_u32(w2, half[2]),
-            vandq_u32(vceqq_u32(w2, half[2]), low),
-        );
-        let center = vreinterpretq_s32_u32(vorrq_u32(
-            vcgtq_u32(w3, half[3]),
-            vandq_u32(vceqq_u32(w3, half[3]), mid),
-        ));
+        // Unsigned lexicographic `c > ⌊q/2⌋`: an equal word defers to the
+        // words below it. Coefficients lie below `2^(26 L)`, so word `j >= L`
+        // is zero on both sides.
+        let defer =
+            |center, word, half| vbslq_u32(vceqq_u32(word, half), center, vcgtq_u32(word, half));
+        let mut center = vcgtq_u32(w0, half[0]);
+        if L > 1 {
+            center = defer(center, w1, half[1]);
+        }
+        if L > 2 {
+            center = defer(center, w2, half[2]);
+        }
+        if L > 3 {
+            center = defer(center, w3, half[3]);
+        }
+        let center = vreinterpretq_s32_u32(center);
         let slices = [
             vandq_u32(w0, mask),
             vandq_u32(vsliq_n_u32::<6>(vshrq_n_u32::<26>(w0), w1), mask),
