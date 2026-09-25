@@ -18,7 +18,8 @@ fn modulus<F: Field + CanonicalEncoding>() -> u128 {
 /// `floor(c / b) + [raw >= b/2]`, which cannot overflow. The centered value
 /// is held as its low 128 bits plus a sign, so the first quotient is exact
 /// even when `q - threshold > i128::MAX`. Recomposition is checked modulo
-/// `2^128`.
+/// `2^128`, and digits covering the field width must leave no final carry:
+/// they recompose the centered value exactly, so recomposition is `c mod q`.
 fn exact_balanced_digits(
     canonical: u128,
     q: u128,
@@ -62,6 +63,13 @@ fn exact_balanced_digits(
         .checked_shl(levels as u32 * log_basis)
         .unwrap_or(0);
     assert_eq!(recomposed.wrapping_add(tail), centered_low);
+    let field_bits = 128 - (q - 1).leading_zeros();
+    if levels as u32 * log_basis >= field_bits {
+        assert_eq!(
+            carry, 0,
+            "digits covering the field width recompose c mod q"
+        );
+    }
     digits
 }
 
@@ -180,7 +188,10 @@ fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64)
             word_levels + 1,
             max_levels,
         ];
-        level_counts.retain(|&levels| (1..=max_levels).contains(&levels));
+        // `new` rejects base-2 digits past the field width.
+        level_counts.retain(|&levels| {
+            (1..=max_levels).contains(&levels) && (log_basis > 1 || levels <= field_bits)
+        });
         level_counts.sort_unstable();
         level_counts.dedup();
         for levels in level_counts {
@@ -268,4 +279,37 @@ fn fp128_near_half_modulus_does_not_wrap_the_carry() {
         power *= basis;
     }
     assert_eq!(recomposed, value);
+}
+
+/// With `q = 2^32 - 99`, 33 base-2 digits of 1 were all -1, which recomposes
+/// to `-(2^33 - 1)` rather than 1.
+#[test]
+fn log_basis_one_accepts_levels_up_to_the_field_width() {
+    type F = Prime32Offset99;
+    let q = modulus::<F>();
+    let params = BalancedDecomposePow2Params::new(32, 1, q);
+    let one = [F::one(); 8];
+    let mut digits = [0i8; 8 * 32];
+    balanced_decompose_coefficients_pow2_i8_into(&one, &mut digits, &params);
+    let mut recomposed = F::zero();
+    let mut power = F::one();
+    for level in 0..32 {
+        recomposed += F::from_i64(i64::from(digits[level * 8])) * power;
+        power += power;
+    }
+    assert_eq!(recomposed, F::one());
+}
+
+#[test]
+#[should_panic(expected = "log_basis 1 needs levels <= the field width")]
+fn log_basis_one_rejects_levels_past_the_field_width() {
+    BalancedDecomposePow2Params::new(33, 1, (1 << 32) - 99);
+}
+
+/// `2^32 + 1` levels used to truncate to 1 in the digit-budget guard.
+#[cfg(target_pointer_width = "64")]
+#[test]
+#[should_panic(expected = "levels must fit in u32")]
+fn levels_beyond_u32_are_rejected() {
+    BalancedDecomposePow2Params::new((1 << 32) + 1, 16, (1 << 32) - 99);
 }

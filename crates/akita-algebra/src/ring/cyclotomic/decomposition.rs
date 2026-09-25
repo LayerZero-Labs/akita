@@ -84,20 +84,30 @@ impl BalancedDecomposePow2Params {
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is outside `1..=16`, or if the requested digit
-    /// budget exceeds the supported field-width guard.
+    /// Panics if `log_basis` is outside `1..=16`, if the requested digit
+    /// budget exceeds the supported field-width guard, or if `log_basis` is 1
+    /// and `levels` exceeds the bit width of `q`.
     pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
         assert!(
             log_basis > 0 && log_basis <= 16,
             "log_basis must be in 1..=16 for signed i16 output"
         );
+        let level_count = u32::try_from(levels).expect("levels must fit in u32");
         assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            level_count.saturating_mul(log_basis) <= 128 + log_basis,
             "levels * log_basis must be <= 128 + log_basis"
+        );
+        // Base-2 balanced digits lie in {-1, 0}. Past the field width the
+        // threshold is `q / 2`, and the digits cannot reach the positive
+        // centered values below it.
+        let field_bits = 128 - q.saturating_sub(1).leading_zeros();
+        assert!(
+            log_basis > 1 || level_count <= field_bits,
+            "log_basis 1 needs levels <= the field width"
         );
 
         let mut bias_nonnegative = [0u64; 3];
-        for level in 0..levels as u32 {
+        for level in 0..level_count {
             let bit = level * log_basis + log_basis - 1;
             bias_nonnegative[(bit / 64) as usize] |= 1u64 << (bit % 64);
         }
