@@ -532,3 +532,41 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
         .evaluate_relation_at_point(&point[..coefficient_bits - 1])
         .is_err());
 }
+
+#[test]
+fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
+    type Extension = Prime128OffsetA7F7;
+
+    // 2 and 6 share `trailing_zeros() == 1`. Without the check before the
+    // cache lookup, the length-6 family would reuse the length-2 contraction.
+    let family = |coefficient_len| CoefficientPackingAffineRelationFamily {
+        scalar: Extension::one(),
+        coefficient_len,
+        base_offset: 0,
+        outer_len: 1,
+        outer_stride: 1,
+        digit_stride: 1,
+        digit_weights: vec![Extension::one()].into(),
+        outer_weights: vec![Extension::one()].into(),
+    };
+    let point = (0..4)
+        .map(|bit| Extension::from_u64(3 + bit))
+        .collect::<Vec<_>>();
+    let compact = |families| CoefficientPackingCompactFactors {
+        basis: BasisMode::Lagrange,
+        physical_field_len: 1usize << point.len(),
+        coefficient_weights: scalar_powers(Extension::from_u64(5), 8).into(),
+        direct_opening_point: Arc::from([]),
+        packing_z_point: Arc::from([]),
+        affine_relation_families: families,
+        quotient_families: Vec::new(),
+        direct_opening_families: Vec::new(),
+        packing_z_families: Vec::new(),
+    };
+    compact(vec![family(2)])
+        .evaluate_relation_at_point(&point)
+        .unwrap();
+    assert!(compact(vec![family(2), family(6)])
+        .evaluate_relation_at_point(&point)
+        .is_err());
+}
