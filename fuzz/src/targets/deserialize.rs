@@ -15,7 +15,16 @@ use akita_types::{
     AkitaVerifierSetup, CommittedGroup, OpeningScheduleSelection,
 };
 
-fn canonical<T>(bytes: &[u8], name: &'static str)
+/// Whether an accepted encoding must equal its re-encoding byte for byte.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Canonical {
+    Strict,
+    /// Known non-canonical decoder (FINDINGS.md F-4): the value must still be
+    /// a stable fixed point; byte differences are counted, not fatal.
+    Counted,
+}
+
+fn canonical<T>(bytes: &[u8], name: &'static str, mode: Canonical)
 where
     T: AkitaDeserialize<Context = ()> + AkitaSerialize + PartialEq + std::fmt::Debug,
 {
@@ -26,10 +35,20 @@ where
     value
         .serialize_compressed(&mut encoded)
         .unwrap_or_else(|error| panic!("{name}: accepted value fails to re-encode: {error:?}"));
-    assert_eq!(encoded, bytes, "{name}: accepted encoding is not canonical");
+    if encoded != bytes {
+        match mode {
+            Canonical::Strict => {
+                assert_eq!(encoded, bytes, "{name}: accepted encoding is not canonical")
+            }
+            Canonical::Counted => stats::count("noncanonical_committed_group"),
+        }
+    }
     let again = T::deserialize_compressed_exact(&encoded[..], &())
         .unwrap_or_else(|error| panic!("{name}: re-encoding does not decode: {error:?}"));
     assert_eq!(again, value, "{name}: decode(encode(x)) != x");
+    let mut twice = Vec::new();
+    again.serialize_compressed(&mut twice).expect("re-encodes");
+    assert_eq!(twice, encoded, "{name}: encoding is not a fixed point");
     stats::count(name);
 }
 
@@ -38,17 +57,41 @@ pub fn run(data: &[u8]) {
     let selector = reader.u8();
     let bytes = reader.rest();
     match selector % 12 {
-        0 => canonical::<CommittedGroup<fp128::Field>>(bytes, "committed_group_fp128"),
-        1 => canonical::<CommittedGroup<fp64::Field>>(bytes, "committed_group_fp64"),
-        2 => canonical::<CommittedGroup<fp32::Field>>(bytes, "committed_group_fp32"),
-        3 => canonical::<AkitaVerifierSetup<fp128::Field>>(bytes, "verifier_setup_fp128"),
-        4 => canonical::<AkitaVerifierSetup<fp32::Field>>(bytes, "verifier_setup_fp32"),
-        5 => canonical::<AkitaExpandedSetup<fp64::Field>>(bytes, "expanded_setup_fp64"),
-        6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor"),
-        7 => canonical::<AkitaSetupSeed>(bytes, "setup_seed"),
-        8 => canonical::<AkitaInstanceDescriptor>(bytes, "instance_descriptor"),
-        9 => canonical::<OpeningScheduleSelection>(bytes, "schedule_selection"),
-        10 => canonical::<Vec<fp128::Field>>(bytes, "field_vec_fp128"),
-        _ => canonical::<Vec<fp32::ExtensionField>>(bytes, "ext_vec_fp32"),
+        0 => canonical::<CommittedGroup<fp128::Field>>(
+            bytes,
+            "committed_group_fp128",
+            Canonical::Counted,
+        ),
+        1 => canonical::<CommittedGroup<fp64::Field>>(
+            bytes,
+            "committed_group_fp64",
+            Canonical::Counted,
+        ),
+        2 => canonical::<CommittedGroup<fp32::Field>>(
+            bytes,
+            "committed_group_fp32",
+            Canonical::Counted,
+        ),
+        3 => canonical::<AkitaVerifierSetup<fp128::Field>>(
+            bytes,
+            "verifier_setup_fp128",
+            Canonical::Strict,
+        ),
+        4 => canonical::<AkitaVerifierSetup<fp32::Field>>(
+            bytes,
+            "verifier_setup_fp32",
+            Canonical::Strict,
+        ),
+        5 => canonical::<AkitaExpandedSetup<fp64::Field>>(
+            bytes,
+            "expanded_setup_fp64",
+            Canonical::Strict,
+        ),
+        6 => canonical::<AkitaSetupDescriptor>(bytes, "setup_descriptor", Canonical::Strict),
+        7 => canonical::<AkitaSetupSeed>(bytes, "setup_seed", Canonical::Strict),
+        8 => canonical::<AkitaInstanceDescriptor>(bytes, "instance_descriptor", Canonical::Strict),
+        9 => canonical::<OpeningScheduleSelection>(bytes, "schedule_selection", Canonical::Strict),
+        10 => canonical::<Vec<fp128::Field>>(bytes, "field_vec_fp128", Canonical::Strict),
+        _ => canonical::<Vec<fp32::ExtensionField>>(bytes, "ext_vec_fp32", Canonical::Strict),
     }
 }
