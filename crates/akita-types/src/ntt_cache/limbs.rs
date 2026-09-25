@@ -113,16 +113,17 @@ pub(super) fn limb_plan<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<Option<LimbPlan<D>>, AkitaError> {
     let modulus_bits = u128::BITS - field_modulus::<F>()?.leading_zeros();
     let tail = usize::from(base.needs_tail());
-    // Costs are in half prime-row dots per column; an i16 tail costs half an
-    // i32 prime and the IFMA52 i32 tail costs one IFMA52 prime.
+    // Costs are in half prime-row dots per column; an i16 tail costs half a
+    // prime and an i32 tail beside IFMA52 primes costs a whole one.
     let (ifma, base_cost) = match base {
         ExactCachePlan::Q32 { .. } => (false, (4 + tail) * (I32_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q64 { .. } => (false, (6 + tail) * (I32_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q128 { .. } => (false, (12 + tail) * (I32_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q32Ifma52 { .. } => (true, (2 + tail) * (IFMA52_TRANSFORM_DOTS + rows)),
         ExactCachePlan::Q64Ifma52 { .. } => (true, 4 * (IFMA52_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q128Ifma52 { .. } => {
-            (true, (6 + 2 * tail) * (IFMA52_TRANSFORM_DOTS + rows))
+        ExactCachePlan::Q128Ifma52 { params, .. } => {
+            let tail = if params.has_tail::<i32>() { 2 } else { tail };
+            (true, (6 + tail) * (IFMA52_TRANSFORM_DOTS + rows))
         }
         ExactCachePlan::Limbs(_) => return Ok(None),
     };
@@ -260,7 +261,7 @@ impl<const D: usize> PreparedLimbMatrix<D> {
         let row_len = self.split.count * self.width;
         let tails = match &self.residues {
             LimbResidues::I32 { .. } => false,
-            LimbResidues::Ifma52(neg) => neg.has_i16_tail() || neg.has_i32_tail(),
+            LimbResidues::Ifma52(neg) => neg.has_tail::<i16>() || neg.has_tail::<i32>(),
         };
         if self.width == 0 || self.len() == 0 || !self.len().is_multiple_of(row_len) || tails {
             return Err(AkitaError::InvalidSetup(

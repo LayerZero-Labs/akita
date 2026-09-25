@@ -502,10 +502,11 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     let base = prepare_exact_ntt_cache(view(), None, base_plan).expect("base cache");
     if ifma52_cache_enabled::<D>() {
         assert!(base.uses_ifma52());
+        // At most 155 bits here, within base plus the 14-bit tail.
         assert!(base.has_exactness_tail());
         assert_eq!(
             base.cache_bytes(),
-            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i32>())
+            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i16>())
         );
         // Two 65-bit limbs under two IFMA primes.
         assert!(cache.uses_ifma52());

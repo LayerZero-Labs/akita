@@ -100,7 +100,7 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
             ) {
                 let mut params = Ifma52Params::new([IFMA52_PRIMES[0]])?;
                 if needs_tail {
-                    params = params.with_i16_tail(I16_TAIL_PRIME.p)?;
+                    params = params.with_tail(I16_TAIL_PRIME.p)?;
                 }
                 Ok(ExactCachePlan::Q32Ifma52 {
                     params: Box::new(params),
@@ -143,16 +143,23 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
             })
         }
         ProtocolCrtNttParams::Q128(params) => {
-            let tail_prime = q128_primes()[0];
-            if let Some(needs_tail) = ifma52_tail_requirement::<F, 3, D>(
-                IFMA52_PRIMES,
-                tail_prime.p as u128,
-                width,
-                rhs_abs_bound,
-            ) {
+            let requirement = |tail_modulus: u128| {
+                ifma52_tail_requirement::<F, 3, D>(
+                    IFMA52_PRIMES,
+                    tail_modulus,
+                    width,
+                    rhs_abs_bound,
+                )
+            };
+            let i32_tail = q128_primes()[0];
+            if let Some(needs_tail) = requirement(i32_tail.p as u128) {
                 let mut params = Ifma52Params::new(IFMA52_PRIMES)?;
-                if needs_tail {
-                    params = params.with_i32_tail(tail_prime.p)?;
+                // Prefer the 14-bit tail, whose transforms and products run
+                // at twice the lane count, whenever its capacity suffices.
+                if requirement(I16_TAIL_PRIME.p as u128) == Some(true) {
+                    params = params.with_tail(I16_TAIL_PRIME.p)?;
+                } else if needs_tail {
+                    params = params.with_tail(i32_tail.p)?;
                 }
                 Ok(ExactCachePlan::Q128Ifma52 {
                     params: Box::new(params),
@@ -240,7 +247,8 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
             homogeneous!(params, Q32, needs_tail)
         }
         ExactCachePlan::Q32Ifma52 { params, needs_tail } => {
-            let (neg, tail) = prepare_ifma52_exact(matrix, tail_prefix_len, *params, needs_tail)?;
+            let (neg, tail) =
+                prepare_ifma52_exact(matrix, tail_prefix_len, *params, I16_TAIL_PRIME, needs_tail)?;
             PreparedNttCacheRepr::Q32Ifma52 { neg, tail }
         }
         ExactCachePlan::Q64 { params, needs_tail } => {
@@ -260,16 +268,29 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
             homogeneous!(params, Q128, needs_tail)
         }
         ExactCachePlan::Q128Ifma52 { params, needs_tail } => {
-            let retain_tail = needs_tail || tail_prefix_len.is_some_and(|length| length > 0);
-            let mut params = *params;
-            if retain_tail && !params.has_i32_tail() {
-                params = params.with_i32_tail(q128_primes()[0].p)?;
+            // A tail retained without a planned one is exactness-only: the
+            // base primes suffice, so it takes the cheaper 14-bit prime.
+            if params.has_tail::<i32>() {
+                let tail_prime = q128_primes()[0];
+                let (neg, tail) =
+                    prepare_ifma52_exact(matrix, tail_prefix_len, *params, tail_prime, needs_tail)?;
+                PreparedNttCacheRepr::Q128Ifma52 {
+                    neg,
+                    tail: tail.map(Q128Ifma52Tail::I32),
+                }
+            } else {
+                let (neg, tail) = prepare_ifma52_exact(
+                    matrix,
+                    tail_prefix_len,
+                    *params,
+                    I16_TAIL_PRIME,
+                    needs_tail,
+                )?;
+                PreparedNttCacheRepr::Q128Ifma52 {
+                    neg,
+                    tail: tail.map(Q128Ifma52Tail::I16),
+                }
             }
-            let tail = retain_tail
-                .then(|| prepare_ifma52_i32_tail(matrix, tail_prefix_len))
-                .transpose()?;
-            let neg = Ifma52NttMatrix::prepare(matrix.as_slice(), &params);
-            PreparedNttCacheRepr::Q128Ifma52 { neg, tail }
         }
         ExactCachePlan::Limbs(plan) => {
             if tail_prefix_len.is_some() {
@@ -284,29 +305,36 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
     Ok(PreparedNttCache(prepared))
 }
 
-fn prepare_ifma52_exact<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
+fn prepare_ifma52_exact<
+    F: Field + CanonicalEncoding,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
     mut params: Ifma52Params<K, D>,
+    tail_prime: NttPrime<W>,
     needs_tail: bool,
-) -> Result<(Ifma52NttMatrix<K, D>, Option<PreparedIfma52Tail<i16, D>>), AkitaError> {
+) -> Result<(Ifma52NttMatrix<K, D>, Option<PreparedIfma52Tail<W, D>>), AkitaError> {
     // A verifier cache rebuild joins physical prefix lengths. Preserve a tail
     // installed by an earlier stronger request even when the current request's
     // exactness bound fits the IFMA base residues by themselves.
     let retain_tail = needs_tail || tail_prefix_len.is_some_and(|length| length > 0);
-    if retain_tail && !params.has_i16_tail() {
-        params = params.with_i16_tail(I16_TAIL_PRIME.p)?;
+    if retain_tail && !params.has_tail::<W>() {
+        params = params.with_tail(tail_prime.p)?;
     }
     let tail = retain_tail
-        .then(|| prepare_ifma52_i16_tail(matrix, tail_prefix_len))
+        .then(|| prepare_ifma52_tail(matrix, tail_prefix_len, tail_prime))
         .transpose()?;
     Ok((Ifma52NttMatrix::prepare(matrix.as_slice(), &params), tail))
 }
 
-fn prepare_ifma52_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
+fn prepare_ifma52_tail<F: Field + CanonicalEncoding, W: PrimeWidth, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
-) -> Result<PreparedIfma52Tail<i16, D>, AkitaError> {
+    prime: NttPrime<W>,
+) -> Result<PreparedIfma52Tail<W, D>, AkitaError> {
     let tail_len = tail_prefix_len.unwrap_or(matrix.as_slice().len());
     if tail_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -316,27 +344,7 @@ fn prepare_ifma52_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     let tail_rings = matrix.as_slice().get(..tail_len).ok_or_else(|| {
         AkitaError::InvalidSetup("mixed IFMA52 tail prefix exceeds the base matrix".into())
     })?;
-    let params = CrtNttParamSet::new([I16_TAIL_PRIME]);
-    let negacyclic = cfg_iter!(tail_rings)
-        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
-        .collect();
-    Ok(PreparedIfma52Tail { negacyclic, params })
-}
-
-fn prepare_ifma52_i32_tail<F: Field + CanonicalEncoding, const D: usize>(
-    matrix: RingMatrixView<'_, F, D>,
-    tail_prefix_len: Option<usize>,
-) -> Result<PreparedIfma52Tail<i32, D>, AkitaError> {
-    let tail_len = tail_prefix_len.unwrap_or(matrix.as_slice().len());
-    if tail_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "required mixed IFMA52 i32-tail prefix is empty".into(),
-        ));
-    }
-    let tail_rings = matrix.as_slice().get(..tail_len).ok_or_else(|| {
-        AkitaError::InvalidSetup("mixed IFMA52 i32-tail prefix exceeds the base matrix".into())
-    })?;
-    let params = CrtNttParamSet::new([q128_primes()[0]]);
+    let params = CrtNttParamSet::new([prime]);
     let negacyclic = cfg_iter!(tail_rings)
         .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
         .collect();
@@ -368,5 +376,55 @@ mod tests {
             cache.cache_bytes(),
             10 * D * core::mem::size_of::<u64>() + 4 * D * core::mem::size_of::<i16>()
         );
+    }
+
+    #[test]
+    fn q128_ifma_rebuild_retains_a_joined_tail_prefix_at_the_planned_width() {
+        const D: usize = 64;
+        let flat =
+            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime128OffsetA7F7, D>::zero(); 10]);
+        let base = || Ifma52Params::new(IFMA52_PRIMES).expect("IFMA52 parameters");
+        let i32_tail = base().with_tail(q128_primes()[0].p).expect("i32 tail");
+        for (params, needs_tail, tail_bytes) in [
+            (base(), false, core::mem::size_of::<i16>()),
+            (i32_tail, true, core::mem::size_of::<i32>()),
+        ] {
+            let matrix = flat.ring_view::<D>(1, 10).expect("matrix view");
+            let plan = ExactCachePlan::Q128Ifma52 {
+                params: Box::new(params),
+                needs_tail,
+            };
+            let cache = prepare_exact_ntt_cache(matrix, Some(4), plan).expect("retained tail");
+
+            assert!(cache.has_exactness_tail());
+            assert_eq!(
+                cache.cache_bytes(),
+                10 * D * IFMA52_PRIMES.len() * core::mem::size_of::<u64>() + 4 * D * tail_bytes
+            );
+        }
+    }
+
+    #[test]
+    fn q128_ifma_plan_prefers_the_i16_tail_within_its_capacity() {
+        const D: usize = 1024;
+        type F = Prime128OffsetA7F7;
+        if !ifma52_cache_enabled::<D>() {
+            return;
+        }
+        // Base plus the 14-bit tail holds 163.6 bits: width 1536 at D = 1024
+        // and |rhs| <= 2^15.
+        let tail = |width| {
+            let params = select_crt_ntt_params::<F, D>().expect("protocol parameters");
+            match exact_cache_plan::<F, D>(params, width, 1 << 15, None).expect("plan") {
+                ExactCachePlan::Q128Ifma52 { params, needs_tail } => (
+                    needs_tail,
+                    params.has_tail::<i16>(),
+                    params.has_tail::<i32>(),
+                ),
+                _ => panic!("expected the q128 IFMA52 plan"),
+            }
+        };
+        assert_eq!(tail(1536), (true, true, false));
+        assert_eq!(tail(1537), (true, false, true));
     }
 }

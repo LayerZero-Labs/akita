@@ -106,36 +106,30 @@ fn mixed_coefficients_to_ring<F: Field + CanonicalEncoding, const K: usize, cons
     params: &I16TailParams<K, D>,
 ) -> CyclotomicRing<F, D> {
     let tail_modulus = i64::from(params.tail.primes[0].p);
-    let mut field_product = F::one();
-    let field_weights: [F; K] = from_fn(|i| {
-        let weight = field_product;
-        field_product *= F::from_i64(i64::from(params.wide.primes[i].p));
-        weight
-    });
-    let tail_field_weight = field_product;
+    let garner = &params.wide.garner;
+    let (field_weights, tail_field_weight) = garner.field_weights::<F>();
+
+    let mut wide_digits = wide.map(|limb| limb.map(i64::from));
+    garner.centered_mixed_radix(&mut wide_digits);
 
     let coefficients = from_fn(|d| {
-        let moduli = params.wide.primes.map(|prime| prime.p as u64);
-        let residues = from_fn(|limb| i128::from(wide[limb][d]));
-        let digits = params.wide.garner.centered_mixed_radix(residues, moduli);
+        let digits = from_fn(|limb| wide_digits[limb][d]);
 
-        let tail_digit = i128::from(tail[0][d]) * i128::from(params.tail_residue_weight)
+        // Centered i32 digits are below 2^30 and tail weights below 2^14, so
+        // each product is below 2^44 and the short linear form fits in i64.
+        let tail_digit = i64::from(tail[0][d]) * params.tail_residue_weight
             + digits
                 .iter()
                 .zip(params.tail_digit_weights)
-                .map(|(digit, weight)| *digit * i128::from(weight))
-                .sum::<i128>();
-        let tail_modulus = i128::from(tail_modulus);
+                .map(|(digit, weight)| digit * weight)
+                .sum::<i64>();
         let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
         if tail_digit > tail_modulus / 2 {
             tail_digit -= tail_modulus;
         }
 
-        let mut result = F::zero();
-        for (digit, weight) in digits.iter().zip(field_weights) {
-            result += F::from_i128(*digit) * weight;
-        }
-        result + F::from_i128(tail_digit) * tail_field_weight
+        garner.digits_to_field(&digits, &field_weights)
+            + F::from_i64(tail_digit) * tail_field_weight
     });
     CyclotomicRing::from_coefficients(coefficients)
 }

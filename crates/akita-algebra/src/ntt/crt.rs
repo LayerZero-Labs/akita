@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
+use crate::Field;
 use akita_error::AkitaError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -203,8 +204,18 @@ const RADIX_MASK: i32 = RADIX - 1;
 /// diagonal entries are zero (unused).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GarnerData<const K: usize> {
+    /// CRT moduli `p_i`, each in `[2, 2^62)`.
+    pub moduli: [u64; K],
     /// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`.
     pub gamma: [[u64; K]; K],
+    /// Shoup quotients `floor(gamma[i][j] * 2^64 / p_i)`.
+    gamma_shoup: [[u64; K]; K],
+    /// Least multiple of `p_i` that is at least `floor(p_j / 2)`, so adding it
+    /// before subtracting a centered digit modulo `p_j` stays nonnegative.
+    lift: [[u64; K]; K],
+    /// First limb of the run containing limb `i`. Each run's modulus product
+    /// is below 2^126, so its centered mixed-radix value fits in i128.
+    run_start: [usize; K],
 }
 
 impl<const K: usize> GarnerData<K> {
@@ -215,43 +226,119 @@ impl<const K: usize> GarnerData<K> {
     }
 
     pub(crate) fn try_from_moduli(moduli: [u64; K]) -> Result<Self, AkitaError> {
+        if moduli
+            .iter()
+            .any(|&modulus| !(2..1 << 62).contains(&modulus))
+        {
+            return Err(AkitaError::InvalidSetup(
+                "CRT moduli must lie in [2, 2^62)".into(),
+            ));
+        }
         let mut gamma = [[0; K]; K];
+        let mut gamma_shoup = [[0; K]; K];
+        let mut lift = [[0; K]; K];
         for i in 1..K {
             let pi = moduli[i];
             #[allow(clippy::needless_range_loop)]
             for j in 0..i {
                 gamma[i][j] = modular_inverse(moduli[j] % pi, pi)?;
+                gamma_shoup[i][j] = ((u128::from(gamma[i][j]) << 64) / u128::from(pi)) as u64;
+                lift[i][j] = (moduli[j] / 2).div_ceil(pi) * pi;
             }
         }
-        Ok(Self { gamma })
-    }
-
-    pub(crate) fn centered_mixed_radix(&self, residues: [i128; K], moduli: [u64; K]) -> [i128; K] {
-        let mut digits = [0; K];
-        if K == 0 {
-            return digits;
-        }
-        let first_modulus = i128::from(moduli[0]);
-        digits[0] = center_mod(residues[0], first_modulus);
-        for index in 1..K {
-            let modulus = i128::from(moduli[index]);
-            let mut digit = residues[index].rem_euclid(modulus);
-            for (prior, prior_digit) in digits.iter().enumerate().take(index) {
-                digit = (digit - prior_digit).rem_euclid(modulus);
-                digit = (digit * i128::from(self.gamma[index][prior])).rem_euclid(modulus);
+        let mut run_start = [0; K];
+        let (mut start, mut product) = (0, 1u128);
+        for (index, &modulus) in moduli.iter().enumerate() {
+            match product.checked_mul(u128::from(modulus)) {
+                Some(next) if next < 1 << 126 => product = next,
+                _ => (start, product) = (index, u128::from(modulus)),
             }
-            digits[index] = center_mod(digit, modulus);
+            run_start[index] = start;
         }
-        digits
+        Ok(Self {
+            moduli,
+            gamma,
+            gamma_shoup,
+            lift,
+            run_start,
+        })
     }
-}
 
-fn center_mod(value: i128, modulus: i128) -> i128 {
-    let value = value.rem_euclid(modulus);
-    if value > modulus / 2 {
-        value - modulus
-    } else {
-        value
+    /// Field images of the radix weights `prod_{j < i} p_j`, followed by the
+    /// image of the full CRT modulus.
+    pub(crate) fn field_weights<F: Field>(&self) -> ([F; K], F) {
+        let mut product = F::one();
+        let weights = core::array::from_fn(|index| {
+            let weight = product;
+            product *= F::from_u64(self.moduli[index]);
+            weight
+        });
+        (weights, product)
+    }
+
+    /// Field image of the integer whose centered mixed-radix digits are
+    /// `digits`, given the radix weights from [`Self::field_weights`].
+    ///
+    /// Each run of limbs is Horner-evaluated exactly in i128, so a run costs
+    /// one field conversion and at most one field multiplication.
+    pub(crate) fn digits_to_field<F: Field>(&self, digits: &[i64; K], weights: &[F; K]) -> F {
+        let mut result = F::zero();
+        let mut end = K;
+        while end > 0 {
+            let start = self.run_start[end - 1];
+            let mut value = 0i128;
+            for index in (start..end).rev() {
+                value = value * i128::from(self.moduli[index]) + i128::from(digits[index]);
+            }
+            let value = F::from_i128(value);
+            result += if start == 0 {
+                value
+            } else {
+                value * weights[start]
+            };
+            end = start;
+        }
+        result
+    }
+
+    /// Replace each column of residues with its centered mixed-radix digits.
+    ///
+    /// On entry `limbs[i][c]` is the residue of coefficient `c` modulo `p_i`,
+    /// which must lie in `(-p_i, p_i)`. On exit it is digit `i`, in
+    /// `[-floor(p_i / 2), floor(p_i / 2)]`, where coefficient `c` equals
+    /// `sum_i limbs[i][c] * prod_{j < i} p_j`. Each step is a Shoup
+    /// multiplication by a precomputed inverse, and each inner loop runs over
+    /// independent coefficients, so the per-coefficient chains overlap.
+    pub(crate) fn centered_mixed_radix<const D: usize>(&self, limbs: &mut [[i64; D]; K]) {
+        for index in 0..K {
+            let modulus = self.moduli[index];
+            let (prior_limbs, rest) = limbs.split_at_mut(index);
+            let Some(column) = rest.first_mut() else {
+                return;
+            };
+            for value in column.iter_mut() {
+                *value += i64::from(*value < 0) * modulus as i64;
+            }
+            for (prior, prior_digits) in prior_limbs.iter().enumerate() {
+                let (gamma, gamma_shoup) =
+                    (self.gamma[index][prior], self.gamma_shoup[index][prior]);
+                let lift = self.lift[index][prior];
+                for (value, &prior_digit) in column.iter_mut().zip(prior_digits) {
+                    // `0 <= value < p_i`, `lift >= floor(p_j / 2) >= |prior_digit|`,
+                    // and all moduli are below 2^62, so the sum is nonnegative
+                    // and below 2^64.
+                    let shifted = (*value as u64 + lift).wrapping_add_signed(-prior_digit);
+                    let quotient = ((u128::from(shifted) * u128::from(gamma_shoup)) >> 64) as u64;
+                    let digit = shifted
+                        .wrapping_mul(gamma)
+                        .wrapping_sub(quotient.wrapping_mul(modulus));
+                    *value = (digit - u64::from(digit >= modulus) * modulus) as i64;
+                }
+            }
+            for value in column.iter_mut() {
+                *value -= i64::from(*value > (modulus / 2) as i64) * modulus as i64;
+            }
+        }
     }
 }
 
@@ -425,5 +512,99 @@ mod capacity_tests {
             Some(768)
         );
         assert!(mixed.supports::<Prime32Offset99, 128>(128, 32_768));
+    }
+}
+
+#[cfg(test)]
+mod garner_tests {
+    use super::GarnerData;
+    use crate::ntt::ifma52::IFMA52_PRIMES;
+    use crate::ntt::tables::{I16_TAIL_PRIME, I32_RAW_PRIMES};
+    use crate::Field;
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99};
+
+    /// Checks range and `sum_k d_k prod_{j<k} p_j == r_i (mod p_i)` for all i.
+    fn mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) -> [i64; K] {
+        let mut limbs = residues.map(|residue| [residue]);
+        garner.centered_mixed_radix(&mut limbs);
+        limbs.map(|[digit]| digit)
+    }
+
+    fn assert_mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) {
+        let digits = mixed_radix(garner, residues);
+        for (i, &modulus) in garner.moduli.iter().enumerate() {
+            let modulus = i128::from(modulus);
+            assert!(i128::from(digits[i]).abs() <= modulus / 2);
+            let mut value = 0i128;
+            let mut weight = 1i128;
+            for (k, &digit) in digits.iter().enumerate() {
+                value = (value + i128::from(digit) * weight).rem_euclid(modulus);
+                weight = (weight * i128::from(garner.moduli[k])).rem_euclid(modulus);
+            }
+            assert_eq!(value, i128::from(residues[i]).rem_euclid(modulus));
+        }
+    }
+
+    /// Checks the i128 run evaluation against one field product per digit.
+    fn assert_field_lift<F: Field, const K: usize>(garner: &GarnerData<K>, digits: &[i64; K]) {
+        let (weights, _) = garner.field_weights::<F>();
+        let expected = digits
+            .iter()
+            .zip(weights)
+            .fold(F::zero(), |sum, (&digit, weight)| {
+                sum + F::from_i64(digit) * weight
+            });
+        assert_eq!(garner.digits_to_field(digits, &weights), expected);
+    }
+
+    fn check_profile<const K: usize>(moduli: [u64; K]) {
+        let garner = GarnerData::try_from_moduli(moduli).unwrap();
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for round in 0..4096 {
+            let residues = core::array::from_fn(|limb| {
+                let modulus = moduli[limb] as i64;
+                let half = modulus / 2;
+                match (round + limb) % 5 {
+                    0 => -half,
+                    1 => half,
+                    2 => modulus - 1,
+                    3 => 1 - modulus,
+                    _ => {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        (state % (2 * modulus as u64 - 1)) as i64 - (modulus - 1)
+                    }
+                }
+            });
+            assert_mixed_radix(&garner, residues);
+            let digits = mixed_radix(&garner, residues);
+            assert_field_lift::<Prime128OffsetA7F7, K>(&garner, &digits);
+            assert_field_lift::<Prime32Offset99, K>(&garner, &digits);
+        }
+    }
+
+    #[test]
+    fn shoup_mixed_radix_matches_crt_congruences() {
+        check_profile(I32_RAW_PRIMES.map(|prime| prime as u64));
+        check_profile(IFMA52_PRIMES);
+        check_profile([IFMA52_PRIMES[0], 12_289, I32_RAW_PRIMES[0] as u64]);
+        check_profile([(1 << 62) - 57, (1 << 61) - 1, 3]);
+        check_profile([I16_TAIL_PRIME.p as u64; 1]);
+        check_profile([
+            I32_RAW_PRIMES[0] as u64,
+            I32_RAW_PRIMES[1] as u64,
+            I32_RAW_PRIMES[2] as u64,
+            I32_RAW_PRIMES[3] as u64,
+            I32_RAW_PRIMES[4] as u64,
+            I32_RAW_PRIMES[5] as u64,
+            I16_TAIL_PRIME.p as u64,
+        ]);
+    }
+
+    #[test]
+    fn rejects_moduli_outside_shoup_range() {
+        assert!(GarnerData::try_from_moduli([1u64 << 62, 3]).is_err());
+        assert!(GarnerData::try_from_moduli([1u64, 3]).is_err());
     }
 }
