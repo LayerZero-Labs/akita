@@ -141,7 +141,8 @@
       "id": "extension-opening",
       "description": "Extension-opening reduction prover paths",
       "code": [
-        "crates/akita-cpu-backend/src/backend/cpu/recursive/opening/**",
+        "crates/akita-cpu-backend/src/opaque/recursive/opening/**",
+        "crates/akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs",
         "crates/akita-types/src/extension_opening_reduction.rs"
       ],
       "consider_updating": [
