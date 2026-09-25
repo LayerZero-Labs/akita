@@ -1,21 +1,25 @@
 #[cfg(target_arch = "aarch64")]
 use std::mem::size_of;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::avx;
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
-#[cfg(target_arch = "aarch64")]
-use crate::ntt::{NttPrime, NttTwiddles};
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::{prime::NttPrime, NttTwiddles};
 use crate::ring::cyclotomic::CyclotomicRing;
 
-use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
+use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
 };
 
 enum CenteredI16NttStrategy<W: PrimeWidth, const K: usize> {
     Lut(CenteredMontLut<W, K>),
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    X86,
     #[cfg(target_arch = "aarch64")]
     NeonI16,
     #[cfg(target_arch = "aarch64")]
@@ -30,6 +34,13 @@ pub(super) struct CenteredI16NttConverter<'a, W: PrimeWidth, const K: usize, con
 
 impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<'a, W, K, D> {
     pub(super) fn new(params: &'a CrtNttParamSet<W, K, D>, rhs: &[[i16; D]]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan) {
+            return Self {
+                params,
+                strategy: CenteredI16NttStrategy::X86,
+            };
+        }
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
             if size_of::<W>() == size_of::<i16>() {
@@ -64,11 +75,48 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
                 let centered = coefficients.map(i32::from);
                 CyclotomicCrtNtt::from_centered_i32_with_lut(&centered, self.params, lut)
             }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            CenteredI16NttStrategy::X86 => self.transform_x86(coefficients),
             #[cfg(target_arch = "aarch64")]
             CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients),
             #[cfg(target_arch = "aarch64")]
             CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients),
         }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn transform_x86(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((limb, prime), twiddles) in limbs
+            .iter_mut()
+            .zip(self.params.primes.iter())
+            .zip(self.params.twiddles.iter())
+        {
+            // SAFETY: `new` selects this strategy only when the prepared plan
+            // proves AVX2 and `D >= 64`. PrimeWidth is sealed to i16 and i32,
+            // so the width check identifies W. MontCoeff is transparent, while
+            // NttPrime and NttTwiddles have stable C layouts. Both arrays hold
+            // D elements and do not overlap.
+            unsafe {
+                if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+                    avx::forward_ntt_centered_i16_i16(
+                        &mut *(limb as *mut _ as *mut [MontCoeff<i16>; D]),
+                        coefficients,
+                        *(prime as *const _ as *const NttPrime<i16>),
+                        &*(twiddles as *const _ as *const NttTwiddles<i16, D>),
+                    );
+                } else {
+                    avx::forward_ntt_centered_i16_i32(
+                        &mut *(limb as *mut _ as *mut [MontCoeff<i32>; D]),
+                        coefficients,
+                        *(prime as *const _ as *const NttPrime<i32>),
+                        &*(twiddles as *const _ as *const NttTwiddles<i32, D>),
+                        self.params.kernel_plan.uses_avx512_transform(),
+                    );
+                }
+            }
+        }
+        CyclotomicCrtNtt { limbs }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -169,7 +217,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
@@ -177,9 +225,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -192,7 +240,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -202,9 +250,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in neg_limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in neg_limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             *cyc_limb = *neg_limb;
             forward_ntt(neg_limb, *prime, tw, params.kernel_plan);
@@ -244,11 +292,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.twiddles.iter())
             .enumerate()
         {
-            let reducer = CenteredPrimeReducer::new(*prime);
+            let reducer = CenteredMontReducer::new(*prime);
             for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
-                *dst = lut.get(k, coefficient).unwrap_or_else(|| {
-                    prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)))
-                });
+                *dst = lut
+                    .get(k, coefficient)
+                    .unwrap_or_else(|| reducer.reduce_i32(coefficient));
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -330,7 +378,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.twiddles.iter())
             .enumerate()
         {
-            let reducer = CenteredPrimeReducer::new(*prime);
+            let reducer = CenteredMontReducer::new(*prime);
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
                     // SAFETY: the caller guarantees `coeff` is covered by `lut`.
@@ -338,7 +386,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
             } else {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coeff)));
+                    *dst = reducer.reduce_i32(coeff);
                 }
             }
             *cyc_limb = *neg_limb;
@@ -377,7 +425,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
@@ -385,9 +433,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             forward_ntt_cyclic(limb, *prime, tw, params.kernel_plan);
         }
