@@ -18,7 +18,6 @@ pub(super) use akita_cpu_backend::OneHotPoly;
 use akita_cpu_backend::SetupPrefixProverRegistry;
 use akita_cpu_backend::{evaluate_root_polynomial, RootPolyShape};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
-use akita_pcs::AkitaCommitmentScheme;
 pub(super) use akita_prover::SelectedProverOpeningData;
 use akita_types::{
     AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile,
@@ -408,7 +407,10 @@ fn verifier_setup_with_alternate_full_prefix(
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
 mod recursive;
 #[allow(unused_imports)]
-pub(super) use recursive::recursive_multi_group_round_trip;
+pub(super) use recursive::{
+    recursive_multi_group_round_trip, recursive_multi_group_round_trip_on, RECURSIVE_ROUND_TRIP_NV,
+    RECURSIVE_ROUND_TRIP_POLYS,
+};
 
 pub(super) fn make_onehot_poly_with_k(nv: usize, k: usize, seed: u64) -> OneHotPoly<F, u8> {
     let total_chunks = (1usize << nv) / k;

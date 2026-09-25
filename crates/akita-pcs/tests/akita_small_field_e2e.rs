@@ -42,6 +42,11 @@
 //!
 //! `fp32_onehot_multi_group`: two precommit groups proved jointly, verifying the
 //! multi-group code path with a small field.
+//!
+//! `fp32_combined_setup_proves_recursive_and_onehot_families`: one setup built
+//! from the union of the fp32 recursive and one-hot requirements proves under
+//! both catalogs on one backend, importing the recursive row's setup prefix
+//! from the combined registry.
 
 #![allow(missing_docs)]
 
@@ -634,5 +639,7 @@ fn fp32_onehot_multi_group() {
     });
 }
 
+#[path = "akita_small_field_e2e/combined_recursive.rs"]
+mod combined_recursive;
 #[path = "akita_small_field_e2e/selective_l2.rs"]
 mod selective_l2;
