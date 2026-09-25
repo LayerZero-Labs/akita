@@ -237,7 +237,7 @@ where
                     let openings = partials
                         .iter()
                         .map(|p| {
-                            coefficient_packing_scalar_opening::<F, E>(
+                            crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening::<F, E>(
                                 geometry,
                                 point.num_live_blocks(),
                                 std::slice::from_ref(p),

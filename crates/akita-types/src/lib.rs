@@ -199,12 +199,8 @@ pub use sis::{
     SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
-#[cfg(any(test, feature = "test-support"))]
-pub use subring_coefficient_packing::coefficient_packing_partials;
 pub use subring_coefficient_packing::{
-    coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
-    CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

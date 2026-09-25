@@ -2,6 +2,7 @@
 
 pub(crate) mod backend;
 pub(crate) mod coefficient_packing;
+pub(crate) mod coefficient_packing_fold;
 mod commitment;
 mod commitment_stage;
 #[cfg(test)]

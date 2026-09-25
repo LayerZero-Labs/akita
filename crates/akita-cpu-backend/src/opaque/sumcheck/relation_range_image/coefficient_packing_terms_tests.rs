@@ -423,6 +423,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
 fn recursive_packing_phases_share_one_relation_authority() {
     use crate::opaque::RecursiveWitnessFlat;
 
+    use crate::arithmetic::coefficient_packing_fold::coefficient_packing_scalar_opening;
     use crate::opaque::PreparedRelationGroupPublic;
     use crate::opaque::{fold_coefficient_packing_group, materialize_coefficient_packing_d_input};
     use crate::opaque::{
@@ -430,7 +431,7 @@ fn recursive_packing_phases_share_one_relation_authority() {
         SubringCoefficientPackingPlan,
     };
     use crate::protocol::validate_prepared_relation_groups;
-    use akita_types::{coefficient_packing_scalar_opening, RingRelationGroupOpeningView};
+    use akita_types::RingRelationGroupOpeningView;
 
     let fixture = fixture();
     let point = &fixture.prepared_point;

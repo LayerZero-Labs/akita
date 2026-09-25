@@ -390,5 +390,7 @@ where
     })
 }
 
-pub(super) type GroupFoldedOpening<F> =
-    akita_types::OpeningFamily<RingVec<F>, akita_types::CoefficientPackingFoldProduct<F>>;
+pub(super) type GroupFoldedOpening<F> = akita_types::OpeningFamily<
+    RingVec<F>,
+    crate::arithmetic::coefficient_packing_fold::CoefficientPackingFoldProduct<F>,
+>;

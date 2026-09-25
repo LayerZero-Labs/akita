@@ -1,6 +1,6 @@
-use super::SubringCoefficientPackingGeometry;
 use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
+use akita_types::SubringCoefficientPackingGeometry;
 use jolt_field::{ExtField, Field, Ring};
 use std::mem;
 
@@ -61,8 +61,8 @@ where
 ///
 /// Returns an error when the extension degree or either input length disagrees
 /// with `geometry`, or when the bounded reference allocation fails.
-#[cfg(any(test, feature = "test-support"))]
-pub(super) fn coefficient_packing_map<F, E>(
+#[cfg(test)]
+pub(crate) fn coefficient_packing_map<F, E>(
     geometry: SubringCoefficientPackingGeometry,
     a_ring_coefficients: &[F],
     packing_weights: &[E],
@@ -113,8 +113,8 @@ where
 ///
 /// Returns an error for an inconsistent extension degree, malformed source or
 /// weight lengths, overflow, or a bounded reference allocation failure.
-#[cfg(any(test, feature = "test-support"))]
-pub fn coefficient_packing_partials<F, E>(
+#[cfg(test)]
+pub(crate) fn coefficient_packing_partials<F, E>(
     geometry: SubringCoefficientPackingGeometry,
     num_live_positions: usize,
     num_positions_per_block: usize,
@@ -242,7 +242,7 @@ where
 ///
 /// Returns an error for zero claim/block counts, an inconsistent extension
 /// degree, malformed coordinate or weight lengths, or overflow.
-pub fn coefficient_packing_scalar_opening<F, E>(
+pub(crate) fn coefficient_packing_scalar_opening<F, E>(
     geometry: SubringCoefficientPackingGeometry,
     num_blocks: usize,
     partial_coordinates_by_claim: &[impl AsRef<[F]>],
@@ -334,7 +334,7 @@ where
 /// Returns an error when the challenge length is not `s` or the bounded
 /// reference allocation fails.
 #[cfg(test)]
-pub(super) fn embed_subring_challenge_in_a_ring<F: Field + Ring>(
+pub(crate) fn embed_subring_challenge_in_a_ring<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenge: &SparseChallenge,
 ) -> Result<Vec<F>, AkitaError> {
@@ -397,7 +397,7 @@ fn negacyclic_product_reference<T: Field>(
 /// Returns an error when either input length disagrees with `geometry` or a
 /// bounded reference allocation fails.
 #[cfg(test)]
-pub(super) fn multiply_a_ring_by_subring_challenge<F: Field + Ring>(
+pub(crate) fn multiply_a_ring_by_subring_challenge<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenge: &SparseChallenge,
     a_ring_coefficients: &[F],
@@ -417,7 +417,7 @@ pub(super) fn multiply_a_ring_by_subring_challenge<F: Field + Ring>(
 /// `[extension coordinate][subring coefficient]`. Their length is `k s`, but
 /// the polynomial modulus used to derive them is `Y^s + 1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoefficientPackingFoldProduct<F: Field> {
+pub(crate) struct CoefficientPackingFoldProduct<F: Field> {
     geometry: SubringCoefficientPackingGeometry,
     reduced_base_field_coordinates: Vec<F>,
     quotient_high_half_base_field_coordinates: Vec<F>,
@@ -426,19 +426,19 @@ pub struct CoefficientPackingFoldProduct<F: Field> {
 impl<F: Field> CoefficientPackingFoldProduct<F> {
     /// Geometry under which both paired outputs were constructed.
     #[must_use]
-    pub fn geometry(&self) -> SubringCoefficientPackingGeometry {
+    pub(crate) fn geometry(&self) -> SubringCoefficientPackingGeometry {
         self.geometry
     }
 
     /// Negacyclic reduction of `sum_i c_i(Y) e_i(Y)` modulo `Y^s + 1`.
     #[must_use]
-    pub fn reduced_base_field_coordinates(&self) -> &[F] {
+    pub(crate) fn reduced_base_field_coordinates(&self) -> &[F] {
         &self.reduced_base_field_coordinates
     }
 
     /// Positive ordinary-product high half `Q_pack`.
     #[must_use]
-    pub fn quotient_high_half_base_field_coordinates(&self) -> &[F] {
+    pub(crate) fn quotient_high_half_base_field_coordinates(&self) -> &[F] {
         &self.quotient_high_half_base_field_coordinates
     }
 }
@@ -477,7 +477,7 @@ fn accumulate_small_signed_product<F: Field + Ring>(
 /// Returns an error when a challenge is malformed at dimension `s`, the
 /// partial length disagrees with the challenge count and geometry, or a
 /// bounded reference allocation fails.
-pub fn fold_coefficient_packing_partials<F: Field + Ring>(
+pub(crate) fn fold_coefficient_packing_partials<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenges: &[SparseChallenge],
     partial_coordinates: &[F],
@@ -597,3 +597,7 @@ pub fn fold_coefficient_packing_partials<F: Field + Ring>(
         quotient_high_half_base_field_coordinates: quotient,
     })
 }
+
+#[cfg(test)]
+#[path = "coefficient_packing_fold_tests.rs"]
+mod tests;

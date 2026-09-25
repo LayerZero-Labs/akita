@@ -238,6 +238,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::arithmetic::coefficient_packing_fold::coefficient_packing_partials;
     use crate::opaque::{
         CpuBackend, RootOpeningSource, SubringCoefficientPackingBatchKernel,
         SubringCoefficientPackingPlan,
@@ -246,8 +247,8 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_error::AkitaError;
     use akita_types::{
-        coefficient_packing_partials, BasisMode, FpExtEncoding,
-        PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+        BasisMode, FpExtEncoding, PreparedSubringCoefficientPackingPoint,
+        SubringCoefficientPackingGeometry,
     };
     use jolt_field::{
         CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
