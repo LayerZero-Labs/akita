@@ -64,7 +64,8 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.group_column_eq_slices(0).unwrap().2, expected);
+    let scan = lifted_test_scan(plan);
+    assert_eq!(scan.group_column_eq_slices(0).unwrap().2, expected);
 }
 
 #[test]
@@ -240,7 +241,7 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     .unwrap();
 
     let deferred_group = &deferred.groups[0];
-    assert_eq!(deferred_group.active_unit_ranges.len(), num_live_blocks);
+    assert_eq!(deferred_group.active_units.len(), num_live_blocks);
     assert_eq!(deferred_group.num_physical_units, num_chunks);
     assert_eq!(deferred_group.d_tensors.len(), num_claims * num_live_blocks);
     assert_eq!(deferred_group.a_tensors.len(), num_chunks);
@@ -252,9 +253,11 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
         .map(|index| test_scalar(1601 + index as u128))
         .collect::<Vec<_>>();
     let alpha = test_scalar(3);
+    let scan = lifted_test_scan(direct);
+    let direct = scan.plan();
     let expected = span_evaluators::structured_slice_reference(
         &direct.groups[0],
-        direct.direct_scan_state.weights(0).unwrap(),
+        scan.mode.weights(0).unwrap(),
         &block_challenges,
         &opening_a_evals,
         alpha,
@@ -262,6 +265,11 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     assert_eq!(
         deferred
             .evaluate_structured_group::<F>(0, &block_challenges, &opening_a_evals, alpha)
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        scan.evaluate_structured_group_cached::<F>(0, &block_challenges, &opening_a_evals)
             .unwrap(),
         expected
     );
