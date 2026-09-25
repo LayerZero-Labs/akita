@@ -67,8 +67,8 @@ resources.
 
 ## CPU resource controls
 
-`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup, trusted
-catalog, and maximum cached ring-switch elements. A zero limit streams
+`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup and the
+maximum cached ring-switch elements. A zero limit streams
 supported operations; `usize::MAX` retains all supported ring-switch
 operations. The CPU kernel sizes one-hot commitment scratch automatically from
 the commitment geometry; see the

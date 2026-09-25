@@ -120,6 +120,41 @@ Their commitments have the same opaque handle type, so their handles can be
 placed in one ordered opening batch. Concrete CPU source operations remain
 inside the backend, and one hot data retains its compact representation.
 
+The backend stores no catalog, so one backend commits every group. Pass each
+group's producer catalog to its own `commit`, then commit the final group and
+open the batch under the proving catalog:
+
+```rust
+let dense_output = backend.commit(
+    dense_scheme.schedules(),
+    &backend.import_source(dense_polynomials)?,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+let prior = PrecommittedGroupProfiles::from_profiles(vec![
+    dense_output.committed_group.profile.clone(),
+])?;
+let final_output = backend.commit(
+    onehot_scheme.schedules(),
+    &backend.import_source(onehot_polynomials)?,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+```
+
+The catalog passed to `commit` is the producer contract for that group: it
+fixes the commit profile and the source class and coefficient bound that
+admission enforces. The handle does not record it, and opening does not check
+it again, because schedule rows carry no producer identity. The application
+must therefore commit each group under the configuration whose contract the
+proving catalog's row assumes for that group. A mismatch cannot make a false
+claim verify, since the verifier enforces the row's frozen caps. The proof's
+completeness and grinding budget, however, no longer follow from the planner's
+model, so an honest proof can fail.
+
+The setup must cover every family that commits on the backend. When the
+proving catalog's rows already include each precommitted profile, its own
+setup suffices. Otherwise build the setup from combined requirements, as in
+[Share one setup across families](./setup-runtime.md#share-one-setup-across-families).
+
 A handle from another backend is rejected during admission. When transferring
 an existing commitment deliberately, use `backend.import_commitment(&handle)`.
 The receiving backend checks the source and commitment material against its

@@ -43,7 +43,7 @@ let setup = scheme.setup_prover(
 ```
 
 A larger covering setup can serve a smaller proof under the same public seed.
-The commitment and proof bind the public setup identity, not the amount of
+Of the setup, the commitment and proof bind only the seed, not the amount of
 matrix data that one prover happened to store.
 
 For a recursive configuration, setup construction also prepares the setup
@@ -73,8 +73,17 @@ let setup = akita_pcs::new_prover_setup::<Field>(&requirements)?;
 
 The combined setup uses the same public seed as each per-family setup, so a
 proof produced with it is byte-identical to one produced with the smaller
-per-family setup. Each commitment and proof still names its own family's
-catalog.
+per-family setup. The transcript's instance descriptor binds the field
+algebra, the family's decomposition and SIS profile, the setup seed, the
+selected schedule row, the grinding plan, and the call layout. It binds no
+provisioned capacity: neither the setup's variable and polynomial bounds nor
+its materialized matrix length. Commitments read the same seed-derived matrix
+prefix under either setup. Each commitment and proof still names its own
+family's catalog.
+
+`SetupRequirements<F>` is tied to the field and has no public constructor
+other than `from_catalog` and `union`, so every requirement passed to
+`new_prover_setup` comes from validated catalog metadata.
 
 ## Prepare the compute backend
 
