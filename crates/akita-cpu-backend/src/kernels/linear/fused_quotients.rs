@@ -16,7 +16,7 @@ struct CenteredRhsBounds {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FusedQuotientRows<F: Field, const D: usize> {
+pub struct FusedQuotientRows<F: Field, const D: usize> {
     pub(crate) b_cyclic: Vec<CyclotomicRing<F, D>>,
     pub(crate) a_quotients: Vec<CyclotomicRing<F, D>>,
 }
@@ -45,22 +45,6 @@ impl FusedQuotientPlan {
     fn is_one_shot(self) -> bool {
         self.t_chunk_width.is_some_and(|width| width >= self.t_len)
             && self.z_chunk_width.is_some_and(|width| width >= self.z_len)
-    }
-
-    #[inline]
-    fn b_row(self, row: usize) -> Range<usize> {
-        self.row(row, self.t_len)
-    }
-
-    #[inline]
-    fn a_row(self, row: usize) -> Range<usize> {
-        self.row(row, self.z_len)
-    }
-
-    #[inline]
-    fn row(self, row: usize, width: usize) -> Range<usize> {
-        let start = row * width;
-        start..start + width
     }
 
     #[inline]
@@ -105,35 +89,64 @@ where
         Ok(())
     }
 
+    /// Adds `matrix[row, column_start..] · rhs` in cyclic form into each row
+    /// accumulator of a `width`-column matrix.
     #[inline(always)]
-    fn with_cyclic<R>(
+    fn accumulate_cyclic_run(
         &self,
-        index: usize,
+        accs: &mut [CyclotomicCrtNtt<W, K, D>],
+        width: usize,
+        column_start: usize,
+        rhs: &[CyclotomicCrtNtt<W, K, D>],
         params: &CrtNttParamSet<W, K, D>,
-        f: impl FnOnce(&CyclotomicCrtNtt<W, K, D>) -> R,
-    ) -> R {
-        match self {
-            Self::Cached { cyclic, .. } => f(&cyclic[index]),
-            Self::Field(source) => {
-                let value = CyclotomicCrtNtt::from_ring_cyclic(&source[index], params);
-                f(&value)
+    ) {
+        for (row, acc) in accs.iter_mut().enumerate() {
+            let start = row * width + column_start;
+            match self {
+                Self::Cached { cyclic, .. } => {
+                    acc.add_assign_pointwise_dot(&cyclic[start..start + rhs.len()], rhs, params);
+                }
+                Self::Field(source) => {
+                    for (entry, rhs) in source[start..start + rhs.len()].iter().zip(rhs) {
+                        let lhs = CyclotomicCrtNtt::from_ring_cyclic(entry, params);
+                        acc.add_assign_pointwise_mul(&lhs, rhs, params);
+                    }
+                }
             }
         }
     }
 
+    /// Adds the negacyclic and cyclic products of `matrix[row, column_start..]`
+    /// with the paired right-hand sides into each row's accumulators.
     #[inline(always)]
-    fn with_pair<R>(
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_pair_run(
         &self,
-        index: usize,
+        neg_accs: &mut [CyclotomicCrtNtt<W, K, D>],
+        cyc_accs: &mut [CyclotomicCrtNtt<W, K, D>],
+        width: usize,
+        column_start: usize,
+        rhs_neg: &[CyclotomicCrtNtt<W, K, D>],
+        rhs_cyc: &[CyclotomicCrtNtt<W, K, D>],
         params: &CrtNttParamSet<W, K, D>,
-        f: impl FnOnce(&CyclotomicCrtNtt<W, K, D>, &CyclotomicCrtNtt<W, K, D>) -> R,
-    ) -> R {
-        match self {
-            Self::Cached { negacyclic, cyclic } => f(&negacyclic[index], &cyclic[index]),
-            Self::Field(source) => {
-                let (negacyclic, cyclic) =
-                    CyclotomicCrtNtt::from_ring_pair_with_params(&source[index], params);
-                f(&negacyclic, &cyclic)
+    ) {
+        for (row, (neg_acc, cyc_acc)) in neg_accs.iter_mut().zip(cyc_accs).enumerate() {
+            let columns = row * width + column_start..row * width + column_start + rhs_neg.len();
+            match self {
+                Self::Cached { negacyclic, cyclic } => {
+                    neg_acc.add_assign_pointwise_dot(&negacyclic[columns.clone()], rhs_neg, params);
+                    cyc_acc.add_assign_pointwise_dot(&cyclic[columns], rhs_cyc, params);
+                }
+                Self::Field(source) => {
+                    for ((entry, rhs_neg), rhs_cyc) in
+                        source[columns].iter().zip(rhs_neg).zip(rhs_cyc)
+                    {
+                        let (neg, cyc) =
+                            CyclotomicCrtNtt::from_ring_pair_with_params(entry, params);
+                        neg_acc.add_assign_pointwise_mul(&neg, rhs_neg, params);
+                        cyc_acc.add_assign_pointwise_mul(&cyc, rhs_cyc, params);
+                    }
+                }
             }
         }
     }
@@ -269,6 +282,27 @@ fn fused_split_eq_quotients_with_params<
     })
 }
 
+/// Transforms one centered row into its negacyclic and cyclic CRT+NTT forms.
+///
+/// # Safety
+///
+/// When `lut` is present, every coefficient of `row` must lie within the
+/// inclusive bound the LUT was built for.
+#[inline(always)]
+unsafe fn centered_pair_ntt<W: PrimeWidth, const K: usize, const D: usize>(
+    row: &[i32; D],
+    params: &CrtNttParamSet<W, K, D>,
+    lut: Option<&CenteredMontLut<W, K>>,
+) -> (CyclotomicCrtNtt<W, K, D>, CyclotomicCrtNtt<W, K, D>) {
+    match lut {
+        // SAFETY: the caller guarantees `row` fits the LUT bound.
+        Some(lut) => unsafe {
+            CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(row, params, lut)
+        },
+        None => CyclotomicCrtNtt::from_centered_i32_pair_with_params(row, params),
+    }
+}
+
 fn fused_split_eq_quotients_one_shot<
     F: Field + CanonicalEncoding,
     W: PrimeWidth,
@@ -289,6 +323,7 @@ fn fused_split_eq_quotients_one_shot<
     let tw = base_tw.min(plan.max_col.div_ceil(MIN_FUSED_TILES).max(1));
     let num_tiles = plan.max_col.div_ceil(tw);
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();
+    let dot_batch = params.pointwise_dot_batch_size();
 
     let accs = cfg_fold_reduce!(
         0..num_tiles,
@@ -300,50 +335,58 @@ fn fused_split_eq_quotients_one_shot<
         |mut accs: FusedNttAccumulators<W, K, D>, tile_idx| {
             let tile_start = tile_idx * tw;
             let tile_end = (tile_start + tw).min(plan.max_col);
+            let mut rhs_neg = Vec::with_capacity(dot_batch);
+            let mut rhs_cyc = Vec::with_capacity(dot_batch);
 
-            for j in tile_start..tile_end {
-                if j < plan.t_len && !is_zero_plane(&t_hat[j]) {
-                    let lut = digit_lut.as_ref().expect("digit LUT exists");
-                    let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
-                    for (i, acc_b) in accs.b.iter_mut().enumerate() {
-                        source.with_cyclic(plan.b_row(i).start + j, params, |cyclic| {
-                            accumulate_pointwise_product_into(acc_b, cyclic, &ntt_t, params);
-                        });
-                    }
-                }
-
-                if j < plan.z_len && !is_zero_centered_row(&z_folded_rings[j]) {
-                    let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                        // SAFETY: `plan_fused_quotients` computed
-                        // `z_bounds.lut` from these `plan.z_len` rows. This
-                        // loop keeps `j < plan.z_len`, and `lut` was built for
-                        // that inclusive centered coefficient bound.
-                        unsafe {
-                            CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
-                                &z_folded_rings[j],
-                                params,
-                                lut,
-                            )
-                        }
-                    } else {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_params(
-                            &z_folded_rings[j],
+            if let Some(lut) = digit_lut.as_ref() {
+                for_each_nonzero_column_run(
+                    tile_start..tile_end.min(plan.t_len),
+                    dot_batch,
+                    |j| is_zero_plane(&t_hat[j]),
+                    |run| {
+                        rhs_cyc.clear();
+                        rhs_cyc.extend(t_hat[run.clone()].iter().map(|digits| {
+                            CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, lut)
+                        }));
+                        source.accumulate_cyclic_run(
+                            &mut accs.b,
+                            plan.t_len,
+                            run.start,
+                            &rhs_cyc,
                             params,
-                        )
-                    };
-                    for (i, (acc_neg, acc_cyc)) in accs
-                        .a_negacyclic
-                        .iter_mut()
-                        .zip(accs.a_cyclic.iter_mut())
-                        .enumerate()
-                    {
-                        source.with_pair(plan.a_row(i).start + j, params, |neg, cyclic| {
-                            accumulate_pointwise_product_into(acc_neg, neg, &ntt_z_neg, params);
-                            accumulate_pointwise_product_into(acc_cyc, cyclic, &ntt_z_cyc, params);
-                        });
-                    }
-                }
+                        );
+                    },
+                );
             }
+
+            for_each_nonzero_column_run(
+                tile_start..tile_end.min(plan.z_len),
+                dot_batch,
+                |j| is_zero_centered_row(&z_folded_rings[j]),
+                |run| {
+                    rhs_neg.clear();
+                    rhs_cyc.clear();
+                    for row in &z_folded_rings[run.clone()] {
+                        // SAFETY: `plan_fused_quotients` computed
+                        // `z_bounds.lut` from these `plan.z_len` rows, the run
+                        // stays below `plan.z_len`, and `centered_lut` was
+                        // built for that inclusive coefficient bound.
+                        let (neg, cyc) =
+                            unsafe { centered_pair_ntt(row, params, centered_lut.as_ref()) };
+                        rhs_neg.push(neg);
+                        rhs_cyc.push(cyc);
+                    }
+                    source.accumulate_pair_run(
+                        &mut accs.a_negacyclic,
+                        &mut accs.a_cyclic,
+                        plan.z_len,
+                        run.start,
+                        &rhs_neg,
+                        &rhs_cyc,
+                        params,
+                    );
+                },
+            );
             accs
         },
         |mut a: FusedNttAccumulators<W, K, D>, b| {
@@ -451,6 +494,7 @@ fn accumulate_cyclic_i8_rows<
 
     let num_chunks = rhs_len.div_ceil(chunk_width);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, rhs_abs_bound);
+    let dot_batch = params.pointwise_dot_batch_size();
 
     cfg_fold_reduce!(
         0..num_chunks,
@@ -458,18 +502,20 @@ fn accumulate_cyclic_i8_rows<
         |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
             let chunk = FusedQuotientPlan::chunk_range(rhs_len, chunk_width, chunk_idx);
             let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+            let mut ntt_rhs = Vec::with_capacity(dot_batch);
 
-            for j in chunk {
-                if is_zero_plane(&rhs[j]) {
-                    continue;
-                }
-                let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
-                for (row, acc) in accs.iter_mut().enumerate() {
-                    source.with_cyclic(plan.b_row(row).start + j, params, |cyclic| {
-                        accumulate_pointwise_product_into(acc, cyclic, &ntt_rhs, params);
-                    });
-                }
-            }
+            for_each_nonzero_column_run(
+                chunk,
+                dot_batch,
+                |j| is_zero_plane(&rhs[j]),
+                |run| {
+                    ntt_rhs.clear();
+                    ntt_rhs.extend(rhs[run.clone()].iter().map(|digits| {
+                        CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, &lut)
+                    }));
+                    source.accumulate_cyclic_run(&mut accs, rhs_len, run.start, &ntt_rhs, params);
+                },
+            );
 
             for (dst, acc) in out.iter_mut().zip(accs) {
                 *dst += acc.to_ring_cyclic(params);
@@ -536,6 +582,7 @@ fn accumulate_centered_quotient_rows<
     let centered_lut = (plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
     let num_chunks = plan.z_len.div_ceil(chunk_width);
+    let dot_batch = params.pointwise_dot_batch_size();
 
     cfg_fold_reduce!(
         0..num_chunks,
@@ -544,35 +591,37 @@ fn accumulate_centered_quotient_rows<
             let chunk = FusedQuotientPlan::chunk_range(plan.z_len, chunk_width, chunk_idx);
             let mut neg_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
             let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+            let mut rhs_neg = Vec::with_capacity(dot_batch);
+            let mut rhs_cyc = Vec::with_capacity(dot_batch);
 
-            for j in chunk {
-                if is_zero_centered_row(&z_folded_rings[j]) {
-                    continue;
-                }
-                let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                    // SAFETY: `plan_fused_quotients` computed
-                    // `z_bounds.lut` from these `plan.z_len` rows. This loop
-                    // keeps `j < plan.z_len`, and `lut` was built for that
-                    // inclusive centered coefficient bound.
-                    unsafe {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
-                            &z_folded_rings[j],
-                            params,
-                            lut,
-                        )
+            for_each_nonzero_column_run(
+                chunk,
+                dot_batch,
+                |j| is_zero_centered_row(&z_folded_rings[j]),
+                |run| {
+                    rhs_neg.clear();
+                    rhs_cyc.clear();
+                    for row in &z_folded_rings[run.clone()] {
+                        // SAFETY: `plan_fused_quotients` computed
+                        // `z_bounds.lut` from these `plan.z_len` rows, the run
+                        // stays below `plan.z_len`, and `centered_lut` was
+                        // built for that inclusive coefficient bound.
+                        let (neg, cyc) =
+                            unsafe { centered_pair_ntt(row, params, centered_lut.as_ref()) };
+                        rhs_neg.push(neg);
+                        rhs_cyc.push(cyc);
                     }
-                } else {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_folded_rings[j], params)
-                };
-                for (row, (neg_acc, cyc_acc)) in
-                    neg_accs.iter_mut().zip(cyc_accs.iter_mut()).enumerate()
-                {
-                    source.with_pair(plan.a_row(row).start + j, params, |neg, cyclic| {
-                        accumulate_pointwise_product_into(neg_acc, neg, &ntt_z_neg, params);
-                        accumulate_pointwise_product_into(cyc_acc, cyclic, &ntt_z_cyc, params);
-                    });
-                }
-            }
+                    source.accumulate_pair_run(
+                        &mut neg_accs,
+                        &mut cyc_accs,
+                        plan.z_len,
+                        run.start,
+                        &rhs_neg,
+                        &rhs_cyc,
+                        params,
+                    );
+                },
+            );
 
             for ((dst, neg_acc), cyc_acc) in out.iter_mut().zip(neg_accs).zip(cyc_accs) {
                 let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring(params);
@@ -609,7 +658,7 @@ fn accumulate_centered_quotient_rows_field<
                     continue;
                 }
                 let z = centered_i32_ring::<F, D>(z_folded);
-                let lhs = source.field_ring(plan.a_row(row_idx).start + j, params);
+                let lhs = source.field_ring(row_idx * plan.z_len + j, params);
                 let neg_product = lhs * z;
                 let mut cyc_product = CyclotomicRing::<F, D>::zero();
                 add_cyclic_product_into(&mut cyc_product, &lhs, &z);
@@ -671,6 +720,7 @@ fn centered_quotient_rows_with_i16_tail_params<
     let base_lut = (actual_bound <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<i32, K>::new(params, actual_bound as i32));
     let num_chunks = width.div_ceil(chunk_width);
+    let dot_batch = params.pointwise_dot_batch_size();
 
     Ok(cfg_fold_reduce!(
         0..num_chunks,
@@ -682,54 +732,61 @@ fn centered_quotient_rows_with_i16_tail_params<
             let mut base_cyc_accs = vec![CyclotomicCrtNtt::<i32, K, D>::zero(); num_rows];
             let mut tail_neg_accs = vec![CyclotomicCrtNtt::<i16, 1, D>::zero(); num_rows];
             let mut tail_cyc_accs = vec![CyclotomicCrtNtt::<i16, 1, D>::zero(); num_rows];
+            let mut z_neg = Vec::with_capacity(dot_batch);
+            let mut z_cyc = Vec::with_capacity(dot_batch);
+            let mut z_tail_neg = Vec::with_capacity(dot_batch);
+            let mut z_tail_cyc = Vec::with_capacity(dot_batch);
 
-            for (offset, z_ring) in z_folded_rings[start..end].iter().enumerate() {
-                if is_zero_centered_row(z_ring) {
-                    continue;
-                }
-                let j = start + offset;
-                let (z_neg, z_cyc) = if let Some(ref lut) = base_lut {
-                    // SAFETY: `actual_bound` bounds every centered coefficient in
-                    // `z_folded_rings`; the LUT is built for that bound, and `j`
-                    // ranges only over the validated `0..width` source rows.
-                    unsafe {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
-                            z_ring, params, lut,
-                        )
+            for_each_nonzero_column_run(
+                start..end,
+                dot_batch,
+                |j| is_zero_centered_row(&z_folded_rings[j]),
+                |run| {
+                    z_neg.clear();
+                    z_cyc.clear();
+                    z_tail_neg.clear();
+                    z_tail_cyc.clear();
+                    for z_ring in &z_folded_rings[run.clone()] {
+                        // SAFETY: `actual_bound` bounds every centered
+                        // coefficient in `z_folded_rings`, and `base_lut` is
+                        // built for that bound.
+                        let (neg, cyc) =
+                            unsafe { centered_pair_ntt(z_ring, params, base_lut.as_ref()) };
+                        let (tail_neg, tail_cyc) =
+                            CyclotomicCrtNtt::from_centered_i32_pair_with_params(
+                                z_ring,
+                                tail_params,
+                            );
+                        z_neg.push(neg);
+                        z_cyc.push(cyc);
+                        z_tail_neg.push(tail_neg);
+                        z_tail_cyc.push(tail_cyc);
                     }
-                } else {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(z_ring, params)
-                };
-                let (z_tail_neg, z_tail_cyc) =
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(z_ring, tail_params);
-                for row in 0..num_rows {
-                    let index = row * width + j;
-                    accumulate_pointwise_product_into(
-                        &mut base_neg_accs[row],
-                        &neg[index],
-                        &z_neg,
-                        params,
-                    );
-                    accumulate_pointwise_product_into(
-                        &mut base_cyc_accs[row],
-                        &cyc[index],
-                        &z_cyc,
-                        params,
-                    );
-                    accumulate_pointwise_product_into(
-                        &mut tail_neg_accs[row],
-                        &tail_neg[index],
-                        &z_tail_neg,
-                        tail_params,
-                    );
-                    accumulate_pointwise_product_into(
-                        &mut tail_cyc_accs[row],
-                        &tail_cyc[index],
-                        &z_tail_cyc,
-                        tail_params,
-                    );
-                }
-            }
+                    for row in 0..num_rows {
+                        let columns = row * width + run.start..row * width + run.end;
+                        base_neg_accs[row].add_assign_pointwise_dot(
+                            &neg[columns.clone()],
+                            &z_neg,
+                            params,
+                        );
+                        base_cyc_accs[row].add_assign_pointwise_dot(
+                            &cyc[columns.clone()],
+                            &z_cyc,
+                            params,
+                        );
+                        tail_neg_accs[row].add_assign_pointwise_dot(
+                            &tail_neg[columns.clone()],
+                            &z_tail_neg,
+                            tail_params,
+                        );
+                        tail_cyc_accs[row].add_assign_pointwise_dot(
+                            &tail_cyc[columns],
+                            &z_tail_cyc,
+                            tail_params,
+                        );
+                    }
+                },
+            );
 
             for row in 0..num_rows {
                 let neg_ring = ntt_with_i16_tail_to_ring(
@@ -756,7 +813,7 @@ fn centered_quotient_rows_with_i16_tail_params<
 }
 
 /// Centered A-quotient rows using the protocol CRT prefix plus its 14-bit tail.
-pub(crate) fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
+pub fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     negacyclic_slot: &PreparedNttCache<D>,
     cyclic_slot: &PreparedNttCache<D>,
     tail_slot: &PreparedNttCache<D>,
@@ -836,10 +893,7 @@ pub(crate) fn fused_split_eq_quotients<F: Field + CanonicalEncoding, const D: us
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn fused_split_eq_quotients_prover_bounds<
-    F: Field + CanonicalEncoding,
-    const D: usize,
->(
+pub fn fused_split_eq_quotients_prover_bounds<F: Field + CanonicalEncoding, const D: usize>(
     negacyclic_slot: &PreparedNttCache<D>,
     cyclic_slot: &PreparedNttCache<D>,
     n_b: usize,

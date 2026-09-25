@@ -24,8 +24,8 @@ pub(crate) use pointwise::{
 use runtime::{select_avx_ntt_mode, AvxCpuFeatures};
 pub(crate) use transform::{
     forward_ntt_centered_i16_i16, forward_ntt_centered_i16_i32, forward_ntt_cyclic_i16,
-    forward_ntt_cyclic_i32, forward_ntt_i16, forward_ntt_i32, forward_ntt_i8_i16,
-    forward_ntt_i8_i32, inverse_ntt_cyclic_i16, inverse_ntt_cyclic_i32, inverse_ntt_i16,
-    inverse_ntt_i32,
+    forward_ntt_cyclic_i32, forward_ntt_cyclic_i8_i16, forward_ntt_cyclic_i8_i32, forward_ntt_i16,
+    forward_ntt_i32, forward_ntt_i8_i16, forward_ntt_i8_i32, inverse_ntt_cyclic_i16,
+    inverse_ntt_cyclic_i32, inverse_ntt_i16, inverse_ntt_i32,
 };
 pub(crate) use twiddles::MontQuotients;

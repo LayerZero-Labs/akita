@@ -321,7 +321,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
         for k in 0..K {
             for (dst, digit) in scratch.iter_mut().zip(digits) {
-                lut.fill_negacyclic_limb(k, digit, params, dst);
+                lut.fill_ntt_limb::<false, D>(k, digit, params, dst);
             }
             let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                 digits
@@ -392,7 +392,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
             for (k, scratch_limb) in scratch.iter_mut().enumerate() {
-                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
+                lut.fill_ntt_limb::<false, D>(k, digits, params, scratch_limb);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {

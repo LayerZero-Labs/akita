@@ -204,21 +204,25 @@ unsafe fn dit_butterfly(
     )
 }
 
-/// First negacyclic forward pass: the `psi^i` twist and DIF stages `D/2`
-/// and `D/4`, in one load and store of the array.
+/// First forward pass: DIF stages `D/2` and `D/4` with a per-output scaling
+/// of stage `D/2`, in one load and store of the array.
 ///
-/// With `i = psi^(D/2)`, stage `D/2` of the twisted input `psi^j x_j` is
-/// `psi^j (x_j + i x_{j+D/2})` and `psi^j w_j (x_j - i x_{j+D/2})`, so the
-/// twist costs one multiply by `i` per pair instead of a separate pass.
-/// `twist` holds `[psi^j | psi^j w_j]`, possibly scaled by `R` so that plain
-/// integer inputs enter Montgomery form here.
+/// With `NEGACYCLIC` and `i = psi^(D/2)`, stage `D/2` of the twisted input
+/// `psi^j x_j` is `psi^j (x_j + i x_{j+D/2})` and
+/// `psi^j w_j (x_j - i x_{j+D/2})`, so the twist costs one multiply by `i`
+/// per pair instead of a separate pass. `twist` then holds
+/// `[psi^j | psi^j w_j]`, possibly scaled by `R` so that plain integer inputs
+/// enter Montgomery form here. Without `NEGACYCLIC`, stage `D/2` is the plain
+/// cyclic butterfly and `twist` holds `[R | R w_j]`, which converts plain
+/// integer inputs at the cost of one extra multiply per pair.
 ///
 /// `load(i)` returns lanes `i..i + 8` of the input. With `CENTER`, the
 /// operands that are added without a preceding multiply are first reduced,
 /// so any `|x| < 2^31` input is accepted; otherwise inputs must lie in
-/// `(-p, p)`. Outputs lie in `[0, 2p)`.
+/// `(-p, p)`; without `NEGACYCLIC` the pair sums must as well. Outputs lie
+/// in `[0, 2p)`.
 #[inline(always)]
-unsafe fn forward_negacyclic_head<const D: usize, const CENTER: bool>(
+unsafe fn forward_head<const D: usize, const CENTER: bool, const NEGACYCLIC: bool>(
     a: *mut i32,
     barrett: &BarrettTwiddles<i32, D>,
     twist: &BarrettTable<i32, D>,
@@ -244,8 +248,11 @@ unsafe fn forward_negacyclic_head<const D: usize, const CENTER: bool>(
         for lane in 0..2 {
             let o = j + 4 * lane;
             let (x0, x1) = (center(x0[lane]), center(x1[lane]));
-            let t0 = root.mul(x2[lane], m.p);
-            let t1 = root.mul(x3[lane], m.p);
+            let (t0, t1) = if NEGACYCLIC {
+                (root.mul(x2[lane], m.p), root.mul(x3[lane], m.p))
+            } else {
+                (center(x2[lane]), center(x3[lane]))
+            };
             let y0 = Multiplier::load(twist, o).mul(vaddq_s32(x0, t0), m.p);
             let y2 = Multiplier::load(twist, half + o).mul(vsubq_s32(x0, t0), m.p);
             let y1 = Multiplier::load(twist, quarter + o).mul(vaddq_s32(x1, t1), m.p);
@@ -519,20 +526,22 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     let m = Modulus::new(prime.p);
     let a_ptr = a.as_mut_ptr().cast::<i32>();
     let barrett = &tw.barrett;
-    forward_negacyclic_head::<D, true>(a_ptr, barrett, &barrett.twist, m, |i| {
+    forward_head::<D, true, true>(a_ptr, barrett, &barrett.twist, m, |i| {
         [vld1q_s32(a_ptr.add(i)), vld1q_s32(a_ptr.add(i + 4))]
     });
     forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8, false);
 }
 
-/// Signed-integer conversion and forward negacyclic NTT for i32 primes.
+/// Signed-integer conversion and forward negacyclic (or, without
+/// `NEGACYCLIC`, cyclic) NTT for i32 primes.
 ///
 /// The first pass reads the inputs directly and multiplies by `R`-scaled
-/// twist factors, so conversion to Montgomery form, the twist, and the first
+/// stage factors, so conversion to Montgomery form, any twist, and the first
 /// two stages share one pass. `load(ptr)` widens the eight inputs at `ptr`,
-/// and every input must have magnitude below `p`.
+/// and every input must have magnitude below `p / 2`, so the cyclic head's
+/// unmultiplied pair sums stay in `(-p, p)`.
 #[inline(always)]
-unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize>(
+unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize, const NEGACYCLIC: bool>(
     a: &mut [MontCoeff<i32>; D],
     inputs: &[T; D],
     prime: NttPrime<i32>,
@@ -541,7 +550,8 @@ unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize>(
 ) {
     if D < MIN_VECTOR_DEGREE {
         for ((coefficient, &input), &psi_r2) in a.iter_mut().zip(inputs).zip(&tw.psi_pows_r2) {
-            *coefficient = MontCoeff::from_raw(prime.mont_mul_raw(input.into(), psi_r2));
+            let factor = if NEGACYCLIC { psi_r2 } else { prime.montsq };
+            *coefficient = MontCoeff::from_raw(prime.mont_mul_raw(input.into(), factor));
         }
         butterfly::forward_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
         return;
@@ -550,10 +560,20 @@ unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize>(
     let a_ptr = a.as_mut_ptr().cast::<i32>();
     let inputs_ptr = inputs.as_ptr();
     let barrett = &tw.barrett;
-    forward_negacyclic_head::<D, false>(a_ptr, barrett, &barrett.twist_digits, m, |i| {
-        load(inputs_ptr.add(i))
-    });
+    let first = if NEGACYCLIC {
+        &barrett.twist_digits
+    } else {
+        &barrett.cyclic_digits
+    };
+    forward_head::<D, false, NEGACYCLIC>(a_ptr, barrett, first, m, |i| load(inputs_ptr.add(i)));
     forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8, false);
+}
+
+/// Widen eight signed digits to two i32 vectors.
+#[inline(always)]
+unsafe fn load_i8x8(ptr: *const i8) -> [int32x4_t; 2] {
+    let wide = vmovl_s8(vld1_s8(ptr));
+    [vmovl_s16(vget_low_s16(wide)), vmovl_high_s16(wide)]
 }
 
 /// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
@@ -567,10 +587,20 @@ pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    forward_ntt_small_i32(a, digits, prime, tw, |ptr| {
-        let wide = vmovl_s8(vld1_s8(ptr));
-        [vmovl_s16(vget_low_s16(wide)), vmovl_high_s16(wide)]
-    });
+    forward_ntt_small_i32::<_, D, true>(a, digits, prime, tw, |ptr| load_i8x8(ptr));
+}
+
+/// NEON-accelerated signed-i8 conversion and forward cyclic NTT.
+///
+/// Kept out of line for the same reason as the negacyclic entry.
+#[inline(never)]
+pub(crate) unsafe fn forward_ntt_cyclic_i8_i32<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    digits: &[i8; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    forward_ntt_small_i32::<_, D, false>(a, digits, prime, tw, |ptr| load_i8x8(ptr));
 }
 
 /// NEON-accelerated centered-i16 conversion and forward negacyclic NTT.
@@ -584,7 +614,7 @@ pub(crate) unsafe fn forward_ntt_centered_i16_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    forward_ntt_small_i32(a, coefficients, prime, tw, |ptr| {
+    forward_ntt_small_i32::<_, D, true>(a, coefficients, prime, tw, |ptr| {
         let x = vld1q_s16(ptr);
         [vmovl_s16(vget_low_s16(x)), vmovl_high_s16(x)]
     });
