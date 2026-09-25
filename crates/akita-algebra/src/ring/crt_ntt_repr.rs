@@ -1,7 +1,5 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
-use std::array::from_fn;
-
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
@@ -124,7 +122,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
     pub fn new(primes: [NttPrime<W>; K]) -> Self {
-        let twiddles = Box::new(from_fn(|k| NttTwiddles::compute(primes[k])));
+        // Collect on the heap: a `[NttTwiddles; K]` value would take hundreds
+        // of kilobytes of stack before boxing.
+        let twiddles = primes
+            .iter()
+            .map(|&prime| NttTwiddles::compute(prime))
+            .collect::<Box<[_]>>()
+            .try_into()
+            .expect("one twiddle table per prime");
         let garner = GarnerData::compute(&primes);
         Self {
             primes,

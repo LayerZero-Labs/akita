@@ -32,6 +32,13 @@ pub trait PrimeWidth:
     /// Double-width type for intermediate Montgomery products.
     type Wide: Copy + Clone;
 
+    /// Tables the NEON transforms read beside the Montgomery tables: the
+    /// Barrett-form tables for `i32`, and nothing for `i16`, whose kernels
+    /// never read them.
+    #[cfg(target_arch = "aarch64")]
+    #[doc(hidden)]
+    type NeonTables<const D: usize>: Clone + fmt::Debug + PartialEq + Eq + Send + Sync;
+
     /// log2(R) for Montgomery reduction: 16 for `i16`, 32 for `i32`.
     const R_LOG: u32;
 
@@ -66,10 +73,24 @@ pub trait PrimeWidth:
     fn from_i64(v: i64) -> Self;
     /// Convert to `i64` (sign-extending).
     fn to_i64(self) -> i64;
+
+    /// Derive [`Self::NeonTables`] from the Montgomery-form tables.
+    #[cfg(target_arch = "aarch64")]
+    #[doc(hidden)]
+    fn neon_tables<const D: usize>(
+        prime: NttPrime<Self>,
+        fwd_twiddles: &[MontCoeff<Self>; D],
+        inv_twiddles: &[MontCoeff<Self>; D],
+        psi_pows: &[MontCoeff<Self>; D],
+        d_inv_psi_inv: &[MontCoeff<Self>; D],
+        d_inv: MontCoeff<Self>,
+    ) -> Self::NeonTables<D>;
 }
 
 impl PrimeWidth for i16 {
     type Wide = i32;
+    #[cfg(target_arch = "aarch64")]
+    type NeonTables<const D: usize> = ();
     const R_LOG: u32 = 16;
 
     #[inline]
@@ -120,10 +141,23 @@ impl PrimeWidth for i16 {
     fn to_i64(self) -> i64 {
         self as i64
     }
+
+    #[cfg(target_arch = "aarch64")]
+    fn neon_tables<const D: usize>(
+        _: NttPrime<Self>,
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: MontCoeff<Self>,
+    ) {
+    }
 }
 
 impl PrimeWidth for i32 {
     type Wide = i64;
+    #[cfg(target_arch = "aarch64")]
+    type NeonTables<const D: usize> = super::neon::BarrettTwiddles<i32, D>;
     const R_LOG: u32 = 32;
 
     #[inline]
@@ -173,6 +207,25 @@ impl PrimeWidth for i32 {
     #[inline]
     fn to_i64(self) -> i64 {
         self as i64
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn neon_tables<const D: usize>(
+        prime: NttPrime<Self>,
+        fwd_twiddles: &[MontCoeff<Self>; D],
+        inv_twiddles: &[MontCoeff<Self>; D],
+        psi_pows: &[MontCoeff<Self>; D],
+        d_inv_psi_inv: &[MontCoeff<Self>; D],
+        d_inv: MontCoeff<Self>,
+    ) -> Self::NeonTables<D> {
+        super::neon::BarrettTwiddles::compute(
+            prime,
+            fwd_twiddles,
+            inv_twiddles,
+            psi_pows,
+            d_inv_psi_inv,
+            d_inv,
+        )
     }
 }
 
