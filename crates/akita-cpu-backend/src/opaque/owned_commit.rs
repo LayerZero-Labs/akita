@@ -160,7 +160,7 @@ mod tests {
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NUM_VARS, 1)
                         .unwrap()
-                        .matrix_capacity;
+                        .matrix_capacity();
                 let setup =
                     AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, capacity).unwrap();
                 let backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();

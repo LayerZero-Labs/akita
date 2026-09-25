@@ -820,8 +820,8 @@ fn combined_family_setup_matches_per_family_proofs() {
             1,
         )
         .expect("one-hot requirements");
-        let dense_fields = dense_requirements.matrix_capacity.num_field_elements;
-        let onehot_fields = onehot_requirements.matrix_capacity.num_field_elements;
+        let dense_fields = dense_requirements.matrix_capacity().num_field_elements;
+        let onehot_fields = onehot_requirements.matrix_capacity().num_field_elements;
         assert_ne!(
             dense_fields, onehot_fields,
             "the families must need different matrix capacities for this test to bind"
@@ -832,7 +832,7 @@ fn combined_family_setup_matches_per_family_proofs() {
         let combined_setup =
             akita_setup::new_prover_setup::<F>(&combined_requirements).expect("combined setup");
         assert_eq!(
-            combined_requirements.matrix_capacity.num_field_elements,
+            combined_requirements.matrix_capacity().num_field_elements,
             dense_fields.max(onehot_fields)
         );
         assert_setup_capacity(&combined_setup, dense_fields.max(onehot_fields));

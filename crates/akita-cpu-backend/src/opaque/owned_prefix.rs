@@ -267,7 +267,7 @@ mod tests {
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&catalog, NV, 1)
                         .unwrap()
-                        .matrix_capacity;
+                        .matrix_capacity();
                 let setup =
                     crate::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
                 let row = catalog

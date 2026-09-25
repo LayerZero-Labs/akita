@@ -4,7 +4,10 @@ use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
     setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey, FoldSchedule, SetupMatrixCapacity,
+    SetupPrefixSlotId,
 };
+use std::collections::BTreeSet;
+use std::marker::PhantomData;
 
 /// Running maximum over every setup matrix a sizing request can reach.
 ///
@@ -43,28 +46,70 @@ impl SetupCapacityScan {
     }
 }
 
-/// Matrix capacity and exact prefix commitments required at one capacity bound.
+/// Matrix capacity and exact prefix commitments required at one capacity bound,
+/// for setups over the field `F`.
 ///
-/// Requirements computed from several catalogs at the same bound combine with
-/// [`SetupRequirements::union`], so one setup can serve every combined family.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupRequirements {
-    /// Maximum polynomial variable count the requirements were computed at.
-    pub max_num_vars: usize,
-    /// Maximum polynomial count per opening batch the requirements were computed at.
-    pub max_num_batched_polys: usize,
-    /// Shared public matrix envelope, including independently reachable precommits.
-    pub matrix_capacity: SetupMatrixCapacity,
-    /// Canonical ordered set of prefix commitments for eligible schedule rows.
-    pub prefix_slot_ids: Vec<akita_types::SetupPrefixSlotId>,
+/// Requirements are only produced by [`SetupRequirements::from_catalog`] and
+/// [`SetupRequirements::union`], so every value carries validated capacity
+/// metadata, a non-empty matrix envelope, and a strictly increasing set of
+/// prefix slot ids. Requirements computed from several catalogs over the same
+/// field at the same bound combine with [`SetupRequirements::union`], so one
+/// setup can serve every combined family.
+pub struct SetupRequirements<F> {
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    matrix_capacity: SetupMatrixCapacity,
+    prefix_slot_ids: Vec<SetupPrefixSlotId>,
+    field: PhantomData<fn() -> F>,
 }
 
-impl SetupRequirements {
+impl<F> std::fmt::Debug for SetupRequirements<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetupRequirements")
+            .field("max_num_vars", &self.max_num_vars)
+            .field("max_num_batched_polys", &self.max_num_batched_polys)
+            .field("matrix_capacity", &self.matrix_capacity)
+            .field("prefix_slot_ids", &self.prefix_slot_ids)
+            .finish()
+    }
+}
+
+impl<F> Clone for SetupRequirements<F> {
+    fn clone(&self) -> Self {
+        Self {
+            max_num_vars: self.max_num_vars,
+            max_num_batched_polys: self.max_num_batched_polys,
+            matrix_capacity: self.matrix_capacity,
+            prefix_slot_ids: self.prefix_slot_ids.clone(),
+            field: PhantomData,
+        }
+    }
+}
+
+impl<F> PartialEq for SetupRequirements<F> {
+    fn eq(&self, other: &Self) -> bool {
+        (
+            self.max_num_vars,
+            self.max_num_batched_polys,
+            self.matrix_capacity,
+            &self.prefix_slot_ids,
+        ) == (
+            other.max_num_vars,
+            other.max_num_batched_polys,
+            other.matrix_capacity,
+            &other.prefix_slot_ids,
+        )
+    }
+}
+
+impl<F> Eq for SetupRequirements<F> {}
+
+impl<F> SetupRequirements<F> {
     /// Size the shared setup matrix from one validated trusted catalog.
     ///
     /// Every admitted row is already expanded and audited. Setup sizing therefore
     /// scans those exact rows instead of consulting any compiled schedule table.
-    pub fn from_catalog<Cfg: CommitmentConfig>(
+    pub fn from_catalog<Cfg: CommitmentConfig<Field = F>>(
         catalog: &crate::TrustedScheduleCatalog<Cfg>,
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -72,7 +117,7 @@ impl SetupRequirements {
         validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
 
         let mut scan = SetupCapacityScan::new();
-        let mut prefix_slot_ids = std::collections::BTreeSet::new();
+        let mut prefix_slot_ids = BTreeSet::new();
         for row in catalog.rows() {
             for profile in &row.profiles().precommitteds {
                 if profile.group.num_vars() <= max_num_vars
@@ -107,7 +152,28 @@ impl SetupRequirements {
             max_num_batched_polys,
             matrix_capacity: scan.finish(max_num_vars)?,
             prefix_slot_ids: prefix_slot_ids.into_iter().collect(),
+            field: PhantomData,
         })
+    }
+
+    /// Maximum polynomial variable count the requirements were computed at.
+    pub fn max_num_vars(&self) -> usize {
+        self.max_num_vars
+    }
+
+    /// Maximum polynomial count per opening batch the requirements were computed at.
+    pub fn max_num_batched_polys(&self) -> usize {
+        self.max_num_batched_polys
+    }
+
+    /// Shared public matrix envelope, including independently reachable precommits.
+    pub fn matrix_capacity(&self) -> SetupMatrixCapacity {
+        self.matrix_capacity
+    }
+
+    /// Strictly increasing prefix commitments for eligible schedule rows.
+    pub fn prefix_slot_ids(&self) -> &[SetupPrefixSlotId] {
+        &self.prefix_slot_ids
     }
 
     /// Combine requirements computed at the same capacity bound.
@@ -132,7 +198,7 @@ impl SetupRequirements {
                 other.max_num_batched_polys
             )));
         }
-        let prefix_slot_ids: std::collections::BTreeSet<_> = self
+        let prefix_slot_ids: BTreeSet<_> = self
             .prefix_slot_ids
             .into_iter()
             .chain(other.prefix_slot_ids)
@@ -147,6 +213,7 @@ impl SetupRequirements {
                     .max(other.matrix_capacity.num_field_elements),
             },
             prefix_slot_ids: prefix_slot_ids.into_iter().collect(),
+            field: PhantomData,
         })
     }
 }

@@ -72,7 +72,7 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
 
     let expected_capacity =
         akita_config::SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), 14, 1)
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(

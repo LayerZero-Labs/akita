@@ -63,14 +63,14 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("quotient setup capacity");
             let reduced_capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(
                 reduced_scheme.schedules(),
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("reduced setup capacity");
             let setup =
                 if quotient_capacity.num_field_elements >= reduced_capacity.num_field_elements {

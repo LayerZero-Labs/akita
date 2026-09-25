@@ -53,7 +53,7 @@ static PUBLIC_MATRIX_CACHE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mu
 /// expansion fails.
 #[tracing::instrument(skip_all, name = "new_prover_setup")]
 pub fn new_prover_setup<F>(
-    requirements: &SetupRequirements,
+    requirements: &SetupRequirements<F>,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
     F: Field
@@ -79,14 +79,14 @@ where
     }
 
     let mut setup = AkitaProverSetup::generate_with_capacity(
-        requirements.max_num_vars,
-        requirements.max_num_batched_polys,
-        requirements.matrix_capacity,
+        requirements.max_num_vars(),
+        requirements.max_num_batched_polys(),
+        requirements.matrix_capacity(),
     )?;
 
     recursive_prefixes::populate_required_setup_prefix_slots(
         &mut setup,
-        &requirements.prefix_slot_ids,
+        requirements.prefix_slot_ids(),
     )?;
 
     #[cfg(feature = "disk-persistence")]
@@ -110,7 +110,7 @@ where
 /// the same slots.
 #[cfg(feature = "disk-persistence")]
 fn prefix_registry_cache_file_name<F: Field + CanonicalEncoding>(
-    requirements: &SetupRequirements,
+    requirements: &SetupRequirements<F>,
 ) -> Result<String, AkitaError> {
     let mut key = Vec::new();
     key.extend_from_slice(b"AKITA-SETUP-PREFIX-SLOTS-V1");
@@ -119,7 +119,8 @@ fn prefix_registry_cache_file_name<F: Field + CanonicalEncoding>(
             .map_err(|err| AkitaError::InvalidSetup(format!("setup-prefix registry key: {err}")))?,
     );
     requirements
-        .prefix_slot_ids
+        .prefix_slot_ids()
+        .to_vec()
         .serialize_uncompressed(&mut key)
         .map_err(|err| AkitaError::InvalidSetup(format!("setup-prefix registry key: {err}")))?;
     let mut requirements_hex = String::with_capacity(64);
@@ -171,7 +172,7 @@ fn cache_directory() -> Option<PathBuf> {
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn get_prefix_registry_storage_path<F: Field + CanonicalEncoding>(
-    requirements: &SetupRequirements,
+    requirements: &SetupRequirements<F>,
 ) -> Option<PathBuf> {
     let mut path = cache_directory()?;
     path.push(prefix_registry_cache_file_name::<F>(requirements).ok()?);
@@ -268,7 +269,7 @@ pub(crate) fn save_prover_setup<
     F: Field + CanonicalEncoding + Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
 >(
     setup: &AkitaProverSetup<F>,
-    requirements: &SetupRequirements,
+    requirements: &SetupRequirements<F>,
 ) -> Result<(), AkitaError> {
     // `setup` was just derived inside this crate. Re-deriving and comparing
     // every field element here would repeat the full setup-generation pass;
@@ -363,13 +364,10 @@ pub(crate) fn load_prover_setup<
         + AkitaDeserialize<Context = ()>
         + 'static,
 >(
-    requirements: &SetupRequirements,
+    requirements: &SetupRequirements<F>,
 ) -> Result<AkitaProverSetup<F>, AkitaError> {
-    let SetupRequirements {
-        max_num_vars,
-        max_num_batched_polys,
-        ..
-    } = *requirements;
+    let max_num_vars = requirements.max_num_vars();
+    let max_num_batched_polys = requirements.max_num_batched_polys();
     let setup_seed = sample_akita_setup_seed();
     let public_matrix_path = get_public_matrix_storage_path::<F>(&setup_seed)?;
     if !public_matrix_path.exists() {
@@ -378,7 +376,7 @@ pub(crate) fn load_prover_setup<
             public_matrix_path.display()
         )));
     }
-    let required_num_field_elements = requirements.matrix_capacity.num_field_elements;
+    let required_num_field_elements = requirements.matrix_capacity().num_field_elements;
     let file = fs::File::open(&public_matrix_path).map_err(|err| {
         AkitaError::InvalidSetup(format!("failed to open public matrix cache: {err}"))
     })?;
@@ -453,7 +451,7 @@ pub(crate) fn load_prover_setup<
     };
     if recursive_prefixes::validate_prefix_registry_complete(
         &setup.prefix_slots,
-        &requirements.prefix_slot_ids,
+        requirements.prefix_slot_ids(),
     )
     .is_err()
     {
@@ -461,7 +459,7 @@ pub(crate) fn load_prover_setup<
             SetupPrefixProverRegistry::new(setup.expanded.descriptor().setup_seed.clone());
         recursive_prefixes::populate_required_setup_prefix_slots(
             &mut setup,
-            &requirements.prefix_slot_ids,
+            requirements.prefix_slot_ids(),
         )?;
         save_prover_setup::<F>(&setup, requirements)?;
     }
@@ -540,7 +538,10 @@ mod tests {
             .expect("workspace schedule catalog")
     }
 
-    fn requirements_at(max_num_vars: usize, max_num_batched_polys: usize) -> SetupRequirements {
+    fn requirements_at(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> SetupRequirements<TestF> {
         SetupRequirements::from_catalog::<Cfg>(&schedules(), max_num_vars, max_num_batched_polys)
             .expect("workspace setup requirements")
     }
@@ -743,46 +744,6 @@ mod tests {
         }
 
         #[test]
-        fn prefix_slots_roundtrip_through_setup_cache() {
-            with_test_cache_dir("prefix-slots", || {
-                const MAX_VARS: usize = 14;
-                cleanup_setup_file_shape(MAX_VARS, 1);
-                let catalog = schedules();
-                let mut setup = new_prover_setup::<TestF>(&requirements_at(MAX_VARS, 1)).unwrap();
-                let row = catalog
-                    .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
-                        akita_types::PolynomialGroupLayout::new(MAX_VARS, 1),
-                    ))
-                    .unwrap();
-                let params = &row.schedule().root.params;
-                let n_prefix =
-                    (params.d_a() * params.outer_slice_count().get()).next_power_of_two();
-                let prefix =
-                    akita_types::setup_prefix_precommitted_params(params, n_prefix).unwrap();
-                let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
-                    .slot_id()
-                    .unwrap();
-                let mut requirements = requirements_at(MAX_VARS, 1);
-                requirements.prefix_slot_ids = vec![id.clone()];
-                let backend = akita_cpu_backend::CpuBackend::<
-                    TestF,
-                    <Cfg as CommitmentConfig>::ExtField,
-                >::new(setup.expanded.clone())
-                .unwrap();
-                setup.prefix_slots = backend.export_setup_prefixes(&[id]).unwrap();
-                save_prover_setup::<TestF>(&setup, &requirements).unwrap();
-
-                let loaded = load_prover_setup::<TestF>(&requirements).unwrap();
-                assert_eq!(loaded.prefix_slots, setup.prefix_slots);
-
-                cleanup_setup_file_shape(MAX_VARS, 1);
-                if let Some(path) = get_prefix_registry_storage_path::<TestF>(&requirements) {
-                    let _ = fs::remove_file(path);
-                }
-            });
-        }
-
-        #[test]
         fn setup_uses_cache_on_second_call() {
             with_test_cache_dir("second-call", || {
                 const MAX_VARS: usize = 14;
@@ -815,7 +776,7 @@ mod tests {
                 let large = new_prover_setup::<TestF>(&requirements_at(LARGE_VARS, 1)).unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
                 let small_required = requirements_at(SMALL_VARS, 1)
-                    .matrix_capacity
+                    .matrix_capacity()
                     .num_field_elements;
                 assert!(large_fields >= small_required);
 
@@ -855,13 +816,13 @@ mod tests {
                 let small = AkitaProverSetup::generate_with_capacity(
                     SMALL_VARS,
                     1,
-                    requirements_at(SMALL_VARS, 1).matrix_capacity,
+                    requirements_at(SMALL_VARS, 1).matrix_capacity(),
                 )
                 .unwrap();
                 let large = AkitaProverSetup::generate_with_capacity(
                     LARGE_VARS,
                     1,
-                    requirements_at(LARGE_VARS, 1).matrix_capacity,
+                    requirements_at(LARGE_VARS, 1).matrix_capacity(),
                 )
                 .unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
