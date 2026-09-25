@@ -23,9 +23,9 @@ pub(crate) fn validate_prefix_registry_complete<F: Field>(
 
 /// Export the required setup-prefix commitments into `setup`.
 ///
-/// Prefix commitments depend only on the setup and the slot ids, so the
-/// exporting backend's extension type `E` never enters the artifacts.
-pub(crate) fn populate_required_setup_prefix_slots<F, E>(
+/// Prefix commitments depend only on the setup and the slot ids. The exporting
+/// backend's extension parameter never enters them, so the base field fills it.
+pub(crate) fn populate_required_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
     required_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
@@ -35,7 +35,7 @@ where
     if required_ids.is_empty() {
         return Ok(());
     }
-    let backend = CpuBackend::<F, E>::new(setup.expanded.clone())?;
+    let backend = CpuBackend::<F, F>::new(setup.expanded.clone())?;
     setup.prefix_slots = backend.export_setup_prefixes(required_ids)?;
     validate_prefix_registry_complete(&setup.prefix_slots, required_ids)?;
     tracing::info!(

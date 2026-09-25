@@ -698,3 +698,70 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
     assert_eq!(required.matrix_capacity.num_field_elements, expected);
     assert!(required.prefix_slot_ids.is_empty());
 }
+
+#[test]
+fn setup_requirements_union_covers_both_families_at_one_bound() {
+    type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
+    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    let requirements_at = |max_num_vars, max_num_batched_polys| {
+        (
+            akita_config::SetupRequirements::from_catalog::<OneHot>(
+                &checked_in_catalog::<OneHot>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("one-hot requirements"),
+            akita_config::SetupRequirements::from_catalog::<MultiChunk>(
+                &checked_in_catalog::<MultiChunk>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("multichunk requirements"),
+        )
+    };
+    let (onehot, multichunk) = requirements_at(50, 16);
+    let combined = onehot
+        .clone()
+        .union(multichunk.clone())
+        .expect("same-bound requirements combine");
+
+    assert_eq!(
+        (combined.max_num_vars, combined.max_num_batched_polys),
+        (50, 16)
+    );
+    assert_eq!(
+        combined.matrix_capacity.num_field_elements,
+        onehot
+            .matrix_capacity
+            .num_field_elements
+            .max(multichunk.matrix_capacity.num_field_elements)
+    );
+    assert!(combined
+        .prefix_slot_ids
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    for slot in onehot
+        .prefix_slot_ids
+        .iter()
+        .chain(&multichunk.prefix_slot_ids)
+    {
+        assert!(combined.prefix_slot_ids.contains(slot));
+    }
+    assert!(
+        combined.prefix_slot_ids.len()
+            <= onehot.prefix_slot_ids.len() + multichunk.prefix_slot_ids.len()
+    );
+    assert_eq!(
+        combined
+            .clone()
+            .union(combined.clone())
+            .expect("idempotent"),
+        combined
+    );
+
+    let (_, smaller_bound) = requirements_at(40, 16);
+    let error = onehot
+        .union(smaller_bound)
+        .expect_err("requirements at different bounds must not combine");
+    assert!(error.to_string().contains("cannot combine"));
+}

@@ -68,11 +68,12 @@ where
     where
         Cfg::Field: AkitaDeserialize<Context = ()> + WithCommitAccumulator,
     {
-        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+        let requirements = akita_config::SetupRequirements::from_catalog::<Cfg>(
             &self.schedules,
             max_num_vars,
             max_num_batched_polys,
-        )
+        )?;
+        akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
     }
 
     /// Derive a verifier setup that preserves the prover's full matrix prefix.

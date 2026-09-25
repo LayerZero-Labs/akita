@@ -43,8 +43,16 @@ impl SetupCapacityScan {
     }
 }
 
-/// Matrix capacity and exact prefix commitments required by one catalog and capacity bound.
+/// Matrix capacity and exact prefix commitments required at one capacity bound.
+///
+/// Requirements computed from several catalogs at the same bound combine with
+/// [`SetupRequirements::union`], so one setup can serve every combined family.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupRequirements {
+    /// Maximum polynomial variable count the requirements were computed at.
+    pub max_num_vars: usize,
+    /// Maximum polynomial count per opening batch the requirements were computed at.
+    pub max_num_batched_polys: usize,
     /// Shared public matrix envelope, including independently reachable precommits.
     pub matrix_capacity: SetupMatrixCapacity,
     /// Canonical ordered set of prefix commitments for eligible schedule rows.
@@ -95,7 +103,49 @@ impl SetupRequirements {
             }
         }
         Ok(Self {
+            max_num_vars,
+            max_num_batched_polys,
             matrix_capacity: scan.finish(max_num_vars)?,
+            prefix_slot_ids: prefix_slot_ids.into_iter().collect(),
+        })
+    }
+
+    /// Combine requirements computed at the same capacity bound.
+    ///
+    /// The result covers the larger matrix envelope and the sorted union of
+    /// both prefix-commitment sets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the two requirements were
+    /// computed at different `max_num_vars` or `max_num_batched_polys`.
+    pub fn union(self, other: Self) -> Result<Self, AkitaError> {
+        if (self.max_num_vars, self.max_num_batched_polys)
+            != (other.max_num_vars, other.max_num_batched_polys)
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup requirements at ({} vars, {} polynomials) cannot combine with \
+                 requirements at ({} vars, {} polynomials)",
+                self.max_num_vars,
+                self.max_num_batched_polys,
+                other.max_num_vars,
+                other.max_num_batched_polys
+            )));
+        }
+        let prefix_slot_ids: std::collections::BTreeSet<_> = self
+            .prefix_slot_ids
+            .into_iter()
+            .chain(other.prefix_slot_ids)
+            .collect();
+        Ok(Self {
+            max_num_vars: self.max_num_vars,
+            max_num_batched_polys: self.max_num_batched_polys,
+            matrix_capacity: SetupMatrixCapacity {
+                num_field_elements: self
+                    .matrix_capacity
+                    .num_field_elements
+                    .max(other.matrix_capacity.num_field_elements),
+            },
             prefix_slot_ids: prefix_slot_ids.into_iter().collect(),
         })
     }

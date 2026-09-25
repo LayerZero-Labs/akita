@@ -50,6 +50,32 @@ For a recursive configuration, setup construction also prepares the setup
 prefix commitments required by its supplied catalog. The host should build
 setup with the configuration that will produce the final proofs.
 
+## Share one setup across families
+
+Configurations with the same field can share one setup, and those that also
+share the extension field can share one backend. Compute each catalog's
+requirements at the same bound, combine them, and build the setup from the
+combined requirements:
+
+```rust
+let requirements = SetupRequirements::from_catalog::<DenseConfig>(
+    dense_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?
+.union(SetupRequirements::from_catalog::<OneHotConfig>(
+    onehot_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?)?;
+let setup = akita_setup::new_prover_setup::<Field>(&requirements)?;
+```
+
+The combined setup uses the same public seed as each per-family setup, so a
+proof produced with it is byte-identical to one produced with the smaller
+per-family setup. Each commitment and proof still names its own family's
+catalog.
+
 ## Prepare the compute backend
 
 The CPU backend turns public setup into reusable execution state.

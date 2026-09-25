@@ -748,3 +748,164 @@ fn explicit_commitment_transfer_between_backends() {
             .expect("heterogeneous verify");
     });
 }
+
+/// Commit one group under `scheme`'s family, prove its single-group opening,
+/// and verify the proof.
+fn commit_prove_verify_single_group<Cfg, P>(
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
+    setup: &akita_cpu_backend::AkitaProverSetup<F>,
+    backend: &CpuBackend<F, F>,
+    poly: P,
+    point: &[F],
+    opening: F,
+    session: &[u8],
+) -> (CommittedGroup<F>, Vec<u8>)
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    P: akita_cpu_backend::CpuSource<F, F>,
+{
+    let akita_cpu_backend::CommitOutput {
+        committed_group: commitment,
+        private_handle: hint,
+    } = backend
+        .commit(
+            scheme.schedules(),
+            &backend.import_source(vec![poly]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
+    let proof = scheme
+        .batched_prove(
+            setup,
+            prove_input::<Cfg>(point, &[opening], &commitment, hint, scheme.schedules()),
+            backend,
+            session,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+    let openings = [opening];
+    scheme
+        .batched_verify(
+            &proof,
+            &scheme.setup_verifier(setup).expect("verifier setup"),
+            session,
+            verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
+            BasisMode::Lagrange,
+        )
+        .expect("verify");
+    (commitment, proof)
+}
+
+// fp128: one setup sized for two families serves both. The dense and one-hot
+// requirements combine at one bound, one backend commits under both families,
+// and each proof is byte-identical to the proof made with that family's own
+// smaller setup, because only the setup seed enters the transcript.
+#[test]
+fn combined_family_setup_matches_per_family_proofs() {
+    const MAX_NV: usize = 16;
+    const DENSE_NV: usize = 16;
+    const ONEHOT_NV: usize = 15;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let dense_scheme =
+            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
+        let onehot_scheme =
+            load_workspace_scheme::<OneHotCfg>().expect("workspace one-hot schedule catalog");
+
+        let dense_requirements = akita_config::SetupRequirements::from_catalog::<DenseCfg>(
+            dense_scheme.schedules(),
+            MAX_NV,
+            1,
+        )
+        .expect("dense requirements");
+        let onehot_requirements = akita_config::SetupRequirements::from_catalog::<OneHotCfg>(
+            onehot_scheme.schedules(),
+            MAX_NV,
+            1,
+        )
+        .expect("one-hot requirements");
+        let dense_fields = dense_requirements.matrix_capacity.num_field_elements;
+        let onehot_fields = onehot_requirements.matrix_capacity.num_field_elements;
+        assert_ne!(
+            dense_fields, onehot_fields,
+            "the families must need different matrix capacities for this test to bind"
+        );
+        let combined_requirements = dense_requirements
+            .union(onehot_requirements)
+            .expect("combined requirements");
+        let combined_setup =
+            akita_setup::new_prover_setup::<F>(&combined_requirements).expect("combined setup");
+        assert_eq!(
+            combined_setup.expanded.shared_matrix().num_field_elements(),
+            dense_fields.max(onehot_fields)
+        );
+        let backend = CpuBackend::new(combined_setup.expanded.clone()).expect("backend");
+
+        let dense_evals = dense_field_evals(DENSE_NV, 0x5e70_0001);
+        let dense_poly =
+            akita_cpu_backend::DensePoly::from_field_evals(DENSE_NV, &dense_evals).expect("dense");
+        let dense_point = random_point(DENSE_NV, 0x5e70_0002);
+        let dense_opening = dense_opening_lagrange(&dense_evals, &dense_point);
+        let onehot_poly = make_onehot_poly::<OneHotCfg>(ONEHOT_NV, 0x5e70_0003);
+        let onehot_point = random_point(ONEHOT_NV, 0x5e70_0004);
+        let onehot_opening = onehot_opening_lagrange(&onehot_poly, &onehot_point);
+        let dense_session = b"completeness/combined_family_setup/dense";
+        let onehot_session = b"completeness/combined_family_setup/onehot";
+
+        let (combined_dense_commitment, combined_dense_proof) = commit_prove_verify_single_group(
+            &dense_scheme,
+            &combined_setup,
+            &backend,
+            dense_poly.clone(),
+            &dense_point,
+            dense_opening,
+            dense_session,
+        );
+        let (combined_onehot_commitment, combined_onehot_proof) = commit_prove_verify_single_group(
+            &onehot_scheme,
+            &combined_setup,
+            &backend,
+            onehot_poly.clone(),
+            &onehot_point,
+            onehot_opening,
+            onehot_session,
+        );
+
+        let dense_setup = dense_scheme.setup_prover(MAX_NV, 1).expect("dense setup");
+        assert_eq!(
+            dense_setup.expanded.shared_matrix().num_field_elements(),
+            dense_fields
+        );
+        let (dense_commitment, dense_proof) = commit_prove_verify_single_group(
+            &dense_scheme,
+            &dense_setup,
+            &CpuBackend::new(dense_setup.expanded.clone()).expect("dense backend"),
+            dense_poly,
+            &dense_point,
+            dense_opening,
+            dense_session,
+        );
+        let onehot_setup = onehot_scheme
+            .setup_prover(MAX_NV, 1)
+            .expect("one-hot setup");
+        assert_eq!(
+            onehot_setup.expanded.shared_matrix().num_field_elements(),
+            onehot_fields
+        );
+        let (onehot_commitment, onehot_proof) = commit_prove_verify_single_group(
+            &onehot_scheme,
+            &onehot_setup,
+            &CpuBackend::new(onehot_setup.expanded.clone()).expect("one-hot backend"),
+            onehot_poly,
+            &onehot_point,
+            onehot_opening,
+            onehot_session,
+        );
+
+        assert_eq!(combined_dense_commitment, dense_commitment);
+        assert_eq!(combined_onehot_commitment, onehot_commitment);
+        assert_eq!(combined_dense_proof, dense_proof);
+        assert_eq!(combined_onehot_proof, onehot_proof);
+    });
+}
