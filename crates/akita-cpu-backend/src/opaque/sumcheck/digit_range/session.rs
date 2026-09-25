@@ -5,6 +5,7 @@ use crate::opaque::{
 };
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use jolt_field::{Fold, Unreduced};
+use jolt_poly::UnivariatePolynomial;
 
 enum ActiveStage<E: Field> {
     Low(LowBasisRangeCheckProver<E>),
@@ -350,7 +351,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             Stage1RoundPolynomial::EqFactored(poly) => poly.degree() <= degree_bound,
             Stage1RoundPolynomial::Standard(poly) => {
                 poly.degree() <= degree_bound
-                    && poly.evaluate(&E::zero()) + poly.evaluate(&E::one()) == self.claim
+                    && poly.evaluate(E::zero()) + poly.evaluate(E::one()) == self.claim
             }
         };
         if !valid {
@@ -388,7 +389,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
                 poly,
                 challenge,
             ),
-            Stage1RoundPolynomial::Standard(poly) => poly.evaluate(&challenge),
+            Stage1RoundPolynomial::Standard(poly) => poly.evaluate(challenge),
         };
         let active = self.active.as_mut().ok_or(AkitaError::InvalidProof)?;
         active.bind(round, challenge);

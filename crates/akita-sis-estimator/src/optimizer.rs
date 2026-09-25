@@ -650,7 +650,6 @@ mod tests {
             d: 0,
             prob: None,
             repetitions: None,
-            tag: Default::default(),
         }
     }
 

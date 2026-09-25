@@ -764,9 +764,9 @@ The main values are:
 | `PreparedFold::evaluation_trace_claim` | $v_{\mathrm{tr}}$ carried into Stage 2 |
 | `PreparedFold::evaluation_trace_points` | prepared $P$, $Q$, and $B$ for each group |
 | `PreparedFold::evaluation_trace_claim_coefficients` | $c_q$ carried into trace-weight construction |
-| `EvaluationTraceGroupParameters::block_opening_point` | block point from which $B_b$ is evaluated |
+| `EvaluationTraceGroupParameters::shared_block_opening_point` | block point from which $B_b$ is evaluated |
 | `EvaluationTraceGroupParameters::opening_digit_weights` | $G_h$ |
-| `EvaluationTraceGroupParameters::inner_trace` | $J_\ell$, equal to $I_\ell$ in the base-field case |
+| `EvaluationTraceGroupParameters::shared_inner_trace` | $J_\ell$, equal to $I_\ell$ in the base-field case |
 | `EvaluationTraceWeights` | $T(x)$ |
 
 The temporary ring $Y$ is used only to compute $v_{\mathrm{tr}}$; it is not

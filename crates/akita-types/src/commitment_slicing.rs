@@ -7,9 +7,6 @@ use akita_error::{checked, AkitaError};
 use crate::compression::CommitmentPayloadMode;
 use crate::witness::dyadic_block_ranges;
 
-/// Largest B commitment slice count admitted by the protocol.
-pub const MAX_COMMITMENT_SLICES: usize = 8;
-
 /// Checked number of logical inputs committed through one physical B matrix.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
@@ -320,29 +317,6 @@ impl CommitmentSliceGeometry {
             .ok_or_else(|| AkitaError::InvalidSetup("B block lies outside slice geometry".into()))
     }
 
-    /// Convert one logical stacked B row to `(slice_index, physical_row)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] for a zero physical rank or a row
-    /// outside the complete logical stack.
-    pub fn logical_row_coordinates(
-        &self,
-        logical_row: usize,
-        physical_output_rank: usize,
-    ) -> Result<(usize, usize), AkitaError> {
-        let logical_rows = self.logical_output_rows(physical_output_rank)?;
-        if logical_row >= logical_rows {
-            return Err(AkitaError::InvalidSetup(
-                "logical B row lies outside slice geometry".into(),
-            ));
-        }
-        Ok((
-            logical_row / physical_output_rank,
-            logical_row % physical_output_rank,
-        ))
-    }
-
     /// Flatten `(slice_index, physical_row)` into the complete logical B row.
     ///
     /// # Errors
@@ -423,7 +397,6 @@ mod tests {
         for count in [0, 3, 6, 16, usize::MAX] {
             assert!(CommitmentSliceCount::try_new(count).is_err());
         }
-        assert_eq!(MAX_COMMITMENT_SLICES, CommitmentSliceCount::EIGHT.get());
     }
 
     #[test]
@@ -482,13 +455,8 @@ mod tests {
             1_680
         );
         assert_eq!(geometry.block_coordinates(11).expect("block"), (3, 2));
-        assert_eq!(
-            geometry.logical_row_coordinates(23, 7).expect("row"),
-            (3, 2)
-        );
         assert_eq!(geometry.logical_row_index(3, 2, 7).expect("row"), 23);
         assert!(geometry.block_coordinates(13).is_err());
-        assert!(geometry.logical_row_coordinates(28, 7).is_err());
     }
 
     #[test]

@@ -691,8 +691,8 @@ mod fp128_policy_tests {
             .schedule()
             .clone();
 
-        assert_eq!(dense.initial_witness_len(), 1usize << 32);
-        assert_eq!(onehot.initial_witness_len(), 1usize << 32);
+        assert_eq!(dense.root.input_witness_len, 1usize << 32);
+        assert_eq!(onehot.root.input_witness_len, 1usize << 32);
     }
 
     #[test]
@@ -707,7 +707,7 @@ mod fp128_policy_tests {
             .schedule()
             .clone();
 
-        assert_eq!(schedule.initial_witness_len(), 1usize << 30);
+        assert_eq!(schedule.root.input_witness_len, 1usize << 30);
     }
 
     #[test]

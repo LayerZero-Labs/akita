@@ -6,6 +6,9 @@ use akita_error::AkitaError;
 use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
+/// Label suffix of the sparse-challenge Fiat–Shamir absorb buffer for one draw
+/// batch. It is embedded in the public fold payload.
+const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
 const SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN: &[u8] =
     b"akita/subring-coefficient-packing-fold-challenge/v1";
 
@@ -39,7 +42,7 @@ pub fn fold_challenge_sample_label(
         .map_err(|_| AkitaError::InvalidSetup("num_live_blocks exceeds u64".to_string()))?;
     let num_claims = u64::try_from(num_claims)
         .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
-    let base_label = akita_transcript::labels::CHALLENGE_WITNESS_FOLD;
+    let base_label = CHALLENGE_WITNESS_FOLD;
     let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 24);
     label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
     label.extend_from_slice(&group_index.to_le_bytes());
@@ -57,25 +60,6 @@ pub trait FoldDraw {
 
     #[cfg(feature = "logging-transcript")]
     fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
-
-    fn draw_folding_challenges(
-        &mut self,
-        ring_d: usize,
-        group_index: usize,
-        num_live_blocks: usize,
-        num_claims: usize,
-        cfg: &SparseChallengeConfig,
-    ) -> Result<Challenges, AkitaError> {
-        self.draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            ring_d,
-            group_index,
-            num_live_blocks,
-            num_claims,
-            cfg,
-            None,
-        )
-    }
 
     #[allow(clippy::too_many_arguments)]
     fn draw_folding_challenges_with_rejection(

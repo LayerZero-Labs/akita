@@ -5,8 +5,8 @@ mod subfield;
 
 use crate::{
     basis_weights, basis_weights_prefix, embed_ring_subfield_vector,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    CommittedGroupParams, FpExtEncoding, RingVec,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, FpExtEncoding,
+    RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
@@ -290,79 +290,19 @@ where
     Ok(transformed)
 }
 
-/// Return whether folded root proving can soundly handle this opening shape.
-///
-/// Degree-one proof-scalar fields keep the original base-field folded-root
-/// path. For true extension proof-scalar fields, the folded path supports
-/// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
-/// in one group are handled by one public row per group, with row-local
-/// extension batching coefficients embedded into the ring relation.
-pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
-    opening_points: &[&[E]],
-    lp: &CommittedGroupParams,
-    alpha_bits: usize,
-) -> bool
-where
-    F: Field,
-    E: ExtField<F>,
-{
-    if E::DEGREE == 1 {
-        return true;
-    }
-    if !D.is_multiple_of(E::DEGREE) || !(D / E::DEGREE).is_power_of_two() {
-        return false;
-    }
-    let packed_slots = D / E::DEGREE;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if packed_inner_bits > alpha_bits {
-        return false;
-    }
-    let target_num_vars = match lp
-        .position_index_bits()
-        .checked_add(lp.block_index_bits())
-        .and_then(|n| n.checked_add(alpha_bits))
-    {
-        Some(value) => value,
-        None => return false,
-    };
-    if opening_points.iter().any(|point| {
-        point.len() > target_num_vars
-            || point
-                .get(packed_inner_bits..alpha_bits)
-                .is_some_and(|inactive| inactive.iter().any(|coord| !coord.is_zero()))
-    }) {
-        return false;
-    }
-    true
-}
-
 #[cfg(test)]
 mod high_half_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusProfileId;
+
     use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
-    use akita_challenges::SparseChallengeConfig;
+
     use jolt_field::{Ext2, ExtField, Fp32, FpExt4, FpExt8, MulBaseUnreduced, Ring, Zero};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;
-
-    fn packed_inner_lp() -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            32,
-            2,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::pm1_only(1),
-        )
-        .with_decomp(1, 32, 1, 1, 1)
-        .unwrap()
-    }
 
     #[test]
     fn recursive_extension_opening_preparation_uses_ring_subfield_boundary() {
@@ -496,22 +436,5 @@ mod tests {
             transformed,
             vec![point[0], point[1], point[2], E::zero(), E::zero(), point[3]]
         );
-    }
-
-    #[test]
-    fn extension_challenge_folded_root_gate_accepts_same_point_batching() {
-        let lp = packed_inner_lp();
-        let point = [F::from_u64(7), F::from_u64(11)];
-
-        assert!(folded_root_supports_opening_shape::<F, F, 32>(
-            &[&point[..]],
-            &lp,
-            5,
-        ));
-        assert!(folded_root_supports_opening_shape::<F, F, 32>(
-            &[&point[..]],
-            &lp,
-            5,
-        ));
     }
 }

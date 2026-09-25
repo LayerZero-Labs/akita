@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
@@ -35,8 +36,8 @@ use crate::{
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress};
-use akita_sumcheck::EqFactoredUniPoly;
-use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+
+use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
@@ -689,9 +690,7 @@ fn terminal_response_fixture(
 fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
-            .map(|_| CompressedUniPoly {
-                coeffs_except_linear_term: vec![F::zero(); degree],
-            })
+            .map(|_| CompressedPoly::new(vec![F::zero(); degree]))
             .collect(),
     }
 }
@@ -702,9 +701,7 @@ fn dummy_eq_factored_sumcheck<F: Field>(
 ) -> EqFactoredSumcheckProof<F> {
     EqFactoredSumcheckProof {
         round_polys: (0..rounds)
-            .map(|_| EqFactoredUniPoly {
-                coeffs_except_constant_term: vec![F::zero(); degree],
-            })
+            .map(|_| OmittedConstantPoly::new(vec![F::zero(); degree]))
             .collect(),
     }
 }
@@ -1010,7 +1007,7 @@ fn scalar_schedule_key_accepts_single_group_layout() {
         AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
-    assert_eq!(key.num_commitment_groups(), 1);
+    assert!(key.precommitteds.is_empty());
 }
 
 #[test]
@@ -1214,7 +1211,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     multi_group_key
         .validate(128)
         .expect("a precommitted group may contain multiple polynomials");
-    assert_eq!(multi_group_key.num_commitment_groups(), 2);
+    assert_eq!(multi_group_key.precommitteds.len(), 1);
     assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
     assert!(!multi_group_key.fits_setup_capacity(20, 4).unwrap());
     assert!(multi_group_key.fits_setup_capacity(20, 5).unwrap());

@@ -64,22 +64,6 @@ pub struct FoldParams {
 }
 
 impl FoldParams {
-    /// Shared D matrix over every group's `w_hat` segment.
-    ///
-    /// Stored once, on the fold's params. The two former copies are gone.
-    #[inline]
-    #[must_use]
-    pub fn open_commit_matrix(&self) -> &crate::OpenCommitMatrixParams {
-        &self.params.open_matrix
-    }
-
-    /// Fold-challenge family for this level.
-    #[inline]
-    #[must_use]
-    pub fn sparse_challenge_config(&self) -> akita_challenges::SparseChallengeConfig {
-        self.params.fold_challenge_config()
-    }
-
     /// The incoming setup prefix, when this fold consumes one.
     #[inline]
     #[must_use]
@@ -598,10 +582,6 @@ impl FoldSchedule {
             validate_level_opening_execution(index + 1, extension_degree, &groups)?;
         }
         Ok(())
-    }
-
-    pub fn initial_witness_len(&self) -> usize {
-        self.root.input_witness_len
     }
 }
 
