@@ -10,7 +10,7 @@
 //! - inverse-cyclic NTT using `omega^{-1}`
 //! - post-untwist by `psi^{-i}`
 
-use super::prime::{MontCoeff, NttPrime, PrimeWidth};
+use super::prime::{pow_mod, MontCoeff, NttPrime, PrimeWidth};
 use super::NttKernelPlan;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -485,18 +485,4 @@ fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
         }
     }
     panic!("no primitive root found for p={p}");
-}
-
-/// Modular exponentiation: `base^exp mod modulus`.
-fn pow_mod(mut base: i64, mut exp: i64, modulus: i64) -> i64 {
-    let mut result = 1i64;
-    base %= modulus;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = result * base % modulus;
-        }
-        base = base * base % modulus;
-        exp >>= 1;
-    }
-    result
 }
