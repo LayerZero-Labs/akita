@@ -150,7 +150,8 @@ pub fn build_riscv64_scalar_q128_cache_artifact<F: Field + CanonicalEncoding, co
         ));
     };
     let needs_tail =
-        required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?;
+        required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, width, rhs_abs_bound)
+            .ok_or_else(|| exact_capacity_error::<D>(width, rhs_abs_bound))?;
     let tail_prefix_len = usize::from(needs_tail) * matrix.as_slice().len();
     let prepared = prepare_exact_ntt_cache(
         matrix,
@@ -276,7 +277,8 @@ pub(crate) fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, con
         &params,
         metadata.width,
         metadata.rhs_abs_bound,
-    )?;
+    )
+    .ok_or_else(|| exact_capacity_error::<D>(metadata.width, metadata.rhs_abs_bound))?;
     if metadata.tail_prefix_len != usize::from(needs_tail) * metadata.base_prefix_len {
         return Err(invalid(
             "prepared cache tail does not match scalar exactness sizing",

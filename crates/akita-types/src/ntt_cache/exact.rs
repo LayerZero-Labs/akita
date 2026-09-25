@@ -1,5 +1,10 @@
-use super::limbs::{limb_plan, LimbPlan};
+use super::limbs::{LimbCandidate, LimbPlan};
 use super::*;
+
+/// One i32 prime transform per column, in units of one prime-row pointwise dot.
+pub(super) const I32_TRANSFORM_DOTS: usize = 6;
+/// One IFMA52 prime transform per column, in units of one prime-row pointwise dot.
+pub(super) const IFMA52_TRANSFORM_DOTS: usize = 2;
 
 pub(super) fn ifma52_cache_enabled<const D: usize>() -> bool {
     ifma52_cache_enabled_for_ring_dimension(D)
@@ -56,6 +61,29 @@ pub(super) enum ExactCachePlan<const D: usize> {
 }
 
 impl<const D: usize> ExactCachePlan<D> {
+    /// Per-column cost over `rows` output rows, in half prime-row dots: an
+    /// i16 tail costs half a prime and an i32 tail beside IFMA52 primes a
+    /// whole one.
+    fn cost(&self, rows: usize) -> usize {
+        let tail = usize::from(self.needs_tail());
+        match self {
+            Self::Q32 { .. } => (4 + tail) * (I32_TRANSFORM_DOTS + rows),
+            Self::Q64 { .. } => (6 + tail) * (I32_TRANSFORM_DOTS + rows),
+            Self::Q128 { .. } => (12 + tail) * (I32_TRANSFORM_DOTS + rows),
+            Self::Q32Ifma52 { .. } => (2 + tail) * (IFMA52_TRANSFORM_DOTS + rows),
+            Self::Q64Ifma52 { .. } => 4 * (IFMA52_TRANSFORM_DOTS + rows),
+            Self::Q128Ifma52 { params, .. } => {
+                let tail = if params.has_tail(q128_primes()[0]) {
+                    2
+                } else {
+                    tail
+                };
+                (6 + tail) * (IFMA52_TRANSFORM_DOTS + rows)
+            }
+            Self::Limbs(plan) => plan.cost(rows),
+        }
+    }
+
     pub(super) const fn needs_tail(&self) -> bool {
         match self {
             Self::Q32 { needs_tail, .. }
@@ -68,28 +96,39 @@ impl<const D: usize> ExactCachePlan<D> {
     }
 }
 
-/// Plan an exact signed-i16 cache. With `limb_rows`, the number of rows the
-/// prepared matrix holds, a limb split replaces the base plan when cheaper.
-pub(super) fn exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
+/// Plan a prover's exact signed-i16 cache over `entries` matrix entries.
+///
+/// The field-sized base representation and the limb split are independent
+/// candidates: each is priced only when its capacity holds, and only the
+/// cheaper one builds its limb tables. Limb rows need whole matrix rows.
+pub(super) fn prover_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
     selected: ProtocolCrtNttParams<D>,
     width: usize,
     rhs_abs_bound: u64,
-    limb_rows: Option<usize>,
+    entries: usize,
 ) -> Result<ExactCachePlan<D>, AkitaError> {
+    let rows = entries / width;
     let base = base_exact_cache_plan::<F, D>(selected, width, rhs_abs_bound)?;
-    if let Some(rows) = limb_rows {
-        if let Some(plan) = limb_plan::<F, D>(&base, width, rhs_abs_bound, rows)? {
-            return Ok(ExactCachePlan::Limbs(plan));
-        }
+    let limbs = if entries.is_multiple_of(width) {
+        LimbCandidate::fitting::<F, D>(width, rhs_abs_bound)?
+    } else {
+        None
+    };
+    match (base, limbs) {
+        (Some(base), Some(limbs)) if base.cost(rows) <= limbs.cost(rows) => Ok(base),
+        (_, Some(limbs)) => Ok(ExactCachePlan::Limbs(limbs.plan::<F, D>(width)?)),
+        (Some(base), None) => Ok(base),
+        (None, None) => Err(exact_capacity_error::<D>(width, rhs_abs_bound)),
     }
-    Ok(base)
 }
 
-fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
+/// Plan the field-sized exact signed-i16 representation, or `None` when the
+/// accumulation exceeds its base plus tail capacity.
+pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
     selected: ProtocolCrtNttParams<D>,
     width: usize,
     rhs_abs_bound: u64,
-) -> Result<ExactCachePlan<D>, AkitaError> {
+) -> Result<Option<ExactCachePlan<D>>, AkitaError> {
     match selected {
         ProtocolCrtNttParams::Q32(params) => {
             if let Some(needs_tail) = ifma52_tail_requirement::<F, 1, D>(
@@ -102,20 +141,22 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
                 if needs_tail {
                     params = params.with_tail(I16_TAIL_PRIME)?;
                 }
-                Ok(ExactCachePlan::Q32Ifma52 {
+                Ok(Some(ExactCachePlan::Q32Ifma52 {
                     params: Box::new(params),
                     needs_tail,
-                })
+                }))
             } else {
-                let needs_tail = required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(
+                let Some(needs_tail) = required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(
                     &params,
                     width,
                     rhs_abs_bound,
-                )?;
-                Ok(ExactCachePlan::Q32 {
+                ) else {
+                    return Ok(None);
+                };
+                Ok(Some(ExactCachePlan::Q32 {
                     params: Box::new(params),
                     needs_tail,
-                })
+                }))
             }
         }
         ProtocolCrtNttParams::Q64(params) => {
@@ -128,19 +169,21 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
                 ),
                 Some(false)
             ) {
-                return Ok(ExactCachePlan::Q64Ifma52 {
+                return Ok(Some(ExactCachePlan::Q64Ifma52 {
                     params: Box::new(Ifma52Params::new([IFMA52_PRIMES[0], IFMA52_PRIMES[1]])?),
-                });
+                }));
             }
-            let needs_tail = required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(
+            let Some(needs_tail) = required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(
                 &params,
                 width,
                 rhs_abs_bound,
-            )?;
-            Ok(ExactCachePlan::Q64 {
+            ) else {
+                return Ok(None);
+            };
+            Ok(Some(ExactCachePlan::Q64 {
                 params: Box::new(params),
                 needs_tail,
-            })
+            }))
         }
         ProtocolCrtNttParams::Q128(params) => {
             let requirement = |tail_modulus: u128| {
@@ -161,20 +204,22 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
                 } else if needs_tail {
                     params = params.with_tail(i32_tail)?;
                 }
-                Ok(ExactCachePlan::Q128Ifma52 {
+                Ok(Some(ExactCachePlan::Q128Ifma52 {
                     params: Box::new(params),
                     needs_tail,
-                })
+                }))
             } else {
-                let needs_tail = required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(
+                let Some(needs_tail) = required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(
                     &params,
                     width,
                     rhs_abs_bound,
-                )?;
-                Ok(ExactCachePlan::Q128 {
+                ) else {
+                    return Ok(None);
+                };
+                Ok(Some(ExactCachePlan::Q128 {
                     params: Box::new(params),
                     needs_tail,
-                })
+                }))
             }
         }
     }
@@ -190,10 +235,9 @@ pub fn ntt_cache_requires_exactness_tail<F: Field + CanonicalEncoding, const D: 
         rhs_abs_bound,
     };
     validate_cache_mode(mode)?;
-    Ok(
-        exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound, None)?
-            .needs_tail(),
-    )
+    base_exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
+        .map(|plan| plan.needs_tail())
+        .ok_or_else(|| exact_capacity_error::<D>(width, rhs_abs_bound))
 }
 
 pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
@@ -201,6 +245,11 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
     tail_prefix_len: Option<usize>,
     plan: ExactCachePlan<D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
+    if tail_prefix_len.is_some_and(|len| len > matrix.as_slice().len()) {
+        return Err(AkitaError::InvalidSetup(
+            "i16-tail NTT prefix exceeds the prepared base prefix".into(),
+        ));
+    }
     macro_rules! homogeneous {
         ($params:expr, $variant:ident, $needs_tail:expr) => {{
             let params = *$params;
@@ -415,8 +464,8 @@ mod tests {
         // and |rhs| <= 2^15.
         let tail = |width| {
             let params = select_crt_ntt_params::<F, D>().expect("protocol parameters");
-            match exact_cache_plan::<F, D>(params, width, 1 << 15, None).expect("plan") {
-                ExactCachePlan::Q128Ifma52 { params, needs_tail } => (
+            match base_exact_cache_plan::<F, D>(params, width, 1 << 15).expect("plan") {
+                Some(ExactCachePlan::Q128Ifma52 { params, needs_tail }) => (
                     needs_tail,
                     params.has_tail(I16_TAIL_PRIME),
                     params.has_tail(q128_primes()[0]),
