@@ -318,13 +318,17 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
                 BasisMode::Lagrange,
             ))
         } else {
-            akita_types::derive_tensor_extension_opening_claim::<FF, Cfg::ExtField>(
-                nv,
-                &poly.field_coeffs()[..len],
+            let column_partials =
+                akita_cpu_backend::benchmark_support::tensor_column_partials_from_base_evals::<
+                    FF,
+                    Cfg::ExtField,
+                >(nv, &poly.field_coeffs()[..len], &original_pt)
+                .expect("valid dense extension opening");
+            akita_types::derive_tensor_extension_opening_claim_from_partials::<FF, Cfg::ExtField>(
                 &original_pt,
+                &column_partials,
             )
             .expect("valid dense extension opening")
-            .0
         }
     };
     drop(statement_prepare_span);

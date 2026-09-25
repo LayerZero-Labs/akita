@@ -17,6 +17,7 @@ mod digit_rows;
 mod exact_i16;
 #[cfg(test)]
 mod exact_i16_tests;
+pub(crate) mod extension_opening_reduction;
 pub(crate) mod field_reduction;
 #[cfg(test)]
 mod kernel_tests;

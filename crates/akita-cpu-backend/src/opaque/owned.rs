@@ -3,6 +3,9 @@ use super::source::{
     prepare_and_evaluate_opening_group, scalar_opening_from_folded_ring,
     PreparedExtensionOpeningGroup,
 };
+use crate::arithmetic::extension_opening_reduction::{
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals,
+};
 use crate::commitment::CommitmentSource;
 use crate::opaque::CpuPreparedOpeningHandle;
 use crate::opaque::*;

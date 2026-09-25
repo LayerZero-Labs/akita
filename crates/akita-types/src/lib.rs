@@ -53,12 +53,8 @@ pub use compression::{
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    num_rounds_from_table_len, reduction_table_len, tensor_column_partials_from_base_evals,
-    tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
-    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
+    derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
+    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
