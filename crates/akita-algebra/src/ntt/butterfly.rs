@@ -27,15 +27,17 @@ pub(crate) fn use_x86_transform_ntt<const D: usize>(plan: NttKernelPlan) -> bool
 /// The C representation is part of the SIMD dispatch contract. `PrimeWidth`
 /// is sealed to `i16` and `i32`, and architecture-specific kernels reinterpret
 /// a table after checking which of those two widths is active.
+///
+/// Every table is a `D`-entry array and the scalars come last, so with the
+/// 64-byte struct alignment each table starts on a cache line for `D >= 32`
+/// and vector loads of consecutive entries never split one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Stage roots for iterative forward cyclic NTT in Montgomery form.
     pub(crate) fwd_wlen: [MontCoeff<W>; D],
     /// Stage roots for iterative inverse cyclic NTT in Montgomery form.
     pub(crate) inv_wlen: [MontCoeff<W>; D],
-    /// Number of active stages in the twiddle arrays (`log2(D)`).
-    pub(crate) num_stages: usize,
     /// Twist factors `psi^i` for negacyclic embedding, in Montgomery form.
     pub(crate) psi_pows: [MontCoeff<W>; D],
     /// Fused conversion factors `psi^i * R^2 mod p`, in centered raw form.
@@ -45,8 +47,6 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) psi_pows_r2: [W; D],
     /// Untwist factors `psi^{-i}`, in Montgomery form.
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
-    /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
-    pub(crate) d_inv: MontCoeff<W>,
     /// Fused `D^{-1} * psi^{-i}` for each index, in Montgomery form.
     pub(crate) d_inv_psi_inv: [MontCoeff<W>; D],
     /// Per-position forward twiddles, packed across stages.
@@ -58,6 +58,10 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Montgomery quotients of the constant tables for the x86 transforms.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) quotients: super::avx::MontQuotients<W, D>,
+    /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
+    pub(crate) d_inv: MontCoeff<W>,
+    /// Number of active stages in the twiddle arrays (`log2(D)`).
+    pub(crate) num_stages: usize,
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
