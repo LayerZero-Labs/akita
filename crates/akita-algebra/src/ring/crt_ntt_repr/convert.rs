@@ -228,7 +228,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             let reducer = CenteredMontReducer::new(*prime);
             for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
-                *dst = reducer.from_limbs(*coefficient);
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -253,7 +253,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             let reducer = CenteredMontReducer::new(*prime);
             for (dst, coefficient) in neg_limb.iter_mut().zip(coefficient_limbs.iter()) {
-                *dst = reducer.from_limbs(*coefficient);
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             *cyc_limb = *neg_limb;
             forward_ntt(neg_limb, *prime, tw, params.kernel_plan);
@@ -297,7 +297,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
                 *dst = lut
                     .get(k, coefficient)
-                    .unwrap_or_else(|| reducer.from_i32(coefficient));
+                    .unwrap_or_else(|| reducer.reduce_i32(coefficient));
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -387,7 +387,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
             } else {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = reducer.from_i32(coeff);
+                    *dst = reducer.reduce_i32(coeff);
                 }
             }
             *cyc_limb = *neg_limb;
@@ -436,7 +436,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             let reducer = CenteredMontReducer::new(*prime);
             for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
-                *dst = reducer.from_limbs(*coefficient);
+                *dst = reducer.reduce_limbs(*coefficient);
             }
             forward_ntt_cyclic(limb, *prime, tw, params.kernel_plan);
         }

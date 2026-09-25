@@ -95,7 +95,7 @@ impl<W: PrimeWidth> CenteredMontReducer<W> {
 
     /// Montgomery form of `value`, in `(-p, p)`.
     #[inline(always)]
-    pub(super) fn from_i32(self, value: i32) -> MontCoeff<W> {
+    pub(super) fn reduce_i32(self, value: i32) -> MontCoeff<W> {
         // |value * scale[0]| <= 2^31 (p - 1) / 2.
         MontCoeff::from_raw(W::from_i64(self.redc(i64::from(value) * self.scale[0])))
     }
@@ -103,7 +103,7 @@ impl<W: PrimeWidth> CenteredMontReducer<W> {
     /// Montgomery form, in `(-p, p)`, of the value with the given
     /// [`balanced_limbs`].
     #[inline(always)]
-    pub(super) fn from_limbs(self, limbs: [i64; 4]) -> MontCoeff<W> {
+    pub(super) fn reduce_limbs(self, limbs: [i64; 4]) -> MontCoeff<W> {
         // Each pair sum is at most 2 * 2^31 * (p - 1) / 2 in magnitude, so
         // both reductions land in (-p, p) and their sum in (-2p, 2p).
         let low = self.redc(limbs[0] * self.scale[0] + limbs[1] * self.scale[1]);
@@ -302,7 +302,9 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
         let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
             let reducer = CenteredMontReducer::new(params.primes[k]);
-            (-max_abs..=max_abs).map(|v| reducer.from_i32(v)).collect()
+            (-max_abs..=max_abs)
+                .map(|v| reducer.reduce_i32(v))
+                .collect()
         });
         Self {
             vals,

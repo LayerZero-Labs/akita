@@ -43,13 +43,13 @@ fn check_reducer<W: PrimeWidth>(prime: NttPrime<W>) {
         assert!(limbs[..3].iter().all(|&limb| i32::try_from(limb).is_ok()));
         assert!(limbs[3].abs() <= 1 << 31);
 
-        let mont = reducer.from_limbs(limbs);
+        let mont = reducer.reduce_limbs(limbs);
         assert!(mont.raw().to_i64().abs() < p);
         let expected = value.rem_euclid(i128::from(p)) as i64;
         assert_eq!(prime.to_canonical(mont).to_i64(), expected, "{value}");
 
         let narrow = value as i32;
-        let mont = reducer.from_i32(narrow);
+        let mont = reducer.reduce_i32(narrow);
         assert!(mont.raw().to_i64().abs() < p);
         let expected = i64::from(narrow).rem_euclid(p);
         assert_eq!(prime.to_canonical(mont).to_i64(), expected, "{narrow}");
