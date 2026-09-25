@@ -152,7 +152,7 @@ where
     fn terminal_message(
         &self,
         material: &CpuCommitmentMaterial<F>,
-    ) -> Result<crate::commitment::TerminalTFieldsMessage, AkitaError> {
+    ) -> Result<crate::commitment::TerminalTFieldsMessage<F>, AkitaError> {
         material.validate_terminal(self)?;
         crate::commitment::InnerRelationMaterial::terminal_message(&material.inner)
     }

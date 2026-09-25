@@ -552,7 +552,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let packing_direct_bytes = packing_payload.direct;
     assert_eq!(
         packing_direct_bytes,
-        akita_types::level_proof_bytes(
+        akita_types::native_nonterminal_level_layout(
             policy.decomposition.field_bits(),
             policy.challenge_field_bits().unwrap(),
             first_params,
@@ -566,6 +566,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 .unwrap(),
             None,
         )
+        .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
         .expect("packing direct payload without EOR"),
     );
     assert!(
@@ -830,7 +831,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 
     let mut policy = policy_of::<Dense>();
     policy.selection_policy =
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3;
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6;
     let dimensions = CommitmentRingDims {
         inner: 256,
         outer: 128,
@@ -1106,7 +1107,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         opening_shape,
     )
     .expect("aggregate EOR bytes");
-    let base = akita_types::level_proof_bytes(
+    let base = akita_types::native_nonterminal_level_layout(
         policy.decomposition.field_bits(),
         policy.challenge_field_bits().unwrap(),
         &params,
@@ -1120,6 +1121,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             .unwrap(),
         None,
     )
+    .and_then(akita_types::NativeNonterminalLevelLayout::encoded_len)
     .expect("base level payload");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
     let runtime = akita_schedules::planner_support::nonterminal_level_payload_bytes(

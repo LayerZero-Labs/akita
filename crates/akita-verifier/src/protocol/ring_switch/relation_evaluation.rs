@@ -19,41 +19,48 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
-pub(super) fn evaluate_relation_at_point<F, E>(
-    evaluator: &RelationMatrixEvaluator<E>,
-    point: &[E],
-    setup: &AkitaExpandedSetup<F>,
-    alpha: E,
-) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
-{
-    let prepared = {
-        let _span = tracing::info_span!("relation_coefficient_functional_preparation").entered();
-        let mut prepared = PreparedDirectRelation::prepare::<F>(evaluator, point, alpha)?;
-        prepared.materialize_setup()?;
-        prepared
-    };
-    prepared.evaluate_materialized_direct::<F>(setup)
-}
+impl<E: Field> RelationMatrixEvaluator<E> {
+    /// Evaluate the canonical relation weights directly in the flattened
+    /// opening domain, without materializing its padded Boolean suffix.
+    pub fn eval_flat_at_point<F>(
+        &self,
+        point: &[E],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let prepared = {
+            let _span =
+                tracing::info_span!("relation_coefficient_functional_preparation").entered();
+            let mut prepared = PreparedDirectRelation::prepare::<F>(self, point, alpha)?;
+            prepared.materialize_setup()?;
+            prepared
+        };
+        prepared.evaluate_materialized_direct::<F>(setup)
+    }
 
-pub(super) fn evaluate_quotient_relation_with_deferred_setup<F, E>(
-    evaluator: &RelationMatrixEvaluator<E>,
-    point: &[E],
-    _setup: &AkitaExpandedSetup<F>,
-    alpha: E,
-    setup_claim: E,
-) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
-{
-    let prepared = {
-        let _span = tracing::info_span!("relation_coefficient_functional_preparation").entered();
-        PreparedDirectRelation::prepare::<F>(evaluator, point, alpha)?
-    };
-    prepared.evaluate_deferred::<F>(setup_claim)
+    /// Evaluate quotient-lift relation weights using an authenticated deferred
+    /// setup-contribution claim. Reduced evaluation has no deferred setup state.
+    pub fn eval_flat_at_point_with_deferred_setup<F>(
+        &self,
+        point: &[E],
+        alpha: E,
+        setup_claim: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let prepared = {
+            let _span =
+                tracing::info_span!("relation_coefficient_functional_preparation").entered();
+            PreparedDirectRelation::prepare::<F>(self, point, alpha)?
+        };
+        prepared.evaluate_deferred::<F>(setup_claim)
+    }
 }
 
 fn prepare_setup_plan<F, E>(
@@ -295,18 +302,10 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         E: FpExtEncoding<F> + Ring + ExtField<F>,
     {
         let result = self.evaluate_relation_weight::<F>()?;
-        let Self::Quotient {
-            evaluator,
-            point,
-            plan,
-            ..
-        } = self
-        else {
+        let Self::Quotient { point, .. } = self else {
             return Err(AkitaError::InvalidProof);
         };
-        let result = result + point.common_alpha_evaluation() * setup_claim;
-        evaluator.cache_setup_contribution_plan(point.address_point(), plan)?;
-        Ok(result)
+        Ok(result + point.common_alpha_evaluation() * setup_claim)
     }
 }
 

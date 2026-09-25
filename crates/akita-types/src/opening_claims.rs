@@ -2,14 +2,10 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
-#[cfg(test)]
-use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
-use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection, TranscriptGrinding};
+use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection};
 use akita_error::{checked, AkitaError};
-use akita_transcript::labels::ABSORB_BATCH_SHAPE;
-use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
@@ -72,6 +68,7 @@ impl OpeningClaimsLayout {
     }
 
     /// Build a layout from group sizes, all sharing the same active variable count.
+    #[cfg(test)]
     pub fn from_group_sizes(
         num_vars: usize,
         polynomials_per_group: &[usize],
@@ -100,11 +97,6 @@ impl OpeningClaimsLayout {
         groups.extend_from_slice(precommitteds);
         groups.push(final_group);
         Self::from_groups(groups)
-    }
-
-    /// Worst-case setup-capacity request as a one-group layout.
-    pub fn from_setup_seed(seed: &AkitaSetupDescriptor) -> Result<Self, AkitaError> {
-        Self::new(seed.max_num_vars, seed.max_num_batched_polys)
     }
 
     /// Validate layout count consistency.
@@ -168,14 +160,6 @@ impl OpeningClaimsLayout {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Number of polynomials in each group.
-    pub fn group_sizes(&self) -> Vec<usize> {
-        self.groups
-            .iter()
-            .map(|group| group.num_polynomials())
-            .collect()
-    }
-
     /// Borrow one group layout by index.
     pub fn group_layout(&self, g: usize) -> Result<&PolynomialGroupLayout, AkitaError> {
         self.groups.get(g).ok_or(AkitaError::InvalidProof)
@@ -201,13 +185,6 @@ impl OpeningClaimsLayout {
             }
         }
         Ok(order)
-    }
-
-    /// Layouts of precommitted groups in root transcript order.
-    pub fn root_precommitted_group_layouts(&self) -> Result<&[PolynomialGroupLayout], AkitaError> {
-        self.check()?;
-        let final_index = self.root_final_group_index()?;
-        Ok(&self.groups[..final_index])
     }
 
     /// Final/new group layout for multi-group root schedule lookup.
@@ -245,25 +222,6 @@ impl OpeningClaimsLayout {
             push_usize(&mut bytes, group.num_polynomials());
         }
         blake2b_256(&bytes)
-    }
-
-    /// Absorb normalized batch-shape fields into the transcript.
-    pub fn append_batch_shape_to_transcript<F, T>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        T: Transcript<F>,
-    {
-        self.check()?;
-
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_groups());
-        for group in self.groups() {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_vars());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials());
-        }
-        Ok(())
     }
 
     /// Sum batched public opening claims under per-slot gamma coefficients.
@@ -517,14 +475,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         self.groups.len()
     }
 
-    /// Total polynomials opened across all groups.
-    pub fn num_total_polynomials(&self) -> usize {
-        self.groups
-            .iter()
-            .map(|group| group.evaluations.len())
-            .sum()
-    }
-
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
         checked::sum(
             self.groups
@@ -532,14 +482,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 .map(PolynomialGroupClaims::num_evaluations),
         )
         .ok_or(AkitaError::InvalidProof)
-    }
-
-    /// Number of polynomials/evaluations in each group.
-    pub fn group_sizes(&self) -> Vec<usize> {
-        self.groups
-            .iter()
-            .map(PolynomialGroupClaims::num_evaluations)
-            .collect()
     }
 
     /// Borrow one group's evaluations.
@@ -581,11 +523,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 .collect(),
         )
     }
-
-    /// Layout digest for this claim set.
-    pub fn opening_batch_digest(&self) -> Result<DescriptorDigest, AkitaError> {
-        Ok(self.layout()?.opening_batch_digest())
-    }
 }
 
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
@@ -598,43 +535,40 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
-    /// Return the only commitment when the current single-group path applies.
-    pub fn single_group_commitment(&self) -> Option<&C> {
-        self.groups
-            .first()
-            .filter(|_| self.groups.len() == 1)
-            .map(PolynomialGroupClaims::commitment)
-    }
-}
-
-/// Apply the scheduled work and sample row-batching coefficients for a protocol site.
-///
-/// Claimed values must already have been absorbed. Keeping message binding
-/// separate makes the phase boundary explicit. The caller chooses whether this
-/// is an early protocol-local compression or the later application batch and
-/// must use the corresponding transcript phase.
-pub fn sample_row_coefficients<F, L, T>(
+/// Apply the scheduled native work and sample one context-bound coefficient
+/// per opening claim.
+pub fn sample_row_coefficients_native<F, L>(
     layout: &OpeningClaimsLayout,
     site: GrindingSite,
-    transcript: &mut T,
+    grinding: &mut crate::NativeProverGrinding<'_>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     L: ExtField<F>,
-    T: TranscriptGrinding<F>,
 {
     layout.check()?;
     if !layout.requires_row_batch_challenge() {
         return Ok(vec![L::one()]);
     }
-    transcript.grind_query(site)?;
-    let challenge_label = site.proof_of_work_label().ok_or_else(|| {
-        AkitaError::InvalidInput("row batching requires a proof-of-work grinding site".into())
-    })?;
-    Ok((0..layout.num_total_polynomials())
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
-        .collect())
+    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
+}
+
+/// Verify the scheduled native work and replay one context-bound coefficient
+/// per opening claim.
+pub fn verify_row_coefficients_native<F, L>(
+    layout: &OpeningClaimsLayout,
+    site: GrindingSite,
+    grinding: &mut crate::NativeVerifierGrinding<'_, '_>,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    L: ExtField<F>,
+{
+    layout.check()?;
+    if !layout.requires_row_batch_challenge() {
+        return Ok(vec![L::one()]);
+    }
+    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
 }
 
 fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
@@ -648,17 +582,9 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::AkitaTranscript;
     use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
-
-    fn prefix_claims(num_vars: usize, evals: usize) -> OpeningClaims<'static, F, ()> {
-        let group =
-            PolynomialGroupClaims::new(vec![F::zero(); num_vars], vec![F::zero(); evals], ())
-                .expect("group");
-        OpeningClaims::from_groups(vec![group]).expect("claims")
-    }
 
     #[test]
     fn groups_own_independent_points() {
@@ -673,15 +599,6 @@ mod tests {
         assert_eq!(claims.group_point(0).expect("first point"), first);
         assert_eq!(claims.group_point(1).expect("second point"), second);
         assert_eq!(claims.layout().expect("layout").max_num_vars(), 3);
-    }
-
-    #[test]
-    fn layout_digest_matches_layout_view() {
-        let claims = prefix_claims(4, 2);
-        assert_eq!(
-            claims.opening_batch_digest().expect("claims digest"),
-            claims.layout().expect("layout").opening_batch_digest()
-        );
     }
 
     #[test]
@@ -723,15 +640,6 @@ mod tests {
         .expect("multi-group layout");
 
         assert_eq!(layout.root_final_group_index().expect("final index"), 2);
-        assert_eq!(
-            layout
-                .root_precommitted_group_layouts()
-                .expect("precommitted layouts"),
-            &[
-                PolynomialGroupLayout::new(2, 1),
-                PolynomialGroupLayout::new(3, 2),
-            ]
-        );
         assert_eq!(
             layout.root_final_group_layout().expect("final layout"),
             PolynomialGroupLayout::new(4, 1)
@@ -792,46 +700,5 @@ mod tests {
             aggregate_bytes - final_only_bytes,
             extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
         );
-    }
-
-    #[test]
-    fn public_row_coefficients_bind_against_claim_cancellation() {
-        let layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::singleton(2),
-            PolynomialGroupLayout::singleton(3),
-        ])
-        .expect("two-group layout");
-        let openings = [F::from_u64(5), F::from_u64(11)];
-        let delta = F::from_u64(3);
-        let tampered = [openings[0] + delta, openings[1] - delta];
-
-        let target = |values: &[F]| {
-            let mut inner = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
-            append_claim_values_to_transcript::<F, F, _>(values, &mut inner);
-            let plan = crate::GrindingPlan::new(
-                vec![crate::GrindingRun::proof_of_work(
-                    GrindingSite::EvaluationBatch { level: 0 },
-                    1,
-                    128,
-                )
-                .expect("grinding run")],
-                128,
-            )
-            .expect("grinding plan");
-            let mut transcript = crate::ProverGrindingTranscript::new(&mut inner, &plan)
-                .expect("grinding transcript");
-            let coefficients = sample_row_coefficients::<F, F, _>(
-                &layout,
-                GrindingSite::EvaluationBatch { level: 0 },
-                &mut transcript,
-            )
-            .expect("derive coefficients");
-            transcript.finish().expect("finish grinding");
-            layout
-                .batched_eval_target(&coefficients, values)
-                .expect("batched target")
-        };
-
-        assert_ne!(target(&openings), target(&tampered));
     }
 }

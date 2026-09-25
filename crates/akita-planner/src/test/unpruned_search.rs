@@ -140,7 +140,10 @@ fn consider_complete_schedule(
     else {
         return Ok(());
     };
-    if !policy.admits_setup_field_elements(candidate.setup_field_elements) {
+    if !policy
+        .setup_field_budget
+        .is_none_or(|budget| candidate.setup_field_elements <= budget)
+    {
         return Ok(());
     }
     let candidate_score = score(policy, &candidate)?;
@@ -267,8 +270,8 @@ pub(super) fn find_schedule(
     };
     let cached_first_direct_setup_field_len = if matches!(
         policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         selected.first_direct_setup_field_len.map(NonZeroUsize::get)
     } else {

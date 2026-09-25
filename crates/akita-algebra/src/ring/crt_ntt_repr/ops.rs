@@ -1,7 +1,5 @@
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use std::mem::MaybeUninit;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
@@ -289,79 +287,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Accumulate `lhs * rhs(digits)` into `self` while reusing caller-owned
-    /// scratch storage for the digit CRT+NTT conversion.
-    #[inline]
-    pub fn add_assign_pointwise_mul_i8_with_lut_scratch(
-        &mut self,
-        lhs: &Self,
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
-        scratch: &mut [[MontCoeff<W>; D]; K],
-    ) {
-        #[cfg(target_arch = "aarch64")]
-        if params.kernel_plan.uses_neon() {
-            for (k, scratch_limb) in scratch.iter_mut().enumerate() {
-                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = params.kernel_plan.x86_pointwise_mode();
-        for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, digit);
-            }
-            forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
-
-            let prime = params.primes[k];
-            let acc_limb = &mut self.limbs[k];
-            let lhs_limb = &lhs.limbs[k];
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = x86_mode {
-                // SAFETY: guarded by x86 runtime dispatch.
-                unsafe {
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc_limb,
-                        lhs_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                }
-                continue;
-            }
-            Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
-        }
-    }
-
     /// Transform a short run of signed-i8 columns and accumulate their
     /// pointwise dot product into every output row.
     ///
@@ -532,45 +457,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Add another CRT+NTT element and reduce each coefficient with the matching
-    /// prime to maintain valid Montgomery ranges.
-    pub fn add_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
-            let mut output = MaybeUninit::<Self>::uninit();
-            let output_ptr = output.as_mut_ptr().cast::<i32>();
-            for (k, prime) in params.primes.iter().enumerate() {
-                unsafe {
-                    avx::add_reduce_i32(
-                        output_ptr.add(k * D),
-                        self.limbs[k].as_ptr() as *const i32,
-                        rhs.limbs[k].as_ptr() as *const i32,
-                        D,
-                        prime.p.to_i64() as i32,
-                    );
-                }
-            }
-            // SAFETY: the SIMD loop initializes every coefficient in the
-            // transparent nested-array representation.
-            return unsafe { output.assume_init() };
-        }
-
-        let mut output = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((dst_limb, lhs_limb), rhs_limb)) in output
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = params.primes[k];
-            for ((dst, lhs), rhs) in dst_limb.iter_mut().zip(lhs_limb).zip(rhs_limb) {
-                let sum = MontCoeff::from_raw(lhs.raw().wrapping_add(rhs.raw()));
-                *dst = prime.reduce_range(sum);
-            }
-        }
-        Self { limbs: output }
-    }
-
     /// Add another CRT+NTT element in place and reduce each coefficient.
     pub fn add_assign_reduced(&mut self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) {
         #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
@@ -649,136 +535,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Subtract another CRT+NTT element and reduce.
-    pub fn sub_reduced(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() && params.kernel_plan.uses_x86_transform() {
-            let mut out = MaybeUninit::<Self>::uninit();
-            let out_ptr = out.as_mut_ptr().cast::<i32>();
-            for (k, prime) in params.primes.iter().enumerate() {
-                let p = prime.p.to_i64() as i32;
-                unsafe {
-                    avx::sub_reduce_i32(
-                        out_ptr.add(k * D),
-                        self.limbs[k].as_ptr() as *const i32,
-                        rhs.limbs[k].as_ptr() as *const i32,
-                        D,
-                        p,
-                    )
-                }
-            }
-            // SAFETY: the SIMD loop initializes all `D` coefficients in every
-            // limb of the transparent nested-array representation.
-            return unsafe { out.assume_init() };
-        }
-        let mut out = self.clone();
-        for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
-            let prime = params.primes[k];
-            for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
-                *a = prime.reduce_range(diff);
-            }
-        }
-        out
-    }
-
-    /// Negate each CRT+NTT coefficient and reduce.
-    pub fn neg_reduced(&self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
-                let mut out = MaybeUninit::<Self>::uninit();
-                let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in params.primes.iter().enumerate() {
-                    let p = prime.p.to_i64() as i32;
-                    unsafe {
-                        match mode {
-                            AvxNttMode::Avx2 => avx::neg_reduce_i32(
-                                out_ptr.add(k * D),
-                                self.limbs[k].as_ptr() as *const i32,
-                                D,
-                                p,
-                            ),
-                            AvxNttMode::Avx512 => avx::neg_reduce_i32_avx512(
-                                out_ptr.add(k * D),
-                                self.limbs[k].as_ptr() as *const i32,
-                                D,
-                                p,
-                            ),
-                        }
-                    }
-                }
-                // SAFETY: the SIMD loop initializes all `D` coefficients in
-                // every limb of the transparent nested-array representation.
-                return unsafe { out.assume_init() };
-            }
-        }
-        let mut out = self.clone();
-        for (k, limb) in out.limbs.iter_mut().enumerate() {
-            let prime = params.primes[k];
-            for a in limb.iter_mut() {
-                let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
-                *a = prime.reduce_range(neg);
-            }
-        }
-        out
-    }
-
-    /// Pointwise multiplication in CRT+NTT domain.
-    pub fn pointwise_mul(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if size_of::<W>() == size_of::<i32>() {
-            if let Some(mode) = params.kernel_plan.x86_pointwise_mode() {
-                let mut out = MaybeUninit::<Self>::uninit();
-                let out_ptr = out.as_mut_ptr().cast::<i32>();
-                for (k, prime) in params.primes.iter().copied().enumerate() {
-                    // SAFETY: `Self` and `MontCoeff<W>` are transparent over
-                    // nested contiguous arrays. The width check above proves
-                    // that each coefficient occupies one `i32`, and every
-                    // kernel writes all `D` coefficients in its limb.
-                    let out_limb = unsafe { out_ptr.add(k * D) };
-                    unsafe {
-                        match mode {
-                            AvxNttMode::Avx2 => avx::pointwise_mul_i32(
-                                out_limb,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
-                                D,
-                                prime.p.to_i64() as i32,
-                                prime.pinv.to_i64() as i32,
-                            ),
-                            AvxNttMode::Avx512 => avx::pointwise_mul_i32_avx512(
-                                out_limb,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
-                                D,
-                                prime.p.to_i64() as i32,
-                                prime.pinv.to_i64() as i32,
-                            ),
-                        }
-                    }
-                }
-                // SAFETY: the loop above initializes every coefficient in all
-                // `K` limbs, which is the complete transparent representation.
-                return unsafe { out.assume_init() };
-            }
-        }
-        let mut out = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((output, lhs), rhs)) in out
-            .iter_mut()
-            .zip(self.limbs.iter())
-            .zip(rhs.limbs.iter())
-            .enumerate()
-        {
-            let prime = params.primes[k];
-            prime.pointwise_mul(output, lhs, rhs);
-            for coefficient in output.iter_mut() {
-                *coefficient = prime.reduce_range(*coefficient);
-            }
-        }
-        Self { limbs: out }
-    }
-
     /// Accumulate `lhs * rhs` into `self` in CRT+NTT domain.
     ///
     /// On AArch64, this uses the fused NEON pointwise-multiply-accumulate kernel
@@ -838,15 +594,5 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
-    }
-
-    /// Apply `sigma_{-1}` directly in NTT domain (`slot[j] -> slot[D-1-j]`).
-    ///
-    /// This is a pure index permutation per CRT limb and does not negate values.
-    pub fn conjugation_automorphism_ntt(&self) -> Self {
-        let limbs = std::array::from_fn(|k| {
-            std::array::from_fn(|j| self.limbs[k][D.saturating_sub(1) - j])
-        });
-        Self { limbs }
     }
 }

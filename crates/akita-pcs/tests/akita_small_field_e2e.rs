@@ -52,11 +52,9 @@ mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_cpu_backend::CpuBackend;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    lagrange_weights, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims,
+    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use common::*;
 use jolt_field::{ExtField, One, Ring};
@@ -119,19 +117,24 @@ macro_rules! small_field_test {
                         .map(|i| weights[i] * <$se>::lift_base(evals[i]))
                         .fold(<$se>::from_u64(0), |a, b| a + b);
 
-                    let roundtrip = single_group_roundtrip::<
-                        $cfg,
-                        akita_cpu_backend::DensePoly<$sf>,
-                    >(
-                        nv,
-                        &poly,
-                        point,
-                        expected,
-                        label,
-                        stringify!($name),
+                    $(
+                        let roundtrip = single_group_roundtrip::<
+                            $cfg,
+                            akita_cpu_backend::DensePoly<$sf>,
+                        >(
+                            nv,
+                            &poly,
+                            point.clone(),
+                            expected,
+                            label,
+                            stringify!($name),
+                        );
+                        $check(&roundtrip, label, stringify!($name));
+                        drop(roundtrip);
+                    )?
+                    let _ = single_group_roundtrip::<$cfg, akita_cpu_backend::DensePoly<$sf>>(
+                        nv, &poly, point, expected, label, stringify!($name),
                     );
-                    $($check(&roundtrip, label, stringify!($name));)?
-                    drop(roundtrip);
                 }
             });
         }
@@ -230,12 +233,11 @@ vec![pre_hint, final_hint],
 scheme.schedules());
                     let selection = prover_data.selection();
 
-                    let mut pt = AkitaTranscript::<$sf>::new(label);
                     let proof = scheme.batched_prove(
                         &setup,
                         prover_data,
                         &stack,
-                        &mut pt,
+                        label,
                         BasisMode::Lagrange,
                     )
                     .expect("prove");
@@ -286,7 +288,7 @@ scheme.schedules());
                         .collect();
                     let expected = onehot_opening_lagrange(&poly, &point);
 
-                    single_group_roundtrip::<
+                    let _ = single_group_roundtrip::<
                         $cfg,
                         akita_cpu_backend::OneHotPoly<$sf, u8>,
                     >(
@@ -407,12 +409,11 @@ vec![pre_hint, final_hint],
 scheme.schedules());
                     let selection = prover_data.selection();
 
-                    let mut pt = AkitaTranscript::<$sf>::new(label);
                     let proof = scheme.batched_prove(
                         &setup,
                         prover_data,
                         &stack,
-                        &mut pt,
+                        label,
                         BasisMode::Lagrange,
                     )
                     .expect("prove");
@@ -609,24 +610,10 @@ fn fp32_onehot_multi_group() {
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript =
-            AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
+        let session = b"completeness/fp32_onehot_multi_group";
         let proof = scheme
-            .batched_prove(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("fp32 multi-group prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_uncompressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<SmallF, SmallE>::deserialize_uncompressed(&bytes[..], &shape)
-                .expect("deserialize");
 
         let verify_claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(pre_point, vec![pre_opening], &pre_commitment)
@@ -635,13 +622,11 @@ fn fp32_onehot_multi_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )

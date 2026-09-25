@@ -378,12 +378,6 @@ pub(crate) enum ProjectedEqPairTensorState {
 }
 
 impl<E: Field> SetupContributionPlan<E> {
-    /// Equality window shared by every direct contribution over this opening point.
-    #[must_use]
-    pub fn eq_window(&self) -> &OffsetEqWindow<E> {
-        self.relation_address.equality_window()
-    }
-
     /// Prepared D/B/A column equality slices for `group_id`.
     ///
     /// The D-role slice is laid out
@@ -391,8 +385,8 @@ impl<E: Field> SetupContributionPlan<E> {
     /// `(claim, block, A_row, outer_subcolumn, commit_digit)`, and the A-role
     /// slice `(position, witness_digit)` after contraction over units and fold
     /// digits. Subcolumn axes have length one for uniform roles.
-    /// The direct ring-switch verifier reuses all three instead of evaluating
-    /// the same opening equality addresses a second time.
+    /// Tests compare these slices against independent address oracles.
+    #[cfg(test)]
     #[must_use]
     pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
         let group_index = self
@@ -412,6 +406,7 @@ pub(crate) struct DirectScanWeights<E> {
 }
 
 impl<E> DirectScanWeights<E> {
+    #[cfg(test)]
     pub(crate) fn slices(&self) -> (&[E], &[E], &[E]) {
         (&self.e, &self.t, &self.z)
     }

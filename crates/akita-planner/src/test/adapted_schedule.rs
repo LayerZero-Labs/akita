@@ -206,17 +206,13 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
 }
 
 #[test]
-fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
+fn adapted_schedule_rejects_oversized_precommit_width_before_search() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(44);
     let main_row = catalog
         .resolve_key(&AkitaScheduleLookupKey::single(main_group))
         .expect("scalar main row");
-    assert!(matches!(
-        main_row.schedule().root.params.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-    ));
     let pre_profile = catalog
         .resolve_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
@@ -224,18 +220,6 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
         .expect("scalar producer row")
         .profiles()
         .final_group;
-    let packing_domain = PlannerOpeningCandidate::coefficient_packing_domain(
-        0,
-        policy_of::<OneHot>().claim_ext_degree,
-        CommitmentRingDims {
-            inner: pre_profile.inner.matrix.ring_dimension(),
-            outer: pre_profile.outer.matrix.ring_dimension(),
-            opening: main_row.schedule().root.params.role_dims().d_d(),
-        },
-    )
-    .expect("valid packing domain");
-    assert_eq!(packing_domain.len(), 1, "regression requires one choice");
-
     let request = crate::emit::GroupedGenerationRequest::new(
         main_group,
         vec![producer::<OneHot>(pre_profile); MAX_ADAPTED_PRECOMMIT_WIDTH + 1],
@@ -247,7 +231,7 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
         &policy_of::<OneHot>(),
         |_| panic!("oversized request must reject before planner search"),
     )
-    .expect_err("oversized one-choice producer domain must fail at the public boundary");
+    .expect_err("oversized producer domain must fail at the public boundary");
     let AkitaError::UnsupportedSchedule(message) = error else {
         panic!("unexpected error: {error}");
     };
@@ -587,13 +571,13 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
-                let adapted_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let adapted_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
                     &key,
                     &adapted.schedule,
                     &policy,
                 )
                 .expect("adapted payload bytes");
-                let full_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let full_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
                     &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");

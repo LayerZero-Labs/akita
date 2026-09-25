@@ -159,5 +159,5 @@ fn downstream_crate_can_compose_fused_and_compression_backends() {
         output.terminal_payload().coeff_len(),
         plan.compression().unwrap().terminal_coefficients()
     );
-    TerminalTFieldsMessage::from_row(output.terminal_payload()).unwrap();
+    TerminalTFieldsMessage::from_row(output.terminal_payload());
 }
