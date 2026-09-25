@@ -2,6 +2,7 @@
 
 use super::*;
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, EqPairTensorFamily, OffsetEqWindow};
+use akita_algebra::ring::terminal_residue_kernel;
 
 pub(super) fn materialize_reduced_role_tensor_weights<E: Field>(
     plan: &SetupContributionPlan<E>,
@@ -100,15 +101,9 @@ pub(super) fn prepare_reduced_role_coefficient_state<E: Field>(
     let native_equality = OffsetEqWindow::new(&native_point)?;
     let mut native_equality_weights = vec![E::zero(); role_dimension];
     native_equality.fill_interval(0, &mut native_equality_weights)?;
-    let functional = akita_types::ReducedCoefficientFunctional::prepare(
-        &native_equality,
-        role_dimension,
-        0,
-        role_dimension,
-        alpha,
-    )?;
+    let functional = terminal_residue_kernel(&native_equality_weights, alpha)?;
     Ok(ReducedRoleCoefficientState {
-        functional: functional.into_weights(),
+        functional: functional.into(),
         equality: native_equality_weights.into(),
     })
 }

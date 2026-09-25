@@ -8,7 +8,6 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
-mod coefficient_functional;
 mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
@@ -50,7 +49,6 @@ pub use batch::{
     prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
     PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
-pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
