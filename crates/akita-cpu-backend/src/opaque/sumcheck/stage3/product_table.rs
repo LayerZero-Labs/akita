@@ -3,7 +3,8 @@ use super::utils::{accumulate_left_round, fold_dense_left_round, fold_factor_in_
 use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, product_claim};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
-use akita_algebra::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_error::AkitaError;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, MulBaseUnreduced, Ring, Zero};
@@ -174,7 +175,7 @@ where
         self.input_claim
     }
 
-    pub(super) fn compute_round_univariate(&self, round: usize) -> UniPoly<E> {
+    pub(super) fn compute_round_univariate(&self, round: usize) -> UnivariatePoly<E> {
         let (constant, linear, quadratic) = if round < self.coefficient_rounds {
             accumulate_left_round(&self.coefficient_table, &self.coefficient_factor, E::one())
         } else {
@@ -186,7 +187,7 @@ where
                 self.coefficient_factor[0],
             )
         };
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
+        UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
     pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
@@ -302,13 +303,17 @@ impl<E: Field + Ring> FactoredProductTerm<E> {
         self.input_claim
     }
 
-    pub(super) fn compute_round_univariate(&self, round: usize, _previous_claim: E) -> UniPoly<E> {
+    pub(super) fn compute_round_univariate(
+        &self,
+        round: usize,
+        _previous_claim: E,
+    ) -> UnivariatePoly<E> {
         let (constant, linear, quadratic) = if round < self.right_rounds {
             accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
         } else {
             accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
         };
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
+        UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
     pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {

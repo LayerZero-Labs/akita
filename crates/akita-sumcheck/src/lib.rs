@@ -12,7 +12,6 @@ mod traits;
 mod types;
 
 pub use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
-pub use akita_algebra::uni_poly::{CompressedUniPoly, UniPoly};
 
 pub use accum::reduce_signed_accum;
 pub use compact_fold::CompactPairFoldLut;
@@ -28,6 +27,6 @@ pub use traits::{
     InfallibleSumcheck, SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckKernel,
 };
 pub use types::{
-    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
-    EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
+    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof,
+    SumcheckProofShape,
 };

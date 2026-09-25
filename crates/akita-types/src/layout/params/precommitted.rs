@@ -505,12 +505,6 @@ impl GroupOpenPhaseParams {
 impl GroupOpenPhaseParams {
     #[inline]
     #[must_use]
-    pub fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable
-    }
-
-    #[inline]
-    #[must_use]
     pub fn opening_method(&self) -> OpeningMethod {
         self.opening.opening_method
     }

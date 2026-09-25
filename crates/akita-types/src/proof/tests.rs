@@ -72,6 +72,4 @@ fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
 
     assert!(!flat.can_decode_single(0));
     assert!(!flat.can_decode_vec(0));
-    assert!(flat.try_to_single::<0>().is_err());
-    assert!(flat.try_to_vec::<0>().is_err());
 }

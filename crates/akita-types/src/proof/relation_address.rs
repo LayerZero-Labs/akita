@@ -3,9 +3,9 @@
 use akita_error::AkitaError;
 
 use super::stage1::FlatBooleanDomain;
-use crate::layout::{
-    validate_role_dims, witness_commitment_domain_len, CommitmentRingDims, RingRole,
-};
+#[cfg(test)]
+use crate::layout::RingRole;
+use crate::layout::{validate_role_dims, witness_commitment_domain_len, CommitmentRingDims};
 use crate::RelationWitnessGeometry;
 
 /// Checked address geometry for one compact relation witness.
@@ -168,26 +168,11 @@ impl RelationAddressGeometry {
     }
 
     #[must_use]
-    pub const fn live_witness_coeff_len(self) -> usize {
-        self.live_witness_coeff_len
-    }
-
-    #[must_use]
-    pub const fn committed_witness_coeff_len(self) -> usize {
-        self.committed_witness_coeff_len
-    }
-
-    #[must_use]
-    pub const fn successor_live_ring_len(self) -> usize {
-        self.live_witness_coeff_len
-            .div_ceil(self.outgoing_witness_ring_dimension)
-    }
-
-    #[must_use]
     pub const fn relation_coefficient_variable_count(self) -> usize {
         self.relation_coefficient_block_len.trailing_zeros() as usize
     }
 
+    #[cfg(test)]
     #[must_use]
     pub const fn role_relation_lane_count(self, role: RingRole) -> usize {
         let role_dim = match role {
@@ -296,11 +281,6 @@ impl CompressionRelationAddressGeometry {
     pub const fn coefficient_block_len(self) -> usize {
         self.coefficient_block_len
     }
-
-    #[must_use]
-    pub const fn live_lane_count(self) -> usize {
-        self.live_witness_coeff_len / self.coefficient_block_len
-    }
 }
 
 const fn all_dims_divisible(dims: CommitmentRingDims, block: usize) -> bool {
@@ -349,9 +329,8 @@ mod tests {
         let geometry =
             RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 320)
                 .unwrap();
-        assert_eq!(geometry.live_witness_coeff_len(), 320);
-        assert_eq!(geometry.committed_witness_coeff_len(), 512);
-        assert_eq!(geometry.successor_live_ring_len(), 5);
+        assert_eq!(geometry.live_witness_coeff_len, 320);
+        assert_eq!(geometry.committed_witness_coeff_len, 512);
         assert_eq!(geometry.relation_coefficient_block_len(), 64);
         assert_eq!(geometry.live_relation_lane_count(), 5);
         assert_eq!(geometry.relation_lane_capacity(), 8);
@@ -370,16 +349,14 @@ mod tests {
         assert_eq!(relation.relation_coefficient_block_len(), 64);
         assert_eq!(relation.live_relation_lane_count(), 16);
         assert_eq!(compression.coefficient_block_len(), 8);
-        assert_eq!(compression.live_lane_count(), 128);
     }
 
     #[test]
     fn successor_alignment_is_one_zero_suffix() {
         let geometry =
             RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 128, 64).unwrap();
-        assert_eq!(geometry.live_witness_coeff_len(), 64);
-        assert_eq!(geometry.successor_live_ring_len(), 1);
-        assert_eq!(geometry.committed_witness_coeff_len(), 128);
+        assert_eq!(geometry.live_witness_coeff_len, 64);
+        assert_eq!(geometry.committed_witness_coeff_len, 128);
         assert_eq!(geometry.digit_witness_domain().domain_len(), 128);
     }
 

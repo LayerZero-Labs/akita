@@ -64,6 +64,7 @@ pub(crate) use fold_kernels::{FoldRelationKernel, FoldRelationOutput, RelationQu
 pub use fold_kernels::{OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput};
 pub(crate) use handles::{CpuWitnessBuildHandle, OperationBinding};
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::UnivariatePoly;
 pub(crate) use lifecycle::{BackendIdentity, CpuProofSessionHandle, ScopeLease};
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldPlan,
@@ -575,7 +576,7 @@ where
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.validate_leased_binding(
             &session_handle.operation_binding(),
             session_handle.scope_lease()?,

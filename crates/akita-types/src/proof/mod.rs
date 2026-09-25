@@ -23,7 +23,6 @@ pub mod setup;
 pub mod setup_envelope;
 pub mod setup_prefix;
 pub mod stage1;
-pub mod terminal_witness;
 
 mod containers;
 
@@ -48,9 +47,8 @@ pub use crate::opening_claims::{
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
-    folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, PreparedOpeningPoint, PreparedRingMultiplier,
-    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
+    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{
@@ -64,8 +62,7 @@ pub use coefficient_packing_relation::{
 pub use commitment::{Commitment, CommittedGroup};
 pub use compression_relation_weights::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
-    evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
-    ReducedCompressionRelationWeights,
+    CompressionRelationWeights, NegativeBinarySupport, ReducedCompressionRelationWeights,
 };
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
 pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
@@ -90,9 +87,8 @@ pub use relation_range_image::{
 };
 pub use relation_weight_event::{RelationWeightContribution, RelationWeightEvent};
 pub use ring_relation::{
-    ring_relation_segment_lengths, CoefficientPackingChallenges, RingRelationGroupOpening,
-    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
+    CoefficientPackingChallenges, RingRelationGroupOpening, RingRelationGroupOpeningView,
+    RingRelationInstance,
 };
 pub use scheme::OpeningPoints;
 pub use setup::{
@@ -119,15 +115,11 @@ pub use shapes::{
 };
 pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use tail_segments::{
-    build_terminal_response_from_groups, build_terminal_response_from_payload,
-    decode_terminal_z_golomb_payload, raw_field_segment_bytes, terminal_response_upper_bound_bytes,
-    terminal_response_z_payload_bytes, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape,
+    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
+    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponse, TerminalResponseShape,
 };
-pub use terminal_witness::TerminalWitnessTranscriptParts;
-pub use witness_emission::{
-    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, WitnessCoefficientSink,
-};
+pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, WitnessCoefficientSink};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;

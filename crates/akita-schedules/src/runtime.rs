@@ -252,12 +252,6 @@ impl PlannerPolicy {
         self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
     }
 
-    /// Whether a candidate fits the optional host setup budget.
-    pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
-        self.setup_field_budget
-            .is_none_or(|budget| num_field_elements <= budget)
-    }
-
     /// Validate extension-field geometry and return the challenge-field width.
     ///
     /// The checked conversion and multiplication keep malformed custom policy

@@ -3,7 +3,7 @@
 use crate::{
     akita::{scalar_sis_from_ring_euclidean, AkitaModulusProfileId},
     config::EstimateConfig,
-    cost::{CostValue, EstimateTag, LatticeCost, LogCost},
+    cost::{CostValue, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     estimate,
     width_table::{D128_SEARCH_CAP, DEFAULT_MAX_RANK, DEFAULT_SEARCH_CAP},
@@ -373,7 +373,6 @@ fn trivially_easy_cost() -> LatticeCost {
         d: 0,
         prob: None,
         repetitions: None,
-        tag: EstimateTag::empty(),
     }
 }
 

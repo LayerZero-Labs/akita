@@ -158,7 +158,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let root = multi_group_root_params(&schedule);
     let main_params = schedule.root.params.clone();
 
-    assert_eq!(multi_group_key.num_commitment_groups(), 4);
+    assert_eq!(multi_group_key.precommitteds.len(), 3);
     assert_eq!(
         multi_group_key
             .num_polynomials()

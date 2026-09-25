@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 struct Stage1EqSumcheck<
     'a,
@@ -35,7 +36,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_sumcheck::EqFactoredUniPoly<E>, AkitaError> {
+    ) -> Result<jolt_poly::OmittedConstantPoly<E>, AkitaError> {
         if round != self.next_round {
             return Err(AkitaError::InvalidProof);
         }
@@ -99,7 +100,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         if round != self.next_round {
             return Err(AkitaError::InvalidProof);
         }
@@ -109,7 +110,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage1Kern
         let crate::backend::Stage1RoundPolynomial::Standard(polynomial) = polynomial else {
             return Err(AkitaError::InvalidProof);
         };
-        if polynomial.coeffs.len() != self.degree + 1 {
+        if polynomial.coefficients().len() != self.degree + 1 {
             return Err(AkitaError::InvalidProof);
         }
         Ok(polynomial)
@@ -706,7 +707,7 @@ impl<F: Field, E: Field, B: crate::backend::OpaqueStage3Kernel<F, E>>
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend
             .stage3_round_polynomial(self.session, round, claim)
     }
@@ -752,7 +753,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueStage2Kern
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend
             .stage2_round_polynomial(self.session, round, claim)
     }

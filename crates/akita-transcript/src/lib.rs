@@ -1,7 +1,6 @@
 //! Native Spongefish proof streams and Akita-specific message codecs.
 
 mod grinding;
-pub mod labels;
 #[cfg(feature = "logging-transcript")]
 mod logging;
 mod native;
