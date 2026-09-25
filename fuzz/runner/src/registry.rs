@@ -112,3 +112,42 @@ pub fn targets(lanes: &[Lane]) -> Vec<String> {
     names.dedup();
     names
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_registry_loads_and_splits_variant_weight() {
+        let lanes =
+            load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../campaign/targets.toml")).unwrap();
+        let ring: Vec<&Lane> = lanes
+            .iter()
+            .filter(|lane| lane.target == "ring_ntt")
+            .collect();
+        assert_eq!(ring.len(), 2);
+        assert!(ring.iter().all(|lane| (lane.weight - 1.0).abs() < 1e-9));
+        assert!(ring
+            .iter()
+            .any(|lane| lane.env.get("AKITA_SCALAR_NTT").map(String::as_str) == Some("1")));
+        let names: std::collections::BTreeSet<String> = targets(&lanes).into_iter().collect();
+        let library: std::collections::BTreeSet<String> = akita_fuzz::targets::ALL
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+        assert_eq!(names, library, "registry and library disagree");
+    }
+
+    #[test]
+    fn rejects_unknown_kinds() {
+        let dir = std::env::temp_dir().join(format!("akita-fuzz-registry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("targets.toml");
+        std::fs::write(
+            &path,
+            "[defaults]\ntimeout_s=1\nrss_limit_mb=1\nmalloc_limit_mb=1\nmax_len=1\nthreads=1\n[target.x]\nkind=\"other\"\n",
+        )
+        .unwrap();
+        assert!(load(&path).unwrap_err().contains("kind"));
+    }
+}

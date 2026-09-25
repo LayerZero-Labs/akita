@@ -102,3 +102,62 @@ pub fn summarize(findings: &Path) -> Vec<Value> {
     out.sort_by(|a: &Value, b: &Value| a["id"].as_str().cmp(&b["id"].as_str()));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("akita-fuzz-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn records_bounded_samples_and_counts_all() {
+        let root = scratch("findings");
+        let artifact = root.join("crash-1");
+        fs::write(&artifact, b"input").unwrap();
+        for index in 0..(MAX_SAMPLES + 3) {
+            let (meta, new) = record(
+                &root.join("findings"),
+                Occurrence {
+                    id: "panic-x-1",
+                    signature: "sig",
+                    kind: "panic",
+                    lane: "x",
+                    target: "x",
+                    artifact: Some(&artifact),
+                    report: &["line".to_string()],
+                    context: json!({"host": "h"}),
+                },
+            )
+            .unwrap();
+            assert_eq!(new, index == 0);
+            assert_eq!(meta["count"], json!(index + 1));
+        }
+        let meta: Value = read_json(&root.join("findings/panic-x-1/meta.json")).unwrap();
+        assert_eq!(meta["samples"].as_array().unwrap().len(), MAX_SAMPLES);
+        assert_eq!(meta["host"], "h");
+        assert_eq!(
+            fs::read(root.join("findings/panic-x-1/sample-0.input")).unwrap(),
+            b"input"
+        );
+    }
+
+    #[test]
+    fn quarantines_the_corpus_copy_by_content_hash() {
+        let root = scratch("quarantine");
+        let corpus = root.join("corpus");
+        fs::create_dir_all(&corpus).unwrap();
+        fs::write(corpus.join(sha1_hex(b"boom")), b"boom").unwrap();
+        let artifact = root.join("crash-2");
+        fs::write(&artifact, b"boom").unwrap();
+        let moved = quarantine_corpus_copy(Some(&artifact), &corpus, &root.join("q")).unwrap();
+        assert!(moved.is_file());
+        assert!(!corpus.join(sha1_hex(b"boom")).exists());
+        assert!(quarantine_corpus_copy(Some(&artifact), &corpus, &root.join("q")).is_none());
+    }
+}

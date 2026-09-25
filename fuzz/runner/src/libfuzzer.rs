@@ -274,3 +274,101 @@ pub fn sha1_hex(data: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(text: &str) -> Vec<String> {
+        text.lines().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn parses_status_and_final_stats() {
+        let mut status = Status::default();
+        parse_status(
+            "INFO: seed corpus: files: 33 min: 1b max: 4096b total: 70Kb rss: 90Mb",
+            &mut status,
+        );
+        parse_status(
+            "#34\tINITED cov: 642 ft: 5404 corp: 33/70Kb exec/s: 0 rss: 101Mb",
+            &mut status,
+        );
+        assert!(status.inited);
+        assert_eq!(
+            (status.execs, status.cov, status.ft, status.corpus),
+            (34, 642, 5404, 33)
+        );
+        parse_status(
+            "#1024\tpulse  cov: 700 ft: 6000 corp: 40/80Kb lim: 4096 exec/s: 512 rss: 120Mb",
+            &mut status,
+        );
+        assert_eq!(
+            (status.execs, status.exec_per_s, status.rss_mb),
+            (1024, 512, 120)
+        );
+        parse_status("stat::number_of_executed_units: 5000", &mut status);
+        parse_status("stat::peak_rss_mb: 300", &mut status);
+        assert_eq!((status.execs, status.rss_mb), (5000, 300));
+    }
+
+    #[test]
+    fn finds_artifact_paths() {
+        let line =
+            "artifact_prefix='/o/artifacts/x/'; Test unit written to /o/artifacts/x/crash-abc";
+        assert_eq!(
+            artifact_path(line),
+            Some(PathBuf::from("/o/artifacts/x/crash-abc"))
+        );
+        assert_eq!(artifact_path("no artifact here"), None);
+    }
+
+    #[test]
+    fn classifies_failures() {
+        assert_eq!(
+            classify(
+                &lines("==1== ERROR: libFuzzer: timeout after 60 seconds"),
+                None
+            ),
+            "timeout"
+        );
+        assert_eq!(classify(&[], Some(Path::new("/a/oom-123"))), "oom");
+        assert_eq!(
+            classify(
+                &lines("==1==ERROR: AddressSanitizer: heap-buffer-overflow"),
+                None
+            ),
+            "asan"
+        );
+        assert_eq!(
+            classify(
+                &lines("thread '<unnamed>' (7) panicked at src/a.rs:3:5:\nboom"),
+                None
+            ),
+            "panic"
+        );
+    }
+
+    #[test]
+    fn panic_signatures_ignore_values_but_keep_location() {
+        let a = lines("thread '<unnamed>' (8575000) panicked at src/targets/decompose.rs:112:9:\nassertion failed: left: Fp64(524171) right: Fp64(524289)");
+        let b = lines("thread '<unnamed>' (1) panicked at src/targets/decompose.rs:112:9:\nassertion failed: left: Fp64(123456) right: Fp64(999999)");
+        let c = lines("thread '<unnamed>' (1) panicked at src/targets/decompose.rs:120:9:\nassertion failed: left: Fp64(123456) right: Fp64(999999)");
+        let (id_a, text_a) = signature("panic", "decompose", &a);
+        assert_eq!(id_a, signature("panic", "decompose", &b).0);
+        assert_ne!(id_a, signature("panic", "decompose", &c).0);
+        assert!(text_a.contains("src/targets/decompose.rs:112"), "{text_a}");
+    }
+
+    #[test]
+    fn stack_signatures_use_akita_frames() {
+        let report = lines(
+            "==1== ERROR: libFuzzer: timeout after 60 seconds\n    #0 0x1 in __sanitizer_print_stack_trace\n    #1 0x2 in akita_fuzz::targets::pcs::run::h0123456789abcdef\n    #2 0x3 in akita_prover::protocol::prove::h0123456789abcdef /x.rs:1\n    #3 0x4 in akita_sumcheck::native::verify /y.rs:2",
+        );
+        let (_, text) = signature("timeout", "pcs_dense", &report);
+        assert!(
+            text.ends_with("akita_prover::protocol::prove <- akita_sumcheck::native::verify"),
+            "{text}"
+        );
+    }
+}

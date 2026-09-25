@@ -140,6 +140,9 @@ pub struct Runner {
     pending_replays: VecDeque<(String, Lane, PathBuf)>,
     last_state: Instant,
     last_corpus_count: Instant,
+    /// Lanes whose startup baseline has not finished in this session.
+    baseline_pending: VecDeque<Lane>,
+    baseline_running: std::collections::HashSet<String>,
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -200,6 +203,8 @@ impl Runner {
             pending_replays: VecDeque::new(),
             last_state: Instant::now() - STATE_INTERVAL,
             last_corpus_count: Instant::now() - CORPUS_COUNT_INTERVAL,
+            baseline_pending: VecDeque::new(),
+            baseline_running: std::collections::HashSet::new(),
         })
     }
 
@@ -551,6 +556,9 @@ impl Runner {
 
     fn finish(&mut self, job: Job, code: i32) {
         let name = job.lane.name();
+        if job.purpose == Purpose::Baseline {
+            self.baseline_running.remove(&name);
+        }
         let elapsed = job.started.elapsed().as_secs_f64();
         let tail: Vec<String> = job.tail.iter().cloned().collect();
         let artifact = job.artifact.clone().or_else(|| {
@@ -770,7 +778,13 @@ impl Runner {
                 .get(&lane.name())
                 .cloned()
                 .unwrap_or_default();
-            if state.backoff_until > time || !self.fits(lane) {
+            let name = lane.name();
+            let awaiting_baseline = self.baseline_running.contains(&name)
+                || self
+                    .baseline_pending
+                    .iter()
+                    .any(|pending| pending.name() == name);
+            if awaiting_baseline || state.backoff_until > time || !self.fits(lane) {
                 continue;
             }
             let projected = state.cpu_seconds
@@ -789,6 +803,23 @@ impl Runner {
     }
 
     fn schedule(&mut self) {
+        while !self.stopping
+            && self
+                .baseline_pending
+                .front()
+                .is_some_and(|lane| self.fits(lane))
+        {
+            let lane = self.baseline_pending.pop_front().expect("front");
+            match self.spawn(&lane, Purpose::Baseline, &[]) {
+                Ok(_) => {
+                    self.baseline_running.insert(lane.name());
+                }
+                Err(error) => self.event(&format!(
+                    "baseline {} failed to start: {error}",
+                    lane.name()
+                )),
+            }
+        }
         while !self.stopping {
             let Some((_, lane, _)) = self.pending_replays.front() else {
                 break;
@@ -820,48 +851,17 @@ impl Runner {
         }
     }
 
-    fn baseline(&mut self) {
+    /// Queue every lane's startup baseline. Each lane starts fuzzing as soon
+    /// as its own baseline finishes; failures become findings.
+    fn queue_baselines(&mut self) {
         self.event(&format!(
             "baseline: executing shipped seeds for {} lanes",
             self.lanes.len()
         ));
-        let mut queue: VecDeque<Lane> = self.lanes.iter().cloned().collect();
-        while (!queue.is_empty() || !self.jobs.is_empty()) && !self.stopping {
-            while queue.front().is_some_and(|lane| self.fits(lane)) {
-                let lane = queue.pop_front().expect("front");
-                if let Err(error) = self.spawn(&lane, Purpose::Baseline, &[]) {
-                    self.event(&format!(
-                        "baseline {} failed to start: {error}",
-                        lane.name()
-                    ));
-                }
-            }
-            self.pump(Duration::from_secs(1));
-            self.reap();
-            self.write_state(false);
-            self.check_signals();
-        }
-        let failed: Vec<String> = self
-            .lanes
-            .iter()
-            .filter(|lane| {
-                !self
-                    .state
-                    .lanes
-                    .get(&lane.name())
-                    .and_then(|s| s.baseline.as_ref())
-                    .is_some_and(|b| b["ok"] == true)
-            })
-            .map(Lane::name)
-            .collect();
-        if failed.is_empty() {
-            self.event("baseline: all lanes passed");
-        } else {
-            self.event(&format!(
-                "baseline: FAILED for {}; see findings (fuzzing continues)",
-                failed.join(", ")
-            ));
-        }
+        // Slowest (end-to-end) lanes first so they overlap cheaper lanes' fuzzing.
+        let mut lanes = self.lanes.clone();
+        lanes.sort_by_key(|lane| std::cmp::Reverse(lane.timeout_s));
+        self.baseline_pending = lanes.into();
     }
 
     pub fn run(mut self) -> std::io::Result<()> {
@@ -873,7 +873,7 @@ impl Runner {
             self.seed_corpus(&lane)?;
         }
         if !self.options.skip_baseline {
-            self.baseline();
+            self.queue_baselines();
         }
         self.event(&format!(
             "fuzzing {} lanes; slice {}s",
