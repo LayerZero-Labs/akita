@@ -65,4 +65,3 @@ pub(super) fn detect_cpu_features() -> AvxCpuFeatures {
             && std::is_x86_feature_detected!("avx512bw"),
     }
 }
-

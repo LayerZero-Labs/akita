@@ -209,39 +209,30 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     ) {
         self.debug_assert_active_digits(digits);
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if crate::ntt::butterfly::use_x86_i32_transform_ntt::<W, D>(params.kernel_plan()) {
+        if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan()) {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
             // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
-            // identifies W as i32. MontCoeff is transparent, while NttPrime
-            // and NttTwiddles have stable C layouts. Both arrays contain D
+            // identifies W. MontCoeff is transparent, while NttPrime and
+            // NttTwiddles have stable C layouts. Both arrays contain D >= 64
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
-                avx::forward_ntt_i8_i32(
-                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
-                    digits,
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                    params.kernel_plan().uses_avx512_transform(),
-                );
-            }
-            return;
-        }
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i16>() {
-            let prime = params.primes[k];
-            let tw = &params.twiddles[k];
-            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
-            // identifies W as i16. MontCoeff is transparent, while NttPrime
-            // and NttTwiddles have stable C layouts. Both arrays contain D
-            // elements, do not overlap, and the prepared plan proves AVX2.
-            unsafe {
-                avx::forward_ntt_i8_i16(
-                    &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
-                    digits,
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
-                );
+                if size_of::<W>() == size_of::<i16>() {
+                    avx::forward_ntt_i8_i16(
+                        &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
+                        digits,
+                        *(&prime as *const _ as *const NttPrime<i16>),
+                        &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    );
+                } else {
+                    avx::forward_ntt_i8_i32(
+                        &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
+                        digits,
+                        *(&prime as *const _ as *const NttPrime<i32>),
+                        &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                        params.kernel_plan().uses_avx512_transform(),
+                    );
+                }
             }
             return;
         }

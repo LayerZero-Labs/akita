@@ -13,12 +13,11 @@
 use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 use super::NttKernelPlan;
 
+/// Whether the x86 transforms handle degree `D`, for either sealed width.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
-pub(crate) fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>(
-    plan: NttKernelPlan,
-) -> bool {
-    D >= 64 && std::mem::size_of::<W>() == std::mem::size_of::<i32>() && plan.uses_x86_transform()
+pub(crate) fn use_x86_transform_ntt<const D: usize>(plan: NttKernelPlan) -> bool {
+    D >= 64 && plan.uses_x86_transform()
 }
 
 /// Precomputed twiddle factors for a specific prime and degree `D`.
@@ -181,25 +180,26 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::mem::size_of::<W>() == std::mem::size_of::<i16>() && plan.uses_x86_transform() {
+    if use_x86_transform_ntt::<D>(plan) {
+        // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
+        // `D >= 64`. PrimeWidth is sealed to i16 and i32, so the width check
+        // identifies W. MontCoeff is transparent, while NttPrime and
+        // NttTwiddles have stable C layouts.
         unsafe {
-            super::avx::forward_ntt_i16(
-                &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                *(&prime as *const _ as *const NttPrime<i16>),
-                &*(tw as *const _ as *const NttTwiddles<i16, D>),
-            );
-        }
-        return;
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if use_x86_i32_transform_ntt::<W, D>(plan) {
-        unsafe {
-            super::avx::forward_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                *(&prime as *const _ as *const NttPrime<i32>),
-                &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                plan.uses_avx512_transform(),
-            );
+            if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+                super::avx::forward_ntt_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            } else {
+                super::avx::forward_ntt_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    plan.uses_avx512_transform(),
+                );
+            }
         }
         return;
     }
@@ -265,25 +265,26 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::mem::size_of::<W>() == std::mem::size_of::<i16>() && plan.uses_x86_transform() {
+    if use_x86_transform_ntt::<D>(plan) {
+        // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
+        // `D >= 64`. PrimeWidth is sealed to i16 and i32, so the width check
+        // identifies W. MontCoeff is transparent, while NttPrime and
+        // NttTwiddles have stable C layouts.
         unsafe {
-            super::avx::inverse_ntt_i16(
-                &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                *(&prime as *const _ as *const NttPrime<i16>),
-                &*(tw as *const _ as *const NttTwiddles<i16, D>),
-            );
-        }
-        return;
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if use_x86_i32_transform_ntt::<W, D>(plan) {
-        unsafe {
-            super::avx::inverse_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                *(&prime as *const _ as *const NttPrime<i32>),
-                &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                plan.uses_avx512_transform(),
-            );
+            if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+                super::avx::inverse_ntt_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            } else {
+                super::avx::inverse_ntt_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    plan.uses_avx512_transform(),
+                );
+            }
         }
         return;
     }
@@ -348,14 +349,26 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if use_x86_i32_transform_ntt::<W, D>(plan) {
+    if use_x86_transform_ntt::<D>(plan) {
+        // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
+        // `D >= 64`. PrimeWidth is sealed to i16 and i32, so the width check
+        // identifies W. MontCoeff is transparent, while NttPrime and
+        // NttTwiddles have stable C layouts.
         unsafe {
-            super::avx::forward_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                *(&prime as *const _ as *const NttPrime<i32>),
-                &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                plan.uses_avx512_transform(),
-            );
+            if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+                super::avx::forward_ntt_cyclic_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            } else {
+                super::avx::forward_ntt_cyclic_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    plan.uses_avx512_transform(),
+                );
+            }
         }
         return;
     }
@@ -416,14 +429,26 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     plan: NttKernelPlan,
 ) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if use_x86_i32_transform_ntt::<W, D>(plan) {
+    if use_x86_transform_ntt::<D>(plan) {
+        // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
+        // `D >= 64`. PrimeWidth is sealed to i16 and i32, so the width check
+        // identifies W. MontCoeff is transparent, while NttPrime and
+        // NttTwiddles have stable C layouts.
         unsafe {
-            super::avx::inverse_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                *(&prime as *const _ as *const NttPrime<i32>),
-                &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                plan.uses_avx512_transform(),
-            );
+            if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+                super::avx::inverse_ntt_cyclic_i16(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            } else {
+                super::avx::inverse_ntt_cyclic_i32(
+                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    plan.uses_avx512_transform(),
+                );
+            }
         }
         return;
     }

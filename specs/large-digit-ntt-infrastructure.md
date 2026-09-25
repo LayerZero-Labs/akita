@@ -37,7 +37,9 @@ Portable, AVX2, and NEON hosts retain the homogeneous i32 CRT profile and add
 one 14-bit residue modulo 12289 only when required. AVX-512IFMA hosts at D64
 through D512 may instead use the exact homogeneous 50-bit profile selected for
 Q32, Q64, or Q128. The Q32 and Q128 IFMA forms can add the 12289 tail when
-their base product is insufficient. The Q64 IFMA form is selected only when
+their base product is insufficient; Q128 instead adds the 30-bit prime
+1073707009 as an i32 tail when base plus 12289 is also insufficient. The Q64
+IFMA form is selected only when
 its two base residues are sufficient; otherwise selection falls back to the
 ordinary Q64 i32 profile, which can use the tail. Every form is derived, lazy,
 and non-serialized.
@@ -127,8 +129,9 @@ canonical 50-bit residues but share the same capacity and centered-Garner
 contracts as the portable profiles. The IFMA form is used only for exact
 negacyclic requests. Ordinary cyclic, negacyclic, and paired-transform cache
 requests retain the i32 representation. Q32 and Q128 may attach 12289 as an
-i16 tail. Q64 does not attach a tail to its IFMA form; an insufficient two
-prime product selects the ordinary Q64 profile instead.
+i16 tail. Q128 falls back to 1073707009 as an i32 tail only when base plus
+12289 is insufficient. Q64 does not attach a tail to its IFMA form; an
+insufficient two prime product selects the ordinary Q64 profile instead.
 
 `12289 - 1 = 3 * 2^12`, so the tail admits a primitive root for every
 negacyclic ring degree through `D = 2048`. It is coprime to every base profile
