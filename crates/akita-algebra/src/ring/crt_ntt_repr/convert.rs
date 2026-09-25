@@ -11,7 +11,7 @@ use crate::ntt::prime::{MontCoeff, PrimeWidth};
 use crate::ntt::{prime::NttPrime, NttTwiddles};
 use crate::ring::cyclotomic::CyclotomicRing;
 
-use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
+use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
 };
@@ -218,7 +218,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
@@ -226,9 +226,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.from_limbs(*coefficient);
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -241,7 +241,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -251,9 +251,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in neg_limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in neg_limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.from_limbs(*coefficient);
             }
             *cyc_limb = *neg_limb;
             forward_ntt(neg_limb, *prime, tw, params.kernel_plan);
@@ -293,11 +293,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.twiddles.iter())
             .enumerate()
         {
-            let reducer = CenteredPrimeReducer::new(*prime);
+            let reducer = CenteredMontReducer::new(*prime);
             for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
-                *dst = lut.get(k, coefficient).unwrap_or_else(|| {
-                    prime.from_canonical(reducer.reduce_i64(i64::from(coefficient)))
-                });
+                *dst = lut
+                    .get(k, coefficient)
+                    .unwrap_or_else(|| reducer.from_i32(coefficient));
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
@@ -379,7 +379,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.twiddles.iter())
             .enumerate()
         {
-            let reducer = CenteredPrimeReducer::new(*prime);
+            let reducer = CenteredMontReducer::new(*prime);
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
                     // SAFETY: the caller guarantees `coeff` is covered by `lut`.
@@ -387,7 +387,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
             } else {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = prime.from_canonical(reducer.reduce_i64(i64::from(coeff)));
+                    *dst = reducer.from_i32(coeff);
                 }
             }
             *cyc_limb = *neg_limb;
@@ -426,7 +426,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
+        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
@@ -434,9 +434,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
+            let reducer = CenteredMontReducer::new(*prime);
+            for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
+                *dst = reducer.from_limbs(*coefficient);
             }
             forward_ntt_cyclic(limb, *prime, tw, params.kernel_plan);
         }
