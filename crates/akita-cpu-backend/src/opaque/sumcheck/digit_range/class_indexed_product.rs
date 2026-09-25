@@ -11,11 +11,12 @@ use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::DigitRangePlan;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
+use jolt_poly::OmittedConstantPoly;
 
 struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
@@ -155,7 +156,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
@@ -220,7 +221,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
                 )
             }
         };
-        EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.arity].to_vec())
+        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.arity].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {

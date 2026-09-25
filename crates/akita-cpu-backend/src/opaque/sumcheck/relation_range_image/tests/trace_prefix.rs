@@ -105,8 +105,8 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(optimized_poly, direct_poly, "mismatch at round {round}");
         let challenge = F::from_u64(809 + 23 * round as u64);
-        optimized_claim = optimized_poly.evaluate(&challenge);
-        direct_claim = direct_poly.evaluate(&challenge);
+        optimized_claim = optimized_poly.evaluate(challenge);
+        direct_claim = direct_poly.evaluate(challenge);
         optimized.ingest_challenge(round, challenge);
         direct.ingest_challenge(round, challenge);
     }
@@ -181,8 +181,8 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         );
 
         let challenge = F::from_u64((11 * round as u64) + 47);
-        prover_claim = prover_poly.evaluate(&challenge);
-        direct_claim = direct_poly.evaluate(&challenge);
+        prover_claim = prover_poly.evaluate(challenge);
+        direct_claim = direct_poly.evaluate(challenge);
         prover.ingest_challenge(round, challenge);
         direct.ingest_challenge(round, challenge);
     }
@@ -259,8 +259,8 @@ fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
         );
 
         let challenge = F::from_u64((23 * round as u64) + 73);
-        prefix_claim = prefix_poly.evaluate(&challenge);
-        padded_claim = padded_poly.evaluate(&challenge);
+        prefix_claim = prefix_poly.evaluate(challenge);
+        padded_claim = padded_poly.evaluate(challenge);
         prefix_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
     }
@@ -311,7 +311,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round0 = prover.compute_round_univariate(0, prover.input_claim());
     let r0 = F::from_u64(103);
     prover.ingest_challenge(0, r0);
-    let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
+    let round1 = prover.compute_round_univariate(1, round0.evaluate(r0));
     let r1 = F::from_u64(107);
 
     let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
@@ -342,13 +342,13 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
     assert_eq!(expected_round0, round0);
     expected.ingest_challenge(0, r0);
-    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(&r0));
+    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(r0));
     assert_eq!(expected_round1, round1);
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()
         .expect("round1 norm poly should be cached")
-        .evaluate(&r1);
+        .evaluate(r1);
     expected.split_eq.bind(r1);
     expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.replace_common_alpha_factor(expected_alpha_round2.clone());

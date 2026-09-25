@@ -1,9 +1,6 @@
 //! Native Spongefish proof-stream driver for standard sumcheck.
 
-use crate::{
-    advance_eq_factored_claim, CompressedUniPoly, EqFactoredUniPoly, SumcheckInstanceVerifier,
-    SumcheckKernel,
-};
+use crate::{advance_eq_factored_claim, SumcheckInstanceVerifier, SumcheckKernel};
 #[cfg(test)]
 use crate::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use akita_algebra::split_eq::GruenSplitEq;
@@ -14,6 +11,7 @@ use akita_transcript::{
     ProtocolSiteId,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
 /// Typed discriminator for native sumcheck transcript sites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,19 +231,18 @@ where
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
         let poly = prover.round_polynomial(round, claim)?;
-        if poly.evaluate(&E::zero()) + poly.evaluate(&E::one()) != claim {
+        if poly.evaluate(E::zero()) + poly.evaluate(E::one()) != claim {
             return Err(AkitaError::InvalidInput(
                 "sumcheck round polynomial does not match its input claim".into(),
             ));
         }
-        let mut compressed = poly.compress();
-        let coefficient_count = compressed.coeffs_except_linear_term.len();
+        let mut coefficients = poly.compress().coeffs_except_linear_term().to_vec();
+        let coefficient_count = coefficients.len();
         if coefficient_count == 0 || coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
         }
-        compressed
-            .coeffs_except_linear_term
-            .resize(degree_bound, E::zero());
+        coefficients.resize(degree_bound, E::zero());
+        let compressed = CompressedPoly::new(coefficients);
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         prover_context(
@@ -258,7 +255,7 @@ where
                 0,
             )?,
         );
-        for coefficient in &compressed.coeffs_except_linear_term {
+        for coefficient in compressed.coeffs_except_linear_term() {
             send_native_extension::<F, E>(channel.state_mut(), *coefficient);
         }
         let challenge = channel.round_challenge(invocation, round_id)?;
@@ -341,9 +338,7 @@ where
                     .map_err(|_| AkitaError::InvalidProof)?,
             );
         }
-        let compressed = CompressedUniPoly {
-            coeffs_except_linear_term: coefficients,
-        };
+        let compressed = CompressedPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = compressed.eval_from_hint(&claim, &challenge);
         challenges.push(challenge);
@@ -378,13 +373,13 @@ where
 
     for round in 0..num_rounds {
         let round_id = u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?;
-        let mut poly = prover.round_polynomial(round, claim)?;
-        let coefficient_count = poly.coeffs_except_constant_term.len();
+        let mut coefficients = prover.round_polynomial(round, claim)?.into_coefficients();
+        let coefficient_count = coefficients.len();
         if coefficient_count > degree_bound {
             return Err(AkitaError::InvalidProof);
         }
-        poly.coeffs_except_constant_term
-            .resize(degree_bound, E::zero());
+        coefficients.resize(degree_bound, E::zero());
+        let poly = OmittedConstantPoly::new(coefficients);
         let atom_count = extension_atom_count::<E, F>(degree_bound)?;
         let body_site = channel.sumcheck_site(invocation, round_id, NativeSumcheckRole::RoundBody);
         prover_context(
@@ -397,7 +392,7 @@ where
                 0,
             )?,
         );
-        for coefficient in &poly.coeffs_except_constant_term {
+        for coefficient in poly.coefficients() {
             send_native_extension::<F, E>(channel.state_mut(), *coefficient);
         }
         let challenge = channel.round_challenge(invocation, round_id)?;
@@ -482,9 +477,7 @@ where
                     .map_err(|_| AkitaError::InvalidProof)?,
             );
         }
-        let poly = EqFactoredUniPoly {
-            coeffs_except_constant_term: coefficients,
-        };
+        let poly = OmittedConstantPoly::new(coefficients);
         let challenge = channel.round_challenge(invocation, round_id)?;
         claim = advance_eq_factored_claim(claim, equality.current_tau(), &poly, challenge);
         equality.bind(challenge);
@@ -499,7 +492,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UniPoly;
     use akita_algebra::poly::multilinear_eval;
     use akita_transcript::{
         native_field_challenge_bytes, native_prover_field_challenge,
@@ -507,6 +499,7 @@ mod tests {
         SITE_FAMILY_SUMCHECK,
     };
     use jolt_field::{CanonicalBytes, One, Prime128Offset275 as F, Ring, Zero};
+    use jolt_poly::UnivariatePoly;
 
     struct DenseInstance {
         evaluations: Vec<F>,
@@ -527,7 +520,7 @@ mod tests {
             self.claim
         }
 
-        fn compute_round_univariate(&mut self, _round: usize, _claim: F) -> UniPoly<F> {
+        fn compute_round_univariate(&mut self, _round: usize, _claim: F) -> UnivariatePoly<F> {
             let half = self.evaluations.len() / 2;
             let (zero, one) = (0..half).fold((F::zero(), F::zero()), |(zero, one), index| {
                 (
@@ -535,7 +528,7 @@ mod tests {
                     one + self.evaluations[2 * index + 1],
                 )
             });
-            UniPoly::from_coeffs(vec![zero, one - zero])
+            UnivariatePoly::new(vec![zero, one - zero])
         }
 
         fn ingest_challenge(&mut self, _round: usize, challenge: F) {
@@ -583,7 +576,7 @@ mod tests {
         }
 
         fn evaluate(&self, point: F) -> F {
-            UniPoly::from_coeffs(self.coefficients.clone()).evaluate(&point)
+            UnivariatePoly::new(self.coefficients.clone()).evaluate(point)
         }
 
         fn claim(&self) -> F {
@@ -608,8 +601,8 @@ mod tests {
             self.split.current_tau()
         }
 
-        fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<F> {
-            EqFactoredUniPoly::from_q_coeffs(self.coefficients.clone())
+        fn compute_round_eq_factored(&mut self, _round: usize) -> OmittedConstantPoly<F> {
+            OmittedConstantPoly::from_q_coefficients(self.coefficients.clone())
         }
 
         fn ingest_challenge(&mut self, _round: usize, challenge: F) {
@@ -776,7 +769,7 @@ mod tests {
             self.split.current_tau()
         }
 
-        fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<F> {
+        fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<F> {
             let [a, b, c, d] = self.coefficients;
             let coefficients = if round == 0 {
                 vec![a + c * self.equality[1], b + d * self.equality[1]]
@@ -784,7 +777,7 @@ mod tests {
                 let first = self.first_challenge.unwrap();
                 vec![a + b * first, c + d * first]
             };
-            EqFactoredUniPoly::from_q_coeffs(coefficients)
+            OmittedConstantPoly::from_q_coefficients(coefficients)
         }
 
         fn ingest_challenge(&mut self, round: usize, challenge: F) {
@@ -1019,5 +1012,80 @@ mod tests {
         let second = F::from_u64(11) + F::from_u64(13) * point[0] + F::one();
         tampered[F::NUM_BYTES..2 * F::NUM_BYTES].copy_from_slice(&second.to_bytes_le_vec());
         assert_eq!(verify(&tampered), Err(AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn arithmetic_cutover_preserves_native_proof_and_challenges() {
+        fn hex(bytes: &[u8]) -> String {
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        }
+        fn challenge_hex(point: &[F]) -> String {
+            hex(&point
+                .iter()
+                .flat_map(|challenge| challenge.to_bytes_le_vec())
+                .collect::<Vec<_>>())
+        }
+
+        // Frozen from Akita cad9f221, before the jolt-poly arithmetic cutover.
+        let (evaluations, claim) = fixture();
+        let mut standard = DenseInstance {
+            evaluations,
+            rounds: 4,
+            claim,
+        };
+        let mut prover = TestProverChannel {
+            state: new_native_prover(b"native-cutover", b"standard").unwrap(),
+            invocation: 3,
+        };
+        let (standard_point, _) = prove_sumcheck_native(
+            &mut crate::InfallibleSumcheck(&mut standard),
+            &mut prover,
+            NativeSumcheckShape::new(4, 1).unwrap(),
+            3,
+        )
+        .unwrap();
+        let standard_proof = hex(prover.state.narg_string());
+        let standard_point = challenge_hex(&standard_point);
+
+        let mut normalized = TwoRoundEq::new(
+            [F::from_u64(2), F::from_u64(5)],
+            [
+                F::from_u64(3),
+                F::from_u64(7),
+                F::from_u64(11),
+                F::from_u64(13),
+            ],
+        );
+        let degree = normalized.degree_bound();
+        let mut prover = TestProverChannel {
+            state: new_native_prover(b"native-cutover", b"normalized").unwrap(),
+            invocation: 5,
+        };
+        let (normalized_point, _) = prove_eq_factored_sumcheck_native::<F, F, _, _>(
+            &mut crate::InfallibleEqFactoredSumcheck(&mut normalized),
+            &mut prover,
+            NativeSumcheckShape::new(2, degree).unwrap(),
+            5,
+        )
+        .unwrap();
+        let normalized_proof = hex(prover.state.narg_string());
+        let normalized_point = challenge_hex(&normalized_point);
+
+        assert_eq!(
+            standard_proof,
+            "400000000000000000000000000000001eac1977828cc02a77594378b1620e1aafe558b0d223814a43d8689584c7e8487ecc94880d17afea66f4d7028d9c7955"
+        );
+        assert_eq!(
+            standard_point,
+            "776ac69d2023b0ca5dd6105eac988386e903335d643748ede1ca51f68a65f80e7a151a0c49a15b5111e208ae324e41ecf5b338e253bee87fcedd60b52f172384"
+        );
+        assert_eq!(
+            normalized_proof,
+            "480000000000000000000000000000000db05c972d63f199da38a132ca63d420"
+        );
+        assert_eq!(
+            normalized_point,
+            "ad3442e42aa54d6ee9a1bd8d0f2f9a3dc03c585e961e38b7e784fab7584fe6ae"
+        );
     }
 }
