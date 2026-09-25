@@ -8,9 +8,11 @@
 //! Between forward passes, butterfly sums are stored in `[0, 2p)` and products
 //! in `(-p, p)`; between inverse passes, every value is in `[0, 2p)`. The
 //! helpers on [`Modulus`] move values between these ranges, each with one add
-//! or subtract and one unsigned minimum. `NttPrime` bounds `p` below `2^30` for `i32` and below `2^14` for
-//! `i16`, so `4p` fits the unsigned lane, `2p` fits the signed lane, and no
-//! intermediate below wraps.
+//! or subtract and one unsigned minimum. The transforms require `p` below
+//! `2^30` for `i32` and below `2^14` for `i16`, which `NttPrime::new` checks
+//! but the public `NttPrime` fields do not enforce. Under that bound `4p` fits
+//! the unsigned lane, `2p` fits the signed lane, and no intermediate below
+//! wraps.
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;

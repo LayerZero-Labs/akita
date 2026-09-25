@@ -7,7 +7,7 @@ use crate::ntt::ifma52::{
 };
 use crate::{
     CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Field,
-    PrimeWidth,
+    NttPrime, PrimeWidth,
 };
 use akita_error::AkitaError;
 
@@ -63,10 +63,10 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
         })
     }
 
-    /// Extend this profile with one exactness-only prime whose residues have
-    /// width `W`.
-    pub fn with_tail<W: PrimeWidth>(mut self, tail_modulus: W) -> Result<Self, AkitaError> {
-        let modulus = tail_modulus.to_i64();
+    /// Extend this profile with the exactness-only prime `tail`, whose
+    /// transforms run over width `W`.
+    pub fn with_tail<W: PrimeWidth>(mut self, tail: NttPrime<W>) -> Result<Self, AkitaError> {
+        let modulus = tail.p.to_i64();
         if modulus <= 2 {
             return Err(AkitaError::InvalidSetup(
                 "IFMA52 tail modulus must exceed 2".into(),
@@ -99,10 +99,13 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
         })
     }
 
-    /// Whether this profile includes an exactness-only CRT limb of width `W`.
+    /// Whether this profile's exactness-only tail is `prime`.
     #[must_use]
-    pub const fn has_tail<W: PrimeWidth>(&self) -> bool {
-        matches!(&self.tail, Some(tail) if tail.width == core::mem::size_of::<W>())
+    pub fn has_tail<W: PrimeWidth>(&self, prime: NttPrime<W>) -> bool {
+        matches!(
+            &self.tail,
+            Some(tail) if tail.width == core::mem::size_of::<W>() && tail.modulus == prime.p.to_i64()
+        )
     }
 
     #[inline]
@@ -116,8 +119,8 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
                 "IFMA52 CRT profile must contain a prime".into(),
             ));
         }
-        if self.tail.is_some() != tail_canonical.is_some()
-            || (self.tail.is_some() && !self.has_tail::<W>())
+        if self.tail.as_ref().map(|tail| tail.width)
+            != tail_canonical.map(|_| core::mem::size_of::<W>())
         {
             return Err(AkitaError::InvalidSetup(
                 "IFMA52 reconstruction tail does not match its parameters".into(),
@@ -213,11 +216,10 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         self.params.crt_capacity()
     }
 
-    /// Whether the bound parameters require an exactness-only tail of width
-    /// `W`.
+    /// Whether the bound parameters' exactness-only tail is `prime`.
     #[must_use]
-    pub const fn has_tail<W: PrimeWidth>(&self) -> bool {
-        self.params.has_tail::<W>()
+    pub fn has_tail<W: PrimeWidth>(&self, prime: NttPrime<W>) -> bool {
+        self.params.has_tail(prime)
     }
 
     /// Multiply by one exact signed-i16 vector.
@@ -254,7 +256,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         let required = num_rows
             .checked_mul(num_cols)
             .ok_or(AkitaError::InvalidProof)?;
-        if !self.params.has_tail::<W>() {
+        if !self.params.has_tail(tail_params.primes[0]) {
             return Err(AkitaError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
             ));
@@ -330,6 +332,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                     terms = 0;
                 }
                 terms += tile.len();
+                debug_assert!(terms <= IFMA52_ACCUMULATOR_TERMS);
                 for (row, accumulator) in accumulators.iter_mut().enumerate() {
                     let row_start = row * num_cols;
                     accumulator.accumulate(
@@ -354,7 +357,6 @@ mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{q128_primes, I16_TAIL_PRIME};
-    use crate::NttPrime;
     use jolt_field::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 
     fn assert_limb_major_i16_matvec<const D: usize>() {
@@ -395,13 +397,15 @@ mod tests {
         assert_limb_major_i16_matvec::<128>();
         assert_limb_major_i16_matvec::<256>();
         assert_limb_major_i16_matvec::<512>();
+        assert_limb_major_i16_matvec::<1024>();
+        assert_limb_major_i16_matvec::<2048>();
     }
 
     fn assert_mixed_ifma_i16_tail_matvec<const D: usize>() {
         type F = Prime64Offset59;
         let params = Ifma52Params::<1, D>::new([IFMA52_PRIMES[0]])
             .expect("params")
-            .with_tail(I16_TAIL_PRIME.p)
+            .with_tail(I16_TAIL_PRIME)
             .expect("tail params");
         let tail_params = CrtNttParamSet::new([I16_TAIL_PRIME]);
         let matrix = (0..6)
@@ -443,18 +447,47 @@ mod tests {
     }
 
     #[test]
+    fn mixed_ifma_matvec_rejects_a_tail_over_another_prime() {
+        const D: usize = 64;
+        let params = Ifma52Params::<1, D>::new([IFMA52_PRIMES[0]])
+            .expect("params")
+            .with_tail(I16_TAIL_PRIME)
+            .expect("tail params");
+        let other = NttPrime::new(13_313_i16);
+        assert!(params.has_tail(I16_TAIL_PRIME));
+        assert!(!params.has_tail(other));
+        assert!(!params.has_tail(q128_primes()[0]));
+
+        let prepared = Ifma52NttMatrix::<1, D>::prepare(
+            &[CyclotomicRing::<Prime64Offset59, D>::zero()],
+            &params,
+        );
+        let tail_params = CrtNttParamSet::new([other]);
+        let tail_matrix = [CyclotomicCrtNtt::zero()];
+        let result = prepared.mat_vec_i16_with_tail::<Prime64Offset59, _>(
+            &tail_matrix,
+            1,
+            &[[0; D]],
+            &tail_params,
+        );
+        assert!(matches!(result, Err(AkitaError::InvalidSetup(_))));
+    }
+
+    #[test]
     fn mixed_ifma_i16_tail_matvec_matches_ring_arithmetic_at_all_dimensions() {
         assert_mixed_ifma_i16_tail_matvec::<64>();
         assert_mixed_ifma_i16_tail_matvec::<128>();
         assert_mixed_ifma_i16_tail_matvec::<256>();
         assert_mixed_ifma_i16_tail_matvec::<512>();
+        assert_mixed_ifma_i16_tail_matvec::<1024>();
+        assert_mixed_ifma_i16_tail_matvec::<2048>();
     }
 
     fn assert_q128_ifma_tail_matvec<W: PrimeWidth, const D: usize>(tail_prime: NttPrime<W>) {
         type F = Prime128OffsetA7F7;
         let params = Ifma52Params::<3, D>::new(IFMA52_PRIMES)
             .expect("params")
-            .with_tail(tail_prime.p)
+            .with_tail(tail_prime)
             .expect("tail params");
         let tail_params = CrtNttParamSet::new([tail_prime]);
         let matrix = (0..6)
@@ -513,6 +546,8 @@ mod tests {
         assert_q128_ifma_tail_matvec::<_, 512>(i32_tail);
         assert_q128_ifma_tail_matvec::<_, 1024>(I16_TAIL_PRIME);
         assert_q128_ifma_tail_matvec::<_, 1024>(i32_tail);
+        // The i32 tail prime supports negacyclic degrees through 1024.
+        assert_q128_ifma_tail_matvec::<_, 2048>(I16_TAIL_PRIME);
     }
 
     fn assert_q128_tail_reconstruction<W: PrimeWidth>(tail_prime: NttPrime<W>) {
@@ -520,7 +555,7 @@ mod tests {
         type F = Prime128OffsetA7F7;
         let params = Ifma52Params::<3, D>::new(IFMA52_PRIMES)
             .expect("params")
-            .with_tail(tail_prime.p)
+            .with_tail(tail_prime)
             .expect("tail params");
         let digits = IFMA52_PRIMES.map(|prime| (prime / 2) as i64);
         let residue = |modulus: u64| {

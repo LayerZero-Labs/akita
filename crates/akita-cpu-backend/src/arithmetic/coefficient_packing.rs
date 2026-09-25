@@ -309,7 +309,7 @@ mod tests {
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<T> as RootOpeningSource<T, RING_D>>::opening_batch(&polys).unwrap();
-        let got = CpuBackend::for_arithmetic_tests()
+        let got = CpuBackend::<T, U>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(
                 None,
                 batch,
@@ -345,7 +345,7 @@ mod tests {
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
-        let got = CpuBackend::for_arithmetic_tests()
+        let got = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(
                 None,
                 batch,
@@ -405,7 +405,7 @@ mod tests {
         let poly = DensePoly::from_ring_coeffs(rings).unwrap();
         let polys = [&poly];
         let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
-        let got = CpuBackend::for_arithmetic_tests()
+        let got = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(
                 None,
                 batch,
@@ -458,7 +458,7 @@ mod tests {
         let refs = sources.iter().collect::<Vec<_>>();
         let batch =
             <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&refs).unwrap();
-        let got = CpuBackend::for_arithmetic_tests()
+        let got = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(
                 None,
                 batch,
@@ -509,10 +509,10 @@ mod tests {
         let onehot_batch =
             <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
-        let dense_partials = CpuBackend::for_arithmetic_tests()
+        let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
-        let onehot_partials = CpuBackend::for_arithmetic_tests()
+        let onehot_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
@@ -520,7 +520,7 @@ mod tests {
         let repeated_refs = vec![&onehot; 8];
         let repeated_batch =
             <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&repeated_refs).unwrap();
-        let repeated_partials = CpuBackend::for_arithmetic_tests()
+        let repeated_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, repeated_batch, plan)
             .unwrap();
         assert!(repeated_partials
@@ -567,7 +567,7 @@ mod tests {
         let plan = SubringCoefficientPackingPlan { point: &point };
 
         assert!(matches!(
-            CpuBackend::for_arithmetic_tests().coefficient_packing_partials_batch(
+            CpuBackend::<F, E>::for_arithmetic_tests().coefficient_packing_partials_batch(
                 None,
                 dense_batch,
                 plan
@@ -578,7 +578,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            CpuBackend::for_arithmetic_tests().coefficient_packing_partials_batch(None, onehot_batch, plan),
+            CpuBackend::<F, E>::for_arithmetic_tests().coefficient_packing_partials_batch(None, onehot_batch, plan),
             Err(AkitaError::InvalidSize {
                 expected,
                 actual,
@@ -622,10 +622,10 @@ mod tests {
         let onehot_batch =
             <OneHotPoly<F> as RootOpeningSource<F, LARGE_D>>::opening_batch(&onehot_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
-        let dense_partials = CpuBackend::for_arithmetic_tests()
+        let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
-        let onehot_partials = CpuBackend::for_arithmetic_tests()
+        let onehot_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
@@ -689,10 +689,10 @@ mod tests {
         let dense_batch =
             <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
-        let onehot_partials = CpuBackend::for_arithmetic_tests()
+        let onehot_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
-        let dense_partials = CpuBackend::for_arithmetic_tests()
+        let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
 
@@ -731,10 +731,10 @@ mod tests {
             <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&recursive_refs)
                 .unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
-        let dense_partials = CpuBackend::for_arithmetic_tests()
+        let dense_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, dense_batch, plan)
             .unwrap();
-        let recursive_partials = CpuBackend::for_arithmetic_tests()
+        let recursive_partials = CpuBackend::<F, E>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(None, recursive_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, recursive_partials);
@@ -761,7 +761,7 @@ mod tests {
         let refs = [&lower_arity];
         let batch =
             <DensePoly<Base> as RootOpeningSource<Base, RING_D>>::opening_batch(&refs).unwrap();
-        assert!(CpuBackend::for_arithmetic_tests()
+        assert!(CpuBackend::<Base, Base>::for_arithmetic_tests()
             .coefficient_packing_partials_batch(
                 None,
                 batch,

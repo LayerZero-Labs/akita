@@ -38,9 +38,8 @@ pub struct CpuStage3Session<F: Field, E: Field> {
     claim: E,
 }
 
-impl<F, E, Cfg> OpaqueStage3Kernel<F, E> for CpuBackend<Cfg>
+impl<F, E> OpaqueStage3Kernel<F, E> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + 'static,
     E: Field
         + Ring
