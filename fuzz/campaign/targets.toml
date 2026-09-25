@@ -1,0 +1,176 @@
+# Canonical registry of campaign targets.
+#
+# Every `[target.<name>]` must be a cargo-fuzz binary in `fuzz/Cargo.toml`
+# and an entry of `akita_fuzz::targets::ALL`; `akita-fuzz prepare` rejects a
+# mismatch. The runner schedules *lanes* (a target, or one of its
+# variants) onto CPU slots in proportion to `weight`.
+#
+# Limits are per libFuzzer process:
+#   timeout_s        libFuzzer -timeout: one input slower than this is a finding
+#   rss_limit_mb     libFuzzer -rss_limit_mb (sampled about once per second)
+#   malloc_limit_mb  libFuzzer -malloc_limit_mb (checked on every allocation)
+#   max_len          libFuzzer -max_len, sized to the target's input encoding
+#   threads          Akita's internal Rayon threads (AKITA_FUZZ_THREADS);
+#                    the lane reserves this many CPU slots
+#   kind             primitive | end_to_end | boundary (reporting only)
+
+[defaults]
+timeout_s = 60
+rss_limit_mb = 3072
+malloc_limit_mb = 3072
+max_len = 4096
+threads = 1
+weight = 1.0
+value_profile = false
+
+[target.field_arith]
+kind = "primitive"
+description = "Base fields vs num-bigint; extension-field laws; delayed-reduction and commit-accumulator contracts"
+max_len = 2048
+timeout_s = 10
+value_profile = true
+
+[target.ring_ntt]
+kind = "primitive"
+description = "CRT+NTT negacyclic/cyclic products, LUT and i16-tail mat-vec vs schoolbook, ring identities"
+weight = 2.0
+max_len = 8192
+timeout_s = 30
+value_profile = true
+variants = [
+  { name = "simd" },
+  { name = "scalar", env = { AKITA_SCALAR_NTT = "1" } },
+]
+
+[target.decompose]
+kind = "primitive"
+description = "Balanced gadget decomposition: recomposition, digit range, SIMD/u64/generic agreement"
+max_len = 4096
+timeout_s = 10
+value_profile = true
+
+[target.multilinear]
+kind = "primitive"
+description = "Eq tables, basis weights, split/Gruen eq invariants, multilinear evaluation and folding"
+max_len = 8192
+timeout_s = 30
+
+[target.sumcheck_roundtrip]
+kind = "primitive"
+description = "Native sumcheck prover/verifier drivers on product instances; false claims and tampering"
+max_len = 8192
+timeout_s = 30
+
+[target.sumcheck_rounds]
+kind = "boundary"
+description = "Original target: verifier round replay over arbitrary argument bytes"
+weight = 0.25
+max_len = 1024
+timeout_s = 10
+
+[target.transcript_roundtrip]
+kind = "primitive"
+description = "Spongefish prover/verifier agreement, byte-level binding, session separation"
+max_len = 4096
+timeout_s = 10
+
+[target.transcript_labels]
+kind = "boundary"
+description = "Original target: arbitrary instance labels and public bytes"
+weight = 0.25
+max_len = 1024
+timeout_s = 10
+
+[target.serialization_vec]
+kind = "boundary"
+description = "Original target: Vec<u8>/Vec<bool> decoding"
+weight = 0.25
+max_len = 1024
+timeout_s = 10
+
+[target.public_deserialize]
+kind = "boundary"
+description = "Untrusted decoding of commitments, setups, descriptors, selections; canonical re-encoding"
+max_len = 65536
+timeout_s = 30
+
+[target.schedule_artifact]
+kind = "boundary"
+description = "Trusted-schedule artifact admission from mutated shipped artifacts; canonical re-encoding"
+max_len = 300000
+timeout_s = 60
+rss_limit_mb = 4096
+malloc_limit_mb = 4096
+
+[target.pcs_dense]
+kind = "end_to_end"
+description = "Completeness: dense and bounded-dense commit/prove/verify over tractable catalog rows"
+weight = 4.0
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 6144
+malloc_limit_mb = 6144
+
+[target.pcs_onehot]
+kind = "end_to_end"
+description = "Completeness: one-hot commit/prove/verify including absent and position-zero selections"
+weight = 3.0
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 6144
+malloc_limit_mb = 6144
+
+[target.pcs_batch]
+kind = "end_to_end"
+description = "Completeness: precommitted, heterogeneous, and imported groups in one batch"
+weight = 3.0
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 6144
+malloc_limit_mb = 6144
+
+[target.pcs_recursive]
+kind = "end_to_end"
+description = "Completeness: recursive setup-offloading families at their smallest rows"
+weight = 1.0
+max_len = 16384
+timeout_s = 600
+rss_limit_mb = 8192
+malloc_limit_mb = 8192
+
+[target.pcs_reject]
+kind = "end_to_end"
+description = "Soundness/binding: honest baseline, then one guaranteed-false or binding mutation"
+weight = 3.0
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 6144
+malloc_limit_mb = 6144
+
+[target.pcs_parallel]
+kind = "end_to_end"
+description = "Determinism: identical proofs across Rayon thread counts and concurrent proofs"
+weight = 1.0
+threads = 4
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 8192
+malloc_limit_mb = 8192
+
+[target.verifier_boundary]
+kind = "boundary"
+description = "Verifier no-panic contract: arbitrary/spliced proof bytes and malformed statements"
+weight = 2.0
+max_len = 131072
+timeout_s = 120
+rss_limit_mb = 4096
+malloc_limit_mb = 4096
+
+[target.prover_boundary]
+kind = "boundary"
+description = "Prover public boundary: false claims, bad shapes, out-of-bound and uncataloged sources"
+weight = 2.0
+max_len = 16384
+timeout_s = 300
+rss_limit_mb = 6144
+malloc_limit_mb = 6144

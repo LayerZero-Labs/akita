@@ -1,12 +1,5 @@
-//! Uninstrumented companion to the Akita fuzz targets.
-//!
-//! ```text
-//! akita-fuzz-tool list                      target names known to the library
-//! akita-fuzz-tool cases [LOG2_COST]         planned and excluded catalog cases
-//! akita-fuzz-tool seeds OUT_DIR             deterministic seed corpora
-//! akita-fuzz-tool smoke TARGET N [SEED]     N pseudo-random inputs, no libFuzzer
-//! akita-fuzz-tool replay TARGET FILE...     run inputs once, report timings
-//! ```
+//! Uninstrumented companion commands: seed generation, case listing, and
+//! smoke/replay runs through the same engine-independent target code.
 
 use akita_fuzz::input::SplitMix64;
 use akita_fuzz::pcs::{Limits, Selector};
@@ -14,59 +7,49 @@ use akita_fuzz::targets;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let command = args.first().map(String::as_str).unwrap_or("help");
-    match command {
-        "list" => {
-            for (name, _) in targets::ALL {
-                println!("{name}");
-            }
-        }
-        "cases" => {
-            let log2 = args
-                .get(1)
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(20u32);
-            print!("{}", targets::pcs::describe_cases(log2));
-        }
-        "seeds" => seeds(Path::new(args.get(1).expect("seeds OUT_DIR"))),
-        "smoke" => {
-            let name = args.get(1).expect("smoke TARGET N [SEED]");
-            let count: usize = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(100);
-            let seed: u64 = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(1);
-            let run = targets::by_name(name).unwrap_or_else(|| panic!("unknown target {name}"));
-            let mut rng = SplitMix64::new(seed);
-            let started = Instant::now();
-            for index in 0..count {
-                let len = (rng.next_u64() % 4096) as usize;
-                let data: Vec<u8> = (0..len).map(|_| rng.next_u64() as u8).collect();
-                let one = Instant::now();
-                run(&data);
-                if index < 3 || one.elapsed().as_secs_f64() > 5.0 {
-                    eprintln!("input {index}: {:.3}s", one.elapsed().as_secs_f64());
-                }
-            }
-            eprintln!(
-                "{name}: {count} inputs in {:.2}s",
-                started.elapsed().as_secs_f64()
-            );
-        }
-        "replay" => {
-            let name = args.get(1).expect("replay TARGET FILE...");
-            let run = targets::by_name(name).unwrap_or_else(|| panic!("unknown target {name}"));
-            for path in &args[2..] {
-                let data = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
-                let started = Instant::now();
-                run(&data);
-                eprintln!("{path}: ok in {:.3}s", started.elapsed().as_secs_f64());
-            }
-        }
-        _ => {
-            eprintln!("usage: akita-fuzz-tool list|cases|seeds|smoke|replay ...");
-            std::process::exit(2);
+pub fn list() {
+    for (name, _) in targets::ALL {
+        println!("{name}");
+    }
+}
+
+pub fn cases(log2: u32) {
+    print!("{}", targets::pcs::describe_cases(log2));
+}
+
+pub fn smoke(name: &str, count: usize, seed: u64) -> Result<(), String> {
+    let run = targets::by_name(name).ok_or_else(|| format!("unknown target {name}"))?;
+    let mut rng = SplitMix64::new(seed);
+    let started = Instant::now();
+    for index in 0..count {
+        let len = (rng.next_u64() % 4096) as usize;
+        let data: Vec<u8> = (0..len).map(|_| rng.next_u64() as u8).collect();
+        let one = Instant::now();
+        run(&data);
+        if index < 3 || one.elapsed().as_secs_f64() > 5.0 {
+            eprintln!("input {index}: {:.3}s", one.elapsed().as_secs_f64());
         }
     }
+    eprintln!(
+        "{name}: {count} inputs in {:.2}s",
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+pub fn replay(name: &str, inputs: &[PathBuf]) -> Result<(), String> {
+    let run = targets::by_name(name).ok_or_else(|| format!("unknown target {name}"))?;
+    for path in inputs {
+        let data = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let started = Instant::now();
+        run(&data);
+        eprintln!(
+            "{}: ok in {:.3}s",
+            path.display(),
+            started.elapsed().as_secs_f64()
+        );
+    }
+    Ok(())
 }
 
 fn write(dir: &Path, name: &str, bytes: &[u8]) {
@@ -79,7 +62,7 @@ fn random_bytes(seed: u64, len: usize) -> Vec<u8> {
     (0..len).map(|_| rng.next_u64() as u8).collect()
 }
 
-fn seeds(out: &Path) {
+pub fn seeds(out: &Path) {
     // Primitive targets: zeros plus deterministic random inputs of mixed sizes.
     for (name, _) in targets::ALL {
         let dir = out.join(name);

@@ -1,0 +1,28 @@
+[package]
+name = "akita-fuzz-runner"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone campaign runner and uninstrumented companion tools. Built with a
+# normal `cargo build --release`; the fuzz targets it drives are built
+# separately by `cargo fuzz build` (see fuzz/README.md).
+[[bin]]
+name = "akita-fuzz"
+path = "src/main.rs"
+
+[dependencies]
+akita-fuzz = { path = "..", default-features = false }
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+tar = "0.4"
+toml = "0.8"
+
+[features]
+default = ["parallel"]
+parallel = ["akita-fuzz/parallel"]
