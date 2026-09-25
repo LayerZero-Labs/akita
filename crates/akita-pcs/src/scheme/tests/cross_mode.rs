@@ -124,11 +124,9 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     .expect("cross-mode proof")
             };
             let quotient_proof = prove(&quotient_scheme, &stack, hint.clone());
-            let reduced_backend = CpuBackend::new(setup.expanded.clone()).expect("reduced backend");
-            let reduced_handle = reduced_backend
-                .import_commitment(&hint)
-                .expect("validated cross-mode commitment transfer");
-            let reduced_proof = prove(&reduced_scheme, &reduced_backend, reduced_handle);
+            // The backend is family-agnostic, so one commitment handle opens under
+            // either catalog without a transfer.
+            let reduced_proof = prove(&reduced_scheme, &stack, hint);
 
             for (scheme, proof, selection, name) in [
                 (

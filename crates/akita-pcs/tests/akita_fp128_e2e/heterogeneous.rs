@@ -226,19 +226,22 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                 .expect("bounded dense poly");
         let final_onehot = make_onehot_poly::<OneHotCfg>(FINAL_NV, 0x8064_0000);
 
-        // Each group commits under the config that owns its bound, so its frozen
-        // profile matches the descriptor the catalog row carries.
-        let bounded_setup = bounded_scheme
-            .setup_prover(BOUNDED_PRE_NV, 1)
-            .expect("bounded dense setup");
-        let bounded_stack = CpuBackend::new(bounded_setup.expanded.clone()).unwrap();
+        // One backend over the one-hot root setup commits both groups. That setup
+        // already covers the bounded precommit, because the one-hot catalog's
+        // mixed-bound rows carry its frozen profile. Each group commits under the
+        // family that owns its bound, so its frozen profile matches the
+        // descriptor the catalog row carries.
+        let setup = onehot_scheme
+            .setup_prover(FINAL_NV, 2)
+            .expect("one-hot root setup");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let akita_cpu_backend::CommitOutput {
             committed_group: bounded_commitment,
             private_handle: bounded_hint,
-        } = bounded_stack
+        } = stack
             .commit(
                 bounded_scheme.schedules(),
-                &bounded_stack
+                &stack
                     .import_source(vec![bounded_dense.clone()])
                     .expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
@@ -256,11 +259,6 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             bounded_digits.num_digits < full_width_digits_at_bounded_basis,
             "bounded precommit digit depth must be below same-basis full-width depth",
         );
-
-        let setup = onehot_scheme
-            .setup_prover(FINAL_NV, 2)
-            .expect("one-hot root setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let precommitteds =
             PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
@@ -303,9 +301,6 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .expect("final prover group"),
         ])
         .expect("prover claims");
-        let bounded_hint = stack
-            .import_commitment(&bounded_hint)
-            .expect("validated bounded transfer");
         let prover_data = SelectedProverOpeningData::from_committed_claims::<OneHotCfg>(
             prover_claims,
             vec![bounded_hint, final_hint],
