@@ -47,6 +47,8 @@ unsafe fn mont_mul_4x_i32(
 struct Modulus {
     p: int32x4_t,
     two_p: int32x4_t,
+    neg_p: int32x4_t,
+    neg_two_p: int32x4_t,
     /// `round(2^31 / p)`, consumed by [`centered_reduce_4x_i32`].
     reciprocal: int32x4_t,
 }
@@ -58,6 +60,8 @@ impl Modulus {
         Self {
             p: vdupq_n_s32(p),
             two_p: vdupq_n_s32(2 * p),
+            neg_p: vdupq_n_s32(-p),
+            neg_two_p: vdupq_n_s32(-2 * p),
             reciprocal: vdupq_n_s32(reciprocal as i32),
         }
     }
@@ -74,6 +78,18 @@ unsafe fn reduce_range_4x_i32(x: int32x4_t, p: int32x4_t, two_p: int32x4_t) -> i
     let x = vreinterpretq_u32_s32(x);
     let y = vminq_u32(x, vaddq_u32(x, vreinterpretq_u32_s32(two_p)));
     vreinterpretq_s32_u32(vminq_u32(y, vsubq_u32(y, vreinterpretq_u32_s32(p))))
+}
+
+/// Folds a sum or difference into `[0, 2p)`, viewing lanes as unsigned.
+///
+/// Returns `min(t, t + c)`. With `c = -2p` it accepts `t` in `[0, 4p)`, with
+/// `c = 2p` it accepts `t` in `(-2p, 2p)`, and with `c = -p` it maps `[0, 2p)`
+/// to `[0, p)`. Since `4p < 2^32`, the rejected candidate always wraps above
+/// the kept one. Two ALU instructions, with no multiply.
+#[inline(always)]
+unsafe fn fold_4x_i32(t: int32x4_t, c: int32x4_t) -> int32x4_t {
+    let t = vreinterpretq_u32_s32(t);
+    vreinterpretq_s32_u32(vminq_u32(t, vaddq_u32(t, vreinterpretq_u32_s32(c))))
 }
 
 /// Centered reduction of `|x| < 2p`, for a modulus `3 <= p < 2^30`.
@@ -139,25 +155,41 @@ impl Multiplier {
     unsafe fn mul(self, x: int32x4_t, p: int32x4_t) -> int32x4_t {
         vmlsq_s32(vmulq_s32(x, self.value), vqrdmulhq_s32(x, self.quotient), p)
     }
+
+    /// `x * w mod p` in `(0, 2p)` for any `|x| < 2^31`: [`Self::mul`] plus
+    /// `p`, with the addition folded into a multiply-accumulate.
+    #[inline(always)]
+    unsafe fn mul_biased(self, x: int32x4_t, p: int32x4_t) -> int32x4_t {
+        vmlsq_s32(
+            vmlaq_s32(p, x, self.value),
+            vqrdmulhq_s32(x, self.quotient),
+            p,
+        )
+    }
 }
 
-/// Gentleman–Sande butterfly `(u + v, w (u - v))` on inputs in `(-p, p)`.
-/// Both outputs lie in `(-p, p)`.
+/// Gentleman–Sande butterfly `(u + v, w (u - v))` with outputs in `[0, 2p)`.
+///
+/// Inputs lie in `[0, 2p)` with `fold = -2p`, or in `(-p, p)` with
+/// `fold = 2p`. Only the difference is multiplied; the sum is folded with ALU
+/// instructions, which keeps the multiply pipes for the twiddle product.
 #[inline(always)]
 unsafe fn dif_butterfly(
     u: int32x4_t,
     v: int32x4_t,
     w: Multiplier,
     m: Modulus,
+    fold: int32x4_t,
 ) -> (int32x4_t, int32x4_t) {
     (
-        centered_reduce_4x_i32(vaddq_s32(u, v), m.p, m.reciprocal),
-        w.mul(vsubq_s32(u, v), m.p),
+        fold_4x_i32(vaddq_s32(u, v), fold),
+        w.mul_biased(vsubq_s32(u, v), m.p),
     )
 }
 
-/// Cooley–Tukey butterfly `(u + w v, u - w v)` for `u` in `(-p, p)` and any
-/// `v`. Both outputs lie in `(-p, p)`.
+/// Cooley–Tukey butterfly `(u + w v, u - w v)` for `u` in `[0, 2p)` and any
+/// `v`. Both outputs lie in `[0, 2p)`, and only the twiddle product uses the
+/// multiply pipes.
 #[inline(always)]
 unsafe fn dit_butterfly(
     u: int32x4_t,
@@ -165,10 +197,10 @@ unsafe fn dit_butterfly(
     w: Multiplier,
     m: Modulus,
 ) -> (int32x4_t, int32x4_t) {
-    let v = w.mul(v, m.p);
+    let v = w.mul_biased(v, m.p);
     (
-        centered_reduce_4x_i32(vaddq_s32(u, v), m.p, m.reciprocal),
-        centered_reduce_4x_i32(vsubq_s32(u, v), m.p, m.reciprocal),
+        fold_4x_i32(vaddq_s32(u, v), m.neg_two_p),
+        fold_4x_i32(vsubq_s32(u, v), m.two_p),
     )
 }
 
@@ -184,7 +216,7 @@ unsafe fn dit_butterfly(
 /// `load(i)` returns lanes `i..i + 8` of the input. With `CENTER`, the
 /// operands that are added without a preceding multiply are first reduced,
 /// so any `|x| < 2^31` input is accepted; otherwise inputs must lie in
-/// `(-p, p)`. Outputs lie in `(-p, p)`.
+/// `(-p, p)`. Outputs lie in `[0, 2p)`.
 #[inline(always)]
 unsafe fn forward_negacyclic_head<const D: usize, const CENTER: bool>(
     a: *mut i32,
@@ -220,8 +252,8 @@ unsafe fn forward_negacyclic_head<const D: usize, const CENTER: bool>(
             let y3 = Multiplier::load(twist, half + quarter + o).mul(vsubq_s32(x1, t1), m.p);
 
             let w = Multiplier::load(&barrett.fwd, quarter - 1 + o);
-            let (z0, z1) = dif_butterfly(y0, y1, w, m);
-            let (z2, z3) = dif_butterfly(y2, y3, w, m);
+            let (z0, z1) = dif_butterfly(y0, y1, w, m, m.two_p);
+            let (z2, z3) = dif_butterfly(y2, y3, w, m, m.two_p);
             vst1q_s32(a.add(o), z0);
             vst1q_s32(a.add(o + quarter), z1);
             vst1q_s32(a.add(o + half), z2);
@@ -231,19 +263,23 @@ unsafe fn forward_negacyclic_head<const D: usize, const CENTER: bool>(
     }
 }
 
-/// DIF stages `len, len/2, ..., 1` on inputs in `(-p, p)`, with canonical
-/// `[0, p)` outputs in bit-reversed order.
+/// DIF stages `len, len/2, ..., 1`, with canonical `[0, p)` outputs in
+/// bit-reversed order.
 ///
-/// Stages are paired into radix-4 passes so each pass loads and stores the
-/// array once for two stages; the last two stages run deinterleaved in
-/// [`forward_dif_tail`]. Requires `D >= 32` and `2 <= len <= D/2`.
+/// Inputs lie in `[0, 2p)`, or in `(-p, p)` with `centered`; every stage
+/// output lies in `[0, 2p)`. Stages are paired into radix-4 passes so each
+/// pass loads and stores the array once for two stages; the last two stages
+/// run deinterleaved in [`forward_dif_tail`]. Requires `D >= 32` and
+/// `4 <= len <= D/2`.
 #[inline(always)]
 unsafe fn forward_dif_stages<const D: usize>(
     a: *mut i32,
     fwd: &BarrettTable<i32, D>,
     m: Modulus,
     mut len: usize,
+    centered: bool,
 ) {
+    let mut fold = if centered { m.two_p } else { m.neg_two_p };
     while len >= 8 {
         let half = len / 2;
         let mut start = 0usize;
@@ -255,11 +291,12 @@ unsafe fn forward_dif_stages<const D: usize>(
                 let u1 = vld1q_s32(a.add(x + half));
                 let u2 = vld1q_s32(a.add(x + len));
                 let u3 = vld1q_s32(a.add(x + len + half));
-                let (v0, v2) = dif_butterfly(u0, u2, Multiplier::load(fwd, len - 1 + j), m);
-                let (v1, v3) = dif_butterfly(u1, u3, Multiplier::load(fwd, len - 1 + j + half), m);
+                let (v0, v2) = dif_butterfly(u0, u2, Multiplier::load(fwd, len - 1 + j), m, fold);
+                let (v1, v3) =
+                    dif_butterfly(u1, u3, Multiplier::load(fwd, len - 1 + j + half), m, fold);
                 let w = Multiplier::load(fwd, half - 1 + j);
-                let (z0, z1) = dif_butterfly(v0, v1, w, m);
-                let (z2, z3) = dif_butterfly(v2, v3, w, m);
+                let (z0, z1) = dif_butterfly(v0, v1, w, m, m.neg_two_p);
+                let (z2, z3) = dif_butterfly(v2, v3, w, m, m.neg_two_p);
                 vst1q_s32(a.add(x), z0);
                 vst1q_s32(a.add(x + half), z1);
                 vst1q_s32(a.add(x + len), z2);
@@ -269,6 +306,7 @@ unsafe fn forward_dif_stages<const D: usize>(
             start += 2 * len;
         }
         len /= 4;
+        fold = m.neg_two_p;
     }
     if len == 4 {
         let w = Multiplier::load(fwd, 3);
@@ -276,7 +314,7 @@ unsafe fn forward_dif_stages<const D: usize>(
         while start < D {
             let u = vld1q_s32(a.add(start));
             let v = vld1q_s32(a.add(start + 4));
-            let (sum, diff) = dif_butterfly(u, v, w, m);
+            let (sum, diff) = dif_butterfly(u, v, w, m, fold);
             vst1q_s32(a.add(start), sum);
             vst1q_s32(a.add(start + 4), diff);
             start += 8;
@@ -285,7 +323,8 @@ unsafe fn forward_dif_stages<const D: usize>(
     forward_dif_tail::<D>(a, fwd, m);
 }
 
-/// Final two DIF stages (`len = 2`, then `len = 1`), with canonical output.
+/// Final two DIF stages (`len = 2`, then `len = 1`) on inputs in `[0, 2p)`,
+/// with canonical output.
 ///
 /// A stride-4 `vld4q` deinterleave places element `e` of four independent
 /// size-4 sub-transforms in the lanes of `r_e`, so both stages run 4-wide
@@ -299,15 +338,16 @@ unsafe fn forward_dif_tail<const D: usize>(a: *mut i32, fwd: &BarrettTable<i32, 
         let int32x4x4_t(r0, r1, r2, r3) = vld4q_s32(a.add(base));
 
         // len = 2: butterflies (e0, e2) with twiddle 1 and (e1, e3) with w.
-        let s0 = centered_reduce_4x_i32(vaddq_s32(r0, r2), m.p, m.reciprocal);
-        let d0 = centered_reduce_4x_i32(vsubq_s32(r0, r2), m.p, m.reciprocal);
-        let (s1, d1) = dif_butterfly(r1, r3, w, m);
+        let s0 = fold_4x_i32(vaddq_s32(r0, r2), m.neg_two_p);
+        let d0 = fold_4x_i32(vsubq_s32(r0, r2), m.two_p);
+        let (s1, d1) = dif_butterfly(r1, r3, w, m, m.neg_two_p);
 
         // len = 1: butterflies (e0, e1) and (e2, e3) with twiddle 1.
-        let o0 = reduce_range_4x_i32(vaddq_s32(s0, s1), m.p, m.two_p);
-        let o1 = reduce_range_4x_i32(vsubq_s32(s0, s1), m.p, m.two_p);
-        let o2 = reduce_range_4x_i32(vaddq_s32(d0, d1), m.p, m.two_p);
-        let o3 = reduce_range_4x_i32(vsubq_s32(d0, d1), m.p, m.two_p);
+        let canonical = |t, fold| fold_4x_i32(fold_4x_i32(t, fold), m.neg_p);
+        let o0 = canonical(vaddq_s32(s0, s1), m.neg_two_p);
+        let o1 = canonical(vsubq_s32(s0, s1), m.two_p);
+        let o2 = canonical(vaddq_s32(d0, d1), m.neg_two_p);
+        let o3 = canonical(vsubq_s32(d0, d1), m.two_p);
 
         vst4q_s32(a.add(base), int32x4x4_t(o0, o1, o2, o3));
         base += 16;
@@ -328,16 +368,17 @@ unsafe fn inverse_dit_stages<const D: usize>(
     scale: impl Fn(usize) -> Multiplier,
 ) {
     // Stages 1 and 2. Stage 1 and the first stage-2 butterfly have twiddle 1.
+    // Every stage output lies in `[0, 2p)`.
     let w = Multiplier::broadcast(inv, 2);
     let mut base = 0usize;
     while base < D {
         let int32x4x4_t(r0, r1, r2, r3) = vld4q_s32(a.add(base));
-        let s0 = centered_reduce_4x_i32(vaddq_s32(r0, r1), m.p, m.reciprocal);
-        let d0 = centered_reduce_4x_i32(vsubq_s32(r0, r1), m.p, m.reciprocal);
-        let s1 = centered_reduce_4x_i32(vaddq_s32(r2, r3), m.p, m.reciprocal);
-        let d1 = centered_reduce_4x_i32(vsubq_s32(r2, r3), m.p, m.reciprocal);
-        let o0 = centered_reduce_4x_i32(vaddq_s32(s0, s1), m.p, m.reciprocal);
-        let o2 = centered_reduce_4x_i32(vsubq_s32(s0, s1), m.p, m.reciprocal);
+        let s0 = fold_4x_i32(vaddq_s32(r0, r1), m.two_p);
+        let d0 = fold_4x_i32(vsubq_s32(r0, r1), m.two_p);
+        let s1 = fold_4x_i32(vaddq_s32(r2, r3), m.two_p);
+        let d1 = fold_4x_i32(vsubq_s32(r2, r3), m.two_p);
+        let o0 = fold_4x_i32(vaddq_s32(s0, s1), m.neg_two_p);
+        let o2 = fold_4x_i32(vsubq_s32(s0, s1), m.two_p);
         let (o1, o3) = dit_butterfly(d0, d1, w, m);
         vst4q_s32(a.add(base), int32x4x4_t(o0, o1, o2, o3));
         base += 16;
@@ -389,8 +430,9 @@ unsafe fn inverse_dit_stages<const D: usize>(
         }
     }
 
-    // Stages D/4 and D/2 with the output scaling. The stage-D/2 sums and
-    // differences stay in (-2p, 2p) and go straight into the scaling multiply.
+    // Stages D/4 and D/2 with the output scaling. Recentering the stage-D/4
+    // sums to `[-p, p)` keeps the stage-D/2 sums and differences in (-2p, 2p),
+    // so they go straight into the scaling multiply.
     let half = D / 2;
     let mut o = 0usize;
     while o < quarter {
@@ -401,6 +443,7 @@ unsafe fn inverse_dit_stages<const D: usize>(
         let w = Multiplier::load(inv, quarter - 1 + o);
         let (y0, y1) = dit_butterfly(x0, x1, w, m);
         let (y2, y3) = dit_butterfly(x2, x3, w, m);
+        let (y0, y1) = (vsubq_s32(y0, m.p), vsubq_s32(y1, m.p));
         let v0 = Multiplier::load(inv, half - 1 + o).mul(y2, m.p);
         let v1 = Multiplier::load(inv, half - 1 + o + quarter).mul(y3, m.p);
         vst1q_s32(a.add(o), scale(o).mul(vaddq_s32(y0, v0), m.p));
@@ -435,7 +478,7 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     forward_negacyclic_head::<D, true>(a_ptr, barrett, &barrett.twist, m, |i| {
         [vld1q_s32(a_ptr.add(i)), vld1q_s32(a_ptr.add(i + 4))]
     });
-    forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8);
+    forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8, false);
 }
 
 /// Signed-integer conversion and forward negacyclic NTT for i32 primes.
@@ -466,7 +509,7 @@ unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize>(
     forward_negacyclic_head::<D, false>(a_ptr, barrett, &barrett.twist_digits, m, |i| {
         load(inputs_ptr.add(i))
     });
-    forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8);
+    forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8, false);
 }
 
 /// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
@@ -542,6 +585,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
         &tw.barrett.fwd,
         Modulus::new(prime.p),
         D / 2,
+        true,
     );
 }
 
