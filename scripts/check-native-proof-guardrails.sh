@@ -93,7 +93,7 @@ if [ "$raw_state_files" != "$expected_raw_state_files" ]; then
 fi
 
 constructor_files="$(search_files '\.to_(prover|verifier)\(' "${proof_input_roots[@]}" | sort)"
-expected_constructor_files='crates/akita-transcript/src/native.rs'
+expected_constructor_files='crates/akita-transcript/src/native/domain.rs'
 if [ "$constructor_files" != "$expected_constructor_files" ]; then
     echo "error: Spongefish state construction escaped its reviewed allowlist" >&2
     printf '%s\n' "$constructor_files" >&2

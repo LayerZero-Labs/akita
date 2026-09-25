@@ -51,6 +51,28 @@ use the same session bytes and independently bind the same public instance.
 The [transcript chapter](../how/transcript.md) lists the exact binding order and
 explains the wire checks used by transcript tests.
 
+### Compose with an outer transcript
+
+Akita starts a fresh sponge for every opening, so it does not inherit state
+from a larger Fiat-Shamir protocol. When an opening is one step of such a
+protocol, bind the outer transcript through the session:
+
+```text
+session = application_label || outer_digest
+```
+
+Squeeze `outer_digest` from the outer transcript after it has absorbed every
+outer message that precedes the opening. Use a full-width hash output of at
+least 256 bits and keep its width fixed. Akita frames the session as
+`LE64(len) || bytes`, so a fixed label and a fixed digest width give an
+unambiguous split. Two outer transcripts with different digests produce
+different openings, and a proof made under one digest does not verify under
+another.
+
+The proof bytes are not fed back into the outer transcript. If the outer
+protocol continues after the opening, it must absorb the proof and any public
+results it depends on.
+
 ## Carry the trusted row selection
 
 `SelectedProverOpeningData::selection()` returns an
