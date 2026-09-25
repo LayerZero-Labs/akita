@@ -8,26 +8,17 @@ use akita_types::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 use std::sync::Arc;
 
-pub(super) enum RetainedOpeningSource<
-    F: Field + CanonicalEncoding,
-    E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
-> {
-    Commitment(Arc<CommittedSource<F, E, Cfg>>),
+pub(super) enum RetainedOpeningSource<F: Field + CanonicalEncoding, E: Field> {
+    Commitment(Arc<CommittedSource<F, E>>),
     Witness(Box<CpuWitnessHandle>),
 }
 
-pub(super) enum PreparedOpeningSource<
-    F: Field + CanonicalEncoding,
-    E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
-> {
-    Retained(RetainedOpeningSource<F, E, Cfg>),
+pub(super) enum PreparedOpeningSource<F: Field + CanonicalEncoding, E: Field> {
+    Retained(RetainedOpeningSource<F, E>),
     TerminalNative,
 }
-impl<F, E, Cfg> OpaqueOpeningKernel<F, E> for CpuBackend<Cfg>
+impl<F, E> OpaqueOpeningKernel<F, E> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
@@ -115,7 +106,7 @@ where
                     F,
                     plan.ring_dimension(),
                     |D| {
-                        crate::opaque::prepare_recursive_witness_opening::<F, E, Cfg, D>(
+                        crate::opaque::prepare_recursive_witness_opening::<F, E, D>(
                             self,
                             Some(self.prepared()?),
                             binding,

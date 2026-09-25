@@ -191,8 +191,8 @@ mod tests {
 
     type MissingExportExecutor<'a> = (
         CommitmentExecutor<'a, F, ResidentStatePolicy>,
-        Arc<CpuInnerCommitOperation<'a, F>>,
-        Arc<CpuCompressionOperation<'a, F>>,
+        Arc<CpuInnerCommitOperation<'a, F, F>>,
+        Arc<CpuCompressionOperation<'a, F, F>>,
     );
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
@@ -309,7 +309,7 @@ mod tests {
 
     fn portable_executor<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, PortableStatePolicy> {
         CommitmentExecutor::cpu(
@@ -324,7 +324,7 @@ mod tests {
 
     fn resident_executor<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, ResidentStatePolicy> {
         CommitmentExecutor::cpu(
@@ -339,7 +339,7 @@ mod tests {
 
     fn executor_without_portable_export<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> MissingExportExecutor<'a> {
         struct MissingExportRoute;
@@ -452,7 +452,7 @@ mod tests {
         assert!(available_field_len >= natural_len);
         assert!(available_field_len < n_prefix);
 
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
@@ -482,7 +482,7 @@ mod tests {
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
@@ -524,7 +524,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let portable = commit_setup_prefix(
             &setup.expanded,
@@ -565,7 +565,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let (executor, _inner, _compression) =
             executor_without_portable_export(&setup, &backend, &prepared);
@@ -592,7 +592,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = resident_executor(&setup, &backend, &prepared);
         let source = DensePoly::from_field_evals(
@@ -663,7 +663,7 @@ mod tests {
         );
 
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let id = SetupPrefixSlotId {
