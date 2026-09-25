@@ -130,7 +130,7 @@ fn witness_relation_plan_is_initialized_once_from_canonical_relation() {
 
 fn reduced_group_witness(
     params: &CommittedGroupParams,
-    ctx: &OperationCtx<'_, ReducedF, CpuBackend>,
+    ctx: &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
 ) -> RingRelationGroupWitness<ReducedF> {
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
     let group_params = params
@@ -419,7 +419,10 @@ fn centered_i32_decompose_matches_ring_decompose() {
 
 fn with_reduced_setup<R>(
     setup_coefficients: usize,
-    test: impl FnOnce(&OperationCtx<'_, ReducedF, CpuBackend>, &AkitaProverSetup<ReducedF>) -> R,
+    test: impl FnOnce(
+        &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
+        &AkitaProverSetup<ReducedF>,
+    ) -> R,
 ) -> R {
     let setup = AkitaProverSetup::<ReducedF>::generate_with_capacity(
         8,
@@ -429,7 +432,7 @@ fn with_reduced_setup<R>(
         },
     )
     .expect("prover setup");
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<ReducedF, ReducedF>::for_arithmetic_tests();
     let prepared = backend
         .prepare_expanded(setup.expanded.clone())
         .expect("prepared setup");
@@ -453,7 +456,7 @@ fn assert_reduced_compression_report(
 fn build_reduced_without_quotients(
     instance: &RingRelationInstance<ReducedF>,
     witness: RingRelationWitness<ReducedF>,
-    ctx: &OperationCtx<'_, ReducedF, CpuBackend>,
+    ctx: &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
     params: &CommittedGroupParams,
 ) -> crate::opaque::OpaqueRecursiveWitness {
     reset_multi_group_quotient_calls();

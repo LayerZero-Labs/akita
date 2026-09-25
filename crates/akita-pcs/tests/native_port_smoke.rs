@@ -38,7 +38,7 @@ fn onehot_fp32_native_roundtrip_inner() {
     let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
     let scheme = AkitaCommitmentScheme::<Cfg>::new(schedules);
     let setup = scheme.setup_prover(NV, 1).unwrap();
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     let chunk_size = akita_config::unit_onehot_source_chunk_size::<Cfg>().unwrap();
     let indices = (0..((1 << NV) / chunk_size))
         .map(|chunk| Some(((chunk * 29 + 7) % chunk_size) as u8))
@@ -59,6 +59,7 @@ fn onehot_fp32_native_roundtrip_inner() {
         });
     let output = backend
         .commit(
+            scheme.schedules(),
             &backend.import_source(vec![poly]).unwrap(),
             GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -105,13 +106,14 @@ fn dense_fp128_native_roundtrip_inner() {
     let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>().unwrap();
     let scheme = AkitaCommitmentScheme::<Cfg>::new(schedules);
     let setup = scheme.setup_prover(NV, 1).unwrap();
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     let evals: Vec<F> = (0..(1 << NV))
         .map(|index| F::from_u64(index as u64))
         .collect();
     let poly = DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
     let output = backend
         .commit(
+            scheme.schedules(),
             &backend.import_source(vec![poly]).unwrap(),
             GroupContext::scheduler_without_precommitted_groups(),
         )

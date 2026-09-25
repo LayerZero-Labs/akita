@@ -2,6 +2,7 @@
 use super::CpuCommitmentMaterialHandle;
 use crate::opaque::lifecycle::CpuProofSessionHandle;
 use crate::opaque::CpuBackend;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::{ProofAdmission, ProofContext};
 use akita_serialization::{AkitaSerialize, Valid};
@@ -10,9 +11,7 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-impl<Cfg: akita_config::CommitmentConfig> akita_prover::backend::ProofScopeConsumer
-    for CpuBackend<Cfg>
-{
+impl<F: Field, E> akita_prover::backend::ProofScopeConsumer for CpuBackend<F, E> {
     type ProofSessionHandle = CpuProofSessionHandle;
 
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
@@ -26,7 +25,7 @@ impl<Cfg: akita_config::CommitmentConfig> akita_prover::backend::ProofScopeConsu
     }
 }
 
-impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
+impl<F: Field, E> CpuBackend<F, E> {
     pub(crate) fn admitted_group(
         &self,
         binding: &crate::opaque::OperationBinding,
@@ -50,18 +49,21 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     }
 }
 
-impl<F, E, Cfg> ProofAdmission<F, E> for CpuBackend<Cfg>
+impl<F, E> ProofAdmission<F, E> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + Send + Sync + 'static,
     E: Field + jolt_field::ExtField<F> + Send + Sync + 'static,
 {
-    fn begin_proof(
+    fn begin_proof<Cfg>(
         &self,
         setup: &AkitaSetupDescriptor,
+        schedules: &TrustedScheduleCatalog<Cfg>,
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
-    ) -> Result<Self::ProofSessionHandle, AkitaError> {
+    ) -> Result<Self::ProofSessionHandle, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         let prepared = self.prepared()?;
         setup
             .check()
@@ -71,7 +73,7 @@ where
                 "proof setup differs from backend setup".into(),
             ));
         }
-        self.validate_proof_configuration(plan, layout)?;
+        Self::validate_proof_configuration(schedules, plan, layout)?;
         plan.validate_structure()?;
         plan.validate_nonterminal_opening_execution(E::DEGREE)?;
         plan.root.params.validate_opening_batch(layout)?;

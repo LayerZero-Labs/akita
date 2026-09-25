@@ -30,12 +30,12 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::array::from_fn;
 
-impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
+impl<F: Field, E> CpuBackend<F, E> {
     /// Execute the standard CPU inner stage over request-compiled sources.
     ///
     /// Every source has the same request-compiled representation. Results
     /// remain in source order.
-    pub(crate) fn commit_resolved_inner_host<F, const D: usize>(
+    pub(crate) fn commit_resolved_inner_host<const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
         sources: &[ResolvedCommitSource<'_, F>],
@@ -84,7 +84,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
                         })
                     })
                     .collect::<Result<Vec<_>, AkitaError>>()?;
-                commit_onehot_sources::<F, D, _, Cfg>(self, prepared, &group, plan)
+                commit_onehot_sources::<F, D, _, E>(self, prepared, &group, plan)
             }};
         }
 
@@ -100,7 +100,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
                             "compiled dense group contains another representation".into(),
                         ));
                     };
-                    self.dense_coefficient_commit_rows::<F, D>(
+                    self.dense_coefficient_commit_rows::<D>(
                         prepared,
                         *dense,
                         source.descriptor(),
@@ -120,7 +120,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
                             "compiled dense-digit group contains another representation".into(),
                         ));
                     };
-                    self.predecomposed_dense_commit_rows::<F, D>(prepared, planes, plan)
+                    self.predecomposed_dense_commit_rows::<D>(prepared, planes, plan)
                         .map(crate::typed_inner_rows)
                 })
                 .collect(),
@@ -134,7 +134,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
                         ));
                     };
                     let digits = short.packed_view();
-                    self.recursive_packed_witness_commit_rows::<F, D>(
+                    self.recursive_packed_witness_commit_rows::<D>(
                         prepared,
                         digits,
                         plan.n_a,
@@ -158,7 +158,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
         }
     }
 
-    fn predecomposed_dense_commit_rows<F, const D: usize>(
+    fn predecomposed_dense_commit_rows<const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
         planes: &PredecomposedDigitPlanes<'_>,
@@ -203,7 +203,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
         )
     }
 
-    pub(crate) fn dense_coefficient_commit_rows<F, const D: usize>(
+    pub(crate) fn dense_coefficient_commit_rows<const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
         source: &dyn DenseCoefficientSource<F>,
@@ -259,7 +259,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
         )
     }
 
-    pub(crate) fn dense_commit_rows<F, const D: usize>(
+    pub(crate) fn dense_commit_rows<const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
         n_a: usize,
@@ -370,7 +370,7 @@ impl<Cfg: akita_config::CommitmentConfig> CpuBackend<Cfg> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn recursive_packed_witness_commit_rows<F, const D: usize>(
+    pub(crate) fn recursive_packed_witness_commit_rows<const D: usize>(
         &self,
         prepared: &CpuPreparedSetup<F>,
         digits: PackedSignedDigitView<'_>,
