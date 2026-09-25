@@ -1,5 +1,8 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
+use crate::coefficient_packing_relation::{
+    CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
+};
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
 use crate::protocol::ring_switch::{PreparedRelationGroups, RelationMatrixEvaluator};
 use akita_algebra::{
@@ -8,9 +11,8 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 use akita_types::{
-    AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
-    NegativeBinarySupport, OpeningFamily, ReducedCompressionRelationWeights,
+    AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
+    OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -345,17 +347,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics;
     use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
-        prepare_coefficient_packing_batch_semantics,
-        prepare_coefficient_packing_verifier_batch_semantics, relation_rhs_coeff_len,
-        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
-        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
-        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
-        RingRelationGroupOpening, RingRelationInstance, RingVec, SisModulusProfileId,
-        SubringCoefficientPackingGeometry, WitnessLayout,
+        prepare_coefficient_packing_batch_semantics, relation_rhs_coeff_len, AkitaSetupDescriptor,
+        BasisMode, CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan,
+        FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
+        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
+        RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
+        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
     };
     use jolt_field::Zero;
     use jolt_field::{Ext2, Prime64Offset59};

@@ -299,9 +299,9 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
             )
             .unwrap()
     };
-    let scan = akita_types::DirectScan::new(
+    let scan = crate::DirectScan::new(
         direct_plan(),
-        akita_types::PreparedCoefficientFunctional::lifted_power(alpha),
+        crate::PreparedCoefficientFunctional::lifted_power(alpha),
     )
     .unwrap();
     let setup_claim = scan.evaluate_direct::<MixedF>(&setup).unwrap();
@@ -316,9 +316,9 @@ fn prepared_relation_accepts_exact_deferred_setup_claim() {
 
     // A setup claim scanned under another alpha must not stand in for the
     // exact claim on the deferred path.
-    let wrong_alpha_scan = akita_types::DirectScan::new(
+    let wrong_alpha_scan = crate::DirectScan::new(
         direct_plan(),
-        akita_types::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
+        crate::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
     )
     .unwrap();
     let wrong_alpha_claim = wrong_alpha_scan.evaluate_direct::<MixedF>(&setup).unwrap();
@@ -366,9 +366,9 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             Some(&fold_gadget),
         )
         .unwrap();
-    let scan = akita_types::DirectScan::new(
+    let scan = crate::DirectScan::new(
         plan,
-        akita_types::PreparedCoefficientFunctional::reduced_evaluation(
+        crate::PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             coefficient_point,
             geometry,

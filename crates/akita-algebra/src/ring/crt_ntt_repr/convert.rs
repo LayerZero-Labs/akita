@@ -5,6 +5,8 @@ use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, invers
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::{NttPrime, NttTwiddles};
 use crate::ring::cyclotomic::CyclotomicRing;
 
 use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
@@ -105,18 +107,17 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             .zip(self.params.twiddles.iter())
         {
             // SAFETY: `new` selects this strategy only for the sealed i32
-            // residue width. The source and destination arrays are disjoint.
+            // residue width. MontCoeff is transparent, while NttPrime and
+            // NttTwiddles have stable C layouts. The source and destination
+            // arrays are disjoint.
             unsafe {
-                neon::centered_i16_to_mont_i32(
-                    limb.as_mut_ptr().cast::<i32>(),
-                    coefficients.as_ptr(),
-                    D,
-                    prime.p.to_i64() as i32,
-                    prime.pinv.to_i64() as i32,
-                    prime.montsq.to_i64() as i32,
+                neon::forward_ntt_centered_i16_i32(
+                    &mut *(limb as *mut _ as *mut [MontCoeff<i32>; D]),
+                    coefficients,
+                    *(prime as *const _ as *const NttPrime<i32>),
+                    &*(twiddles as *const _ as *const NttTwiddles<i32, D>),
                 );
             }
-            forward_ntt(limb, *prime, twiddles, self.params.kernel_plan);
         }
         CyclotomicCrtNtt { limbs }
     }

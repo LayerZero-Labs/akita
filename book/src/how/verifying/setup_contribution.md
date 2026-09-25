@@ -147,7 +147,11 @@ its plan and `SetupIndexWeightMle` only from the exact Stage 2 challenge point.
 
 The main implementation owners are:
 
-- `crates/akita-types/src/setup_contribution/` for geometry and tensors;
+- `crates/akita-types/src/setup_contribution/` for the functional-free plan,
+  its geometry and relation-column tensors, and the dense setup-index weights
+  the prover consumes;
+- `crates/akita-verifier/src/setup_contribution/` for the direct scan,
+  structured group contraction, and `SetupIndexWeightMle`;
 - `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs` for
   direct or deferred selection; and
 - `crates/akita-verifier/src/stages/stage3.rs` for the setup product check.

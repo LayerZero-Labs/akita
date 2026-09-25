@@ -508,7 +508,7 @@ mod tests {
         max_source_coefficients: usize,
     ) -> (
         AkitaProverSetup<F>,
-        <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+        <CpuBackend<F, F> as ComputeBackendSetup<F>>::PreparedSetup,
     ) {
         let plan = CompressionChainPlan::for_complete_source(
             SisModulusProfileId::Q128OffsetA7F7,
@@ -529,7 +529,7 @@ mod tests {
             },
         )
         .unwrap();
-        let prepared = CpuBackend::for_arithmetic_tests()
+        let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
             .prepare_expanded(setup.expanded.clone())
             .unwrap();
         (setup, prepared)
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn sequential_and_batched_execution_match_and_preserve_identity() {
         let (setup, prepared) = prepared_context(64);
-        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let ctx =
             OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let (batched, report) =
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn mixed_shapes_partition_and_rhs_expansion_is_bounded() {
         let (setup, prepared) = prepared_context(65);
-        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let ctx =
             OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let mut inputs = (0..MAX_COMPRESSION_RHS_BATCH + 3)
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn reduced_execution_builds_no_quotients_or_paired_compression_cache() {
         let (setup, prepared) = prepared_context(64);
-        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let ctx =
             OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let mut reduced = input(0, 64);
@@ -640,7 +640,7 @@ mod tests {
     fn compression_execution_bench() {
         const SAMPLES: usize = 30;
         let (setup, prepared) = prepared_context(64);
-        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let ctx =
             OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let (_, cold) = execute_compression_chains(&ctx, vec![input(0, 64)]).unwrap();

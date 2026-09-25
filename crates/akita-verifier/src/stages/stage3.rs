@@ -2,6 +2,7 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::SetupIndexWeightMle;
 #[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 #[cfg(test)]
@@ -13,7 +14,7 @@ use akita_serialization::AkitaSerialize;
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
     setup_prefix_coverage_eval_len, AkitaVerifierSetup, CommittedGroupParams,
-    PreparedRelationAddress, SetupIndexWeightMle, SETUP_SUMCHECK_DEGREE,
+    PreparedRelationAddress, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(test)]
 use jolt_field::solinas::parallel::*;

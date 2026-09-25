@@ -35,7 +35,7 @@ fn prepared() -> (AkitaProverSetup<F>, CpuPreparedSetup<F>) {
         },
     )
     .unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .unwrap();
     (setup, prepared)
@@ -56,7 +56,7 @@ fn assert_rows_equal(left: &RingVec<F>, right: &RingVec<F>) {
 #[test]
 fn resolved_homogeneous_groups_cover_dense_and_all_onehot_widths() {
     let (_setup, prepared) = prepared();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let dense = DensePoly::from_field_evals(
         9,
         (0usize..512)
@@ -91,7 +91,7 @@ fn resolved_homogeneous_groups_cover_dense_and_all_onehot_widths() {
                     .materialize()
                     .unwrap();
             let actual = backend
-                .commit_resolved_inner_host::<F, D>(&prepared, &resolved, plan())
+                .commit_resolved_inner_host::<D>(&prepared, &resolved, plan())
                 .unwrap();
             assert_eq!(actual.len(), 1);
             assert_eq!(actual[0].ring_dim(), D);
@@ -121,7 +121,7 @@ fn resolved_homogeneous_groups_cover_dense_and_all_onehot_widths() {
 #[test]
 fn resolved_packed_short_norm_commits_without_full_decode() {
     let (_setup, prepared) = prepared();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let witness = RecursiveWitnessFlat::from_i8_digits(
         (0usize..512)
             .map(|index| match index % 3 {
@@ -143,7 +143,7 @@ fn resolved_packed_short_norm_commits_without_full_decode() {
     .materialize()
     .unwrap();
     let actual = backend
-        .commit_resolved_inner_host::<F, D>(&prepared, &resolved, plan())
+        .commit_resolved_inner_host::<D>(&prepared, &resolved, plan())
         .unwrap();
     assert_eq!(actual.len(), 1);
     assert_eq!(actual[0].ring_dim(), D);
@@ -153,7 +153,7 @@ fn resolved_packed_short_norm_commits_without_full_decode() {
 #[test]
 fn resolved_dense_reuses_exact_plan_digit_cache() {
     let (_setup, prepared) = prepared();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let dense = DensePoly::from_field_evals(
         9,
         (0usize..512)
@@ -179,7 +179,7 @@ fn resolved_dense_reuses_exact_plan_digit_cache() {
     .materialize()
     .unwrap();
     let expected = backend
-        .commit_resolved_inner_host::<F, D>(&prepared, &coefficient_resolved, plan())
+        .commit_resolved_inner_host::<D>(&prepared, &coefficient_resolved, plan())
         .unwrap();
     let source_refs: [&dyn CommitmentSource<F>; 1] = [&dense];
     let resolved = compile_commitment_request(
@@ -199,7 +199,7 @@ fn resolved_dense_reuses_exact_plan_digit_cache() {
         Some(PolynomialType::Dense(DenseType::PredecomposedDigits))
     );
     let actual = backend
-        .commit_resolved_inner_host::<F, D>(&prepared, &resolved, plan())
+        .commit_resolved_inner_host::<D>(&prepared, &resolved, plan())
         .unwrap();
     assert_rows_equal(&actual[0], &expected[0]);
 }
@@ -220,7 +220,7 @@ fn resolved_sources_reject_a_different_execution_plan() {
     let mut other_plan = plan();
     other_plan.n_a = 1;
 
-    assert!(CpuBackend::for_arithmetic_tests()
-        .commit_resolved_inner_host::<F, D>(&prepared, &resolved, other_plan)
+    assert!(CpuBackend::<F, F>::for_arithmetic_tests()
+        .commit_resolved_inner_host::<D>(&prepared, &resolved, other_plan)
         .is_err());
 }

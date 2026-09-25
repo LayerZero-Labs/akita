@@ -68,7 +68,7 @@ impl OpeningClaimsLayout {
     }
 
     /// Build a layout from group sizes, all sharing the same active variable count.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn from_group_sizes(
         num_vars: usize,
         polynomials_per_group: &[usize],

@@ -33,14 +33,14 @@ fn native_stream_binds_session_statement_basis_and_eof() {
         let point = random_point(NUM_VARS, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -200,14 +200,14 @@ fn native_stream_mutations_reject_without_panicking() {
             BasisMode::Lagrange,
         );
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )

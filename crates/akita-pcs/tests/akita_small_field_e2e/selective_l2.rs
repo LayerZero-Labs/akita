@@ -78,14 +78,14 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("L2 prover setup");
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -172,8 +172,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let setup = scheme
             .setup_prover(NUM_VARS, 1)
             .expect("terminal L2 prover setup");
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme
             .setup_verifier(&setup)
             .expect("terminal L2 verifier setup");
@@ -182,6 +181,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )

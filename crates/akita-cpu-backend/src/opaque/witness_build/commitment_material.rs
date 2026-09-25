@@ -35,7 +35,7 @@ pub struct CpuCommitmentMaterialHandle<F: Field> {
 impl<F: Field> CpuCommitmentMaterialHandle<F> {
     fn validate_terminal(
         &self,
-        backend: &crate::opaque::CpuBackend<impl akita_config::CommitmentConfig>,
+        backend: &crate::opaque::CpuBackend<F, impl Sized>,
     ) -> Result<(), AkitaError> {
         backend.validate_binding(&self.binding)?;
         let (schedule, _) = self.binding.scope_lease().proof_plan()?;
@@ -143,10 +143,9 @@ where
 
 pub(crate) type CpuCommitmentMaterial<F> = CpuCommitmentMaterialHandle<F>;
 
-impl<F, Cfg> crate::opaque::TerminalCommitmentMaterialKernel<F, CpuCommitmentMaterial<F>>
-    for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::TerminalCommitmentMaterialKernel<F, CpuCommitmentMaterial<F>>
+    for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Send + 'static,
 {
     fn terminal_message(

@@ -14,10 +14,11 @@ use super::{
     PreparedRelationGroups, QuotientRelationMultipliers, ReducedRelationMultipliers,
     RelationMatrixEvaluator, RelationMatrixGroupEvaluator,
 };
+use crate::setup_contribution::{evaluate_structured_group, DirectScan};
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, DirectScan, FpExtEncoding,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
     PreparedRelationAddress, RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily,
     RelationWitnessGeometry, SetupContributionPlan,
 };
@@ -74,7 +75,8 @@ impl<E: Field> RelationMatrixEvaluator<E> {
             QuotientRelation::prepare::<F>(self, groups, point, alpha)?
         };
         let structured = relation.evaluate_structured(|group| {
-            plan.evaluate_structured_group::<F>(
+            evaluate_structured_group::<F, _>(
+                &plan,
                 group.group_id,
                 &group.multipliers.c_alphas,
                 &group.multipliers.opening_a_evals,
