@@ -1,9 +1,10 @@
-//! Precomputed Montgomery quotients for the x86 `i32` transforms.
+//! Precomputed Montgomery quotients for the x86 `i16` and `i32` transforms.
 //!
-//! For a constant `w` the quotient is `w * p^{-1} mod 2^32`. With it, the
-//! Montgomery product of any `x` by `w` is `hi(x*w) - hi(lo(x*q) * p)`, which
-//! equals `mont_mul(x, w)` bit for bit. The low-half product `lo(x*q)` no
-//! longer waits on `x*w`, and the kernels need no `mullo`.
+//! For a constant `w` the quotient is `w * p^{-1} mod 2^k`, with `k` the lane
+//! width. With it, the Montgomery product of any `x` by `w` is
+//! `hi(x*w) - hi(lo(x*q) * p)`, which equals `mont_mul(x, w)` bit for bit.
+//! The low-half product `lo(x*q)` no longer waits on `x*w`, and the `i32`
+//! kernels need no `mullo`.
 
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 

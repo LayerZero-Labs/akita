@@ -560,7 +560,7 @@ pub(super) unsafe fn dot_reduce<const D: usize>(
                 ),
                 _mm512_and_si512(low, m.mask),
             );
-            // x < 2p + 2p + 2^52 < 9p.
+            // x < 2p + 2p + 2^52 < 12p, since p > 2^49.
             let x = _mm512_min_epu64(x, _mm512_sub_epi64(x, eight_p));
             let x = _mm512_min_epu64(x, _mm512_sub_epi64(x, four_p));
             let x = m.reduce_2p(m.reduce_4p(x));

@@ -31,9 +31,9 @@ pub struct Ifma52Prime {
 impl Ifma52Prime {
     /// Validate and prepare one IFMA52 prime.
     pub fn new(modulus: u64) -> Result<Self, AkitaError> {
-        if modulus >= (1 << 50) || modulus & 1 == 0 {
+        if modulus <= (1 << 49) || modulus >= (1 << 50) || modulus & 1 == 0 {
             return Err(AkitaError::InvalidSetup(
-                "IFMA52 modulus must be odd and below 2^50".into(),
+                "IFMA52 modulus must be odd and between 2^49 and 2^50".into(),
             ));
         }
         let mut prime = Self {
@@ -278,8 +278,9 @@ pub(crate) fn forward_i16<const D: usize>(
     scalar_forward(&mut values.0, prime, twiddles);
 }
 
-/// Inverse transform of residues below `2p` in transform order, into
-/// canonical residues in standard order.
+/// Inverse transform of canonical residues in transform order, into
+/// canonical residues in standard order. The IFMA kernel also accepts
+/// residues below `2p`.
 #[inline(always)]
 pub(crate) fn inverse<const D: usize>(
     values: &mut Ifma52Residues<D>,
@@ -305,8 +306,9 @@ pub(crate) const IFMA52_ACCUMULATOR_TERMS: usize = 1 << 11;
 /// `high[c] 2^52 + low[c]`.
 ///
 /// Each product of two residues below `2^52` adds its low and high 52 bits
-/// to `low` and `high`, so both stay below `2^63` for up to
-/// [`IFMA52_ACCUMULATOR_TERMS`] products after a fold.
+/// to `low` and `high`. A fold leaves `low` below `p` and `high` zero, so
+/// for up to [`IFMA52_ACCUMULATOR_TERMS`] products after it `low` stays
+/// below `p + 2^63` and `high` below `2^63`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct Ifma52Accumulator<const D: usize> {
@@ -518,6 +520,16 @@ mod tests {
         ($check:ident, $use_ifma:expr, $($degree:literal),+) => {
             $($check::<$degree>($use_ifma);)+
         };
+    }
+
+    #[test]
+    fn prime_requires_an_odd_modulus_between_2_49_and_2_50() {
+        for modulus in [(1 << 49) - 1, 1 << 49, (1 << 50) - 2, (1 << 50) + 1] {
+            assert!(Ifma52Prime::new(modulus).is_err(), "{modulus}");
+        }
+        for modulus in [(1 << 49) + 1, (1 << 50) - 1] {
+            assert!(Ifma52Prime::new(modulus).is_ok(), "{modulus}");
+        }
     }
 
     #[test]
