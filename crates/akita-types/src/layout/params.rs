@@ -200,8 +200,8 @@ impl CommittedGroupParams {
         self.groups.precommitted()
     }
 
-    #[cfg(test)]
-    pub(crate) fn preceding_group_mut_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn preceding_group_mut_for_test(
         &mut self,
         group_index: usize,
     ) -> Option<&mut GroupOpenPhaseParams> {

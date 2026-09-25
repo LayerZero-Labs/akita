@@ -59,9 +59,15 @@ has already factored the relation coordinates. This state is encoded by the
 
 ## Direct Stage 2 mode
 
-In direct mode, the plan materializes compact setup index weights and scans the
-required public setup prefix. For each setup ring it evaluates the ring at
-`alpha`, multiplies by the structured index weight, and accumulates the result.
+In direct mode, the verifier moves the plan into a `DirectScan` together with
+the prepared coefficient functional. The scan owns the plan, the per-group E,
+T, and Z column weights, and the packed D, B, and A segment partition; the plan
+itself carries no functional state. `DirectScan::evaluate_direct` walks the
+required public setup prefix. For each setup ring it evaluates the ring against
+the functional (the powers of `alpha` in quotient-lift mode), multiplies by the
+structured index weight, and accumulates the result. The structured group terms
+reuse the same cached column weights. Because every evaluation reads the plan
+the scan owns, a scan cannot be evaluated against a different plan.
 
 The scan is linear in the required public setup size. This is necessary because
 the setup coefficients are arbitrary. The verifier factors the setup equality
@@ -74,7 +80,15 @@ Direct mode returns the setup contribution as part of
 ## Deferred Stage 3 mode
 
 In deferred mode, Stage 2 receives a claimed setup contribution. It uses that
-claim in the same relation evaluation and caches the exact prepared plan.
+claim in the same relation evaluation, evaluates the structured group terms in
+closed form from the plan, and builds no `DirectScan`.
+
+Deferred mode exists only for quotient-lift levels. A deferred claim exists
+only when the next fold consumes this level's setup prefix, and schedule
+validation admits no such successor after reduced evaluation. The trusted
+schedule, not the proof, fixes this combination, so the verifier rejects a
+reduced-evaluation level with a deferred claim with `InvalidSetup` before any
+setup planning.
 
 Stage 3 then proves a product over two coordinates:
 
@@ -92,9 +106,15 @@ pow_\alpha(\rho_y).
 ```
 
 The first factor comes from the public setup or from an authenticated setup
-prefix opening. The second factor is the compact MLE of the same
-`SetupContributionPlan` used by Stage 2. The final factor evaluates the powers
-of `alpha` inside one ring.
+prefix opening. The second factor is `SetupIndexWeightMle`, the compact MLE of
+the setup-index weight. Stage 3 builds it from a `SetupContributionPlan`
+prepared from the same Stage 2 challenge point and witness layout, so it uses
+the same address rules as the Stage 2 plan. The plan keeps the group's live
+witness units, and the B-role tensors are rebuilt from those, so the
+constructor takes the plan alone and cannot be handed a second layout. Only
+the verifier builds these
+paired-equality tensors; the prover materializes the dense setup-index weights
+instead. The final factor evaluates the powers of `alpha` inside one ring.
 
 When a setup prefix is selected, the first factor is an evaluation of the actual
 full power-of-two setup prefix `S[0..n_prefix]`. The active support
@@ -121,13 +141,17 @@ change the setup index weights or relation geometry.
 ## Safety and ownership
 
 Plan construction checks every role dimension, projection ratio, row span,
-unit range, and address product. The verifier caches a plan only when deferred
-mode is active, and Stage 3 consumes it only for the exact Stage 2 challenge
-point.
+unit range, and address product. It also rejects a relation address that cannot
+be bridged from the relation base to the Stage 3 setup base. Stage 3 prepares
+its plan and `SetupIndexWeightMle` only from the exact Stage 2 challenge point.
 
 The main implementation owners are:
 
-- `crates/akita-types/src/setup_contribution/` for geometry and tensors;
+- `crates/akita-types/src/setup_contribution/` for the functional-free plan,
+  its geometry and relation-column tensors, and the dense setup-index weights
+  the prover consumes;
+- `crates/akita-verifier/src/setup_contribution/` for the direct scan,
+  structured group contraction, and `SetupIndexWeightMle`;
 - `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs` for
   direct or deferred selection; and
 - `crates/akita-verifier/src/stages/stage3.rs` for the setup product check.

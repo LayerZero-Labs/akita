@@ -42,56 +42,75 @@ fn embedded_terminal_functionals<E: Field>(
                 .filter(|&end| end <= ambient_dimension)
                 .ok_or(AkitaError::InvalidProof)?;
             let mut embedded = vec![E::zero(); ambient_dimension];
-            embedded[start..end].copy_from_slice(native_equality);
+            embedded
+                .get_mut(start..end)
+                .ok_or(AkitaError::InvalidProof)?
+                .copy_from_slice(native_equality);
             terminal_residue_kernel(&embedded, alpha)
         })
         .collect()
 }
 
-impl<E: Field> SetupContributionPlan<E> {
+impl<E: Field> DirectScan<E> {
     /// Contract one reduced-evaluation group's structured E/T/Z terms with
     /// their genuine public ring multipliers.
+    ///
+    /// The reduced alpha and role functionals are the ones this scan was
+    /// prepared for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a reduced scan or
+    /// the group is not evaluation-trace, and
+    /// [`AkitaError::InvalidProof`] if the challenges do not match the group.
     pub fn evaluate_reduced_structured_group<F>(
         &self,
         group_id: usize,
         challenges: &Challenges,
-        opening_multiplier: &crate::PreparedRingMultiplier<E>,
+        opening_multiplier: &akita_types::PreparedRingMultiplier<E>,
     ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let group_index = self
-            .groups
-            .iter()
-            .position(|group| group.group_id == group_id)
-            .ok_or(AkitaError::InvalidProof)?;
-        let group = &self.groups[group_index];
-        let (alpha, weights) = match &self.direct_scan_state {
-            DirectScanState::Reduced { alpha, groups, .. } => (
-                *alpha,
-                groups.get(group_index).ok_or_else(|| {
-                    AkitaError::InvalidSetup("reduced direct-scan group is missing".into())
-                })?,
-            ),
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "reduced structured contraction requires prepared reduced state".into(),
-                ));
-            }
+        let plan = &self.plan;
+        let DirectScanMode::Reduced {
+            alpha,
+            groups: scan_groups,
+        } = &self.mode
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "reduced structured contraction requires a reduced direct scan".into(),
+            ));
         };
-        if !matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace) {
+        let alpha = *alpha;
+        let group_index = plan
+            .groups()
+            .iter()
+            .position(|group| group.group_id() == group_id)
+            .ok_or(AkitaError::InvalidProof)?;
+        let group = plan
+            .groups()
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let weights = scan_groups.get(group_index).ok_or_else(|| {
+            AkitaError::InvalidSetup("reduced direct-scan group is missing".into())
+        })?;
+        if !matches!(
+            group.opening_method(),
+            akita_types::OpeningMethod::EvaluationTrace
+        ) {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured contraction disagrees with its prepared mode".into(),
             ));
         }
         let block_claims = group
-            .num_claims
-            .checked_mul(group.num_live_blocks)
+            .num_claims()
+            .checked_mul(group.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
         if challenges.len() != block_claims
-            || challenges.num_claims() != group.num_claims
-            || challenges.num_live_blocks_per_claim() != group.num_live_blocks
+            || challenges.num_claims() != group.num_claims()
+            || challenges.num_live_blocks_per_claim() != group.num_live_blocks()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -100,35 +119,37 @@ impl<E: Field> SetupContributionPlan<E> {
         let (a_functional, a_equality) = (&a_role.functional, &a_role.equality);
         let (b_functional, b_equality) = (&b_role.functional, &b_role.equality);
         let (d_functional, d_equality) = (&d_role.functional, &d_role.equality);
-        let d_a = group.role_dims.d_a();
+        let d_a = group.role_dims().d_a();
         if a_functional.len() != d_a
             || a_equality.len() != d_a
-            || b_functional.len() != group.role_dims.d_b()
-            || b_equality.len() != group.role_dims.d_b()
-            || d_functional.len() != group.role_dims.d_d()
-            || d_equality.len() != group.role_dims.d_d()
+            || b_functional.len() != group.role_dims().d_b()
+            || b_equality.len() != group.role_dims().d_b()
+            || d_functional.len() != group.role_dims().d_d()
+            || d_equality.len() != group.role_dims().d_d()
         {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured coefficient state has malformed dimensions".into(),
             ));
         }
 
-        let opening_gadget = extension_gadget::<F, E>(group.depth_open, group.log_basis_open);
-        let commitment_gadget = extension_gadget::<F, E>(group.depth_commit, group.log_basis_outer);
-        let witness_gadget = extension_gadget::<F, E>(group.depth_witness, group.log_basis_inner);
+        let opening_gadget = extension_gadget::<F, E>(group.depth_open(), group.log_basis_open());
+        let commitment_gadget =
+            extension_gadget::<F, E>(group.depth_commit(), group.log_basis_outer());
+        let witness_gadget =
+            extension_gadget::<F, E>(group.depth_witness(), group.log_basis_inner());
         let (outer_subcolumns, _) =
-            SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-        let opening_subcolumns = group.opening_subcolumns;
+            SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims())?;
+        let opening_subcolumns = group.opening_subcolumns();
         let opening_functionals =
             embedded_terminal_functionals(d_equality, d_a, opening_subcolumns, alpha)?;
         let commitment_functionals =
             embedded_terminal_functionals(b_equality, d_a, outer_subcolumns, alpha)?;
-        let e_stride = checked::product([opening_subcolumns, group.depth_open])
+        let e_stride = checked::product([opening_subcolumns, group.depth_open()])
             .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
-        let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
+        let t_row_stride = checked::product([outer_subcolumns, group.depth_commit()])
             .ok_or_else(|| AkitaError::InvalidSetup("structured T row stride overflow".into()))?;
         let t_stride = group
-            .n_a
+            .n_a()
             .checked_mul(t_row_stride)
             .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
         let expected_e = block_claims
@@ -138,13 +159,13 @@ impl<E: Field> SetupContributionPlan<E> {
             .checked_mul(t_stride)
             .ok_or(AkitaError::InvalidProof)?;
         let expected_z = group
-            .num_positions_per_block
-            .checked_mul(group.depth_witness)
+            .num_positions_per_block()
+            .checked_mul(group.depth_witness())
             .ok_or(AkitaError::InvalidProof)?;
         if weights.e.len() != expected_e
             || weights.t.len() != expected_t
             || weights.z.len() != expected_z
-            || group.a_row_weights.len() != group.n_a
+            || group.a_row_weights().len() != group.n_a()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -161,12 +182,12 @@ impl<E: Field> SetupContributionPlan<E> {
             for (subcolumn, functional) in opening_functionals.iter().enumerate() {
                 let multiplier = challenge.evaluate(functional)?;
                 let digit_start = subcolumn
-                    .checked_mul(group.depth_open)
+                    .checked_mul(group.depth_open())
                     .ok_or(AkitaError::InvalidProof)?;
                 let digit_weights = checked_slice(
                     e_weights,
                     digit_start,
-                    group.depth_open,
+                    group.depth_open(),
                     "reduced structured E digits",
                 )?;
                 e += multiplier
@@ -189,17 +210,17 @@ impl<E: Field> SetupContributionPlan<E> {
             let mut t = E::zero();
             for (row, &row_weight) in t_weights
                 .chunks_exact(t_row_stride)
-                .zip(group.a_row_weights.iter())
+                .zip(group.a_row_weights().iter())
             {
                 let mut row_evaluation = E::zero();
                 for (subcolumn, &multiplier) in commitment_multipliers.iter().enumerate() {
                     let digit_start = subcolumn
-                        .checked_mul(group.depth_commit)
+                        .checked_mul(group.depth_commit())
                         .ok_or(AkitaError::InvalidProof)?;
                     let digit_weights = checked_slice(
                         row,
                         digit_start,
-                        group.depth_commit,
+                        group.depth_commit(),
                         "reduced structured T digits",
                     )?;
                     row_evaluation += multiplier
@@ -210,18 +231,18 @@ impl<E: Field> SetupContributionPlan<E> {
                 }
                 t += row_weight * row_evaluation;
             }
-            et += group.consistency_weight * e + t;
+            et += group.consistency_weight() * e + t;
         }
 
         let mut z = E::zero();
-        for position in 0..group.num_positions_per_block {
+        for position in 0..group.num_positions_per_block() {
             let start = position
-                .checked_mul(group.depth_witness)
+                .checked_mul(group.depth_witness())
                 .ok_or(AkitaError::InvalidProof)?;
             let eq = checked_slice(
                 &weights.z,
                 start,
-                group.depth_witness,
+                group.depth_witness(),
                 "reduced structured Z",
             )?;
             let digit_evaluation = eq
@@ -231,7 +252,7 @@ impl<E: Field> SetupContributionPlan<E> {
             z += opening_multiplier.evaluate_position_functional(position, a_functional)?
                 * digit_evaluation;
         }
-        Ok(et + group.consistency_weight * z)
+        Ok(et + group.consistency_weight() * z)
     }
 }
 

@@ -180,8 +180,10 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
-    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
+    checked_slice, ensure_setup_envelope, factor_aligned_role_tensors, project_role_tensors,
+    role_projection_evaluation, role_tensors_are_aligned, shared_setup_fold_gadget,
+    PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
+    SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
     SetupProjectionGeometry,
 };
 pub use signed_digit::{
