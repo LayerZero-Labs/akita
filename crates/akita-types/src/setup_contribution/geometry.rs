@@ -101,7 +101,7 @@ impl SetupProjectionGeometry {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn from_role_footprints(
         role_dims: CommitmentRingDims,
         a_footprint: usize,
@@ -255,7 +255,9 @@ impl SetupProjectionGeometry {
         self.natural_field_len
     }
 
-    pub(crate) fn validate_alpha_power_lengths(
+    /// Check that the lifted alpha-power vectors have one power per role
+    /// coefficient.
+    pub fn validate_alpha_power_lengths(
         self,
         a_len: usize,
         b_len: usize,

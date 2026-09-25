@@ -99,8 +99,8 @@ B, and D setup rows, their witness weights, and the powers of the ring challenge
 used at the sampled relation point.
 
 In direct mode, the verifier uses this plan to scan the public setup. In
-offloaded mode, Stage 2 accepts a claimed value and saves the same plan for
-Stage 3. The prover and verifier then run a degree two sumcheck over two
+offloaded mode, Stage 2 accepts a claimed value, and Stage 3 prepares the same
+plan again from the Stage 2 challenge point. The prover and verifier then run a degree two sumcheck over two
 coordinates:
 
 - one coordinate selects a coefficient inside a setup ring; and
@@ -232,6 +232,7 @@ panic.
 | Build recursive candidates and prefix requirements | `crates/akita-planner/src/schedule_params/candidate/recursive.rs` and `candidate/setup_prefix.rs` |
 | Define prefix identities and proof data | `crates/akita-types/src/proof/setup_prefix.rs` |
 | Build the shared setup contribution plan | `crates/akita-types/src/setup_contribution/` |
+| Evaluate the setup contribution at the Stage 2 point | `crates/akita-verifier/src/setup_contribution/` |
 | Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |
 | Prove the setup product | `crates/akita-cpu-backend/src/opaque/sumcheck/stage3/` |
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |

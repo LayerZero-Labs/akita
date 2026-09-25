@@ -22,11 +22,12 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    DigitRangePlan, OpeningClaimsLayout, PreparedCoefficientFunctional, PreparedRelationAddress,
-    RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationGroupOpening, RingRelationInstance, RingRelationMode, RingVec,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
+    DigitRangePlan, OpeningClaimsLayout, PreparedRelationAddress, RelationAddressGeometry,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
+    RingRelationInstance, RingRelationMode, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
+use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
@@ -294,7 +295,7 @@ fn structured_reduced_evaluation(
     let fold_gadget = shared_setup_fold_gadget(params, opening_batch, &setup_groups)
         .expect("evaluation-trace fold gadget");
     let coefficient_bits = fixture.geometry.relation_coefficient_variable_count();
-    let mut setup_plan = SetupContributionPlan::prepare::<ReducedF>(
+    let setup_plan = SetupContributionPlan::prepare::<ReducedF>(
         params,
         opening_batch,
         1,
@@ -306,17 +307,17 @@ fn structured_reduced_evaluation(
         fixture.geometry,
     )
     .expect("setup contribution plan");
-    setup_plan
-        .materialize_direct_scan(
-            PreparedCoefficientFunctional::reduced_evaluation(
-                fixture.alpha,
-                &fixture.point[..coefficient_bits],
-                fixture.geometry,
-            )
-            .expect("reduced coefficient functional"),
+    let scan = DirectScan::new(
+        setup_plan,
+        PreparedCoefficientFunctional::reduced_evaluation(
+            fixture.alpha,
+            &fixture.point[..coefficient_bits],
+            fixture.geometry,
         )
-        .expect("reduced direct scan");
-    let structured = setup_plan
+        .expect("reduced coefficient functional"),
+    )
+    .expect("reduced direct scan");
+    let structured = scan
         .evaluate_reduced_structured_group::<ReducedF>(
             0,
             instance
@@ -346,7 +347,7 @@ fn structured_reduced_evaluation(
         ReducedF::zero()
     };
     structured
-        + setup_plan
+        + scan
             .evaluate_direct::<ReducedF>(setup)
             .expect("direct reduced setup evaluation")
         + compression

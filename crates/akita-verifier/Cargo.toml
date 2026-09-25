@@ -50,8 +50,10 @@ benchmark-support = []
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
+  "akita-challenges/parallel",
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
+  "akita-types/parallel",
 ]
 
 [lints]

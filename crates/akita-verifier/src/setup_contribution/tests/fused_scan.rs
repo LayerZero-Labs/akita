@@ -38,7 +38,7 @@ fn literal_native_functional<E: Field>(
     let ratio = dimension / coefficient_dimension;
     let mut native_point = coefficient_point.to_vec();
     native_point
-        .extend_from_slice(&plan.relation_address.point()[..ratio.trailing_zeros() as usize]);
+        .extend_from_slice(&plan.relation_address().point()[..ratio.trailing_zeros() as usize]);
     literal_terminal_functional(&native_point, dimension, alpha)
 }
 
@@ -60,24 +60,24 @@ fn naive_physical_b_weights<E: Field>(
     row_weights: &[E],
     b_row_start: usize,
 ) -> Vec<E> {
-    let slice_count = group.physical_b.geometry().slice_count().get();
-    let rows = group.physical_b.physical_rows();
-    let columns = group.physical_b.physical_input_width();
-    let maximum_blocks = group.num_live_blocks.div_ceil(slice_count);
-    let per_block = columns / (group.num_claims * maximum_blocks);
+    let slice_count = group.physical_b().geometry().slice_count().get();
+    let rows = group.physical_b().physical_rows();
+    let columns = group.physical_b().physical_input_width();
+    let maximum_blocks = group.num_live_blocks().div_ceil(slice_count);
+    let per_block = columns / (group.num_claims() * maximum_blocks);
     let mut physical = vec![E::zero(); rows * columns];
     for slice in 0..slice_count {
-        let block_start = slice * group.num_live_blocks / slice_count;
-        let block_end = (slice + 1) * group.num_live_blocks / slice_count;
+        let block_start = slice * group.num_live_blocks() / slice_count;
+        let block_end = (slice + 1) * group.num_live_blocks() / slice_count;
         for row in 0..rows {
             let row_weight = row_weights[b_row_start + slice * rows + row];
-            for claim in 0..group.num_claims {
+            for claim in 0..group.num_claims() {
                 for block in block_start..block_end {
                     for offset in 0..per_block {
                         let physical_column =
                             (claim * maximum_blocks + block - block_start) * per_block + offset;
                         let logical_column =
-                            (claim * group.num_live_blocks + block) * per_block + offset;
+                            (claim * group.num_live_blocks() + block) * per_block + offset;
                         physical[row * columns + physical_column] +=
                             row_weight * logical[logical_column];
                     }
@@ -104,30 +104,33 @@ where
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let mut evaluation = E::zero();
-    let row_families =
-        crate::RelationWitnessGeometry::for_level(&inputs.level_params, &inputs.opening_batch, 1)
-            .unwrap()
-            .rhs_layout()
-            .row_families()
-            .unwrap();
+    let row_families = akita_types::RelationWitnessGeometry::for_level(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+    )
+    .unwrap()
+    .rhs_layout()
+    .row_families()
+    .unwrap();
     let d_row_start = row_families
         .iter()
-        .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))
+        .position(|family| matches!(family, akita_types::RelationRowFamily::Opening { .. }))
         .unwrap();
     let coefficient_dimension = plan
         .relation_address_geometry()
         .relation_coefficient_block_len();
     let mut d_column_start = 0usize;
-    for group in &plan.groups {
+    for group in plan.groups() {
         let group_input = group_inputs
             .iter()
-            .find(|candidate| candidate.group_id == group.group_id)
+            .find(|candidate| candidate.group_id == group.group_id())
             .unwrap();
         let role_spec = |dimension: usize| {
             let role_lanes = dimension / coefficient_dimension;
             RoleLaneSpec {
-                a_ratio: group.role_dims.d_a() / coefficient_dimension,
-                role_subcolumns: group.role_dims.d_a() / dimension,
+                a_ratio: group.role_dims().d_a() / coefficient_dimension,
+                role_subcolumns: group.role_dims().d_a() / dimension,
                 role_lanes,
                 weighting: RoleLaneWeighting::ReducedHigh,
             }
@@ -135,63 +138,67 @@ where
         let high_equality = |dimension: usize| {
             let role_lanes = dimension / coefficient_dimension;
             OffsetEqWindow::new(
-                &plan.relation_address.point()[role_lanes.trailing_zeros() as usize..],
+                &plan.relation_address().point()[role_lanes.trailing_zeros() as usize..],
             )
             .unwrap()
         };
         let e_weights = setup_e_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_live_blocks,
-            group.num_claims,
-            group.depth_open,
-            &high_equality(group.role_dims.d_d()),
-            &role_spec(group.role_dims.d_d()),
+            group.group_id(),
+            group.num_live_blocks(),
+            group.num_claims(),
+            group.depth_open(),
+            &high_equality(group.role_dims().d_d()),
+            &role_spec(group.role_dims().d_d()),
         )
         .unwrap();
         let t_weights = setup_t_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_live_blocks,
-            group.depth_commit,
-            group.n_a,
-            group.num_claims,
-            &high_equality(group.role_dims.d_b()),
-            &role_spec(group.role_dims.d_b()),
+            group.group_id(),
+            group.num_live_blocks(),
+            group.depth_commit(),
+            group.n_a(),
+            group.num_claims(),
+            &high_equality(group.role_dims().d_b()),
+            &role_spec(group.role_dims().d_b()),
         )
         .unwrap();
-        let mut z_weights = vec![E::zero(); group.z_cols];
+        let mut z_weights = vec![E::zero(); group.z_cols()];
         setup_z_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_positions_per_block,
-            group.depth_witness,
+            group.group_id(),
+            group.num_positions_per_block(),
+            group.depth_witness(),
             fold_gadget.len(),
-            &high_equality(group.role_dims.d_a()),
+            &high_equality(group.role_dims().d_a()),
             fold_gadget,
-            &role_spec(group.role_dims.d_a()),
+            &role_spec(group.role_dims().d_a()),
             &mut z_weights,
         )
         .unwrap();
         let a_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_a(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_a(), alpha);
         let b_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_b(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_b(), alpha);
         let d_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_d(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_d(), alpha);
 
         let d_view = setup
             .shared_matrix()
-            .ring_view_dyn(plan.d_rows, plan.d_physical_cols, group.role_dims.d_d())
+            .ring_view_dyn(
+                plan.d_rows(),
+                plan.d_physical_cols(),
+                group.role_dims().d_d(),
+            )
             .unwrap();
-        for row in 0..plan.d_rows {
+        for row in 0..plan.d_rows() {
             for (local_column, &column_weight) in e_weights.iter().enumerate() {
                 let column = d_column_start + local_column;
                 let ring = d_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_d()..(column + 1) * group.role_dims.d_d()]
+                    [column * group.role_dims().d_d()..(column + 1) * group.role_dims().d_d()]
                     .as_ref();
                 evaluation += row_weights[d_row_start + row]
                     * column_weight
@@ -201,12 +208,12 @@ where
 
         let a_view = setup
             .shared_matrix()
-            .ring_view_dyn(group.n_a, group.z_cols, group.role_dims.d_a())
+            .ring_view_dyn(group.n_a(), group.z_cols(), group.role_dims().d_a())
             .unwrap();
-        for row in 0..group.n_a {
+        for row in 0..group.n_a() {
             for (column, &column_weight) in z_weights.iter().enumerate() {
                 let ring = &a_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_a()..(column + 1) * group.role_dims.d_a()];
+                    [column * group.role_dims().d_a()..(column + 1) * group.role_dims().d_a()];
                 evaluation += row_weights[group_input.a_row_start + row]
                     * column_weight
                     * literal_ring_dot(ring, &a_functional);
@@ -218,22 +225,22 @@ where
         let b_view = setup
             .shared_matrix()
             .ring_view_dyn(
-                group.physical_b.physical_rows(),
-                group.physical_b.physical_input_width(),
-                group.role_dims.d_b(),
+                group.physical_b().physical_rows(),
+                group.physical_b().physical_input_width(),
+                group.role_dims().d_b(),
             )
             .unwrap();
-        for row in 0..group.physical_b.physical_rows() {
-            for column in 0..group.physical_b.physical_input_width() {
+        for row in 0..group.physical_b().physical_rows() {
+            for column in 0..group.physical_b().physical_input_width() {
                 let ring = &b_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_b()..(column + 1) * group.role_dims.d_b()];
-                evaluation += b_weights[row * group.physical_b.physical_input_width() + column]
+                    [column * group.role_dims().d_b()..(column + 1) * group.role_dims().d_b()];
+                evaluation += b_weights[row * group.physical_b().physical_input_width() + column]
                     * literal_ring_dot(ring, &b_functional);
             }
         }
         d_column_start += e_weights.len();
     }
-    assert_eq!(d_column_start, plan.d_physical_cols);
+    assert_eq!(d_column_start, plan.d_physical_cols());
     evaluation
 }
 
@@ -242,7 +249,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     const D_A: usize = 128;
     const D_B: usize = 64;
     const D_D: usize = 64;
-    let mut plan = finalize_test_plan(
+    let scan = finalize_test_plan(
         2,
         5,
         vec![
@@ -287,6 +294,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
             opening: D_D,
         },
     );
+    let plan = scan.plan();
     let setup_ring_elements = plan.required().div_ceil(D_A / D_D);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -305,10 +313,10 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     let alpha_pows_a = scalar_powers(alpha, D_A);
     let alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = plan
+    let expected = scan
         .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D_A)
         .unwrap();
-    let got = plan.evaluate_direct::<F>(&setup).unwrap();
+    let got = scan.evaluate_direct::<F>(&setup).unwrap();
     assert_eq!(got, expected);
 
     let a_functional: std::sync::Arc<[F]> = akita_algebra::ring::terminal_residue_kernel(
@@ -327,11 +335,17 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     )
     .unwrap()
     .into();
-    let lifted_groups =
-        match std::mem::replace(&mut plan.direct_scan_state, DirectScanState::Unprepared) {
-            DirectScanState::Lifted { groups, .. } => groups,
-            _ => panic!("fixture must start with lifted direct-scan state"),
-        };
+    let DirectScan {
+        plan,
+        mode: DirectScanMode::Lifted {
+            groups: lifted_groups,
+            ..
+        },
+        ..
+    } = scan
+    else {
+        panic!("fixture must start with a lifted direct scan");
+    };
     let reduced_groups = lifted_groups
         .into_iter()
         .map(|weights| ReducedDirectScanWeights {
@@ -352,12 +366,15 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
             ],
         })
         .collect();
-    plan.direct_scan_state = DirectScanState::Reduced {
-        alpha: test_scalar(5),
-        coefficient_point: vec![test_scalar(3); 6].into(),
-        groups: reduced_groups,
-    };
-    let reduced_expected = plan
+    let scan = DirectScan::with_mode(
+        plan,
+        DirectScanMode::Reduced {
+            alpha: test_scalar(5),
+            groups: reduced_groups,
+        },
+    )
+    .unwrap();
+    let reduced_expected = scan
         .evaluate_direct_by_rows::<F>(
             &setup,
             &a_functional,
@@ -366,7 +383,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
             D_A,
         )
         .unwrap();
-    assert_eq!(plan.evaluate_direct::<F>(&setup).unwrap(), reduced_expected);
+    assert_eq!(scan.evaluate_direct::<F>(&setup).unwrap(), reduced_expected);
 }
 
 #[test]
@@ -378,7 +395,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
     };
     let (inputs, groups, layout, lifted_plan, _, relation_point, fold_gadget) =
         structured_weight_fixture_with_outgoing(5, &[2, 2, 1], role_dims, 32);
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -396,15 +413,18 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
     let coefficient_point = (0..coefficient_variables)
         .map(|index| test_scalar(401 + index as u128))
         .collect::<Vec<_>>();
-    plan.materialize_direct_scan(
+    let relation_address_geometry = plan.relation_address_geometry();
+    let scan = DirectScan::new(
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(
             test_scalar(7),
             &coefficient_point,
-            plan.relation_address_geometry(),
+            relation_address_geometry,
         )
         .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
 
     let base_dimension = plan.projection_geometry().base_ring_dim();
     let setup_coefficients = plan.required() * base_dimension;
@@ -421,7 +441,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
                 .collect(),
         ),
     );
-    let DirectScanState::Reduced { groups: direct, .. } = &plan.direct_scan_state else {
+    let DirectScanMode::Reduced { groups: direct, .. } = &scan.mode else {
         panic!("reduced fixture must prepare reduced direct-scan state");
     };
     let [_a_role, b_role, d_role] = &direct[0].roles;
@@ -431,7 +451,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
     ));
     assert!(std::sync::Arc::ptr_eq(&b_role.equality, &d_role.equality));
     let expected = reduced_direct_literal_oracle(
-        &plan,
+        plan,
         &setup,
         &inputs,
         &groups,
@@ -441,7 +461,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
         &coefficient_point,
         test_scalar(7),
     );
-    assert_eq!(plan.evaluate_direct::<F>(&setup).unwrap(), expected);
+    assert_eq!(scan.evaluate_direct::<F>(&setup).unwrap(), expected);
 }
 
 #[test]
@@ -458,7 +478,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
     let coefficient_point = (0..relation_address_geometry.relation_coefficient_variable_count())
         .map(|index| test_scalar(1701 + index as u128))
         .collect::<Vec<_>>();
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -470,7 +490,8 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         relation_address_geometry,
     )
     .unwrap();
-    plan.materialize_direct_scan(
+    let scan = DirectScan::new(
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             &coefficient_point,
@@ -479,6 +500,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -494,9 +516,9 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         ),
     );
     assert_eq!(
-        plan.evaluate_direct::<F>(&setup).unwrap(),
+        scan.evaluate_direct::<F>(&setup).unwrap(),
         reduced_direct_literal_oracle(
-            &plan,
+            plan,
             &setup,
             &inputs,
             &groups,
@@ -537,7 +559,7 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
         .map(X::lift_base)
         .collect::<Vec<_>>();
     let alpha = extension(809);
-    let mut plan = SetupContributionPlan::<X>::prepare::<F>(
+    let plan = SetupContributionPlan::<X>::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -549,11 +571,13 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
         geometry,
     )
     .unwrap();
-    plan.materialize_direct_scan(
+    let scan = DirectScan::new(
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(alpha, &coefficient_point, geometry)
             .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -569,9 +593,9 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
         ),
     );
     assert_eq!(
-        plan.evaluate_direct::<F>(&setup).unwrap(),
+        scan.evaluate_direct::<F>(&setup).unwrap(),
         reduced_direct_literal_oracle(
-            &plan,
+            plan,
             &setup,
             &inputs,
             &groups,

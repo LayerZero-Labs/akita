@@ -62,6 +62,9 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) d_inv: MontCoeff<W>,
     /// Number of active stages in the twiddle arrays (`log2(D)`).
     pub(crate) num_stages: usize,
+    /// Barrett-form tables for the NEON transforms.
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) barrett: super::neon::BarrettTwiddles<W, D>,
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -154,6 +157,16 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             d_inv,
         );
 
+        #[cfg(target_arch = "aarch64")]
+        let barrett = super::neon::BarrettTwiddles::compute(
+            prime,
+            &fwd_twiddles,
+            &inv_twiddles,
+            &psi_pows,
+            &d_inv_psi_inv,
+            d_inv,
+        );
+
         Self {
             fwd_wlen,
             inv_wlen,
@@ -168,6 +181,8 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             inv_twiddles,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             quotients,
+            #[cfg(target_arch = "aarch64")]
+            barrett,
         }
     }
 }
