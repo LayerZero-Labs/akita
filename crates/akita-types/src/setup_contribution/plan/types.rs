@@ -405,7 +405,8 @@ impl<E: Field> PhysicalBSetupPlan<E> {
     }
 }
 
-/// Challenge-free per-group setup-contribution geometry and weights.
+/// Coefficient-functional-free per-group setup-contribution geometry and
+/// weights.
 ///
 /// Built only by [`SetupContributionPlan::prepare`] (or the test-support
 /// fixture constructor); consumers read it through
@@ -437,18 +438,14 @@ pub struct SetupContributionGroupPlan<E: Field> {
     pub physical_b: PhysicalBSetupPlan<E>,
     pub a_row_weights: Arc<[E]>,
     pub fold_gadget: Arc<[E]>,
-    /// Exact non-empty block ranges used by the partitioned E and T roles.
-    pub active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// The non-empty witness units of this group, in layout order. The E and
+    /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
+    /// are rebuilt from them, so no second layout is ever consulted.
+    pub active_units: Arc<[crate::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
     pub num_physical_units: usize,
     pub d_tensors: Vec<EqPairTensorFamily<E>>,
     pub a_tensors: Vec<EqPairTensorFamily<E>>,
-}
-
-#[derive(Clone, Copy)]
-pub struct SetupUnitRange {
-    pub global_block_start: usize,
-    pub num_live_blocks: usize,
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {

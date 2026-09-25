@@ -245,7 +245,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     const D_A: usize = 128;
     const D_B: usize = 64;
     const D_D: usize = 64;
-    let (plan, scan) = finalize_test_plan(
+    let scan = finalize_test_plan(
         2,
         5,
         vec![
@@ -290,6 +290,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
             opening: D_D,
         },
     );
+    let plan = scan.plan();
     let setup_ring_elements = plan.required().div_ceil(D_A / D_D);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -308,17 +309,10 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     let alpha_pows_a = scalar_powers(alpha, D_A);
     let alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
-    let expected = evaluate_direct_by_rows::<F, _>(
-        &plan,
-        &scan,
-        &setup,
-        &alpha_pows_a,
-        &alpha_pows_b,
-        &alpha_pows_d,
-        D_A,
-    )
-    .unwrap();
-    let got = scan.evaluate_direct::<F>(&plan, &setup).unwrap();
+    let expected = scan
+        .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D_A)
+        .unwrap();
+    let got = scan.evaluate_direct::<F>(&setup).unwrap();
     assert_eq!(got, expected);
 
     let a_functional: std::sync::Arc<[F]> = akita_algebra::ring::terminal_residue_kernel(
@@ -337,10 +331,14 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     )
     .unwrap()
     .into();
-    let DirectScanMode::Lifted {
-        groups: lifted_groups,
+    let DirectScan {
+        plan,
+        mode: DirectScanMode::Lifted {
+            groups: lifted_groups,
+            ..
+        },
         ..
-    } = scan.mode
+    } = scan
     else {
         panic!("fixture must start with a lifted direct scan");
     };
@@ -365,27 +363,23 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
         })
         .collect();
     let scan = DirectScan::with_mode(
-        &plan,
+        plan,
         DirectScanMode::Reduced {
             alpha: test_scalar(5),
             groups: reduced_groups,
         },
     )
     .unwrap();
-    let reduced_expected = evaluate_direct_by_rows::<F, _>(
-        &plan,
-        &scan,
-        &setup,
-        &a_functional,
-        &projected_functional,
-        &projected_functional,
-        D_A,
-    )
-    .unwrap();
-    assert_eq!(
-        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
-        reduced_expected
-    );
+    let reduced_expected = scan
+        .evaluate_direct_by_rows::<F>(
+            &setup,
+            &a_functional,
+            &projected_functional,
+            &projected_functional,
+            D_A,
+        )
+        .unwrap();
+    assert_eq!(scan.evaluate_direct::<F>(&setup).unwrap(), reduced_expected);
 }
 
 #[test]
@@ -415,16 +409,18 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
     let coefficient_point = (0..coefficient_variables)
         .map(|index| test_scalar(401 + index as u128))
         .collect::<Vec<_>>();
+    let relation_address_geometry = plan.relation_address_geometry();
     let scan = DirectScan::new(
-        &plan,
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(
             test_scalar(7),
             &coefficient_point,
-            plan.relation_address_geometry(),
+            relation_address_geometry,
         )
         .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
 
     let base_dimension = plan.projection_geometry().base_ring_dim();
     let setup_coefficients = plan.required() * base_dimension;
@@ -451,7 +447,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
     ));
     assert!(std::sync::Arc::ptr_eq(&b_role.equality, &d_role.equality));
     let expected = reduced_direct_literal_oracle(
-        &plan,
+        plan,
         &setup,
         &inputs,
         &groups,
@@ -461,7 +457,7 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
         &coefficient_point,
         test_scalar(7),
     );
-    assert_eq!(scan.evaluate_direct::<F>(&plan, &setup).unwrap(), expected);
+    assert_eq!(scan.evaluate_direct::<F>(&setup).unwrap(), expected);
 }
 
 #[test]
@@ -491,7 +487,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
     )
     .unwrap();
     let scan = DirectScan::new(
-        &plan,
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             &coefficient_point,
@@ -500,6 +496,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -515,9 +512,9 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
         ),
     );
     assert_eq!(
-        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
+        scan.evaluate_direct::<F>(&setup).unwrap(),
         reduced_direct_literal_oracle(
-            &plan,
+            plan,
             &setup,
             &inputs,
             &groups,
@@ -571,11 +568,12 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
     )
     .unwrap();
     let scan = DirectScan::new(
-        &plan,
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(alpha, &coefficient_point, geometry)
             .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
     let setup_coefficients = plan.required() * plan.projection_geometry().base_ring_dim();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -591,9 +589,9 @@ fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
         ),
     );
     assert_eq!(
-        scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
+        scan.evaluate_direct::<F>(&setup).unwrap(),
         reduced_direct_literal_oracle(
-            &plan,
+            plan,
             &setup,
             &inputs,
             &groups,

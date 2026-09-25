@@ -53,7 +53,7 @@ use akita_types::{
     checked_slice, dispatch_for_field, factor_aligned_role_tensors, project_role_tensors,
     role_projection_evaluation, role_tensors_are_aligned, AkitaExpandedSetup,
     PhysicalBWeightSegment, PhysicalBWeightTerm, RelationAddressGeometry, RingMatrixView,
-    SetupContributionGroupPlan, SetupContributionPlan, SetupProjectionGeometry, WitnessLayout,
+    SetupContributionGroupPlan, SetupContributionPlan, SetupProjectionGeometry,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};

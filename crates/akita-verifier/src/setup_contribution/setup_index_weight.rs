@@ -37,26 +37,22 @@ pub struct SetupIndexWeightMle<E: Field> {
 }
 
 impl<E: Field> SetupIndexWeightMle<E> {
-    /// Build the setup-index weight tensors for `plan` over `witness_layout`.
+    /// Build the setup-index weight tensors for `plan`.
     ///
-    /// `witness_layout` must be the layout `plan` was prepared from; the B
-    /// setup tensors are rebuilt from it here instead of being stored on the
-    /// plan.
+    /// The B setup tensors are rebuilt here from the witness units the plan
+    /// retained at preparation, instead of being stored on the plan.
     ///
     /// # Errors
     ///
-    /// Returns an error if the layout disagrees with the plan's groups or any
-    /// relation tensor fails to align to the Stage-3 setup base.
-    pub fn new(
-        plan: &SetupContributionPlan<E>,
-        witness_layout: &WitnessLayout,
-    ) -> Result<Self, AkitaError> {
+    /// Returns an error if any relation tensor fails to align to the Stage-3
+    /// setup base.
+    pub fn new(plan: &SetupContributionPlan<E>) -> Result<Self, AkitaError> {
         let (relation_base_bridge_point, setup_relation_point) =
             plan.relation_base_bridge_split()?;
         let mut tensors = Vec::<ProjectedEqPairTensor<E>>::new();
         for group in plan.groups() {
             append_d_tensors(plan, group, &mut tensors)?;
-            append_b_tensors(plan, group, witness_layout, &mut tensors)?;
+            append_b_tensors(plan, group, &mut tensors)?;
             append_a_tensors(plan, group, &mut tensors)?;
         }
         for batch in &mut tensors {
@@ -220,14 +216,12 @@ fn append_d_tensors<E: Field>(
 fn append_b_tensors<E: Field>(
     plan: &SetupContributionPlan<E>,
     group: &SetupContributionGroupPlan<E>,
-    witness_layout: &WitnessLayout,
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
 ) -> Result<(), AkitaError> {
     if group.physical_b.physical_rows() == 0 {
         return Ok(());
     }
-    let setup_tensors =
-        build_group_b_setup_tensors(plan.relation_address_geometry(), group, witness_layout)?;
+    let setup_tensors = build_group_b_setup_tensors(plan.relation_address_geometry(), group)?;
     let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
         setup_tensors
     } else {
@@ -269,7 +263,6 @@ fn append_a_tensors<E: Field>(
 fn build_group_b_setup_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
-    witness_layout: &WitnessLayout,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
     let physical_b = &group.physical_b;
     let geometry = physical_b.geometry();
@@ -307,7 +300,7 @@ fn build_group_b_setup_tensors<E: Field>(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut tensors = Vec::new();
-    for unit in witness_layout.units_for_group(group.group_id)? {
+    for unit in group.active_units.iter() {
         let unit_start = unit.global_block_start();
         let unit_end = unit_start
             .checked_add(unit.num_live_blocks())

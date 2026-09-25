@@ -24,18 +24,14 @@ impl<E: Field> DirectScan<E> {
     ///
     /// # Errors
     ///
-    /// Returns an error if this scan was prepared for a different plan or the
-    /// shared setup matrix is too small for `plan`.
-    pub fn evaluate_direct<F>(
-        &self,
-        plan: &SetupContributionPlan<E>,
-        setup: &AkitaExpandedSetup<F>,
-    ) -> Result<E, AkitaError>
+    /// Returns an error if the shared setup matrix is too small for this
+    /// scan's plan.
+    pub fn evaluate_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        self.check_plan(plan)?;
+        let plan = &self.plan;
         match &self.mode {
             DirectScanMode::Lifted { alpha, groups } => {
                 let geometry = plan.projection_geometry();

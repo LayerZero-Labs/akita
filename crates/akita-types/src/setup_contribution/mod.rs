@@ -23,7 +23,7 @@ pub use plan::{
     factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
     role_tensors_are_aligned, PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionGroupPlan,
-    SetupContributionPlan, SetupUnitRange,
+    SetupContributionPlan,
 };
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.

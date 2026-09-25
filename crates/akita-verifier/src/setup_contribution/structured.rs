@@ -101,12 +101,11 @@ impl<E: Field> DirectScan<E> {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] if this scan is not a lifted scan for
-    /// `plan`, and [`AkitaError::InvalidProof`] if the challenge vectors do
-    /// not match the group's shape.
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a lifted scan, and
+    /// [`AkitaError::InvalidProof`] if the challenge vectors do not match the
+    /// group's shape.
     pub(crate) fn evaluate_structured_group_cached<F>(
         &self,
-        plan: &SetupContributionPlan<E>,
         group_id: usize,
         block_challenges: &[E],
         opening_a_evals: &[E],
@@ -115,7 +114,7 @@ impl<E: Field> DirectScan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        self.check_plan(plan)?;
+        let plan = &self.plan;
         let DirectScanMode::Lifted {
             alpha,
             groups: scan_groups,
@@ -361,7 +360,7 @@ where
             "structured role tensor families disagree".into(),
         ));
     }
-    let active_unit_count = group.active_unit_ranges.len();
+    let active_unit_count = group.active_units.len();
     if active_unit_count == 0 || group.num_physical_units == 0 {
         return Err(AkitaError::InvalidSetup(
             "structured tensor partition is empty".into(),
@@ -407,11 +406,11 @@ where
             )
         };
         let unit = group
-            .active_unit_ranges
+            .active_units
             .get(unit_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let global_block_start = unit.global_block_start;
-        let unit_blocks = unit.num_live_blocks;
+        let global_block_start = unit.global_block_start();
+        let unit_blocks = unit.num_live_blocks();
         let setup_block = claim
             .checked_mul(group.num_live_blocks)
             .and_then(|block| block.checked_add(global_block_start))

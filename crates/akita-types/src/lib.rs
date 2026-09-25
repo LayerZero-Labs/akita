@@ -184,7 +184,7 @@ pub use setup_contribution::{
     role_projection_evaluation, role_tensors_are_aligned, shared_setup_fold_gadget,
     PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
-    SetupProjectionGeometry, SetupUnitRange,
+    SetupProjectionGeometry,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,

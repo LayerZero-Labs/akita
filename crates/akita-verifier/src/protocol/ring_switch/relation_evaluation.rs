@@ -69,14 +69,14 @@ impl<E: Field> RelationMatrixEvaluator<E> {
                 "reduced relation evaluation has no deferred setup contribution".into(),
             ));
         };
-        let relation = {
+        let (relation, plan) = {
             let _span =
                 tracing::info_span!("relation_coefficient_functional_preparation").entered();
             QuotientRelation::prepare::<F>(self, groups, point, alpha)?
         };
         let structured = relation.evaluate_structured(|group| {
             evaluate_structured_group::<F, _>(
-                &relation.plan,
+                &plan,
                 group.group_id,
                 &group.multipliers.c_alphas,
                 &group.multipliers.opening_a_evals,
@@ -110,19 +110,21 @@ where
 }
 
 /// Quotient-lift relation state shared by the direct and deferred paths.
+///
+/// The setup-contribution plan is returned beside it by `prepare`: the
+/// deferred path evaluates the plan in closed form, and the direct path hands
+/// it to the [`DirectScan`] that owns it from then on.
 pub(super) struct QuotientRelation<'a, E: Field> {
     evaluator: &'a RelationMatrixEvaluator<E>,
     groups: &'a [RelationMatrixGroupEvaluator<QuotientRelationMultipliers<E>>],
     point: PreparedLiftedRelationPoint<E>,
     row_families: Vec<RelationRowFamily>,
-    plan: SetupContributionPlan<E>,
 }
 
 /// Reduced-evaluation relation state; it has only a direct path.
 pub(super) struct ReducedRelation<'a, E: Field> {
     groups: &'a [RelationMatrixGroupEvaluator<ReducedRelationMultipliers<E>>],
     point: PreparedReducedRelationPoint<E>,
-    plan: SetupContributionPlan<E>,
 }
 
 impl<'a, E: Field> QuotientRelation<'a, E> {
@@ -131,7 +133,7 @@ impl<'a, E: Field> QuotientRelation<'a, E> {
         groups: &'a [RelationMatrixGroupEvaluator<QuotientRelationMultipliers<E>>],
         point: &[E],
         alpha: E,
-    ) -> Result<Self, AkitaError>
+    ) -> Result<(Self, SetupContributionPlan<E>), AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + ExtField<F>,
@@ -173,13 +175,15 @@ impl<'a, E: Field> QuotientRelation<'a, E> {
             &quotient_row_dims,
         )?;
         let plan = prepare_setup_plan::<F, E>(evaluator, point.relation_address())?;
-        Ok(Self {
-            evaluator,
-            groups,
-            point,
-            row_families,
+        Ok((
+            Self {
+                evaluator,
+                groups,
+                point,
+                row_families,
+            },
             plan,
-        })
+        ))
     }
 
     /// Sum `evaluate_group` over every group and apply the common alpha factor.
@@ -213,7 +217,7 @@ impl<'a, E: Field> ReducedRelation<'a, E> {
         groups: &'a [RelationMatrixGroupEvaluator<ReducedRelationMultipliers<E>>],
         point: &[E],
         alpha: E,
-    ) -> Result<Self, AkitaError>
+    ) -> Result<(Self, SetupContributionPlan<E>), AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F>,
@@ -234,15 +238,12 @@ impl<'a, E: Field> ReducedRelation<'a, E> {
         let point =
             PreparedReducedRelationPoint::new(point, alpha, evaluator.relation_address_geometry)?;
         let plan = prepare_setup_plan::<F, E>(evaluator, point.relation_address())?;
-        Ok(Self {
-            groups,
-            point,
-            plan,
-        })
+        Ok((Self { groups, point }, plan))
     }
 }
 
-/// A relation prepared for direct evaluation, together with its scan cache.
+/// A relation prepared for direct evaluation, together with the scan that
+/// owns its setup-contribution plan.
 pub(super) enum PreparedDirectRelation<'a, E: Field> {
     Quotient {
         relation: QuotientRelation<'a, E>,
@@ -266,18 +267,20 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
     {
         match &evaluator.groups {
             PreparedRelationGroups::QuotientLift(groups) => {
-                let relation = QuotientRelation::prepare::<F>(evaluator, groups, point, alpha)?;
+                let (relation, plan) =
+                    QuotientRelation::prepare::<F>(evaluator, groups, point, alpha)?;
                 let scan = {
                     let _span = tracing::info_span!("relation_setup_weights").entered();
-                    DirectScan::new(&relation.plan, relation.point.coefficient_functional())?
+                    DirectScan::new(plan, relation.point.coefficient_functional())?
                 };
                 Ok(Self::Quotient { relation, scan })
             }
             PreparedRelationGroups::ReducedEvaluation(groups) => {
-                let relation = ReducedRelation::prepare::<F>(evaluator, groups, point, alpha)?;
+                let (relation, plan) =
+                    ReducedRelation::prepare::<F>(evaluator, groups, point, alpha)?;
                 let scan = {
                     let _span = tracing::info_span!("relation_setup_weights").entered();
-                    DirectScan::new(&relation.plan, relation.point.coefficient_functional())?
+                    DirectScan::new(plan, relation.point.coefficient_functional())?
                 };
                 Ok(Self::Reduced { relation, scan })
             }
@@ -287,9 +290,9 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
     #[cfg(any(test, feature = "benchmark-support"))]
     pub(super) fn setup_field_len(&self) -> usize {
         match self {
-            Self::Quotient { relation, .. } => relation.plan.projection_geometry(),
-            Self::Reduced { relation, .. } => relation.plan.projection_geometry(),
+            Self::Quotient { scan, .. } | Self::Reduced { scan, .. } => scan.plan(),
         }
+        .projection_geometry()
         .natural_field_len()
     }
 
@@ -300,9 +303,10 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
     {
         let _span = tracing::info_span!("relation_setup_scan").entered();
         match self {
-            Self::Quotient { relation, scan } => Ok(relation.point.common_alpha_evaluation()
-                * scan.evaluate_direct::<F>(&relation.plan, setup)?),
-            Self::Reduced { relation, scan } => scan.evaluate_direct::<F>(&relation.plan, setup),
+            Self::Quotient { relation, scan } => {
+                Ok(relation.point.common_alpha_evaluation() * scan.evaluate_direct::<F>(setup)?)
+            }
+            Self::Reduced { scan, .. } => scan.evaluate_direct::<F>(setup),
         }
     }
 
@@ -314,7 +318,6 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         match self {
             Self::Quotient { relation, scan } => relation.evaluate_structured(|group| {
                 scan.evaluate_structured_group_cached::<F>(
-                    &relation.plan,
                     group.group_id,
                     &group.multipliers.c_alphas,
                     &group.multipliers.opening_a_evals,
@@ -325,7 +328,6 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
                 relation.groups.iter().try_fold(E::zero(), |sum, group| {
                     Ok(sum
                         + scan.evaluate_reduced_structured_group::<F>(
-                            &relation.plan,
                             group.group_id,
                             &group.multipliers.challenges,
                             &group.multipliers.opening,

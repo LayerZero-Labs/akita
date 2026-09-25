@@ -204,7 +204,7 @@ fn make_case_with_shape(
         .fold(F::zero(), |acc, (index, weight)| {
             acc + eq_eval_at_index(&rho, index) * weight
         });
-    let mle = SetupIndexWeightMle::new(&plan, &layout).unwrap();
+    let mle = SetupIndexWeightMle::new(&plan).unwrap();
     assert_eq!(mle.evaluate(&rho, alpha).unwrap(), dense);
     SetupIndexWeightBenchCase {
         mle,

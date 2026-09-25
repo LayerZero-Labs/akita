@@ -12,8 +12,8 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
 
     let lane_weight = |witness_column: usize| eq_eval_at_index(&address_point, witness_column);
     let group = &groups[0];
-    let scan = lifted_test_scan(&plan);
-    let (e_eq_slice, t_eq_slice, z_eq_slice) = scan.group_column_eq_slices(&plan, 0).unwrap();
+    let scan = lifted_test_scan(plan);
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = scan.group_column_eq_slices(0).unwrap();
     let first_unit = witness_layout
         .units_for_group(group.group_id)
         .unwrap()
@@ -103,8 +103,9 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 .sum::<F>()
         };
         let group = &groups[0];
-        let scan = lifted_test_scan(&plan);
-        let (e_eq_slice, t_eq_slice, z_eq_slice) = scan.group_column_eq_slices(&plan, 0).unwrap();
+        let scan = lifted_test_scan(plan);
+        let plan = scan.plan();
+        let (e_eq_slice, t_eq_slice, z_eq_slice) = scan.group_column_eq_slices(0).unwrap();
         let first_unit = witness_layout
             .units_for_group(group.group_id)
             .unwrap()
@@ -202,7 +203,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             e_eq_slice.to_vec(),
             t_eq_slice.to_vec(),
             z_eq_slice.to_vec(),
-            SetupIndexWeightMle::new(&plan, &witness_layout)
+            SetupIndexWeightMle::new(plan)
                 .unwrap()
                 .evaluate(&rho, alpha)
                 .unwrap(),

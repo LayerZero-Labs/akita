@@ -23,7 +23,6 @@ use types::validate_setup_inputs;
 pub use types::{
     PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
-    SetupUnitRange,
 };
 
 use super::geometry::SetupProjectionGroupGeometry;

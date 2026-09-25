@@ -60,12 +60,11 @@ impl<E: Field> DirectScan<E> {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] if this scan is not a reduced scan
-    /// for `plan` or the group is not evaluation-trace, and
+    /// Returns [`AkitaError::InvalidSetup`] if this is not a reduced scan or
+    /// the group is not evaluation-trace, and
     /// [`AkitaError::InvalidProof`] if the challenges do not match the group.
     pub fn evaluate_reduced_structured_group<F>(
         &self,
-        plan: &SetupContributionPlan<E>,
         group_id: usize,
         challenges: &Challenges,
         opening_multiplier: &akita_types::PreparedRingMultiplier<E>,
@@ -74,7 +73,7 @@ impl<E: Field> DirectScan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        self.check_plan(plan)?;
+        let plan = &self.plan;
         let DirectScanMode::Reduced {
             alpha,
             groups: scan_groups,

@@ -71,12 +71,7 @@ fn projected_setup_weight_reference(
     }
     acc
 }
-fn assert_span_mle_matches_dense(
-    plan: &SetupContributionPlan<F>,
-    witness_layout: &WitnessLayout,
-    rho: &[F],
-    alpha: F,
-) {
+fn assert_span_mle_matches_dense(plan: &SetupContributionPlan<F>, rho: &[F], alpha: F) {
     let dense = plan
         .materialize_setup_index_weights(alpha)
         .unwrap()
@@ -86,7 +81,7 @@ fn assert_span_mle_matches_dense(
             acc + eq_eval_at_index(rho, index) * weight
         });
     assert_eq!(
-        SetupIndexWeightMle::new(plan, witness_layout)
+        SetupIndexWeightMle::new(plan)
             .unwrap()
             .evaluate(rho, alpha)
             .unwrap(),
@@ -100,10 +95,10 @@ fn assert_fixture_setup_index_mle_matches_dense(
     outgoing_ring_dim: usize,
 ) {
     let alpha = test_scalar(3);
-    let (_, _, layout, plan, _, _, _) =
+    let (_, _, _, plan, _, _, _) =
         structured_weight_fixture_with_outgoing(8, ownership_widths, role_dims, outgoing_ring_dim);
     let rho = rho_for_required(plan.required());
-    assert_span_mle_matches_dense(&plan, &layout, &rho, alpha);
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
 fn naive_sliced_physical_b_weights(
@@ -363,7 +358,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         .map(|index| test_scalar(701 + index as u128))
         .collect::<Vec<_>>();
     let alpha = test_scalar(17);
-    let mut plan = SetupContributionPlan::prepare::<F>(
+    let plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         1,
@@ -375,12 +370,13 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         geometry,
     )
     .unwrap();
-    let scan = DirectScan::new(
-        &plan,
+    let mut scan = DirectScan::new(
+        plan,
         PreparedCoefficientFunctional::reduced_evaluation(alpha, &coefficient_point, geometry)
             .unwrap(),
     )
     .unwrap();
+    let plan = scan.plan();
     let group_id = plan.groups()[0].group_id;
     let block_claim_count = plan.groups()[0].num_claims * plan.groups()[0].num_live_blocks;
     let sparse_challenges = (0..block_claim_count)
@@ -398,7 +394,8 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     let opening_base_weights = (0..plan.groups()[0].num_positions_per_block)
         .map(|index| test_scalar(901 + index as u128))
         .collect::<Vec<_>>();
-    let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &Challenges, openings: &[F]| {
+    let assert_literal = |scan: &DirectScan<F>, blocks: &Challenges, openings: &[F]| {
+        let plan = scan.plan();
         let opening =
             akita_types::RingMultiplierOpeningPoint::from_base(&akita_types::RingOpeningPoint {
                 position_weights: openings.to_vec(),
@@ -417,7 +414,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         );
         assert_ne!(expected, F::zero());
         assert_eq!(
-            scan.evaluate_reduced_structured_group::<F>(plan, group_id, blocks, &opening)
+            scan.evaluate_reduced_structured_group::<F>(group_id, blocks, &opening)
                 .unwrap(),
             expected
         );
@@ -437,24 +434,24 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
 
     let original_a_weights = plan.groups()[0].a_row_weights.to_vec();
     let original_consistency = plan.groups()[0].consistency_weight;
-    std::sync::Arc::make_mut(&mut plan.groups_mut_for_test()[0].a_row_weights).fill(F::zero());
+    std::sync::Arc::make_mut(&mut scan.plan.groups_mut_for_test()[0].a_row_weights).fill(F::zero());
     assert_literal(
-        &plan,
+        &scan,
         &block_challenges,
         &vec![F::zero(); opening_base_weights.len()],
     );
 
-    std::sync::Arc::make_mut(&mut plan.groups_mut_for_test()[0].a_row_weights)
+    std::sync::Arc::make_mut(&mut scan.plan.groups_mut_for_test()[0].a_row_weights)
         .copy_from_slice(&original_a_weights);
-    plan.groups_mut_for_test()[0].consistency_weight = F::zero();
+    scan.plan.groups_mut_for_test()[0].consistency_weight = F::zero();
     assert_literal(
-        &plan,
+        &scan,
         &block_challenges,
         &vec![F::zero(); opening_base_weights.len()],
     );
 
-    plan.groups_mut_for_test()[0].consistency_weight = original_consistency;
-    assert_literal(&plan, &zero_challenges, &opening_base_weights);
+    scan.plan.groups_mut_for_test()[0].consistency_weight = original_consistency;
+    assert_literal(&scan, &zero_challenges, &opening_base_weights);
 }
 
 #[test]
@@ -494,7 +491,7 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
                 acc + eq_eval_at_index(&rho, index) * weight
             });
         assert_eq!(
-            SetupIndexWeightMle::new(&full, &layout)
+            SetupIndexWeightMle::new(&full)
                 .unwrap()
                 .evaluate(&rho, alpha)
                 .unwrap(),
@@ -515,13 +512,14 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
         let opening_a_evals = (0..group.num_positions_per_block)
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
-        let scan = lifted_test_scan(&full);
+        let scan = lifted_test_scan(full);
+        let full = scan.plan();
+        let group = &full.groups()[0];
         let direct = scan.mode.weights(0).unwrap();
         let reference =
             structured_slice_reference(group, direct, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
             scan.evaluate_structured_group_cached::<F>(
-                &full,
                 group.group_id,
                 &block_challenges,
                 &opening_a_evals,
@@ -545,19 +543,19 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
 
 #[test]
 fn span_setup_index_mle_matches_dense_single_chunk() {
-    let (_, _, layout, plan, _, _, _) =
+    let (_, _, _, plan, _, _, _) =
         structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
     let rho = rho_for_required(plan.required());
-    assert_span_mle_matches_dense(&plan, &layout, &rho, alpha);
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 #[test]
 fn span_setup_index_mle_matches_dense_multi_chunk() {
-    let (_, _, layout, plan, _, _, _) =
+    let (_, _, _, plan, _, _, _) =
         structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
     let rho = rho_for_required(plan.required());
-    assert_span_mle_matches_dense(&plan, &layout, &rho, alpha);
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
 #[test]
@@ -588,8 +586,9 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     )
     .unwrap();
     let alpha = test_scalar(3);
-    DirectScan::new(&plan, PreparedCoefficientFunctional::lifted_power(alpha))
+    let scan = DirectScan::new(plan, PreparedCoefficientFunctional::lifted_power(alpha))
         .expect("bridged plan prepares a lifted direct scan");
+    let plan = scan.plan();
 
     assert_eq!(
         plan.relation_address_geometry()
@@ -598,7 +597,7 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     );
     assert_eq!(plan.projection_geometry().base_ring_dim(), 128);
     let rho = rho_for_required(plan.required());
-    assert_span_mle_matches_dense(&plan, &layout, &rho, alpha);
+    assert_span_mle_matches_dense(plan, &rho, alpha);
 }
 
 #[test]
@@ -612,15 +611,16 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
     for slice_count in
         [2, 4, 8].map(|count| akita_types::CommitmentSliceCount::try_new(count).unwrap())
     {
-        let (_, _, layout, plan, _, _, _) = structured_weight_fixture_with_slices(
+        let (_, _, _, plan, _, _, _) = structured_weight_fixture_with_slices(
             11,
             &[3, 5, 3],
             role_dims,
             setup_ring_dim,
             slice_count,
         );
+        let scan = lifted_test_scan(plan);
+        let plan = scan.plan();
         let group = &plan.groups()[0];
-        let scan = lifted_test_scan(&plan);
         let direct = scan.mode.weights(0).unwrap();
         let expected = naive_sliced_physical_b_weights(group, &direct.t);
         assert_eq!(
@@ -649,10 +649,8 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
         let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
         assert_eq!(
-            scan.evaluate_direct::<F>(&plan, &setup).unwrap(),
-            evaluate_direct_by_rows::<F, _>(
-                &plan,
-                &scan,
+            scan.evaluate_direct::<F>(&setup).unwrap(),
+            scan.evaluate_direct_by_rows::<F>(
                 &setup,
                 &alpha_pows_a,
                 &alpha_pows_b,
@@ -666,12 +664,12 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
 
         let rho = rho_for_required(plan.required());
         assert_eq!(
-            SetupIndexWeightMle::new(&plan, &layout)
+            SetupIndexWeightMle::new(plan)
                 .unwrap()
                 .evaluate(&rho, alpha)
                 .unwrap(),
             projected_setup_weight_reference(
-                &plan,
+                plan,
                 &scan,
                 &rho,
                 plan.required(),
@@ -734,11 +732,11 @@ fn setup_index_mle_matches_mixed_role_plans() {
 
 #[test]
 fn span_setup_index_mle_supports_non_power_of_two_ownership_widths() {
-    let (_, _, layout, plan, _, _, _) =
+    let (_, _, _, plan, _, _, _) =
         structured_weight_fixture(8, &[3, 5], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
     let rho = rho_for_required(plan.required());
-    assert_span_mle_matches_dense(&plan, &layout, &rho, alpha);
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 #[test]
 fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
@@ -750,16 +748,16 @@ fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
     };
     let setup_ring_dim = 64;
     for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
-        let (_, _, layout, plan, _, _, _) =
-            structured_weight_fixture(8, ownership_widths, role_dims);
+        let (_, _, _, plan, _, _, _) = structured_weight_fixture(8, ownership_widths, role_dims);
         let rho = rho_for_required(plan.required());
-        let got = SetupIndexWeightMle::new(&plan, &layout)
+        let got = SetupIndexWeightMle::new(&plan)
             .unwrap()
             .evaluate(&rho, alpha)
             .unwrap();
-        let scan = lifted_test_scan(&plan);
+        let scan = lifted_test_scan(plan);
+        let plan = scan.plan();
         let expected = projected_setup_weight_reference(
-            &plan,
+            plan,
             &scan,
             &rho,
             plan.required(),
