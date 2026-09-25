@@ -322,3 +322,33 @@ fn validate_rejects_invalid_configs() {
         .expect("power-of-two chunk counts validate");
     }
 }
+
+#[test]
+fn units_for_group_filters_by_group_in_any_order() {
+    let geometry = RelationRowGeometry::native(64).unwrap();
+    let unit = |group_index: usize, start: usize| {
+        WitnessUnitLayout::new_for_test(
+            group_index,
+            0,
+            0,
+            1,
+            start..start + 1,
+            start + 1..start + 2,
+            geometry,
+            start + 2..start + 3,
+        )
+    };
+    // Canonical layouts put the final group first. Group 0 first with a
+    // second group present must still select by group index.
+    let layout = WitnessLayout::new_for_test(vec![unit(0, 0), unit(1, 3)], Vec::new(), 1);
+    let groups = |group_index| {
+        layout
+            .units_for_group(group_index)
+            .unwrap()
+            .map(WitnessUnitLayout::group_index)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(groups(0), vec![0]);
+    assert_eq!(groups(1), vec![1]);
+    assert!(layout.units_for_group(2).is_err());
+}

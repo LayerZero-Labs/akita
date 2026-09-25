@@ -24,6 +24,11 @@ pub(crate) struct CoefficientPackingVerifierGroupSemantics<E: Field> {
 pub(crate) struct CoefficientPackingCompactFactors<E: Field> {
     pub(super) basis: BasisMode,
     pub(super) physical_field_len: usize,
+    /// Powers of alpha shared by every affine family. Each family contracts
+    /// the prefix of length `coefficient_len` and carries its segment offset
+    /// in `scalar`, so the evaluator caches coefficient contractions by
+    /// length alone.
+    pub(super) coefficient_weights: Arc<[E]>,
     pub(super) direct_opening_point: Arc<[E]>,
     pub(super) packing_z_point: Arc<[E]>,
     pub(super) affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
@@ -35,7 +40,6 @@ pub(crate) struct CoefficientPackingCompactFactors<E: Field> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CoefficientPackingAffineRelationFamily<E: Field> {
     pub(super) scalar: E,
-    pub(super) coefficient_weights: Arc<[E]>,
     pub(super) coefficient_len: usize,
     pub(super) base_offset: usize,
     pub(super) outer_len: usize,
@@ -92,9 +96,14 @@ impl<E: Field> CoefficientPackingAffineRelationFamily<E> {
             && Arc::ptr_eq(&self.digit_weights, &other.digit_weights)
             && Arc::ptr_eq(&self.outer_weights, &other.outer_weights)
     }
+}
 
-    fn coefficient_evaluation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        let coefficient_len = self.coefficient_len;
+impl<E: Field> CoefficientPackingCompactFactors<E> {
+    fn coefficient_evaluation_at_point(
+        &self,
+        coefficient_len: usize,
+        point: &[E],
+    ) -> Result<E, AkitaError> {
         if coefficient_len == 0 || !coefficient_len.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
                 "packing affine coefficient axis is malformed".into(),
@@ -114,9 +123,7 @@ impl<E: Field> CoefficientPackingAffineRelationFamily<E> {
                 sum + weight * eq_eval_at_index(coefficient_point, coefficient)
             }))
     }
-}
 
-impl<E: Field> CoefficientPackingCompactFactors<E> {
     fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
         let point_variables = u32::try_from(point.len())
             .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
@@ -155,7 +162,8 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
                 {
                     evaluation
                 } else {
-                    let evaluation = family.coefficient_evaluation_at_point(point)?;
+                    let evaluation =
+                        self.coefficient_evaluation_at_point(family.coefficient_len, point)?;
                     let slot = coefficient_evaluations
                         .get_mut(coefficient_bits)
                         .ok_or(AkitaError::InvalidProof)?;
@@ -363,14 +371,9 @@ pub(super) fn prepare_compact_factors<F: Field, E: Field>(
     let k = group.geometry().extension_degree();
     let kh = group.geometry().subring_embedding_stride();
     let d_a = group.geometry().a_ring_dimension();
-    let partial_width = group.geometry().partial_base_field_width();
     // The validated group fixes the point geometry, claim count, challenge
-    // count, alpha powers and basis. Only the digit split is compact-specific.
-    if group.d_d() == 0 || !partial_width.is_multiple_of(group.d_d()) {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing digit dimension does not divide the partial width".into(),
-        ));
-    }
+    // count, alpha powers and basis, and guarantees `d_d | partial_width`.
+    let partial_width = group.geometry().partial_base_field_width();
 
     let semantic_stride = partial_width
         .checked_mul(group.opening_gadget().len())
@@ -494,7 +497,6 @@ pub(super) fn prepare_compact_factors<F: Field, E: Field>(
                 }
                 affine_relation_families.push(CoefficientPackingAffineRelationFamily {
                     scalar: group.consistency_weight() * basis_element * alpha_offset,
-                    coefficient_weights: Arc::clone(&coefficient_weights),
                     coefficient_len: coefficient_count,
                     base_offset: physical_start / coefficient_count,
                     outer_len: semantic_count,
@@ -729,6 +731,7 @@ pub(super) fn prepare_compact_factors<F: Field, E: Field>(
     Ok(CoefficientPackingCompactFactors {
         basis: group.prepared_point().basis(),
         physical_field_len: group.physical_field_len(),
+        coefficient_weights,
         direct_opening_point: direct_opening_point.into(),
         packing_z_point: packing_z_point.into(),
         affine_relation_families,
