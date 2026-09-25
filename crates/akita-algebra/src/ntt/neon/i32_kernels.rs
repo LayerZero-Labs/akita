@@ -438,33 +438,69 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8);
 }
 
-/// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
+/// Signed-integer conversion and forward negacyclic NTT for i32 primes.
 ///
-/// The first pass reads the digits directly and multiplies by `R`-scaled
+/// The first pass reads the inputs directly and multiplies by `R`-scaled
 /// twist factors, so conversion to Montgomery form, the twist, and the first
-/// two stages share one pass.
-pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
+/// two stages share one pass. `load(ptr)` widens the eight inputs at `ptr`,
+/// and every input must have magnitude below `p`.
+#[inline(always)]
+unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize>(
     a: &mut [MontCoeff<i32>; D],
-    digits: &[i8; D],
+    inputs: &[T; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
+    load: impl Fn(*const T) -> [int32x4_t; 2],
 ) {
     if D < MIN_VECTOR_DEGREE {
-        for ((coefficient, &digit), &psi_r2) in a.iter_mut().zip(digits).zip(&tw.psi_pows_r2) {
-            *coefficient = MontCoeff::from_raw(prime.mont_mul_raw(i32::from(digit), psi_r2));
+        for ((coefficient, &input), &psi_r2) in a.iter_mut().zip(inputs).zip(&tw.psi_pows_r2) {
+            *coefficient = MontCoeff::from_raw(prime.mont_mul_raw(input.into(), psi_r2));
         }
         butterfly::forward_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
         return;
     }
     let m = Modulus::new(prime.p);
     let a_ptr = a.as_mut_ptr().cast::<i32>();
-    let digits_ptr = digits.as_ptr();
+    let inputs_ptr = inputs.as_ptr();
     let barrett = &tw.barrett;
     forward_negacyclic_head::<D, false>(a_ptr, barrett, &barrett.twist_digits, m, |i| {
-        let wide = vmovl_s8(vld1_s8(digits_ptr.add(i)));
-        [vmovl_s16(vget_low_s16(wide)), vmovl_high_s16(wide)]
+        load(inputs_ptr.add(i))
     });
     forward_dif_stages::<D>(a_ptr, &barrett.fwd, m, D / 8);
+}
+
+/// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
+///
+/// Kept out of line, like the centered-i16 entry: inlined into the digit
+/// fill loop, it slows the i8 matvec by about 8%.
+#[inline(never)]
+pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    digits: &[i8; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    forward_ntt_small_i32(a, digits, prime, tw, |ptr| {
+        let wide = vmovl_s8(vld1_s8(ptr));
+        [vmovl_s16(vget_low_s16(wide)), vmovl_high_s16(wide)]
+    });
+}
+
+/// NEON-accelerated centered-i16 conversion and forward negacyclic NTT.
+///
+/// The protocol's i32 CRT primes all exceed the complete i16 range, so sign
+/// extension already gives a representative in `(-p, p)`.
+#[inline(never)]
+pub(crate) unsafe fn forward_ntt_centered_i16_i32<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    coefficients: &[i16; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    forward_ntt_small_i32(a, coefficients, prime, tw, |ptr| {
+        let x = vld1q_s16(ptr);
+        [vmovl_s16(vget_low_s16(x)), vmovl_high_s16(x)]
+    });
 }
 
 /// NEON-accelerated inverse negacyclic NTT for i32 primes.
@@ -676,45 +712,6 @@ pub(crate) unsafe fn centered_i8_to_mont_i32(
             *dst.add(i) = prime.from_canonical(i32::from(*src.add(i))).raw();
             i += 1;
         }
-    }
-}
-
-/// Convert signed i16 coefficients directly into an i32 Montgomery limb.
-///
-/// The protocol's i32 CRT primes are all larger than the complete i16 range,
-/// so sign extension already gives the centered residue consumed by
-/// `from_canonical`. Widening eight coefficients at a time avoids both the
-/// temporary `[i32; D]` and a scalar table lookup for every output coefficient.
-///
-/// # Safety
-///
-/// `dst` and `src` must be valid for `d` elements and must not overlap. The
-/// modulus must be larger than every absolute source coefficient.
-pub(crate) unsafe fn centered_i16_to_mont_i32(
-    dst: *mut i32,
-    src: *const i16,
-    d: usize,
-    p: i32,
-    pinv: i32,
-    montsq: i32,
-) {
-    let p_q = vdupq_n_s32(p);
-    let pinv_q = vdupq_n_s32(pinv);
-    let montsq_q = vdupq_n_s32(montsq);
-    let mut i = 0usize;
-    while i + 8 <= d {
-        let coefficients = vld1q_s16(src.add(i));
-        let low = vmovl_s16(vget_low_s16(coefficients));
-        let high = vmovl_high_s16(coefficients);
-        vst1q_s32(dst.add(i), mont_mul_4x_i32(low, montsq_q, p_q, pinv_q));
-        vst1q_s32(dst.add(i + 4), mont_mul_4x_i32(high, montsq_q, p_q, pinv_q));
-        i += 8;
-    }
-
-    let prime = NttPrime::compute(p);
-    while i < d {
-        *dst.add(i) = prime.from_canonical(i32::from(*src.add(i))).raw();
-        i += 1;
     }
 }
 
