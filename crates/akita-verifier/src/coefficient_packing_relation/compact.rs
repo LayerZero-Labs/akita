@@ -8,15 +8,12 @@ use jolt_field::Field;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::{
-    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry, WitnessLayout,
-};
+use akita_types::{BasisMode, ValidatedCoefficientPackingGroup};
 
 /// One verifier group's compact coefficient-packing semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierGroupSemantics<E: Field> {
+pub(crate) struct CoefficientPackingVerifierGroupSemantics<E: Field> {
     pub(super) group_index: usize,
-    pub(super) geometry: SubringCoefficientPackingGeometry,
     pub(super) group_claim_range: Range<usize>,
     pub(super) scalar_claim_weight: E,
     pub(super) compact_factors: CoefficientPackingCompactFactors<E>,
@@ -24,8 +21,8 @@ pub struct CoefficientPackingVerifierGroupSemantics<E: Field> {
 
 /// Compact tensor factors used by the verifier at the Stage 2 final point.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingCompactFactors<E: Field> {
-    pub(super) basis: crate::BasisMode,
+pub(crate) struct CoefficientPackingCompactFactors<E: Field> {
+    pub(super) basis: BasisMode,
     pub(super) physical_field_len: usize,
     pub(super) direct_opening_point: Arc<[E]>,
     pub(super) packing_z_point: Arc<[E]>,
@@ -53,40 +50,35 @@ pub(super) struct CoefficientPackingAffineRelationFamily<E: Field> {
 /// Unlike the prover batch, this carrier never builds the expanded event and
 /// segment representation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierBatchSemantics<E: Field> {
+pub(crate) struct CoefficientPackingVerifierBatchSemantics<E: Field> {
     pub(super) groups: Vec<CoefficientPackingVerifierGroupSemantics<E>>,
 }
 
 impl<E: Field> CoefficientPackingVerifierBatchSemantics<E> {
     #[must_use]
-    pub fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
+    pub(crate) fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
         &self.groups
     }
 }
 
 impl<E: Field> CoefficientPackingVerifierGroupSemantics<E> {
     #[must_use]
-    pub const fn group_index(&self) -> usize {
+    pub(crate) const fn group_index(&self) -> usize {
         self.group_index
     }
 
     #[must_use]
-    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
-        self.geometry
-    }
-
-    #[must_use]
-    pub fn group_claim_range(&self) -> Range<usize> {
+    pub(crate) fn group_claim_range(&self) -> Range<usize> {
         self.group_claim_range.clone()
     }
 
     #[must_use]
-    pub const fn scalar_claim_weight(&self) -> E {
+    pub(crate) const fn scalar_claim_weight(&self) -> E {
         self.scalar_claim_weight
     }
 
     #[must_use]
-    pub const fn compact_factors(&self) -> &CoefficientPackingCompactFactors<E> {
+    pub(crate) const fn compact_factors(&self) -> &CoefficientPackingCompactFactors<E> {
         &self.compact_factors
     }
 }
@@ -146,7 +138,7 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
 
     /// Evaluate packed E and Q relation weights without expanding their
     /// claim/block/digit/plane support.
-    pub fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+    pub(crate) fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         self.validate_point(point)?;
         let evaluate_affine = || -> Result<E, AkitaError> {
             let mut coefficient_evaluations = [None; usize::BITS as usize];
@@ -238,13 +230,13 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
 
     /// Evaluate the direct-opening and packing-Z structured terms from their
     /// retained tensor factors.
-    pub fn evaluate_stage2_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+    pub(crate) fn evaluate_stage2_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         self.validate_point(point)?;
         let evaluate = |left: &[E], families: &[EqPairTensorFamily<E>]| match self.basis {
-            crate::BasisMode::Lagrange => {
+            BasisMode::Lagrange => {
                 eval_boolean_pair_tensor_families::<_, false, false>(left, point, families)
             }
-            crate::BasisMode::Monomial => {
+            BasisMode::Monomial => {
                 eval_boolean_pair_tensor_families::<_, true, false>(left, point, families)
             }
         };
@@ -253,29 +245,6 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
                 + evaluate(&self.packing_z_point, &self.packing_z_families)?,
         )
     }
-}
-
-pub(super) struct CompactFactorInputs<'a, E: Field> {
-    pub geometry: SubringCoefficientPackingGeometry,
-    pub prepared_point: &'a PreparedSubringCoefficientPackingPoint<E>,
-    pub witness_layout: &'a WitnessLayout,
-    pub group_index: usize,
-    pub num_claims: usize,
-    pub num_live_blocks: usize,
-    pub d_d: usize,
-    pub consistency_row: usize,
-    pub physical_field_len: usize,
-    pub consistency_weight: E,
-    pub scalar_claim_weight: E,
-    pub denominator: E,
-    pub claim_coefficients: &'a [E],
-    pub challenge_alpha: &'a [E],
-    pub alpha_powers: &'a [E],
-    pub basis_elements: &'a [E],
-    pub opening_gadget: &'a [E],
-    pub quotient_gadget: &'a [E],
-    pub witness_gadget: &'a [E],
-    pub fold_gadget: &'a [E],
 }
 
 fn dyadic_segments(range: Range<usize>) -> Result<Vec<Range<usize>>, AkitaError> {
@@ -387,27 +356,27 @@ fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaE
     Ok(())
 }
 
-pub(super) fn prepare_compact_factors<E: Field>(
-    inputs: CompactFactorInputs<'_, E>,
+pub(super) fn prepare_compact_factors<F: Field, E: Field>(
+    group: &ValidatedCoefficientPackingGroup<'_, F, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
-    let s = inputs.geometry.challenge_subring_dimension();
-    let k = inputs.geometry.extension_degree();
-    let kh = inputs.geometry.subring_embedding_stride();
-    let d_a = inputs.geometry.a_ring_dimension();
-    let partial_width = inputs.geometry.partial_base_field_width();
-    if inputs.prepared_point.geometry() != inputs.geometry
-        || inputs.claim_coefficients.len() != inputs.num_claims
-        || inputs.challenge_alpha.len()
-            != inputs
-                .num_claims
-                .checked_mul(inputs.num_live_blocks)
+    let s = group.geometry().challenge_subring_dimension();
+    let k = group.geometry().extension_degree();
+    let kh = group.geometry().subring_embedding_stride();
+    let d_a = group.geometry().a_ring_dimension();
+    let partial_width = group.geometry().partial_base_field_width();
+    if group.prepared_point().geometry() != group.geometry()
+        || group.group_claim_coefficients().len() != group.num_claims()
+        || group.challenge_alpha_values().len()
+            != group
+                .num_claims()
+                .checked_mul(group.num_live_blocks())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("packing challenge count overflow".into())
                 })?
-        || inputs.alpha_powers.len() != s
-        || inputs.basis_elements.len() != k
-        || inputs.d_d == 0
-        || !partial_width.is_multiple_of(inputs.d_d)
+        || group.alpha_powers().len() != s
+        || group.basis().len() != k
+        || group.d_d() == 0
+        || !partial_width.is_multiple_of(group.d_d())
     {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing compact factors disagree with their geometry".into(),
@@ -415,22 +384,26 @@ pub(super) fn prepare_compact_factors<E: Field>(
     }
 
     let semantic_stride = partial_width
-        .checked_mul(inputs.opening_gadget.len())
+        .checked_mul(group.opening_gadget().len())
         .ok_or_else(|| AkitaError::InvalidSetup("packing E stride overflow".into()))?;
-    let digit_segments = dyadic_segments(0..inputs.opening_gadget.len())?;
-    let opening_digit_axes = geometric_axes(0, inputs.d_d, inputs.opening_gadget, &digit_segments)?;
-    let claim_coefficients = shared_slice(inputs.claim_coefficients, "packing claim axis")?;
-    let coefficient_weights = shared_slice(inputs.alpha_powers, "packing coefficient axis")?;
-    let opening_gadget = shared_slice(inputs.opening_gadget, "packing digit axis")?;
+    let digit_segments = dyadic_segments(0..group.opening_gadget().len())?;
+    let opening_digit_axes =
+        geometric_axes(0, group.d_d(), group.opening_gadget(), &digit_segments)?;
+    let claim_coefficients = shared_slice(group.group_claim_coefficients(), "packing claim axis")?;
+    let coefficient_weights = shared_slice(group.alpha_powers(), "packing coefficient axis")?;
+    let opening_gadget = shared_slice(group.opening_gadget(), "packing digit axis")?;
     let mut affine_relation_families = Vec::new();
     let mut quotient_families = Vec::new();
     let mut direct_opening_families = Vec::new();
-    for unit in inputs.witness_layout.units_for_group(inputs.group_index)? {
+    for unit in group
+        .witness_layout()
+        .units_for_group(group.group_index())?
+    {
         if unit.num_live_blocks() == 0 {
             continue;
         }
-        let semantic_count = inputs
-            .num_claims
+        let semantic_count = group
+            .num_claims()
             .checked_mul(unit.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("packing E semantic count overflow".into()))?;
         let mut challenge_weights = Vec::new();
@@ -439,12 +412,12 @@ pub(super) fn prepare_compact_factors<E: Field>(
             .map_err(|_| {
                 AkitaError::InvalidInput("packing challenge axis allocation failed".into())
             })?;
-        for claim in 0..inputs.num_claims {
+        for claim in 0..group.num_claims() {
             for global_block in unit.global_block_range() {
                 let challenge = claim
-                    .checked_mul(inputs.num_live_blocks)
+                    .checked_mul(group.num_live_blocks())
                     .and_then(|base| base.checked_add(global_block))
-                    .and_then(|index| inputs.challenge_alpha.get(index).copied())
+                    .and_then(|index| group.challenge_alpha_values().get(index).copied())
                     .ok_or(AkitaError::InvalidProof)?;
                 challenge_weights.push(challenge);
             }
@@ -459,8 +432,8 @@ pub(super) fn prepare_compact_factors<E: Field>(
                     .checked_mul(s)
                     .and_then(|base| base.checked_add(plane_offset))
                     .ok_or_else(|| AkitaError::InvalidSetup("packing plane overflow".into()))?;
-                let role_coefficient = flat % inputs.d_d;
-                let coefficient_count = (inputs.d_d - role_coefficient).min(s - plane_offset);
+                let role_coefficient = flat % group.d_d();
+                let coefficient_count = (group.d_d() - role_coefficient).min(s - plane_offset);
                 plane_segments = plane_segments.checked_add(1).ok_or_else(|| {
                     AkitaError::InvalidInput("packing plane segment count overflow".into())
                 })?;
@@ -473,16 +446,16 @@ pub(super) fn prepare_compact_factors<E: Field>(
         // the role as another unit tensor axis instead of emitting one family
         // per subcolumn. Unlike the affine relation above, this source term
         // has no alpha weight along the role axis.
-        let compact_role_axis = if s > inputs.d_d && s.is_multiple_of(inputs.d_d) {
-            let role_subcolumns = s / inputs.d_d;
-            let role_stride = inputs
-                .opening_gadget
+        let compact_role_axis = if s > group.d_d() && s.is_multiple_of(group.d_d()) {
+            let role_subcolumns = s / group.d_d();
+            let role_stride = group
+                .opening_gadget()
                 .len()
-                .checked_mul(inputs.d_d)
+                .checked_mul(group.d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("packing role stride overflow".into()))?;
             Some(EqPairTensorAxis::unit(
                 role_subcolumns,
-                inputs.d_d,
+                group.d_d(),
                 role_stride,
             ))
         } else {
@@ -498,24 +471,24 @@ pub(super) fn prepare_compact_factors<E: Field>(
             .and_then(|count| count.checked_mul(block_segments.len()))
             .ok_or_else(|| AkitaError::InvalidInput("packing family count overflow".into()))?;
         reserve_families(&mut direct_opening_families, direct_count)?;
-        for (plane, &basis_element) in inputs.basis_elements.iter().enumerate() {
+        for (plane, &basis_element) in group.basis().iter().enumerate() {
             let mut plane_offset = 0usize;
             while plane_offset < s {
                 let flat = plane
                     .checked_mul(s)
                     .and_then(|base| base.checked_add(plane_offset))
                     .ok_or_else(|| AkitaError::InvalidSetup("packing plane overflow".into()))?;
-                let role_subcolumn = flat / inputs.d_d;
-                let role_coefficient = flat % inputs.d_d;
-                let coefficient_count = (inputs.d_d - role_coefficient).min(s - plane_offset);
-                let alpha_offset = *inputs
-                    .alpha_powers
+                let role_subcolumn = flat / group.d_d();
+                let role_coefficient = flat % group.d_d();
+                let coefficient_count = (group.d_d() - role_coefficient).min(s - plane_offset);
+                let alpha_offset = *group
+                    .alpha_powers()
                     .get(plane_offset)
                     .ok_or(AkitaError::InvalidProof)?;
                 let physical_start = unit.e_coefficient_index(
-                    inputs.d_d,
-                    inputs.num_claims,
-                    inputs.opening_gadget.len(),
+                    group.d_d(),
+                    group.num_claims(),
+                    group.opening_gadget().len(),
                     0,
                     unit.global_block_start(),
                     role_subcolumn,
@@ -524,20 +497,20 @@ pub(super) fn prepare_compact_factors<E: Field>(
                 )?;
                 if !physical_start.is_multiple_of(coefficient_count)
                     || !semantic_stride.is_multiple_of(coefficient_count)
-                    || !inputs.d_d.is_multiple_of(coefficient_count)
+                    || !group.d_d().is_multiple_of(coefficient_count)
                 {
                     return Err(AkitaError::InvalidSetup(
                         "packing E affine geometry is not coefficient aligned".into(),
                     ));
                 }
                 affine_relation_families.push(CoefficientPackingAffineRelationFamily {
-                    scalar: inputs.consistency_weight * basis_element * alpha_offset,
+                    scalar: group.consistency_weight() * basis_element * alpha_offset,
                     coefficient_weights: Arc::clone(&coefficient_weights),
                     coefficient_len: coefficient_count,
                     base_offset: physical_start / coefficient_count,
                     outer_len: semantic_count,
                     outer_stride: semantic_stride / coefficient_count,
-                    digit_stride: inputs.d_d / coefficient_count,
+                    digit_stride: group.d_d() / coefficient_count,
                     digit_weights: Arc::clone(&opening_gadget),
                     outer_weights: Arc::clone(&challenge_weights),
                 });
@@ -551,24 +524,24 @@ pub(super) fn prepare_compact_factors<E: Field>(
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("direct-opening claim stride overflow".into())
             })?;
-        for (plane, &basis_element) in inputs.basis_elements.iter().enumerate() {
+        for (plane, &basis_element) in group.basis().iter().enumerate() {
             let mut plane_offset = 0usize;
             while plane_offset < s {
                 let flat = plane
                     .checked_mul(s)
                     .and_then(|base| base.checked_add(plane_offset))
                     .ok_or_else(|| AkitaError::InvalidSetup("packing plane overflow".into()))?;
-                let role_subcolumn = flat / inputs.d_d;
-                let role_coefficient = flat % inputs.d_d;
+                let role_subcolumn = flat / group.d_d();
+                let role_coefficient = flat % group.d_d();
                 let coefficient_count = if compact_role_axis.is_some() {
                     if role_coefficient != 0 {
                         return Err(AkitaError::InvalidSetup(
                             "compact packing role axis is not coefficient aligned".into(),
                         ));
                     }
-                    inputs.d_d
+                    group.d_d()
                 } else {
-                    (inputs.d_d - role_coefficient).min(s - plane_offset)
+                    (group.d_d() - role_coefficient).min(s - plane_offset)
                 };
                 if compact_role_axis.is_some() && coefficient_count > s - plane_offset {
                     return Err(AkitaError::InvalidSetup(
@@ -578,9 +551,9 @@ pub(super) fn prepare_compact_factors<E: Field>(
                 for (digit_segment, digit_axis) in digit_segments.iter().zip(&opening_digit_axes) {
                     for block_segment in &block_segments {
                         let physical_start = unit.e_coefficient_index(
-                            inputs.d_d,
-                            inputs.num_claims,
-                            inputs.opening_gadget.len(),
+                            group.d_d(),
+                            group.num_claims(),
+                            group.opening_gadget().len(),
                             0,
                             block_segment.start,
                             role_subcolumn,
@@ -594,8 +567,8 @@ pub(super) fn prepare_compact_factors<E: Field>(
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup("direct-opening offset overflow".into())
                             })?;
-                        let opening_weight = inputs
-                            .opening_gadget
+                        let opening_weight = group
+                            .opening_gadget()
                             .get(digit_segment.start)
                             .copied()
                             .ok_or(AkitaError::InvalidProof)?;
@@ -615,7 +588,7 @@ pub(super) fn prepare_compact_factors<E: Field>(
                         direct_opening_families.push(EqPairTensorFamily::new(
                             left_offset,
                             physical_start,
-                            inputs.scalar_claim_weight * basis_element * opening_weight,
+                            group.scalar_claim_weight() * basis_element * opening_weight,
                             axes,
                         )?);
                     }
@@ -629,67 +602,70 @@ pub(super) fn prepare_compact_factors<E: Field>(
         }
     }
 
-    let quotient_digit_segments = dyadic_segments(0..inputs.quotient_gadget.len())?;
+    let quotient_digit_segments = dyadic_segments(0..group.quotient_gadget().len())?;
     let quotient_digit_axes = geometric_axes(
         0,
         partial_width,
-        inputs.quotient_gadget,
+        group.quotient_gadget(),
         &quotient_digit_segments,
     )?;
-    let alpha_axis = geometric_axis(0, 1, inputs.alpha_powers, s)?;
+    let alpha_axis = geometric_axis(0, 1, group.alpha_powers(), s)?;
     reserve_families(
         &mut quotient_families,
         k.checked_mul(quotient_digit_segments.len())
             .ok_or_else(|| AkitaError::InvalidInput("packing family count overflow".into()))?,
     )?;
-    for (plane, &basis_element) in inputs.basis_elements.iter().enumerate() {
+    for (plane, &basis_element) in group.basis().iter().enumerate() {
         for (digit_segment, digit_axis) in quotient_digit_segments.iter().zip(&quotient_digit_axes)
         {
-            let physical_start = inputs.witness_layout.r_coefficient_index(
-                inputs.consistency_row,
+            let physical_start = group.witness_layout().r_coefficient_index(
+                group.consistency_row(),
                 digit_segment.start,
                 plane,
                 0,
             )?;
-            let quotient_weight = inputs
-                .quotient_gadget
+            let quotient_weight = group
+                .quotient_gadget()
                 .get(digit_segment.start)
                 .copied()
                 .ok_or(AkitaError::InvalidProof)?;
             quotient_families.push(EqPairTensorFamily::new(
                 0,
                 physical_start,
-                -(inputs.consistency_weight * basis_element * inputs.denominator * quotient_weight),
+                -(group.consistency_weight()
+                    * basis_element
+                    * group.denominator()
+                    * quotient_weight),
                 vec![alpha_axis.clone(), digit_axis.clone()],
             )?);
         }
     }
 
-    let witness_digit_segments = dyadic_segments(0..inputs.witness_gadget.len())?;
-    let fold_digit_segments = dyadic_segments(0..inputs.fold_gadget.len())?;
+    let witness_digit_segments = dyadic_segments(0..group.witness_gadget().len())?;
+    let fold_digit_segments = dyadic_segments(0..group.fold_gadget().len())?;
     let mut packing_z_families = Vec::new();
-    let position_stride = inputs
-        .witness_gadget
+    let position_stride = group
+        .witness_gadget()
         .len()
-        .checked_mul(inputs.fold_gadget.len())
+        .checked_mul(group.fold_gadget().len())
         .and_then(|count| count.checked_mul(d_a))
         .ok_or_else(|| AkitaError::InvalidSetup("packing-Z position stride overflow".into()))?;
-    let witness_stride = inputs
-        .fold_gadget
+    let witness_stride = group
+        .fold_gadget()
         .len()
         .checked_mul(d_a)
         .ok_or_else(|| AkitaError::InvalidSetup("packing-Z witness stride overflow".into()))?;
     let witness_digit_axes = geometric_axes(
         0,
         witness_stride,
-        inputs.witness_gadget,
+        group.witness_gadget(),
         &witness_digit_segments,
     )?;
-    let fold_digit_axes = geometric_axes(0, d_a, inputs.fold_gadget, &fold_digit_segments)?;
-    let packing_alpha_axis = geometric_axis(0, kh, inputs.alpha_powers, s)?;
-    let unit_count = inputs
-        .witness_layout
-        .units_for_group(inputs.group_index)?
+    let fold_digit_axes = geometric_axes(0, d_a, group.fold_gadget(), &fold_digit_segments)?;
+    let packing_alpha_axis = geometric_axis(0, kh, group.alpha_powers(), s)?;
+    let unit_count = group
+        .witness_layout()
+        .units_for_group(group.group_index())?
         .count();
     reserve_families(
         &mut packing_z_families,
@@ -698,42 +674,45 @@ pub(super) fn prepare_compact_factors<E: Field>(
             .and_then(|count| count.checked_mul(fold_digit_segments.len()))
             .ok_or_else(|| AkitaError::InvalidInput("packing-Z family count overflow".into()))?,
     )?;
-    for unit in inputs.witness_layout.units_for_group(inputs.group_index)? {
+    for unit in group
+        .witness_layout()
+        .units_for_group(group.group_index())?
+    {
         for (witness_segment, witness_axis) in
             witness_digit_segments.iter().zip(&witness_digit_axes)
         {
             for (fold_segment, fold_axis) in fold_digit_segments.iter().zip(&fold_digit_axes) {
                 let physical_start = unit.z_coefficient_index(
                     d_a,
-                    inputs.prepared_point.num_positions_per_block(),
-                    inputs.witness_gadget.len(),
-                    inputs.fold_gadget.len(),
+                    group.prepared_point().num_positions_per_block(),
+                    group.witness_gadget().len(),
+                    group.fold_gadget().len(),
                     0,
                     witness_segment.start,
                     fold_segment.start,
                     0,
                 )?;
-                let witness_weight = inputs
-                    .witness_gadget
+                let witness_weight = group
+                    .witness_gadget()
                     .get(witness_segment.start)
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?;
-                let fold_weight = inputs
-                    .fold_gadget
+                let fold_weight = group
+                    .fold_gadget()
                     .get(fold_segment.start)
                     .copied()
                     .ok_or(AkitaError::InvalidProof)?;
                 packing_z_families.push(EqPairTensorFamily::new(
                     0,
                     physical_start,
-                    -(inputs.consistency_weight * witness_weight * fold_weight),
+                    -(group.consistency_weight() * witness_weight * fold_weight),
                     vec![
                         EqPairTensorAxis::unit(kh, 1, 1),
                         packing_alpha_axis.clone(),
                         fold_axis.clone(),
                         witness_axis.clone(),
                         EqPairTensorAxis::unit(
-                            inputs.prepared_point.num_positions_per_block(),
+                            group.prepared_point().num_positions_per_block(),
                             kh,
                             position_stride,
                         ),
@@ -746,18 +725,21 @@ pub(super) fn prepare_compact_factors<E: Field>(
     let mut direct_opening_point = Vec::new();
     extend_point(
         &mut direct_opening_point,
-        inputs.prepared_point.tail_point(),
+        group.prepared_point().tail_point(),
     )?;
     extend_point(
         &mut direct_opening_point,
-        inputs.prepared_point.block_point(),
+        group.prepared_point().block_point(),
     )?;
     let mut packing_z_point = Vec::new();
-    extend_point(&mut packing_z_point, inputs.prepared_point.packing_point())?;
-    extend_point(&mut packing_z_point, inputs.prepared_point.position_point())?;
+    extend_point(&mut packing_z_point, group.prepared_point().packing_point())?;
+    extend_point(
+        &mut packing_z_point,
+        group.prepared_point().position_point(),
+    )?;
     Ok(CoefficientPackingCompactFactors {
-        basis: inputs.prepared_point.basis(),
-        physical_field_len: inputs.physical_field_len,
+        basis: group.prepared_point().basis(),
+        physical_field_len: group.physical_field_len(),
         direct_opening_point: direct_opening_point.into(),
         packing_z_point: packing_z_point.into(),
         affine_relation_families,
