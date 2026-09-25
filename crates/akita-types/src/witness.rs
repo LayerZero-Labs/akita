@@ -764,23 +764,14 @@ impl WitnessLayout {
         &self,
         group_index: usize,
     ) -> Result<impl Iterator<Item = &WitnessUnitLayout> + Clone, AkitaError> {
-        let single_group = self.units.first().is_some_and(|unit| unit.group_index == 0);
-        if (single_group && group_index != 0)
-            || (!single_group
-                && !self
-                    .units
-                    .iter()
-                    .any(|unit| unit.group_index == group_index))
-        {
+        let units = self
+            .units
+            .iter()
+            .filter(move |unit| unit.group_index == group_index);
+        if units.clone().next().is_none() {
             return Err(AkitaError::InvalidSetup("witness group is missing".into()));
         }
-        let empty = self.units[..0].iter();
-        let (direct, filtered) = if single_group {
-            (self.units.iter(), empty)
-        } else {
-            (empty, self.units.iter())
-        };
-        Ok(direct.chain(filtered.filter(move |unit| unit.group_index == group_index)))
+        Ok(units)
     }
 
     pub fn unit_for_block(
