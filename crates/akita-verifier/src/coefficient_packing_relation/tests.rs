@@ -68,6 +68,32 @@ fn materialize_stage2<E: Field>(
     dense
 }
 
+/// An extension element with every base coordinate nonzero, so cross terms
+/// between extension coordinates cannot vanish.
+fn genuine_extension<Base: Field, Extension: ExtField<Base>>(seed: u64) -> Extension {
+    Extension::from_base_fn(|coordinate| Base::from_u64(2 + 3 * seed + 5 * coordinate as u64))
+}
+
+/// Rebuild `point` over the same geometry with genuine-extension coordinates.
+fn genuine_extension_point<Base: Field, Extension: ExtField<Base>>(
+    point: &PreparedSubringCoefficientPackingPoint<Extension>,
+    basis: BasisMode,
+    seed: u64,
+) -> PreparedSubringCoefficientPackingPoint<Extension> {
+    let values = (0..point.source_num_vars() as u64)
+        .map(|index| genuine_extension::<Base, Extension>(seed + index))
+        .collect::<Vec<_>>();
+    PreparedSubringCoefficientPackingPoint::new(
+        point.geometry(),
+        basis,
+        point.num_live_positions(),
+        point.num_positions_per_block(),
+        point.source_num_vars(),
+        &values,
+    )
+    .unwrap()
+}
+
 fn batch_inputs<'a, Base: Field, Extension: Field>(
     fixture: &'a CoefficientPackingFixture<Base, Extension>,
     points: &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<Extension>)],
@@ -111,7 +137,7 @@ where
         .physical_field_len()
         .next_power_of_two();
     let point = (0..padded_len.trailing_zeros())
-        .map(|index| Extension::from_u64(point_seed + u64::from(index)))
+        .map(|index| genuine_extension::<Base, Extension>(point_seed + u64::from(index)))
         .collect();
     let oracles = DenseOracles {
         point,
@@ -190,6 +216,64 @@ fn compact_factors_match_dense_oracles_under_monomial_basis() {
     )
     .unwrap();
     assert_compact_factors_match_dense(&fixture, [E::zero(), E::one(), E::from_u64(17)], 23);
+}
+
+/// Replace every verifier-supplied scalar in `fixture` (tau1, claim
+/// coefficients, prepared point) with genuine-extension values, then compare
+/// the compact factors with the dense oracles under both bases at
+/// genuine-extension alphas.
+fn assert_compact_factors_match_dense_at_genuine_extension_values<Base, Extension>(
+    mut fixture: CoefficientPackingFixture<Base, Extension>,
+) where
+    Base: Field + CanonicalEncoding + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring,
+{
+    assert!(Extension::DEGREE > 1);
+    for (index, tau) in fixture.tau1.iter_mut().enumerate() {
+        *tau = genuine_extension::<Base, Extension>(100 + index as u64);
+    }
+    for (index, coefficient) in fixture.claim_coefficients.iter_mut().enumerate() {
+        *coefficient = genuine_extension::<Base, Extension>(200 + index as u64);
+    }
+    for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+        fixture.prepared_point =
+            genuine_extension_point::<Base, Extension>(&fixture.prepared_point, basis, 300);
+        let alphas = [400, 401, 402].map(genuine_extension::<Base, Extension>);
+        assert_compact_factors_match_dense(&fixture, alphas, 500);
+    }
+}
+
+#[test]
+fn compact_factors_match_dense_oracles_at_genuine_extension_values() {
+    assert_compact_factors_match_dense_at_genuine_extension_values(coefficient_packing_fixture::<
+        F,
+        E,
+    >(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        2,
+    ));
+    for d_d in [64, 128] {
+        assert_compact_factors_match_dense_at_genuine_extension_values(
+            coefficient_packing_fixture::<Prime32Offset99, FpExt4<Prime32Offset99>>(
+                SisModulusProfileId::Q32Offset99,
+                1024,
+                d_d,
+                64,
+                6,
+                4,
+                13,
+                2,
+                2,
+            ),
+        );
+    }
 }
 
 #[test]
@@ -284,13 +368,23 @@ fn compact_factors_skip_empty_distributed_witness_units() {
 
 #[test]
 fn multi_group_compact_factors_follow_relation_group_order() {
-    let fixture = coefficient_packing_multigroup_fixture();
+    let mut fixture = coefficient_packing_multigroup_fixture();
+    for (index, tau) in fixture.tau1.iter_mut().enumerate() {
+        *tau = genuine_extension::<F, E>(100 + index as u64);
+    }
+    for (index, coefficient) in fixture.claim_coefficients.iter_mut().enumerate() {
+        *coefficient = genuine_extension::<F, E>(200 + index as u64);
+    }
+    for (group, point) in &mut fixture.points {
+        *point =
+            genuine_extension_point::<F, E>(point, BasisMode::Lagrange, 300 + 50 * *group as u64);
+    }
     let point_refs = fixture
         .points
         .iter()
         .map(|(group, point)| (*group, point))
         .collect::<Vec<_>>();
-    let alpha = E::from_u64(37);
+    let alpha = genuine_extension::<F, E>(37);
     let inputs = || CoefficientPackingBatchSemanticInputs {
         level_params: &fixture.params,
         opening_batch: &fixture.opening_batch,
@@ -302,7 +396,7 @@ fn multi_group_compact_factors_follow_relation_group_order() {
         claim_coefficients: &fixture.claim_coefficients,
     };
     let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(inputs()).unwrap();
-    let (_, expanded) = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
+    let (events, expanded) = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     assert_eq!(
         compact_batch
             .groups()
@@ -311,19 +405,33 @@ fn multi_group_compact_factors_follow_relation_group_order() {
             .collect::<Vec<_>>(),
         vec![1, 0]
     );
+    let padded_len = expanded.groups()[0]
+        .stage2_terms()
+        .physical_field_len()
+        .next_power_of_two();
+    let point = (0..u64::from(padded_len.trailing_zeros()))
+        .map(|bit| genuine_extension::<F, E>(41 + bit))
+        .collect::<Vec<_>>();
+    // The E/Q relation is a batch-wide polynomial: the per-group compact
+    // relations must sum to the dense evaluation of every group's events.
+    let mut relation_sum = E::zero();
     for (compact, semantics) in compact_batch.groups().iter().zip(expanded.groups()) {
         assert_eq!(compact.group_index(), semantics.group_index());
         assert_eq!(
             compact.group_claim_range(),
             semantics.stage2_terms().group_claim_range()
         );
-        let padded_len = semantics
-            .stage2_terms()
-            .physical_field_len()
-            .next_power_of_two();
-        let point = (0..padded_len.trailing_zeros())
-            .map(|bit| E::from_u64(41 + u64::from(bit)))
-            .collect::<Vec<_>>();
+        assert_eq!(
+            semantics
+                .stage2_terms()
+                .physical_field_len()
+                .next_power_of_two(),
+            padded_len
+        );
+        relation_sum += compact
+            .compact_factors()
+            .evaluate_relation_at_point(&point)
+            .unwrap();
         assert_eq!(
             compact
                 .compact_factors()
@@ -332,6 +440,11 @@ fn multi_group_compact_factors_follow_relation_group_order() {
             semantics.stage2_terms().evaluate_at_point(&point).unwrap()
         );
     }
+    assert_ne!(relation_sum, E::zero());
+    assert_eq!(
+        relation_sum,
+        multilinear_eval(&materialize_events(&events, alpha, padded_len), &point).unwrap()
+    );
 }
 
 #[test]

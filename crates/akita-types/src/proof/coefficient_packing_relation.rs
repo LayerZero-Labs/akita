@@ -854,13 +854,17 @@ where
 }
 
 /// Validate every packing group of one fold authority, in relation group
-/// order.
+/// order, and hand each one by value to `project`.
+///
+/// Each validated group is dropped once `project` returns, so only one
+/// group's validation buffers are live at a time.
 ///
 /// Rejects prepared points for EvaluationTrace groups, duplicate or missing
 /// points, and points outside the relation group order.
-pub fn validate_coefficient_packing_batch_groups<'a, F, E>(
+pub fn validate_coefficient_packing_batch_groups<'a, F, E, T>(
     inputs: &CoefficientPackingBatchSemanticInputs<'a, F, E>,
-) -> Result<Vec<ValidatedCoefficientPackingGroup<'a, F, E>>, AkitaError>
+    mut project: impl FnMut(ValidatedCoefficientPackingGroup<'a, F, E>) -> Result<T, AkitaError>,
+) -> Result<Vec<T>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
@@ -910,7 +914,7 @@ where
                         "coefficient-packing group is missing its prepared point".into(),
                     )
                 })?;
-                groups.push(validate_coefficient_packing_group(
+                groups.push(project(validate_coefficient_packing_group(
                     CoefficientPackingGroupSemanticInputs {
                         level_params: inputs.level_params,
                         opening_batch: inputs.opening_batch,
@@ -923,7 +927,7 @@ where
                         claim_coefficients: inputs.claim_coefficients,
                     },
                     &authority,
-                )?);
+                )?)?);
             }
         }
     }
@@ -956,14 +960,12 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let validated = validate_coefficient_packing_batch_groups(&inputs)?;
     let mut events = Vec::new();
-    let mut groups = Vec::with_capacity(validated.len());
-    for group in validated {
+    let groups = validate_coefficient_packing_batch_groups(&inputs, |group| {
         let (group_events, group) = prepare_coefficient_packing_prover_group(group)?;
         events.extend(group_events);
-        groups.push(group);
-    }
+        Ok(group)
+    })?;
     Ok((events, CoefficientPackingBatchSemantics { groups }))
 }
 
