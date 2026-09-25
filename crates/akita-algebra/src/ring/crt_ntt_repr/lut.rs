@@ -69,43 +69,10 @@ impl<W: PrimeWidth> CenteredPrimeReducer<W> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct CenteredPrimeWideReducer<W: PrimeWidth> {
-    narrow: CenteredPrimeReducer<W>,
-    p_u64: u64,
-    r64: i64,
-}
-
-impl<W: PrimeWidth> CenteredPrimeWideReducer<W> {
-    #[inline(always)]
-    pub(super) fn new(prime: NttPrime<W>) -> Self {
-        let narrow = CenteredPrimeReducer::new(prime);
-        let p_u64 = narrow.p as u64;
-        let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
-        Self { narrow, p_u64, r64 }
-    }
-
-    #[inline(always)]
-    pub(super) fn reduce_i128(self, value: i128) -> W {
-        // Split the signed value into a low 64-bit limb and a sign-extended high
-        // word, then reduce `hi * 2^64 + lo` modulo the small CRT prime.
-        let lo = (value as u64 % self.p_u64) as i64;
-        let hi = ((value >> 64) as i64).rem_euclid(self.narrow.p);
-        let r = (lo + hi * self.r64) % self.narrow.p;
-        self.narrow.reduce_i64(r)
-    }
-}
-
 #[cfg(test)]
 #[inline(always)]
 pub(super) fn centered_prime_residue_i64<W: PrimeWidth>(prime: NttPrime<W>, value: i64) -> W {
     CenteredPrimeReducer::new(prime).reduce_i64(value)
-}
-
-#[cfg(test)]
-#[inline(always)]
-pub(super) fn centered_prime_residue_i128<W: PrimeWidth>(prime: NttPrime<W>, value: i128) -> W {
-    CenteredPrimeWideReducer::new(prime).reduce_i128(value)
 }
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {

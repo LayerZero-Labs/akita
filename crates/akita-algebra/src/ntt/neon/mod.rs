@@ -7,9 +7,11 @@
 
 use std::sync::OnceLock;
 
+mod field_limbs;
 mod i16_kernels;
 mod i32_kernels;
 
+pub(crate) use field_limbs::field_residues_i32;
 #[cfg(feature = "parallel")]
 pub use i16_kernels::add_reduce_i16;
 pub(crate) use i16_kernels::{

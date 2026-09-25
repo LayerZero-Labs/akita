@@ -6,6 +6,7 @@ mod batched_four_point_policy;
 pub mod butterfly;
 pub mod crt;
 mod digit_validation;
+pub(crate) mod field_limbs;
 pub mod ifma52;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;

@@ -1,13 +1,16 @@
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::avx;
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
+use crate::ntt::field_limbs::{field_residues, FieldModulusLimbs, FIELD_CHUNK};
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
 
-use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
+use super::lut::CenteredPrimeReducer;
 use super::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
 };
@@ -122,6 +125,94 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
     }
 }
 
+impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
+    /// Write the Montgomery residues of the centered coefficients of `ring`
+    /// modulo every CRT prime into `out`, in `(-p, p)` and coefficient order.
+    pub(super) fn field_residues<F: CrtNttConvertibleField>(
+        &self,
+        ring: &CyclotomicRing<F, D>,
+        out: &mut [[MontCoeff<W>; D]; K],
+    ) {
+        let modulus = FieldModulusLimbs::new(
+            (-F::one())
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128")
+                + 1,
+        );
+        match modulus.len {
+            1 => self.field_residues_with::<F, 1>(ring, &modulus, out),
+            2 => self.field_residues_with::<F, 2>(ring, &modulus, out),
+            3 => self.field_residues_with::<F, 3>(ring, &modulus, out),
+            4 => self.field_residues_with::<F, 4>(ring, &modulus, out),
+            _ => self.field_residues_with::<F, 5>(ring, &modulus, out),
+        }
+    }
+
+    /// [`Self::field_residues`] with `L` limbs, one chunk of coefficients at a
+    /// time.
+    fn field_residues_with<F: CrtNttConvertibleField, const L: usize>(
+        &self,
+        ring: &CyclotomicRing<F, D>,
+        modulus: &FieldModulusLimbs,
+        out: &mut [[MontCoeff<W>; D]; K],
+    ) {
+        let mut buffer = [0u128; FIELD_CHUNK];
+        for (start, coefficients) in (0..D)
+            .step_by(FIELD_CHUNK)
+            .zip(ring.coeffs.chunks(FIELD_CHUNK))
+        {
+            let canonical = &mut buffer[..coefficients.len()];
+            for (dst, coefficient) in canonical.iter_mut().zip(coefficients) {
+                *dst = coefficient
+                    .to_u128_checked()
+                    .expect("Akita field element must fit in u128");
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if self.kernel_plan.uses_x86_transform()
+                && size_of::<W>() == size_of::<i32>()
+                && canonical.len() % 8 == 0
+            {
+                // SAFETY: PrimeWidth is sealed to i16 and i32, so the width
+                // check identifies W as i32 and MontCoeff is transparent. The
+                // prepared plan proves AVX2, the chunk length is a multiple of
+                // eight and ends within D, L covers the modulus, and every
+                // coefficient is canonical.
+                unsafe {
+                    avx::field_residues_i32::<L, K, D>(
+                        &mut *(out as *mut _ as *mut [[MontCoeff<i32>; D]; K]),
+                        start,
+                        canonical,
+                        modulus,
+                        &self.field_scales,
+                    );
+                }
+                continue;
+            }
+            #[cfg(target_arch = "aarch64")]
+            if self.kernel_plan.uses_neon()
+                && size_of::<W>() == size_of::<i32>()
+                && canonical.len() % 4 == 0
+            {
+                // SAFETY: PrimeWidth is sealed to i16 and i32, so the width
+                // check identifies W as i32 and MontCoeff is transparent. The
+                // chunk length is a multiple of four and ends within D, L
+                // covers the modulus, and every coefficient is canonical.
+                unsafe {
+                    neon::field_residues_i32::<L, K, D>(
+                        &mut *(out as *mut _ as *mut [[MontCoeff<i32>; D]; K]),
+                        start,
+                        canonical,
+                        modulus,
+                        &self.field_scales,
+                    );
+                }
+                continue;
+            }
+            field_residues::<W, L, K, D>(out, start, canonical, modulus, &self.field_scales);
+        }
+    }
+}
+
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     pub(crate) fn centered_coefficients_with_params(
         &self,
@@ -168,18 +259,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
-
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        params.field_residues(ring, &mut limbs);
         for ((limb, prime), tw) in limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
-            }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
         Self { limbs }
@@ -191,21 +277,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        let centered_coeffs = ring.centered_coefficients_i128();
-
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        params.field_residues(ring, &mut neg_limbs);
+        let mut cyc_limbs = neg_limbs;
         for (((neg_limb, cyc_limb), prime), tw) in neg_limbs
             .iter_mut()
             .zip(cyc_limbs.iter_mut())
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in neg_limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
-            }
-            *cyc_limb = *neg_limb;
             forward_ntt(neg_limb, *prime, tw, params.kernel_plan);
             forward_ntt_cyclic(cyc_limb, *prime, tw, params.kernel_plan);
         }
@@ -376,18 +456,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let centered_coeffs = ring.centered_coefficients_i128();
-
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        params.field_residues(ring, &mut limbs);
         for ((limb, prime), tw) in limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredPrimeWideReducer::new(*prime);
-            for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                *dst = prime.from_canonical(reducer.reduce_i128(*centered));
-            }
             forward_ntt_cyclic(limb, *prime, tw, params.kernel_plan);
         }
         Self { limbs }

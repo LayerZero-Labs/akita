@@ -4,6 +4,7 @@
 //! Production pointwise and transform kernels use AVX2 after it won the
 //! measured Ice Lake workloads.
 
+mod field_limbs;
 mod montgomery;
 mod pointwise;
 mod runtime;
@@ -14,6 +15,8 @@ mod transform_i32;
 mod wide512;
 
 pub use runtime::{avx_ntt_mode, use_avx2_transform_ntt, AvxNttMode};
+
+pub(crate) use field_limbs::field_residues_i32;
 
 use montgomery::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,

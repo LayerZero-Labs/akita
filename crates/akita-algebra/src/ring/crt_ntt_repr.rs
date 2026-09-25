@@ -4,6 +4,7 @@ use std::array::from_fn;
 
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
+use crate::ntt::field_limbs::FieldLimbScales;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{CanonicalEncoding, CrtCapacity, Field, NttKernelPlan};
 
@@ -37,6 +38,8 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub twiddles: [NttTwiddles<W, D>; K],
     /// Garner reconstruction constants for CRT lift-back.
     pub garner: GarnerData<K>,
+    /// Per-prime constants for reducing field coefficients into residues.
+    field_scales: [FieldLimbScales; K],
     /// Host arithmetic kernels selected when this parameter set was prepared.
     kernel_plan: NttKernelPlan,
 }
@@ -126,6 +129,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             primes,
             twiddles,
             garner,
+            field_scales: primes.map(FieldLimbScales::new),
             kernel_plan: NttKernelPlan::detect::<W>(),
         }
     }
