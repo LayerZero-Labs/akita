@@ -104,9 +104,17 @@ pub fn run(options: Prepare) -> Result<(), String> {
     .lines()
     .map(str::to_string)
     .collect();
-    if registered != library || registered != binaries {
+    let per_target: BTreeSet<String> = binaries
+        .iter()
+        .filter(|name| name.as_str() != crate::libfuzzer::BINARY)
+        .cloned()
+        .collect();
+    if registered != library
+        || registered != per_target
+        || !binaries.contains(crate::libfuzzer::BINARY)
+    {
         return Err(format!(
-            "target sets disagree:\n  campaign/targets.toml: {registered:?}\n  akita_fuzz::targets::ALL: {library:?}\n  cargo fuzz list: {binaries:?}"
+            "target sets disagree:\n  campaign/targets.toml: {registered:?}\n  akita_fuzz::targets::ALL: {library:?}\n  cargo fuzz list without fuzz_all: {per_target:?}"
         ));
     }
 
@@ -122,6 +130,7 @@ pub fn run(options: Prepare) -> Result<(), String> {
             &options.sanitizer,
             "--target",
             &triple,
+            crate::libfuzzer::BINARY,
         ])
         .current_dir(&fuzz);
     if options.sequential {
@@ -145,11 +154,9 @@ pub fn run(options: Prepare) -> Result<(), String> {
         std::fs::create_dir_all(dist.join(sub)).map_err(|e| e.to_string())?;
     }
     let built = fuzz.join("target").join(&triple).join("release");
-    for target in &registered {
-        std::fs::copy(built.join(target), dist.join("bin").join(target)).map_err(|e| {
-            format!("copy instrumented {target}: {e} (was `cargo fuzz build` run?)")
-        })?;
-    }
+    let binary = crate::libfuzzer::BINARY;
+    std::fs::copy(built.join(binary), dist.join("bin").join(binary))
+        .map_err(|e| format!("copy instrumented {binary}: {e} (was `cargo fuzz build` run?)"))?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::fs::copy(&exe, dist.join("akita-fuzz")).map_err(|e| format!("copy runner: {e}"))?;
     std::fs::copy(

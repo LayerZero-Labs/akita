@@ -5,6 +5,9 @@ use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// The multiplexed instrumented binary; `AKITA_FUZZ_TARGET` selects the target.
+pub const BINARY: &str = "fuzz_all";
+
 pub struct Limits<'a> {
     pub lane: &'a Lane,
     pub timeout_s: u64,
@@ -65,6 +68,7 @@ pub fn environment(
     symbolizer: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
+    env.insert("AKITA_FUZZ_TARGET".into(), lane.target.clone());
     env.insert("AKITA_FUZZ_THREADS".into(), lane.threads.to_string());
     env.insert("RAYON_NUM_THREADS".into(), lane.threads.to_string());
     env.insert(

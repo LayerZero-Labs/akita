@@ -111,6 +111,7 @@ struct Job {
     finding_id: Option<String>,
     terminated_at: Option<Instant>,
     output_closed: bool,
+    exited_at: Option<Instant>,
 }
 
 enum Message {
@@ -314,7 +315,7 @@ impl Runner {
             .join(lane.name())
             .join(format!("{job_name}.json"));
         std::fs::create_dir_all(stats_file.parent().expect("parent"))?;
-        let binary = self.dist.join("bin").join(&lane.target);
+        let binary = self.dist.join("bin").join(libfuzzer::BINARY);
         let corpus = self.store.corpus.join(&lane.target);
         let mut args = match purpose {
             Purpose::Fuzz => libfuzzer::fuzz_args(
@@ -445,6 +446,7 @@ impl Runner {
                 finding_id: None,
                 terminated_at: None,
                 output_closed: false,
+                exited_at: None,
             },
         );
         Ok(id)
@@ -498,14 +500,23 @@ impl Runner {
         for id in ids {
             let job = self.jobs.get_mut(&id).expect("job");
             match job.child.try_wait() {
-                Ok(Some(status)) if job.output_closed => {
+                // A descendant may keep the pipe open after the worker exits.
+                Ok(Some(status))
+                    if job.output_closed
+                        || job
+                            .exited_at
+                            .is_some_and(|at| at.elapsed() > Duration::from_secs(10)) =>
+                {
                     let code = status
                         .code()
                         .unwrap_or_else(|| -status.signal().unwrap_or(0));
                     let job = self.jobs.remove(&id).expect("job");
                     self.finish(job, code);
                 }
-                Ok(Some(_)) => {} // wait for the reader to drain the pipe
+                Ok(Some(_)) => {
+                    // Let the reader drain the pipe first.
+                    job.exited_at.get_or_insert_with(Instant::now);
+                }
                 Ok(None) | Err(_) => {
                     let now = Instant::now();
                     if job.terminated_at.is_none() && now > job.deadline {

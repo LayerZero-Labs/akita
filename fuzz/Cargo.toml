@@ -188,3 +188,10 @@ path = "fuzz_targets/prover_boundary.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_all"
+path = "fuzz_targets/fuzz_all.rs"
+test = false
+doc = false
+bench = false

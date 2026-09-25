@@ -278,7 +278,7 @@ pub fn reproduce(
     let scratch = std::env::temp_dir().join(format!("akita-fuzz-reproduce-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let mut args = libfuzzer::base_args(
-        &dist.join("bin").join(&lane.target),
+        &dist.join("bin").join(libfuzzer::BINARY),
         libfuzzer::Limits {
             lane,
             timeout_s: lane.timeout_s * 2,
@@ -311,7 +311,7 @@ pub fn minimize(
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let output = directory.join(format!("minimized-{}.input", now()));
     let mut args = libfuzzer::base_args(
-        &dist.join("bin").join(&lane.target),
+        &dist.join("bin").join(libfuzzer::BINARY),
         libfuzzer::Limits {
             lane,
             timeout_s: lane.timeout_s,
@@ -377,10 +377,13 @@ pub fn validate_dist(dist: &Path, lanes: &[Lane]) -> Vec<String> {
         }
         Err(_) => problems.push("MANIFEST.sha256 is missing".into()),
     }
+    if !dist.join("bin").join(libfuzzer::BINARY).is_file() {
+        problems.push(format!(
+            "missing instrumented binary bin/{}",
+            libfuzzer::BINARY
+        ));
+    }
     for target in crate::registry::targets(lanes) {
-        if !dist.join("bin").join(&target).is_file() {
-            problems.push(format!("missing instrumented binary bin/{target}"));
-        }
         if !dist.join("seeds").join(&target).is_dir() {
             problems.push(format!("missing seeds/{target}"));
         }
