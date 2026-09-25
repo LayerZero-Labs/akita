@@ -58,13 +58,17 @@ Akita has two different AVX-512 paths. They must not be described as one
 backend.
 
 The ordinary i32 NTT path uses the scalar reference implementation or the
-runtime selected AVX2 implementation on x86. `AKITA_SCALAR_NTT=1` forces the
-scalar path. A width aware AVX-512 i32 transform also exists. It uses 16 i32
-lanes on stages with a half length of at least 16, 8 lanes at half length 8,
-4 lanes at half length 4, and scalar work for the remaining small stages.
-Production runtime dispatch does not select this wide i32 transform. It is
-kept for direct architecture tests and benchmark experiments because the
-measured AVX2 transform is faster on the target workloads.
+runtime selected x86 implementation. `AKITA_SCALAR_NTT=1` forces the scalar
+path. The x86 transforms are written once over a vector-width trait and
+instantiated at 256 and 512 bits. Both use radix-4 passes whose butterfly
+half length is at least 16, followed (forward) or preceded (inverse) by a
+256-bit kernel that runs the last four or five stages in registers. Degrees
+below 64 use the scalar transforms. Runtime dispatch selects the AVX2
+instantiation. `AKITA_AVX512_NTT=1` opts into the 512-bit transforms and
+pointwise kernels on hosts with `avx512f`, `avx512dq`, and `avx512bw`. On the
+measured AMD Zen 4 host, whose 512-bit units are double-pumped, the 512-bit
+transforms were slower than AVX2 up to `D256` and at most 2% faster at `D1024`,
+and single-threaded proving did not get faster, so they are not the default.
 
 The second path is AVX-512IFMA. It is used for exact signed NTT caches,
 including selected dense q128 commitments whose digits fit in `i8`. The
@@ -93,13 +97,15 @@ The exact cache uses the smallest CRT representation that meets the strict CRT b
 | --- | ---: | --- |
 | Q32 | 1 `u64` residue | Use the base residue when it fits. Add 12289 when the base does not fit but the mixed product does. Otherwise use the ordinary Q32 profile. |
 | Q64 | 2 `u64` residues | Use the IFMA form only when the two base residues fit. Otherwise use the ordinary Q64 profile, which can add 12289. |
-| Q128 | 3 `u64` residues | Use the base residues when they fit. Add the 30-bit prime 1073707009 when the hybrid product fits. Otherwise use the ordinary Q128 profile. |
+| Q128 | 3 `u64` residues | Use the base residues when they fit. Otherwise add 12289 when that product fits, else the 30-bit prime 1073707009 when that product fits. Otherwise use the ordinary Q128 profile. |
 
 For the full signed `i16` bound, the one prime Q32 base is not sufficient at
 the eligible degrees, so Q32 exact caches use the mixed tail. The two prime Q64
 base supports much larger widths without a tail. The three-prime Q128 base is
-roughly 150 bits; its optional 30-bit tail raises the exact reach to roughly
-180 bits, matching the portable six-prime profile. This is why one
+roughly 150 bits. Adding 12289 raises the exact reach to roughly 163.6 bits and
+the 30-bit tail to roughly 180 bits, matching the portable six-prime profile.
+The 14-bit tail is preferred whenever it suffices: its transforms and pointwise
+products run at twice the SIMD lane count of the 30-bit tail. This is why one
 AVX-512IFMA host can use different cache representations for different field
 and schedule shapes.
 
@@ -110,7 +116,7 @@ and signed RHS bound. It does not select IFMA merely because the host has
 AVX-512.
 
 Dense q128 commitments add one further performance rule. If the complete row
-exceeds the three-prime IFMA capacity but fits after adding 1073707009, an eligible
+exceeds the three-prime IFMA capacity but fits after adding a tail, an eligible
 AVX-512IFMA host accumulates the row exactly. This avoids repeatedly
 transforming and reconstructing many small chunks. Scalar, AVX2, and NEON
 hosts keep the chunked `i8` path, which is faster and uses less prepared-cache
@@ -119,15 +125,16 @@ capacity bound, not on a machine name or a fixed problem size.
 
 The IFMA matrix stores one transformed negacyclic matrix for each selected
 50 bit prime. When a Q128 tail is needed, the cache stores a shorter prefix of
-the same matrix under the 30 bit prime 1073707009. The matvec transforms the signed
+the same matrix under 12289, or under the 30 bit prime 1073707009 when base plus
+12289 is insufficient. The matvec transforms the signed
 `i16` RHS, accumulates pointwise products, reconstructs with all selected
 residues, and returns canonical protocol field elements. The tail does not
 change setup bytes, proof bytes, transcript bytes, or setup digests.
 
 **Code:** `crates/akita-algebra/src/ntt/ifma52.rs`,
 `crates/akita-algebra/src/ntt/ifma52/x86.rs`,
-`crates/akita-types/src/ntt_cache/exact.rs`, and
-`crates/akita-algebra/src/ntt/avx/wide512.rs`.
+`crates/akita-types/src/ntt_cache/exact.rs`, and, for the tail transforms,
+`crates/akita-algebra/src/ntt/avx/transform.rs`.
 
 ## Accumulation capacity and chunking
 
@@ -160,6 +167,60 @@ storage choices for the same centered CRT contract.
 **Code:** `crates/akita-algebra/src/ntt/crt.rs`,
 `crates/akita-types/src/ntt_cache/`, and
 `docs/crt-ntt-capacity-profile.md`.
+
+## Limb-split exact products
+
+A field-sized CRT product pays for the full width of every matrix entry. For a
+q128 exact product that is six i32 primes, plus a tail, or three IFMA primes.
+Each prime costs one RHS transform per column and one pointwise product per
+output row. When a matrix has only a few output rows, the RHS transforms
+dominate, and a narrower representation is cheaper.
+
+A prover exact cache can therefore store each public entry as balanced limbs.
+Let \(n\) be the bit length of \(q\). A centered entry \(A\), with
+\(|A| < q/2\), is written as
+
+\[
+A = \sum_{l=0}^{L-1} 2^{bl} A_l, \qquad |A_l| \le 2^{b-1},
+\qquad bL \ge n + 1.
+\]
+
+Each limb row accumulates exactly under two CRT primes. The capacity condition
+above applies with \(2^b\) in place of \(q\), so the limb bound replaces the
+field bound. Portable, AVX2, and NEON hosts use the two i32 Q32 primes. Eligible
+AVX-512IFMA hosts use the first two 50 bit IFMA primes. The matvec
+reconstructs every limb product \(y_l = A_l \cdot v\) as an exact integer and
+returns \(\sum_l 2^{bl} y_l\) in the protocol field.
+
+The selector picks the smallest \(L \ge 2\) whose limbs fit the two-prime
+capacity. At the q128 modulus with \(D = 512\), a width of 1536, and an
+11 bit signed digit, the i32 primes need \(L = 5\) limbs of 26 bits. The IFMA
+primes need \(L = 2\) limbs of 65 bits.
+
+The limb form transforms the RHS under two primes instead of the full CRT set.
+It also computes \(L\) times as many pointwise products per output row. The
+selector compares both plans in units of one prime-row pointwise product. It
+charges 6 units for an i32 prime transform and 2 units for an IFMA prime
+transform. It uses limbs only when their estimated cost is strictly lower. With
+these weights, limbs win for few-row q128 and q64 products and lose once many
+rows share each RHS transform. The q32 base product uses only two i32 primes and
+a tail, so at the example shape limbs win only for a single row.
+
+Limbs also change the memory footprint:
+
+| Profile | Base residue bytes per coefficient | Limb residue bytes per coefficient |
+| --- | ---: | ---: |
+| i32, q128 | 26 with the 12289 tail | 40 at \(L = 5\) |
+| IFMA, q128 | 28 with the 30 bit tail | 32 at \(L = 2\) |
+
+The limb form is used only for prover caches prepared without a verifier tail
+prefix. Verifier warmed caches, compression caches, and the prepared verifier
+artifact keep the base representation. The choice therefore changes prover
+time and prepared-cache memory, but not setup bytes, commitment bytes, proof
+bytes, transcript bytes, or setup digests.
+
+**Code:** `crates/akita-types/src/ntt_cache/limbs.rs` and
+`crates/akita-types/src/ntt_cache/exact.rs`.
 
 ## Smooth-subgroup FFT for Reed--Solomon encoding
 

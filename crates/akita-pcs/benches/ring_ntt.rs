@@ -91,7 +91,11 @@ fn legacy_radix64_i8_reference_matvec(
         let lut = DigitMontLut::new_with_digit_bound(params, 32);
         let transformed = plane
             .iter()
-            .map(|digits| ProductionN128D64::from_i8_with_lut(digits, params, &lut))
+            .map(|digits| {
+                let mut transformed = ProductionN128D64::zero();
+                transformed.assign_i8_with_lut(digits, params, &lut);
+                transformed
+            })
             .collect::<Vec<_>>();
         for (dst, row) in out.iter_mut().zip(matrix) {
             let mut accumulator = ProductionN128D64::zero();

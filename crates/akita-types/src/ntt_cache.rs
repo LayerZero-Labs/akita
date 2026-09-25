@@ -9,7 +9,7 @@ use akita_algebra::ntt::tables::{
 };
 use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
-    MontCoeff,
+    MontCoeff, NttPrime,
 };
 use akita_error::AkitaError;
 #[allow(unused_imports)]
@@ -27,12 +27,14 @@ use crate::{
 };
 
 mod exact;
+mod limbs;
 mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
 pub use exact::ntt_cache_requires_exactness_tail;
 use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
+use limbs::PreparedLimbMatrix;
 pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
 pub use prepared_artifact::{
     build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
@@ -318,9 +320,9 @@ fn dense_i8_exact_ifma52_is_profitable(
 /// Whether a dense signed-i8 commitment should use one exact AVX-512 IFMA52
 /// accumulation instead of bounded portable CRT chunks.
 ///
-/// This selects only q128 rows that need the 30-bit tail for a complete IFMA52
-/// accumulation. AVX2, NEON, scalar execution, and rows that fit the three
-/// base IFMA52 limbs retain the chunked i8 kernel.
+/// This selects only q128 rows that need an exactness tail for a complete
+/// IFMA52 accumulation. AVX2, NEON, scalar execution, and rows that fit the
+/// three base IFMA52 limbs retain the chunked i8 kernel.
 pub fn dense_i8_commit_prefers_exact_ifma52(
     field_modulus: u128,
     ring_dimension: usize,
@@ -420,6 +422,29 @@ pub struct PreparedIfma52Tail<W: PrimeWidth, const D: usize> {
     params: CrtNttParamSet<W, 1, D>,
 }
 
+impl<W: PrimeWidth, const D: usize> PreparedIfma52Tail<W, D> {
+    /// Whether this tail is a nonempty prefix of `neg` over `prime`, the tail
+    /// prime bound to `neg`.
+    fn matches<const K: usize>(&self, neg: &Ifma52NttMatrix<K, D>, prime: NttPrime<W>) -> bool {
+        neg.has_tail::<W>()
+            && !self.negacyclic.is_empty()
+            && self.negacyclic.len() <= neg.len()
+            && self.params.primes == [prime]
+    }
+
+    fn cache_bytes(&self) -> usize {
+        self.negacyclic.len() * D * core::mem::size_of::<W>()
+    }
+}
+
+/// The exactness tail of a q128 IFMA52 cache: the 14-bit prime when base plus
+/// its capacity suffices, else the 30-bit prime.
+#[derive(Debug)]
+enum Q128Ifma52Tail<const D: usize> {
+    I16(PreparedIfma52Tail<i16, D>),
+    I32(PreparedIfma52Tail<i32, D>),
+}
+
 /// One prepared NTT cache over the field-selected CRT profile.
 ///
 /// Its representation is opaque so matrices, parameters, exactness metadata,
@@ -485,7 +510,9 @@ enum PreparedNttCacheRepr<const D: usize> {
         exact: bool,
     },
     #[non_exhaustive]
-    Q64Ifma52 { neg: Ifma52NttMatrix<2, D> },
+    Q64Ifma52 {
+        neg: Ifma52NttMatrix<2, D>,
+    },
     #[non_exhaustive]
     Q128 {
         neg: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
@@ -497,8 +524,9 @@ enum PreparedNttCacheRepr<const D: usize> {
     #[non_exhaustive]
     Q128Ifma52 {
         neg: Ifma52NttMatrix<3, D>,
-        tail: Option<PreparedIfma52Tail<i32, D>>,
+        tail: Option<Q128Ifma52Tail<D>>,
     },
+    Limbs(PreparedLimbMatrix<D>),
 }
 
 impl<const D: usize> PreparedNttCacheRepr<D> {
@@ -553,14 +581,11 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 exact,
             } => validate!(neg, cyc, params, tail, *exact),
             Self::Q32Ifma52 { neg, tail } => {
-                if neg.is_empty()
-                    || neg.has_i16_tail() != tail.is_some()
-                    || tail.as_ref().is_some_and(|tail| {
-                        tail.negacyclic.is_empty()
-                            || tail.negacyclic.len() > neg.len()
-                            || tail.params.primes != [I16_TAIL_PRIME]
-                    })
-                {
+                let tail_matches = match tail {
+                    None => !neg.has_tail::<i16>(),
+                    Some(tail) => tail.matches(neg, I16_TAIL_PRIME),
+                };
+                if neg.is_empty() || !tail_matches {
                     return Err(AkitaError::InvalidSetup(
                         "prepared mixed IFMA52 NTT cache is inconsistent".into(),
                     ));
@@ -588,19 +613,18 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                 exact,
             } => validate!(neg, cyc, params, tail, *exact),
             Self::Q128Ifma52 { neg, tail } => {
-                if neg.is_empty()
-                    || neg.has_i32_tail() != tail.is_some()
-                    || tail.as_ref().is_some_and(|tail| {
-                        tail.negacyclic.is_empty()
-                            || tail.negacyclic.len() > neg.len()
-                            || tail.params.primes != [q128_primes()[0]]
-                    })
-                {
+                let tail_matches = match tail {
+                    None => !neg.has_tail::<i16>() && !neg.has_tail::<i32>(),
+                    Some(Q128Ifma52Tail::I16(tail)) => tail.matches(neg, I16_TAIL_PRIME),
+                    Some(Q128Ifma52Tail::I32(tail)) => tail.matches(neg, q128_primes()[0]),
+                };
+                if neg.is_empty() || !tail_matches {
                     return Err(AkitaError::InvalidSetup(
                         "prepared mixed IFMA52 NTT cache is inconsistent".into(),
                     ));
                 }
             }
+            Self::Limbs(neg) => neg.validate()?,
         }
         Ok(())
     }
@@ -625,20 +649,20 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             }
             Self::Q32 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q32_NUM_PRIMES),
             Self::Q32Ifma52 { neg, tail, .. } => {
-                neg.cache_bytes()
-                    + tail.as_ref().map_or(0, |tail| {
-                        tail.negacyclic.len() * D * core::mem::size_of::<i16>()
-                    })
+                neg.cache_bytes() + tail.as_ref().map_or(0, PreparedIfma52Tail::cache_bytes)
             }
             Self::Q64 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q64_NUM_PRIMES),
             Self::Q64Ifma52 { neg, .. } => neg.cache_bytes(),
             Self::Q128 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q128_NUM_PRIMES),
             Self::Q128Ifma52 { neg, tail, .. } => {
                 neg.cache_bytes()
-                    + tail.as_ref().map_or(0, |tail| {
-                        tail.negacyclic.len() * D * core::mem::size_of::<i32>()
-                    })
+                    + match tail {
+                        None => 0,
+                        Some(Q128Ifma52Tail::I16(tail)) => tail.cache_bytes(),
+                        Some(Q128Ifma52Tail::I32(tail)) => tail.cache_bytes(),
+                    }
             }
+            Self::Limbs(neg) => neg.cache_bytes(),
         }
     }
 
@@ -652,7 +676,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64 { cyc, .. } => cyc.is_some(),
             Self::Q64Ifma52 { .. } => false,
             Self::Q128 { cyc, .. } => cyc.is_some(),
-            Self::Q128Ifma52 { .. } => false,
+            Self::Q128Ifma52 { .. } | Self::Limbs(_) => false,
         }
     }
 
@@ -666,7 +690,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64 { neg, .. } => neg.is_some(),
             Self::Q64Ifma52 { .. } => true,
             Self::Q128 { neg, .. } => neg.is_some(),
-            Self::Q128Ifma52 { .. } => true,
+            Self::Q128Ifma52 { .. } | Self::Limbs(_) => true,
         }
     }
 
@@ -681,6 +705,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q64Ifma52 { .. } => false,
             Self::Q128 { tail, .. } => tail.is_some(),
             Self::Q128Ifma52 { tail, .. } => tail.is_some(),
+            Self::Limbs(_) => false,
         }
     }
 
@@ -702,6 +727,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q32 { .. } | Self::Q32Ifma52 { .. } => ProtocolRingDispatchTierId::Fp32,
             Self::Q64 { .. } | Self::Q64Ifma52 { .. } => ProtocolRingDispatchTierId::Fp64,
             Self::Q128 { .. } | Self::Q128Ifma52 { .. } => ProtocolRingDispatchTierId::Fp128,
+            Self::Limbs(neg) => neg.tier(),
         };
         if protocol_dispatch_tier::<F>() != prepared_tier {
             return Err(AkitaError::InvalidSetup(
@@ -786,12 +812,17 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
                         "signed-i16 matvec exceeds prepared IFMA52 capacity".into(),
                     ));
                 }
-                if let Some(tail) = tail {
-                    neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
-                } else {
-                    neg.mat_vec_i16(num_rows, rhs)
+                match tail {
+                    None => neg.mat_vec_i16(num_rows, rhs),
+                    Some(Q128Ifma52Tail::I16(tail)) => {
+                        neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
+                    }
+                    Some(Q128Ifma52Tail::I32(tail)) => {
+                        neg.mat_vec_i16_with_tail(&tail.negacyclic, num_rows, rhs, &tail.params)
+                    }
                 }
             }
+            Self::Limbs(neg) => neg.mat_vec_i16(log_basis, num_rows, rhs),
         }
     }
 }
@@ -824,12 +855,19 @@ impl<const D: usize> PreparedNttCache<D> {
     /// Whether this exact cache uses the AVX-512IFMA residue representation.
     #[must_use]
     pub const fn uses_ifma52(&self) -> bool {
-        matches!(
-            self.0,
+        match &self.0 {
             PreparedNttCacheRepr::Q32Ifma52 { .. }
-                | PreparedNttCacheRepr::Q64Ifma52 { .. }
-                | PreparedNttCacheRepr::Q128Ifma52 { .. }
-        )
+            | PreparedNttCacheRepr::Q64Ifma52 { .. }
+            | PreparedNttCacheRepr::Q128Ifma52 { .. } => true,
+            PreparedNttCacheRepr::Limbs(neg) => neg.uses_ifma52(),
+            _ => false,
+        }
+    }
+
+    /// Whether this exact cache stores field entries as balanced limb rows.
+    #[must_use]
+    pub const fn uses_limb_split(&self) -> bool {
+        matches!(self.0, PreparedNttCacheRepr::Limbs(_))
     }
 
     /// Borrow the Q32 i32 base domains and their bound parameters.
@@ -1054,7 +1092,12 @@ fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usi
         rhs_abs_bound,
     } = mode
     {
-        let plan = exact_cache_plan::<F, D>(selected, width, rhs_abs_bound)?;
+        // Only a prover cache (no verifier tail prefix) may use limb rows.
+        let limb_rows = tail_prefix_len
+            .is_none()
+            .then(|| matrix.as_slice().len() / width)
+            .filter(|rows| rows * width == matrix.as_slice().len());
+        let plan = exact_cache_plan::<F, D>(selected, width, rhs_abs_bound, limb_rows)?;
         return prepare_exact_ntt_cache(matrix, tail_prefix_len, plan);
     }
     macro_rules! prepare {

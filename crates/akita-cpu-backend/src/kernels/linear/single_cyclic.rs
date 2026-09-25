@@ -137,11 +137,12 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         chunk_width,
         params,
         |accs, start, end| {
+            let mut ntt_d = CyclotomicCrtNtt::<W, K, D>::zero();
             for (j, digit) in vec[start..end].iter().enumerate() {
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                ntt_d.assign_i8_with_lut(digit, params, &lut);
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                 }
@@ -188,11 +189,12 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         chunk_width,
         params,
         |accs, start, end| {
+            let mut ntt_d = CyclotomicCrtNtt::<W, K, D>::zero();
             for (j, digit) in vec[start..end].iter().enumerate() {
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                ntt_d.assign_i8_cyclic_with_lut(digit, params, &lut);
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                 }
