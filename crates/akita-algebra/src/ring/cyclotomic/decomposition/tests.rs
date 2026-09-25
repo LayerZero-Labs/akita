@@ -1,0 +1,271 @@
+use super::*;
+use jolt_field::{
+    Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime40Offset195, Prime64Offset59,
+};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+fn modulus<F: Field + CanonicalEncoding>() -> u128 {
+    (-F::one())
+        .to_u128_checked()
+        .expect("test fields fit in u128")
+        + 1
+}
+
+/// Independent oracle for balanced base-`2^log_basis` digits.
+///
+/// Runs the digit recurrence with the carry written as
+/// `floor(c / b) + [raw >= b/2]`, which cannot overflow. The centered value
+/// is held as its low 128 bits plus a sign, so the first quotient is exact
+/// even when `q - threshold > i128::MAX`. Recomposition is checked modulo
+/// `2^128`.
+fn exact_balanced_digits(
+    canonical: u128,
+    q: u128,
+    threshold: u128,
+    levels: usize,
+    log_basis: u32,
+) -> Vec<i32> {
+    let b = 1i128 << log_basis;
+    let half_b = b >> 1;
+    let mask = (1u128 << log_basis) - 1;
+    let negative = canonical > threshold;
+    let centered_low = if negative {
+        canonical.wrapping_sub(q)
+    } else {
+        canonical
+    };
+    let sign_fill = if negative {
+        !(u128::MAX >> log_basis)
+    } else {
+        0
+    };
+    let mut raw = (centered_low & mask) as i128;
+    let mut floor = ((centered_low >> log_basis) | sign_fill) as i128;
+    let mut carry = 0i128;
+    let mut recomposed = 0u128;
+    let mut digits = Vec::with_capacity(levels);
+    for level in 0..levels {
+        let high = raw >= half_b;
+        let digit = if high { raw - b } else { raw };
+        digits.push(digit as i32);
+        recomposed = recomposed.wrapping_add(
+            (digit as u128)
+                .checked_shl(level as u32 * log_basis)
+                .unwrap_or(0),
+        );
+        carry = floor + i128::from(high);
+        raw = carry & (b - 1);
+        floor = carry >> log_basis;
+    }
+    let tail = (carry as u128)
+        .checked_shl(levels as u32 * log_basis)
+        .unwrap_or(0);
+    assert_eq!(recomposed.wrapping_add(tail), centered_low);
+    digits
+}
+
+fn edge_values(
+    q: u128,
+    threshold: u128,
+    log_basis: u32,
+    levels: usize,
+    rng: &mut StdRng,
+) -> Vec<u128> {
+    let mut values = vec![0, 1, 2, q - 1, q - 2, q / 2 - 1, q / 2, q / 2 + 1];
+    for delta in 0..3 {
+        values.push(threshold.wrapping_sub(delta));
+        values.push(threshold.wrapping_add(delta));
+    }
+    let field_bits = 128 - (q - 1).leading_zeros();
+    for bit in 0..field_bits {
+        let power = 1u128 << bit;
+        values.extend([power - 1, power, power + 1]);
+        values.extend([q - power - 1, q - power, q - power + 1]);
+    }
+    // Carry-propagation boundaries: partial sums of `H` and their negations.
+    let half_b = 1u128 << (log_basis - 1);
+    let mut partial = 0u128;
+    for level in 0..levels as u32 {
+        let shift = level * log_basis;
+        if shift >= field_bits {
+            break;
+        }
+        partial = partial.wrapping_add(half_b << shift);
+        for delta in 0..3 {
+            values.push(partial.wrapping_add(delta));
+            values.push(partial.wrapping_sub(delta));
+            values.push(q.wrapping_sub(partial).wrapping_add(delta));
+            values.push(q.wrapping_sub(partial).wrapping_sub(delta));
+        }
+    }
+    for _ in 0..64 {
+        values.push(rng.gen_range(0..q));
+    }
+    values.retain(|&value| value < q);
+    values
+}
+
+/// Run every compiled kernel instantiation over `coefficients`, twice with
+/// different prefills so an unwritten digit cannot pass by accident.
+fn check_signed_kernels<F, T>(
+    coefficients: &[F],
+    params: &BalancedDecomposePow2Params,
+    expected: &[Vec<i32>],
+    context: &str,
+) where
+    F: CanonicalEncoding,
+    T: BalancedSignedDigit + From<i8> + Into<i32>,
+{
+    let width = coefficients.len();
+    let check = |label: &str, run: &dyn Fn(&mut [T])| {
+        for fill in [0i8, 1] {
+            let mut out = vec![T::from(fill); width * params.levels];
+            run(&mut out);
+            for (coefficient, digits) in expected.iter().enumerate() {
+                for (level, &digit) in digits.iter().enumerate() {
+                    assert_eq!(
+                        out[level * width + coefficient].into(),
+                        digit,
+                        "{label} {context} width={width} coefficient={coefficient} level={level}"
+                    );
+                }
+            }
+        }
+    };
+    check("portable", &|out| {
+        balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params)
+    });
+    check("dispatch", &|out| {
+        balanced_decompose_coefficients_pow2_signed_into(coefficients, out, params)
+    });
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: runtime feature detection guarantees AVX2.
+            check("avx2", &|out| unsafe {
+                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params)
+            });
+        }
+        if std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512bw")
+            && std::is_x86_feature_detected!("avx512vl")
+            && std::is_x86_feature_detected!("avx512dq")
+        {
+            // SAFETY: runtime feature detection guarantees every enabled feature.
+            check("avx512", &|out| unsafe {
+                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params)
+            });
+        }
+    }
+}
+
+fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let q = modulus::<F>();
+    let field_bits = (128 - (q - 1).leading_zeros()) as usize;
+    for log_basis in 1..=16u32 {
+        let covering = field_bits.div_ceil(log_basis as usize);
+        let max_levels = ((128 + log_basis) / log_basis) as usize;
+        // `word_levels` fills the first 64-bit word of `x + H`, the limit of the
+        // u32 SIMD kernels and of the one-word portable instantiation.
+        let word_levels = 64 / log_basis as usize;
+        let mut level_counts = vec![
+            1,
+            2,
+            covering - 1,
+            covering,
+            covering + 1,
+            word_levels,
+            word_levels + 1,
+            max_levels,
+        ];
+        level_counts.retain(|&levels| (1..=max_levels).contains(&levels));
+        level_counts.sort_unstable();
+        level_counts.dedup();
+        for levels in level_counts {
+            let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+            let values = edge_values(q, params.threshold, log_basis, levels, &mut rng);
+            let coefficients = values
+                .iter()
+                .map(|&value| F::from_u128_reduced(value))
+                .collect::<Vec<_>>();
+            let expected = values
+                .iter()
+                .map(|&value| exact_balanced_digits(value, q, params.threshold, levels, log_basis))
+                .collect::<Vec<_>>();
+            for width in [values.len(), 1, 8, 40, 63, 64, 65, 72, 129] {
+                let width = width.min(values.len());
+                let context = format!("q={q:#x} log_basis={log_basis} levels={levels}");
+                check_signed_kernels::<F, i16>(
+                    &coefficients[..width],
+                    &params,
+                    &expected[..width],
+                    &context,
+                );
+                if log_basis > 8 {
+                    continue;
+                }
+                check_signed_kernels::<F, i8>(
+                    &coefficients[..width],
+                    &params,
+                    &expected[..width],
+                    &context,
+                );
+                // Public i8 entry point, including its u32 SIMD path.
+                let mut out = vec![0i8; width * levels];
+                balanced_decompose_coefficients_pow2_i8_into(
+                    &coefficients[..width],
+                    &mut out,
+                    &params,
+                );
+                for (coefficient, digits) in expected[..width].iter().enumerate() {
+                    for (level, &digit) in digits.iter().enumerate() {
+                        assert_eq!(
+                            i32::from(out[level * width + coefficient]),
+                            digit,
+                            "i8 entry {context} width={width} coefficient={coefficient} level={level}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn add_bias_decomposition_matches_exact_recurrence_fp128() {
+    check_field_against_exact_recurrence::<Prime128OffsetA7F7>(0xa7f7);
+    check_field_against_exact_recurrence::<Prime128Offset275>(0x275);
+}
+
+#[test]
+fn add_bias_decomposition_matches_exact_recurrence_narrow_fields() {
+    check_field_against_exact_recurrence::<Prime64Offset59>(0x59);
+    check_field_against_exact_recurrence::<Fp64<4294967197>>(0x4294967197);
+    check_field_against_exact_recurrence::<Prime40Offset195>(0x195);
+    check_field_against_exact_recurrence::<Prime32Offset99>(0x99);
+}
+
+#[test]
+fn fp128_near_half_modulus_does_not_wrap_the_carry() {
+    // With q = 2^128 - 275 and log_basis = 9, centered values within b/2 of
+    // 2^127 overflowed the former i128 carry `(c - digit) >> log_basis`, so
+    // the digits recomposed to `x - 2^128` once `levels * log_basis > 128`.
+    type F = Prime128Offset275;
+    let q = modulus::<F>();
+    let (levels, log_basis) = (15, 9);
+    let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+    let value = F::from_u128_reduced(q / 2 - 1);
+    let mut digits = [0i16; 15];
+    balanced_decompose_coefficients_pow2_signed_into(&[value], &mut digits, &params);
+
+    let basis = F::from_u64(1 << log_basis);
+    let mut recomposed = F::zero();
+    let mut power = F::one();
+    for digit in digits {
+        recomposed += F::from_i64(i64::from(digit)) * power;
+        power *= basis;
+    }
+    assert_eq!(recomposed, value);
+}

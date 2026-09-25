@@ -7,10 +7,9 @@ use super::poly::DensePoly;
 use crate::opaque::DecomposeFoldWitness;
 use crate::sources::poly_helpers::{
     balanced_ring_decompose_fold_chunked, balanced_ring_decompose_fold_partitioned,
-    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
-    DecomposeParams,
+    cached_digit_decompose_fold_partitioned, sparse_mul_acc,
 };
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -37,24 +36,13 @@ where
             .to_u128_checked()
             .expect("Akita field element must fit in u128")
             + 1;
-        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
         let Some(planes) = self.digit_planes_for::<D>(num_digits, log_basis) else {
             return balanced_ring_decompose_fold_chunked(
                 coeffs,
                 challenges,
                 chunk_ranges,
                 num_positions_per_block,
-                num_digits,
-                &params,
+                &BalancedDecomposePow2Params::new(num_digits, log_basis, q),
             );
         };
         chunk_ranges
@@ -180,16 +168,7 @@ where
             .to_u128_checked()
             .expect("Akita field element must fit in u128")
             + 1;
-        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
         // The single-digit scratch is i8; wider bases need the checked i16 kernel below.
         if num_digits == 1 && log_basis <= akita_types::MAX_I8_LOG_BASIS {
@@ -222,7 +201,7 @@ where
                 cfg_into_iter!(0..num_positions_per_block)
                     .map(|elem_idx| {
                         let mut z_local = [0i32; D];
-                        let mut digit_plane = [0i8; D];
+                        let mut digit_plane = [[0i8; D]];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
                             let global_idx = block_idx * num_positions_per_block + elem_idx;
@@ -230,8 +209,11 @@ where
                                 continue;
                             }
                             let ring = &coeffs[global_idx];
-                            decompose_ring_single_digit::<F, D>(ring, &mut digit_plane, &params);
-                            sparse_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
+                            ring.balanced_decompose_pow2_i8_into_with_params(
+                                &mut digit_plane,
+                                &params,
+                            );
+                            sparse_mul_acc::<D>(&digit_plane[0], c_i, &mut z_local);
                         }
 
                         z_local
@@ -248,7 +230,6 @@ where
                 coeffs,
                 challenges,
                 num_positions_per_block,
-                num_digits,
                 &params,
             )
         };

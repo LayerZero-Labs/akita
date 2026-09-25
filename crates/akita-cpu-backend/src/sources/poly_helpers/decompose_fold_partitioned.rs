@@ -5,15 +5,12 @@ use super::narrow_accum::{
     sparse_mul_acc_i16_terms as sparse_mul_acc_i16_narrow_terms,
     sparse_mul_acc_terms as sparse_mul_acc_narrow_terms,
 };
-use super::rotated_accum::{
-    accumulate_rotated_digit_plane, decompose_ring_full_challenge_accumulate,
-    should_use_rotated_challenge,
-};
+use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
 use super::{
-    decompose_ring_interleaved, decompose_ring_interleaved_i16, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_pm1,
-    DecomposeParams,
+    fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1,
+    sparse_mul_acc_pm1,
 };
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_types::SignedDigitKernel;
@@ -136,7 +133,7 @@ enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
     },
     LiveRings {
         coeffs: &'a [CyclotomicRing<F, D>],
-        params: &'a DecomposeParams,
+        params: &'a BalancedDecomposePow2Params,
     },
     PackedTight {
         digits: PackedSignedDigitView<'a>,
@@ -164,33 +161,26 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
             Self::Predecomposed {
                 digit_abs_bound, ..
             } => *digit_abs_bound,
-            Self::LiveRings { params, .. } => params.half_b as u64,
+            Self::LiveRings { params, .. } => {
+                akita_types::balanced_signed_digit_abs_bound(params.log_basis())
+                    .expect("decompose-fold parameters must use a validated signed-digit basis")
+            }
             Self::PackedTight {
                 digit_abs_bound, ..
             } => *digit_abs_bound,
         }
     }
 
-    fn digit_scratch(
-        &self,
-        plans: &[ChallengePlan<D>],
-        num_digits: usize,
-    ) -> Option<DigitScratch<D>> {
+    fn digit_scratch(&self, num_digits: usize) -> Option<DigitScratch<D>> {
         match self {
-            Self::LiveRings { params, .. }
-                if plans
-                    .iter()
-                    .any(|plan| !matches!(plan, ChallengePlan::Rotated(_))) =>
-            {
-                Some(
-                    match SignedDigitKernel::for_log_basis(params.log_basis)
-                        .expect("decompose-fold parameters must use a validated signed-digit basis")
-                    {
-                        SignedDigitKernel::I8 => DigitScratch::I8(vec![[0i8; D]; num_digits]),
-                        SignedDigitKernel::I16 => DigitScratch::I16(vec![[0i16; D]; num_digits]),
-                    },
-                )
-            }
+            Self::LiveRings { params, .. } => Some(
+                match SignedDigitKernel::for_log_basis(params.log_basis())
+                    .expect("decompose-fold parameters must use a validated signed-digit basis")
+                {
+                    SignedDigitKernel::I8 => DigitScratch::I8(vec![[0i8; D]; num_digits]),
+                    SignedDigitKernel::I16 => DigitScratch::I16(vec![[0i16; D]; num_digits]),
+                },
+            ),
             _ => None,
         }
     }
@@ -211,7 +201,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
             (Self::Predecomposed { digit_planes, .. }, ChallengePlan::Rotated(rotated)) => {
                 let src_base = ring_idx * num_digits;
                 for digit_idx in 0..num_digits {
-                    accumulate_rotated_digit_plane::<D>(
+                    accumulate_rotated_digit_plane(
                         &digit_planes[src_base + digit_idx],
                         rotated.as_ref(),
                         &mut acc[dst_base + digit_idx],
@@ -223,11 +213,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                 let digit_plane = digits
                     .decode_array::<D>(ring_idx * D)
                     .expect("validated packed recursive ring");
-                accumulate_rotated_digit_plane::<D>(
-                    &digit_plane,
-                    rotated.as_ref(),
-                    &mut acc[dst_base],
-                );
+                accumulate_rotated_digit_plane(&digit_plane, rotated.as_ref(), &mut acc[dst_base]);
             }
             (Self::PackedTight { digits, .. }, plan) => {
                 debug_assert_eq!(num_digits, 1);
@@ -268,24 +254,37 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                 }
             }
             (Self::LiveRings { coeffs, params }, ChallengePlan::Rotated(rotated)) => {
-                let base = dst_base;
-                decompose_ring_full_challenge_accumulate::<F, D>(
-                    &coeffs[ring_idx],
-                    rotated.as_ref(),
-                    &mut acc[base..base + num_digits],
-                    params,
-                );
+                let acc = &mut acc[dst_base..dst_base + num_digits];
+                match digit_scratch.expect("live rotated path requires signed-digit scratch") {
+                    DigitScratch::I8(digit_buf) => {
+                        coeffs[ring_idx]
+                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
+                        for (digit_plane, digit_acc) in digit_buf.iter().zip(acc) {
+                            accumulate_rotated_digit_plane(
+                                digit_plane,
+                                rotated.as_ref(),
+                                digit_acc,
+                            );
+                        }
+                    }
+                    DigitScratch::I16(digit_buf) => {
+                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
+                        for (digit_plane, digit_acc) in digit_buf.iter().zip(acc) {
+                            accumulate_rotated_digit_plane(
+                                digit_plane,
+                                rotated.as_ref(),
+                                digit_acc,
+                            );
+                        }
+                    }
+                }
             }
             (Self::LiveRings { coeffs, params }, plan) => {
                 let base = dst_base;
                 match digit_scratch.expect("live sparse path requires signed-digit scratch") {
                     DigitScratch::I8(digit_buf) => {
-                        decompose_ring_interleaved::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx]
+                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
                         for digit in 0..num_digits {
                             match plan {
                                 ChallengePlan::WidePm1(pm1) => sparse_mul_acc_pm1(
@@ -306,12 +305,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                         }
                     }
                     DigitScratch::I16(digit_buf) => {
-                        decompose_ring_interleaved_i16::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
                         for digit in 0..num_digits {
                             match plan {
                                 ChallengePlan::WidePm1(pm1) => sparse_mul_acc_i16_pm1(
@@ -368,12 +362,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
             Self::LiveRings { coeffs, params } => {
                 match digit_scratch.expect("live narrow path requires signed-digit scratch") {
                     DigitScratch::I8(digit_buf) => {
-                        decompose_ring_interleaved::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx]
+                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
                         for digit in 0..num_digits {
                             sparse_mul_acc_narrow(
                                 &digit_buf[digit],
@@ -383,12 +373,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                         }
                     }
                     DigitScratch::I16(digit_buf) => {
-                        decompose_ring_interleaved_i16::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
                         for digit in 0..num_digits {
                             sparse_mul_acc_i16_narrow(
                                 &digit_buf[digit],
@@ -453,12 +438,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                 match digit_scratch.expect("live chunked narrow path requires signed-digit scratch")
                 {
                     DigitScratch::I8(digit_buf) => {
-                        decompose_ring_interleaved::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx]
+                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
                         for term_range in term_ranges {
                             let positions = &challenge.positions[term_range.clone()];
                             let coefficients = &challenge.coeffs[term_range.clone()];
@@ -474,12 +455,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
                         }
                     }
                     DigitScratch::I16(digit_buf) => {
-                        decompose_ring_interleaved_i16::<F, D>(
-                            &coeffs[ring_idx],
-                            digit_buf,
-                            num_digits,
-                            params,
-                        );
+                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
                         for term_range in term_ranges {
                             let positions = &challenge.positions[term_range.clone()];
                             let coefficients = &challenge.coeffs[term_range.clone()];
@@ -547,7 +523,7 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_scratch = source.digit_scratch(&plans, num_digits);
+            let mut digit_scratch = source.digit_scratch(num_digits);
             let mut narrow_acc = uses_narrow_accumulation.then(|| vec![[0i16; D]; acc.len()]);
             let mut narrow_bound = 0u64;
 
@@ -680,14 +656,13 @@ pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, co
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-    num_digits: usize,
-    p: &DecomposeParams,
+    params: &BalancedDecomposePow2Params,
 ) -> Vec<[i32; D]> {
     element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::LiveRings { coeffs, params: p },
+        ElementFoldSource::LiveRings { coeffs, params },
         challenges,
         num_positions_per_block,
-        num_digits,
+        params.levels(),
     )
 }
 

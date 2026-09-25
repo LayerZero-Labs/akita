@@ -1,8 +1,11 @@
 use super::CpuPreparedSetup;
 use crate::sources::packed_digits::PackedSignedDigitView;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
+use akita_types::{
+    balanced_signed_digit_abs_bound, field_modulus, NttCacheKey, NttTransformDomain,
+};
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
@@ -19,6 +22,8 @@ pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    let params =
+        BalancedDecomposePow2Params::new(num_digits_inner, log_basis_inner, field_modulus::<F>()?);
     prepared.with_shared_ntt::<D, _>(
         NttCacheKey::from_matrix_shape(
             D,
@@ -37,7 +42,7 @@ pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
                         let start = ring_idx * num_digits_inner;
                         ring.balanced_decompose_pow2_i16_into(
                             &mut rhs[start..start + num_digits_inner],
-                            log_basis_inner,
+                            &params,
                         );
                     }
                     ntt.mat_vec_i16::<F>(log_basis_inner, n_a, &rhs)
@@ -100,6 +105,8 @@ pub(super) fn recursive_packed_witness_commit_rows<F: Field + CanonicalEncoding,
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     let ring_elems = digits.len() / D;
+    let params =
+        BalancedDecomposePow2Params::new(num_digits_inner, log_basis_inner, field_modulus::<F>()?);
     prepared.with_shared_ntt::<D, _>(
         NttCacheKey::from_matrix_shape(
             D,
@@ -129,7 +136,7 @@ pub(super) fn recursive_packed_witness_commit_rows<F: Field + CanonicalEncoding,
                             let start = ring_idx * num_digits_inner;
                             ring.balanced_decompose_pow2_i16_into(
                                 &mut rhs[start..start + num_digits_inner],
-                                log_basis_inner,
+                                &params,
                             );
                         }
                     }

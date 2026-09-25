@@ -17,11 +17,8 @@ use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(test)]
-pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
     balanced_decompose_coefficients_pow2_i8_into, decompose_centering_threshold,
-    peel_first_balanced_digit, try_balanced_decompose_coefficients_pow2_i8_u64_into,
     BalancedDecomposePow2Params,
 };
 pub use wide::WideCyclotomicRing;

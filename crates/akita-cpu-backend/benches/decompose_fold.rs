@@ -1,11 +1,9 @@
 #![allow(missing_docs)]
 
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_cpu_backend::benchmark_support::{
-    balanced_ring_decompose_fold_partitioned, DecomposeParams,
-};
+use akita_cpu_backend::benchmark_support::balanced_ring_decompose_fold_partitioned;
 use akita_cpu_backend::standalone::{
     decompose_recursive_witness, recursive_witness_from_i8_digits,
 };
@@ -67,16 +65,7 @@ fn dense_case<F: Field + CanonicalEncoding, const D: usize>(
         .to_u128_checked()
         .expect("Akita field element must fit in u128")
         + 1;
-    let threshold = decompose_centering_threshold(num_digits, log_basis, q);
-    let params = DecomposeParams {
-        threshold,
-        q,
-        mask: (1i128 << log_basis) - 1,
-        half_b: 1i128 << (log_basis - 1),
-        b_val: 1i128 << log_basis,
-        log_basis,
-        overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-    };
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     let mut group = c.benchmark_group(format!("decompose_fold/dense_{field_label}"));
     group.throughput(Throughput::Elements(FIELD_COEFFICIENTS as u64));
@@ -86,7 +75,6 @@ fn dense_case<F: Field + CanonicalEncoding, const D: usize>(
                 black_box(&rings),
                 black_box(&challenges),
                 POSITIONS_PER_BLOCK,
-                num_digits,
                 &params,
             ))
         });
