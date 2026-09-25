@@ -27,8 +27,8 @@ where
         ));
     }
     if d_weights.len() != d_rows
-        || group.d_col_range.end > d_physical_cols
-        || group.d_col_range.len() != e_eq_slice.len()
+        || group.d_col_range().end > d_physical_cols
+        || group.d_col_range().len() != e_eq_slice.len()
     {
         return Err(AkitaError::InvalidSetup(
             "cached setup scan geometry is malformed".into(),

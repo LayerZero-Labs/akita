@@ -125,7 +125,8 @@ where
         build_root_projection("B", alpha_pows_b, geometry.b_ratio())?,
         build_root_projection("D", alpha_pows_d, geometry.d_ratio())?,
     ];
-    let projections = if matches!(plan.groups(), [only] if only.role_dims == geometry.role_dims()) {
+    let projections = if matches!(plan.groups(), [only] if only.role_dims() == geometry.role_dims())
+    {
         vec![root_projections]
     } else {
         plan.groups()
@@ -140,9 +141,9 @@ where
                     })
                 };
                 Ok([
-                    build("A", group.role_dims.d_a(), group.a_ratio)?,
-                    build("B", group.role_dims.d_b(), group.b_ratio)?,
-                    build("D", group.role_dims.d_d(), group.d_ratio)?,
+                    build("A", group.role_dims().d_a(), group.a_ratio())?,
+                    build("B", group.role_dims().d_b(), group.b_ratio())?,
+                    build("D", group.role_dims().d_d(), group.d_ratio())?,
                 ])
             })
             .collect::<Result<Vec<_>, AkitaError>>()?

@@ -232,7 +232,7 @@ impl<E: Field> DirectScan<E> {
             .plan
             .groups()
             .iter()
-            .position(|group| group.group_id == group_id)?;
+            .position(|group| group.group_id() == group_id)?;
         self.mode
             .weights(group_index)
             .map(DirectScanWeights::slices)
@@ -259,26 +259,26 @@ fn materialize_reduced_direct_scan_weights<E: Field>(
     coefficient_point: &[E],
     cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
 ) -> Result<ReducedDirectScanWeights<E>, AkitaError> {
-    let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), || {
+    let a_role = intern_reduced_functional(cache, group.role_dims().d_a(), || {
         prepare_reduced_role_coefficient_state(
             plan,
-            group.role_dims.d_a(),
+            group.role_dims().d_a(),
             alpha,
             coefficient_point,
         )
     })?;
-    let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), || {
+    let b_role = intern_reduced_functional(cache, group.role_dims().d_b(), || {
         prepare_reduced_role_coefficient_state(
             plan,
-            group.role_dims.d_b(),
+            group.role_dims().d_b(),
             alpha,
             coefficient_point,
         )
     })?;
-    let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), || {
+    let d_role = intern_reduced_functional(cache, group.role_dims().d_d(), || {
         prepare_reduced_role_coefficient_state(
             plan,
-            group.role_dims.d_d(),
+            group.role_dims().d_d(),
             alpha,
             coefficient_point,
         )
@@ -286,34 +286,34 @@ fn materialize_reduced_direct_scan_weights<E: Field>(
     let evaluate_e = || {
         materialize_reduced_role_tensor_weights(
             plan,
-            group.d_relation_ratio,
-            group.role_dims.d_d(),
-            &group.d_tensors,
-            group.d_col_range.len(),
+            group.d_relation_ratio(),
+            group.role_dims().d_d(),
+            group.d_tensors(),
+            group.d_col_range().len(),
         )
     };
     let evaluate_t = || {
         materialize_reduced_role_tensor_weights(
             plan,
-            group.b_relation_ratio,
-            group.role_dims.d_b(),
-            group.physical_b.relation_tensors(),
-            group.physical_b.logical_input_width(),
+            group.b_relation_ratio(),
+            group.role_dims().d_b(),
+            group.physical_b().relation_tensors(),
+            group.physical_b().logical_input_width(),
         )
     };
     let evaluate_z = || {
         materialize_reduced_role_tensor_weights(
             plan,
-            group.a_relation_ratio,
-            group.role_dims.d_a(),
-            &group.a_tensors,
-            group.z_cols,
+            group.a_relation_ratio(),
+            group.role_dims().d_a(),
+            group.a_tensors(),
+            group.z_cols(),
         )
     };
     let (e, t, z) = materialize_three_roles(
-        group.d_col_range.len(),
-        group.physical_b.logical_input_width(),
-        group.z_cols,
+        group.d_col_range().len(),
+        group.physical_b().logical_input_width(),
+        group.z_cols(),
         evaluate_e,
         evaluate_t,
         evaluate_z,
@@ -332,34 +332,34 @@ fn materialize_lifted_direct_scan_weights<E: Field>(
     let evaluate_e = || {
         let _span = tracing::info_span!("setup_materialize_e_weights").entered();
         plan.materialize_role_tensor_weights(
-            group.d_relation_ratio,
-            &group.d_tensors,
-            group.d_col_range.len(),
+            group.d_relation_ratio(),
+            group.d_tensors(),
+            group.d_col_range().len(),
             alpha,
         )
     };
     let evaluate_t = || {
         let _span = tracing::info_span!("setup_materialize_t_weights").entered();
         plan.materialize_role_tensor_weights(
-            group.b_relation_ratio,
-            group.physical_b.relation_tensors(),
-            group.physical_b.logical_input_width(),
+            group.b_relation_ratio(),
+            group.physical_b().relation_tensors(),
+            group.physical_b().logical_input_width(),
             alpha,
         )
     };
     let evaluate_z = || {
         let _span = tracing::info_span!("setup_materialize_z_weights").entered();
         plan.materialize_role_tensor_weights(
-            group.a_relation_ratio,
-            &group.a_tensors,
-            group.z_cols,
+            group.a_relation_ratio(),
+            group.a_tensors(),
+            group.z_cols(),
             alpha,
         )
     };
     let (e, t, z) = materialize_three_roles(
-        group.d_col_range.len(),
-        group.physical_b.logical_input_width(),
-        group.z_cols,
+        group.d_col_range().len(),
+        group.physical_b().logical_input_width(),
+        group.z_cols(),
         evaluate_e,
         evaluate_t,
         evaluate_z,

@@ -7,9 +7,9 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     dyadic_block_ranges, gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor,
-    CommitmentRingDims, CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, OpeningMethod,
-    PhysicalBSetupPlan, PreparedRelationAddress, RingRole, SetupContributionGroupInputs,
-    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, PhysicalBSetupPlan,
+    PreparedRelationAddress, RingRole, SetupContributionGroupInputs, WitnessLayout,
+    WitnessQuotientRowLayout, WitnessUnitLayout,
 };
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
@@ -476,38 +476,13 @@ fn test_group_plan(
         b_weights.into(),
     )
     .unwrap();
-    let group = SetupContributionGroupPlan {
-        group_id: 0,
-        opening_method: OpeningMethod::EvaluationTrace,
-        role_dims: CommitmentRingDims::uniform(64),
-        a_ratio: 1,
-        b_ratio: 1,
-        d_ratio: 1,
-        a_relation_ratio: 1,
-        b_relation_ratio: 1,
-        d_relation_ratio: 1,
-        opening_subcolumns: 1,
-        consistency_weight: F::one(),
-        num_claims: 0,
-        num_live_blocks: 0,
-        num_positions_per_block: z_cols,
-        depth_witness: 1,
-        depth_commit: 1,
-        depth_open: 1,
-        log_basis_inner: 1,
-        log_basis_outer: 1,
-        log_basis_open: 1,
+    let group = SetupContributionGroupPlan::from_test_parts(
         d_col_range,
         z_cols,
         n_a,
         physical_b,
-        a_row_weights: a_row_weights.into(),
-        fold_gadget: vec![F::one()].into(),
-        active_units: Vec::new().into(),
-        num_physical_units: 0,
-        d_tensors: Vec::new(),
-        a_tensors: Vec::new(),
-    };
+        a_row_weights.into(),
+    );
     (
         group,
         DirectScanWeights {
@@ -945,17 +920,17 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
     assert_eq!(
         plan.groups()
             .iter()
-            .find(|group| group.group_id == 1)
+            .find(|group| group.group_id() == 1)
             .unwrap()
-            .d_col_range,
+            .d_col_range(),
         0..2
     );
     assert_eq!(
         plan.groups()
             .iter()
-            .find(|group| group.group_id == 0)
+            .find(|group| group.group_id() == 0)
             .unwrap()
-            .d_col_range,
+            .d_col_range(),
         2..3
     );
     let alpha = test_scalar(3);
@@ -972,7 +947,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
     assert_eq!(
-        SetupIndexWeightMle::new(&plan)
+        SetupIndexWeightMle::new(plan)
             .unwrap()
             .evaluate(&rho_setup_idx, alpha)
             .unwrap(),
@@ -980,11 +955,11 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         "multi-group setup-index MLE must match the full plan"
     );
     for (group_index, group) in plan.groups().iter().enumerate() {
-        let block_challenges = (0..group.num_claims * group.num_live_blocks)
-            .map(|index| test_scalar(1501 + 17 * group.group_id as u128 + index as u128))
+        let block_challenges = (0..group.num_claims() * group.num_live_blocks())
+            .map(|index| test_scalar(1501 + 17 * group.group_id() as u128 + index as u128))
             .collect::<Vec<_>>();
-        let opening_a_evals = (0..group.num_positions_per_block)
-            .map(|index| test_scalar(1601 + 19 * group.group_id as u128 + index as u128))
+        let opening_a_evals = (0..group.num_positions_per_block())
+            .map(|index| test_scalar(1601 + 19 * group.group_id() as u128 + index as u128))
             .collect::<Vec<_>>();
         let reference = span_evaluators::structured_slice_reference(
             group,
@@ -995,19 +970,19 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         );
         assert_eq!(
             scan.evaluate_structured_group_cached::<F>(
-                group.group_id,
+                group.group_id(),
                 &block_challenges,
                 &opening_a_evals,
             )
             .unwrap(),
             reference,
             "cached structured evaluation must match group {} dense oracle",
-            group.group_id
+            group.group_id()
         );
         assert_eq!(
             evaluate_structured_group::<F, _>(
-                &plan,
-                group.group_id,
+                plan,
+                group.group_id(),
                 &block_challenges,
                 &opening_a_evals,
                 alpha,
@@ -1015,7 +990,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             .unwrap(),
             reference,
             "closed-form structured evaluation must match group {} dense oracle",
-            group.group_id
+            group.group_id()
         );
     }
 }

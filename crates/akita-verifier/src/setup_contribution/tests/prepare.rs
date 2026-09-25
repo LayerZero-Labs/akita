@@ -145,10 +145,13 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     .unwrap();
 
     let deferred_group = &deferred.groups()[0];
-    assert_eq!(deferred_group.active_units.len(), num_live_blocks);
-    assert_eq!(deferred_group.num_physical_units, num_chunks);
-    assert_eq!(deferred_group.d_tensors.len(), num_claims * num_live_blocks);
-    assert_eq!(deferred_group.a_tensors.len(), num_chunks);
+    assert_eq!(deferred_group.active_units().len(), num_live_blocks);
+    assert_eq!(deferred_group.num_physical_units(), num_chunks);
+    assert_eq!(
+        deferred_group.d_tensors().len(),
+        num_claims * num_live_blocks
+    );
+    assert_eq!(deferred_group.a_tensors().len(), num_chunks);
 
     let block_challenges = (0..num_claims * num_live_blocks)
         .map(|index| test_scalar(1501 + index as u128))

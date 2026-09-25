@@ -192,21 +192,21 @@ fn append_d_tensors<E: Field>(
         return Ok(());
     }
     let lifted = group
-        .d_tensors
+        .d_tensors()
         .iter()
         .map(|tensor| {
             lift_role_tensor(
                 tensor,
-                group.d_col_range.start,
+                group.d_col_range().start,
                 plan.d_physical_cols(),
                 plan.d_weights(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
+    for tensor in compact_affine_unit_families(lifted, group.num_claims())? {
         push_projected_tensor(
             batches,
-            group.d_ratio,
+            group.d_ratio(),
             rebase_relation_tensor(&tensor, plan.relation_base_bridge_ratio()?)?,
         )?;
     }
@@ -218,19 +218,19 @@ fn append_b_tensors<E: Field>(
     group: &SetupContributionGroupPlan<E>,
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
 ) -> Result<(), AkitaError> {
-    if group.physical_b.physical_rows() == 0 {
+    if group.physical_b().physical_rows() == 0 {
         return Ok(());
     }
     let setup_tensors = build_group_b_setup_tensors(plan.relation_address_geometry(), group)?;
-    let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
+    let tensors = if group.physical_b().geometry().slice_count().is_sliced() {
         setup_tensors
     } else {
-        compact_affine_unit_families(setup_tensors, group.num_claims)?
+        compact_affine_unit_families(setup_tensors, group.num_claims())?
     };
     for tensor in tensors {
         push_projected_tensor(
             batches,
-            group.b_ratio,
+            group.b_ratio(),
             rebase_relation_tensor(&tensor, plan.relation_base_bridge_ratio()?)?,
         )?;
     }
@@ -242,18 +242,18 @@ fn append_a_tensors<E: Field>(
     group: &SetupContributionGroupPlan<E>,
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
 ) -> Result<(), AkitaError> {
-    if group.n_a == 0 {
+    if group.n_a() == 0 {
         return Ok(());
     }
     let lifted = group
-        .a_tensors
+        .a_tensors()
         .iter()
-        .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights))
+        .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols(), group.a_row_weights()))
         .collect::<Result<Vec<_>, _>>()?;
     for tensor in compact_affine_unit_families(lifted, 1)? {
         push_projected_tensor(
             batches,
-            group.a_ratio,
+            group.a_ratio(),
             rebase_relation_tensor(&tensor, plan.relation_base_bridge_ratio()?)?,
         )?;
     }
@@ -264,21 +264,22 @@ fn build_group_b_setup_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
-    let physical_b = &group.physical_b;
+    let physical_b = &group.physical_b();
     let geometry = physical_b.geometry();
-    let (b_subcolumns, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-    let source_lanes = group.a_relation_ratio;
-    let a_row_setup_stride = checked::product([group.depth_commit, b_subcolumns])
+    let (b_subcolumns, _) =
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims())?;
+    let source_lanes = group.a_relation_ratio();
+    let a_row_setup_stride = checked::product([group.depth_commit(), b_subcolumns])
         .ok_or_else(|| AkitaError::InvalidSetup("setup B A-row stride overflow".into()))?;
-    let block_setup_stride = checked::product([group.n_a, a_row_setup_stride])
+    let block_setup_stride = checked::product([group.n_a(), a_row_setup_stride])
         .ok_or_else(|| AkitaError::InvalidSetup("setup B block stride overflow".into()))?;
-    let a_row_relation_stride = checked::product([group.depth_commit, source_lanes])
+    let a_row_relation_stride = checked::product([group.depth_commit(), source_lanes])
         .ok_or_else(|| AkitaError::InvalidSetup("setup B relation A-row stride overflow".into()))?;
-    let subcolumn_relation_stride = checked::product([group.depth_commit, group.b_relation_ratio])
-        .ok_or_else(|| {
+    let subcolumn_relation_stride =
+        checked::product([group.depth_commit(), group.b_relation_ratio()]).ok_or_else(|| {
             AkitaError::InvalidSetup("setup B subcolumn relation stride overflow".into())
         })?;
-    let block_relation_stride = checked::product([group.n_a, a_row_relation_stride])
+    let block_relation_stride = checked::product([group.n_a(), a_row_relation_stride])
         .ok_or_else(|| AkitaError::InvalidSetup("setup B relation block stride overflow".into()))?;
     let claim_setup_stride =
         checked::product([geometry.max_blocks_per_slice(), block_setup_stride])
@@ -300,7 +301,7 @@ fn build_group_b_setup_tensors<E: Field>(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut tensors = Vec::new();
-    for unit in group.active_units.iter() {
+    for unit in group.active_units().iter() {
         let unit_start = unit.global_block_start();
         let unit_end = unit_start
             .checked_add(unit.num_live_blocks())
@@ -313,7 +314,7 @@ fn build_group_b_setup_tensors<E: Field>(
             }
             let intersection_len = intersection_end - intersection_start;
             let local_block_start = intersection_start - slice.start;
-            for claim in 0..group.num_claims {
+            for claim in 0..group.num_claims() {
                 let setup_column = claim
                     .checked_mul(claim_setup_stride)
                     .and_then(|base| {
@@ -323,11 +324,11 @@ fn build_group_b_setup_tensors<E: Field>(
                     })
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
                 let witness_coefficient = unit.t_coefficient_index(
-                    group.role_dims.d_a(),
-                    group.role_dims.d_b(),
-                    group.num_claims,
-                    group.n_a,
-                    group.depth_commit,
+                    group.role_dims().d_a(),
+                    group.role_dims().d_b(),
+                    group.num_claims(),
+                    group.n_a(),
+                    group.depth_commit(),
                     claim,
                     intersection_start,
                     0,
@@ -352,14 +353,14 @@ fn build_group_b_setup_tensors<E: Field>(
                     relation_lane_start,
                     E::one(),
                     vec![
-                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_relation_ratio),
+                        EqPairTensorAxis::unit(group.depth_commit(), 1, group.b_relation_ratio()),
                         EqPairTensorAxis::unit(
                             b_subcolumns,
-                            group.depth_commit,
+                            group.depth_commit(),
                             subcolumn_relation_stride,
                         ),
                         EqPairTensorAxis::unit(
-                            group.n_a,
+                            group.n_a(),
                             a_row_setup_stride,
                             a_row_relation_stride,
                         ),

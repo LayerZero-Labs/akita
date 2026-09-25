@@ -134,7 +134,7 @@ fn reduced_functional_classes<'a, E: Field, const BASE_D: usize>(
         .map_err(|_| AkitaError::InvalidSetup("too many reduced groups".into()))?;
 
     for (group, direct) in plan.groups().iter().zip(weights) {
-        let ratios = [group.a_ratio, group.b_ratio, group.d_ratio];
+        let ratios = [group.a_ratio(), group.b_ratio(), group.d_ratio()];
         let mut group_classes = [0usize; 3];
         for (role_index, (role, ratio)) in direct.roles.iter().zip(ratios).enumerate() {
             let expected_len = ratio.checked_mul(BASE_D).ok_or_else(|| {

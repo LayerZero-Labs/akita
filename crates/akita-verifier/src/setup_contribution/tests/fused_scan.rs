@@ -60,24 +60,24 @@ fn naive_physical_b_weights<E: Field>(
     row_weights: &[E],
     b_row_start: usize,
 ) -> Vec<E> {
-    let slice_count = group.physical_b.geometry().slice_count().get();
-    let rows = group.physical_b.physical_rows();
-    let columns = group.physical_b.physical_input_width();
-    let maximum_blocks = group.num_live_blocks.div_ceil(slice_count);
-    let per_block = columns / (group.num_claims * maximum_blocks);
+    let slice_count = group.physical_b().geometry().slice_count().get();
+    let rows = group.physical_b().physical_rows();
+    let columns = group.physical_b().physical_input_width();
+    let maximum_blocks = group.num_live_blocks().div_ceil(slice_count);
+    let per_block = columns / (group.num_claims() * maximum_blocks);
     let mut physical = vec![E::zero(); rows * columns];
     for slice in 0..slice_count {
-        let block_start = slice * group.num_live_blocks / slice_count;
-        let block_end = (slice + 1) * group.num_live_blocks / slice_count;
+        let block_start = slice * group.num_live_blocks() / slice_count;
+        let block_end = (slice + 1) * group.num_live_blocks() / slice_count;
         for row in 0..rows {
             let row_weight = row_weights[b_row_start + slice * rows + row];
-            for claim in 0..group.num_claims {
+            for claim in 0..group.num_claims() {
                 for block in block_start..block_end {
                     for offset in 0..per_block {
                         let physical_column =
                             (claim * maximum_blocks + block - block_start) * per_block + offset;
                         let logical_column =
-                            (claim * group.num_live_blocks + block) * per_block + offset;
+                            (claim * group.num_live_blocks() + block) * per_block + offset;
                         physical[row * columns + physical_column] +=
                             row_weight * logical[logical_column];
                     }
@@ -124,13 +124,13 @@ where
     for group in plan.groups() {
         let group_input = group_inputs
             .iter()
-            .find(|candidate| candidate.group_id == group.group_id)
+            .find(|candidate| candidate.group_id == group.group_id())
             .unwrap();
         let role_spec = |dimension: usize| {
             let role_lanes = dimension / coefficient_dimension;
             RoleLaneSpec {
-                a_ratio: group.role_dims.d_a() / coefficient_dimension,
-                role_subcolumns: group.role_dims.d_a() / dimension,
+                a_ratio: group.role_dims().d_a() / coefficient_dimension,
+                role_subcolumns: group.role_dims().d_a() / dimension,
                 role_lanes,
                 weighting: RoleLaneWeighting::ReducedHigh,
             }
@@ -145,56 +145,60 @@ where
         let e_weights = setup_e_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_live_blocks,
-            group.num_claims,
-            group.depth_open,
-            &high_equality(group.role_dims.d_d()),
-            &role_spec(group.role_dims.d_d()),
+            group.group_id(),
+            group.num_live_blocks(),
+            group.num_claims(),
+            group.depth_open(),
+            &high_equality(group.role_dims().d_d()),
+            &role_spec(group.role_dims().d_d()),
         )
         .unwrap();
         let t_weights = setup_t_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_live_blocks,
-            group.depth_commit,
-            group.n_a,
-            group.num_claims,
-            &high_equality(group.role_dims.d_b()),
-            &role_spec(group.role_dims.d_b()),
+            group.group_id(),
+            group.num_live_blocks(),
+            group.depth_commit(),
+            group.n_a(),
+            group.num_claims(),
+            &high_equality(group.role_dims().d_b()),
+            &role_spec(group.role_dims().d_b()),
         )
         .unwrap();
-        let mut z_weights = vec![E::zero(); group.z_cols];
+        let mut z_weights = vec![E::zero(); group.z_cols()];
         setup_z_col_weights(
             layout,
             layout.live_coeff_len(),
-            group.group_id,
-            group.num_positions_per_block,
-            group.depth_witness,
+            group.group_id(),
+            group.num_positions_per_block(),
+            group.depth_witness(),
             fold_gadget.len(),
-            &high_equality(group.role_dims.d_a()),
+            &high_equality(group.role_dims().d_a()),
             fold_gadget,
-            &role_spec(group.role_dims.d_a()),
+            &role_spec(group.role_dims().d_a()),
             &mut z_weights,
         )
         .unwrap();
         let a_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_a(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_a(), alpha);
         let b_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_b(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_b(), alpha);
         let d_functional =
-            literal_native_functional(plan, coefficient_point, group.role_dims.d_d(), alpha);
+            literal_native_functional(plan, coefficient_point, group.role_dims().d_d(), alpha);
 
         let d_view = setup
             .shared_matrix()
-            .ring_view_dyn(plan.d_rows(), plan.d_physical_cols(), group.role_dims.d_d())
+            .ring_view_dyn(
+                plan.d_rows(),
+                plan.d_physical_cols(),
+                group.role_dims().d_d(),
+            )
             .unwrap();
         for row in 0..plan.d_rows() {
             for (local_column, &column_weight) in e_weights.iter().enumerate() {
                 let column = d_column_start + local_column;
                 let ring = d_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_d()..(column + 1) * group.role_dims.d_d()]
+                    [column * group.role_dims().d_d()..(column + 1) * group.role_dims().d_d()]
                     .as_ref();
                 evaluation += row_weights[d_row_start + row]
                     * column_weight
@@ -204,12 +208,12 @@ where
 
         let a_view = setup
             .shared_matrix()
-            .ring_view_dyn(group.n_a, group.z_cols, group.role_dims.d_a())
+            .ring_view_dyn(group.n_a(), group.z_cols(), group.role_dims().d_a())
             .unwrap();
-        for row in 0..group.n_a {
+        for row in 0..group.n_a() {
             for (column, &column_weight) in z_weights.iter().enumerate() {
                 let ring = &a_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_a()..(column + 1) * group.role_dims.d_a()];
+                    [column * group.role_dims().d_a()..(column + 1) * group.role_dims().d_a()];
                 evaluation += row_weights[group_input.a_row_start + row]
                     * column_weight
                     * literal_ring_dot(ring, &a_functional);
@@ -221,16 +225,16 @@ where
         let b_view = setup
             .shared_matrix()
             .ring_view_dyn(
-                group.physical_b.physical_rows(),
-                group.physical_b.physical_input_width(),
-                group.role_dims.d_b(),
+                group.physical_b().physical_rows(),
+                group.physical_b().physical_input_width(),
+                group.role_dims().d_b(),
             )
             .unwrap();
-        for row in 0..group.physical_b.physical_rows() {
-            for column in 0..group.physical_b.physical_input_width() {
+        for row in 0..group.physical_b().physical_rows() {
+            for column in 0..group.physical_b().physical_input_width() {
                 let ring = &b_view.row_flat(row).unwrap()
-                    [column * group.role_dims.d_b()..(column + 1) * group.role_dims.d_b()];
-                evaluation += b_weights[row * group.physical_b.physical_input_width() + column]
+                    [column * group.role_dims().d_b()..(column + 1) * group.role_dims().d_b()];
+                evaluation += b_weights[row * group.physical_b().physical_input_width() + column]
                     * literal_ring_dot(ring, &b_functional);
             }
         }

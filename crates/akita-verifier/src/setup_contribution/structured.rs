@@ -35,35 +35,35 @@ where
     let group_index = plan
         .groups()
         .iter()
-        .position(|group| group.group_id == group_id)
+        .position(|group| group.group_id() == group_id)
         .ok_or(AkitaError::InvalidProof)?;
     let group = plan
         .groups()
         .get(group_index)
         .ok_or(AkitaError::InvalidProof)?;
     let uses_evaluation_trace_consistency = matches!(
-        group.opening_method,
+        group.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
     );
     let block_claims = group
-        .num_claims
-        .checked_mul(group.num_live_blocks)
+        .num_claims()
+        .checked_mul(group.num_live_blocks())
         .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
     if block_challenges.len() != block_claims
-        || opening_a_evals.len() != group.num_positions_per_block
+        || opening_a_evals.len() != group.num_positions_per_block()
     {
         return Err(AkitaError::InvalidProof);
     }
 
-    let opening_gadget = extension_gadget::<F, E>(group.depth_open, group.log_basis_open);
-    let commitment_gadget = extension_gadget::<F, E>(group.depth_commit, group.log_basis_outer);
-    let witness_gadget = extension_gadget::<F, E>(group.depth_witness, group.log_basis_inner);
+    let opening_gadget = extension_gadget::<F, E>(group.depth_open(), group.log_basis_open());
+    let commitment_gadget = extension_gadget::<F, E>(group.depth_commit(), group.log_basis_outer());
+    let witness_gadget = extension_gadget::<F, E>(group.depth_witness(), group.log_basis_inner());
     let (outer_subcolumns, _) =
-        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-    let opening_subcolumns = group.opening_subcolumns;
-    let e_stride = checked::product([opening_subcolumns, group.depth_open])
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims())?;
+    let opening_subcolumns = group.opening_subcolumns();
+    let e_stride = checked::product([opening_subcolumns, group.depth_open()])
         .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
-    let t_stride = checked::product([group.n_a, group.depth_commit, outer_subcolumns])
+    let t_stride = checked::product([group.n_a(), group.depth_commit(), outer_subcolumns])
         .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
     let e_len = block_claims
         .checked_mul(e_stride)
@@ -72,8 +72,8 @@ where
         .checked_mul(t_stride)
         .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
     let z_cols = group
-        .num_positions_per_block
-        .checked_mul(group.depth_witness)
+        .num_positions_per_block()
+        .checked_mul(group.depth_witness())
         .ok_or_else(|| AkitaError::InvalidSetup("structured Z width overflow".into()))?;
     Ok(StructuredGroupShape {
         group_index,
@@ -147,12 +147,12 @@ impl<E: Field> DirectScan<E> {
         if weights.e.len() != e_len
             || weights.t.len() != t_len
             || weights.z.len() != z_cols
-            || group.a_row_weights.len() != group.n_a
+            || group.a_row_weights().len() != group.n_a()
         {
             return Err(AkitaError::InvalidProof);
         }
         let projected_opening_gadget = (opening_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims().d_d(), opening_subcolumns))
             .transpose()?
             .map(|scales| {
                 scales
@@ -161,7 +161,7 @@ impl<E: Field> DirectScan<E> {
                     .collect::<Vec<_>>()
             });
         let projected_commitment_gadget = (outer_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims().d_b(), outer_subcolumns))
             .transpose()?
             .map(|scales| {
                 scales
@@ -176,7 +176,7 @@ impl<E: Field> DirectScan<E> {
             .as_deref()
             .unwrap_or(&commitment_gadget);
         let direct_witness_gadget = &witness_gadget;
-        let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
+        let t_row_stride = checked::product([outer_subcolumns, group.depth_commit()])
             .ok_or_else(|| AkitaError::InvalidSetup("structured T row stride overflow".into()))?;
         if direct_opening_gadget.len() != e_stride || direct_commitment_gadget.len() != t_row_stride
         {
@@ -203,7 +203,7 @@ impl<E: Field> DirectScan<E> {
             let t_eq = checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
             let t = t_eq
                 .chunks_exact(t_row_stride)
-                .zip(group.a_row_weights.iter())
+                .zip(group.a_row_weights().iter())
                 .fold(E::zero(), |sum, (row, &row_weight)| {
                     sum + row_weight
                         * row
@@ -215,7 +215,7 @@ impl<E: Field> DirectScan<E> {
                 .get(block_claim)
                 .ok_or(AkitaError::InvalidProof)?;
             let consistency = if uses_evaluation_trace_consistency {
-                group.consistency_weight * e
+                group.consistency_weight() * e
             } else {
                 E::zero()
             };
@@ -239,12 +239,12 @@ impl<E: Field> DirectScan<E> {
         };
         let fold_z = |acc: Result<E, AkitaError>, position: usize| {
             let start = position
-                .checked_mul(group.depth_witness)
+                .checked_mul(group.depth_witness())
                 .ok_or(AkitaError::InvalidProof)?;
             let eq = checked_slice(
                 &weights.z,
                 start,
-                group.depth_witness,
+                group.depth_witness(),
                 "structured direct Z slice",
             )?;
             let inner = eq
@@ -260,13 +260,13 @@ impl<E: Field> DirectScan<E> {
         let run_z = || -> Result<E, AkitaError> {
             if z_cols >= PARALLEL_THRESHOLD {
                 cfg_fold_reduce!(
-                    0..group.num_positions_per_block,
+                    0..group.num_positions_per_block(),
                     || Ok(E::zero()),
                     fold_z,
                     |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
                 )
             } else {
-                (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
+                (0..group.num_positions_per_block()).fold(Ok(E::zero()), fold_z)
             }
         };
         // Running E/T against Z costs one `rayon::join`, and that cost
@@ -285,7 +285,7 @@ impl<E: Field> DirectScan<E> {
         // applying it once after reduction drops one field multiplication
         // per position and leaves the contracted equation auditable.
         Ok(if uses_evaluation_trace_consistency {
-            et + group.consistency_weight * z
+            et + group.consistency_weight() * z
         } else {
             et
         })
@@ -325,10 +325,10 @@ where
         ..
     } = structured_group_shape::<F, _>(plan, group_id, block_challenges, opening_a_evals)?;
     let opening_scales = (opening_subcolumns != 1)
-        .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
+        .then(|| scalar_powers_with_stride(alpha, group.role_dims().d_d(), opening_subcolumns))
         .transpose()?;
     let outer_scales = (outer_subcolumns != 1)
-        .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+        .then(|| scalar_powers_with_stride(alpha, group.role_dims().d_b(), outer_subcolumns))
         .transpose()?;
     let point = plan.relation_address().point();
     let base_ring_dim = plan
@@ -348,32 +348,32 @@ where
                 .collect(),
         ))
     };
-    let projected_opening = projected_digits(&opening_gadget, group.d_relation_ratio)?;
+    let projected_opening = projected_digits(&opening_gadget, group.d_relation_ratio())?;
     let opening_digits = projected_opening.as_deref().unwrap_or(&opening_gadget);
-    let projected_commitment = projected_digits(&commitment_gadget, group.b_relation_ratio)?;
+    let projected_commitment = projected_digits(&commitment_gadget, group.b_relation_ratio())?;
     let commitment_digits = projected_commitment
         .as_deref()
         .unwrap_or(&commitment_gadget);
 
-    if group.num_claims == 0 || group.num_live_blocks == 0 {
+    if group.num_claims() == 0 || group.num_live_blocks() == 0 {
         return Err(AkitaError::InvalidSetup(
             "structured role tensor families disagree".into(),
         ));
     }
-    let active_unit_count = group.active_units.len();
-    if active_unit_count == 0 || group.num_physical_units == 0 {
+    let active_unit_count = group.active_units().len();
+    if active_unit_count == 0 || group.num_physical_units() == 0 {
         return Err(AkitaError::InvalidSetup(
             "structured tensor partition is empty".into(),
         ));
     }
     let family_count = group
-        .num_claims
+        .num_claims()
         .checked_mul(active_unit_count)
         .ok_or(AkitaError::InvalidProof)?;
-    if group.d_tensors.len() != family_count
-        || group.physical_b.relation_tensors().len()
-            != usize::from(group.physical_b.logical_rows()? != 0) * family_count
-        || group.a_tensors.len() != usize::from(group.n_a != 0) * group.num_physical_units
+    if group.d_tensors().len() != family_count
+        || group.physical_b().relation_tensors().len()
+            != usize::from(group.physical_b().logical_rows()? != 0) * family_count
+        || group.a_tensors().len() != usize::from(group.n_a() != 0) * group.num_physical_units()
     {
         return Err(AkitaError::InvalidSetup(
             "structured tensor families disagree with compiled active and physical units".into(),
@@ -387,32 +387,32 @@ where
         let claim = family_index / active_unit_count;
         let unit_index = family_index % active_unit_count;
         let tensor_index = unit_index
-            .checked_mul(group.num_claims)
+            .checked_mul(group.num_claims())
             .and_then(|index| index.checked_add(claim))
             .ok_or(AkitaError::InvalidProof)?;
         let d_tensor = group
-            .d_tensors
+            .d_tensors()
             .get(tensor_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let b_tensor = if group.physical_b.logical_rows()? == 0 {
+        let b_tensor = if group.physical_b().logical_rows()? == 0 {
             None
         } else {
             Some(
                 group
-                    .physical_b
+                    .physical_b()
                     .relation_tensors()
                     .get(tensor_index)
                     .ok_or(AkitaError::InvalidProof)?,
             )
         };
         let unit = group
-            .active_units
+            .active_units()
             .get(unit_index)
             .ok_or(AkitaError::InvalidProof)?;
         let global_block_start = unit.global_block_start();
         let unit_blocks = unit.num_live_blocks();
         let setup_block = claim
-            .checked_mul(group.num_live_blocks)
+            .checked_mul(group.num_live_blocks())
             .and_then(|block| block.checked_add(global_block_start))
             .ok_or(AkitaError::InvalidProof)?;
         let expected_d_offset = setup_block
@@ -434,12 +434,12 @@ where
             }
         }
         let claim_start = claim
-            .checked_mul(group.num_live_blocks)
+            .checked_mul(group.num_live_blocks())
             .ok_or(AkitaError::InvalidProof)?;
         let claim_challenges = checked_slice(
             block_challenges,
             claim_start,
-            group.num_live_blocks,
+            group.num_live_blocks(),
             "structured E block factors",
         )?;
         let e_outer_start = global_block_start
@@ -449,7 +449,7 @@ where
             .checked_mul(opening_subcolumns)
             .ok_or(AkitaError::InvalidProof)?;
         let mut contribution = if uses_evaluation_trace_consistency {
-            group.consistency_weight
+            group.consistency_weight()
                 * eval_affine_digit_intervals(
                     point,
                     &[d_tensor.right_offset],
@@ -467,13 +467,13 @@ where
         };
 
         if let Some(b_tensor) = b_tensor {
-            let t_high_weights = AffineWeightProduct::new(claim_challenges, &group.a_row_weights)?;
+            let t_high_weights = AffineWeightProduct::new(claim_challenges, group.a_row_weights())?;
             let t_outer_start = global_block_start
-                .checked_mul(group.n_a)
+                .checked_mul(group.n_a())
                 .and_then(|start| start.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
             let t_live_len = unit_blocks
-                .checked_mul(group.n_a)
+                .checked_mul(group.n_a())
                 .and_then(|len| len.checked_mul(outer_subcolumns))
                 .ok_or(AkitaError::InvalidProof)?;
             contribution += eval_affine_digit_intervals(
@@ -502,20 +502,20 @@ where
         )
     }?;
 
-    let projection_lanes = (group.a_relation_ratio != 1)
-        .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_relation_ratio))
+    let projection_lanes = (group.a_relation_ratio() != 1)
+        .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_relation_ratio()))
         .transpose()?;
     let fold_digits = if let Some(lanes) = &projection_lanes {
         group
-            .fold_gadget
+            .fold_gadget()
             .iter()
             .flat_map(|&fold| lanes.iter().map(move |&lane| -(fold * lane)))
             .collect::<Vec<_>>()
     } else {
-        group.fold_gadget.iter().map(|&fold| -fold).collect()
+        group.fold_gadget().iter().map(|&fold| -fold).collect()
     };
     let a_base_offsets = group
-        .a_tensors
+        .a_tensors()
         .iter()
         .map(|tensor| tensor.right_offset)
         .collect::<Vec<_>>();
@@ -551,7 +551,7 @@ where
             })?;
         for (position, &opening_a) in opening_a_evals.iter().enumerate() {
             let position_offset = position
-                .checked_mul(group.depth_witness)
+                .checked_mul(group.depth_witness())
                 .and_then(|offset| offset.checked_mul(fold_digits.len()))
                 .ok_or(AkitaError::InvalidProof)?;
             for &base in &a_base_offsets {
@@ -566,7 +566,7 @@ where
             point,
             &weighted_bases,
             0,
-            group.depth_witness,
+            group.depth_witness(),
             fold_digits.len(),
             1,
             &fold_digits,
@@ -576,7 +576,7 @@ where
         )?
     };
     Ok(if uses_evaluation_trace_consistency {
-        evaluation + group.consistency_weight * z
+        evaluation + group.consistency_weight() * z
     } else {
         evaluation
     })

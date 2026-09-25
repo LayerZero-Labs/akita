@@ -41,21 +41,21 @@ pub(super) fn scan_partition<E: Field>(
     }
     let (required, segments) = build_packed_segments(
         PackedDLayout {
-            active_col_start: group.d_col_range.start,
+            active_col_start: group.d_col_range().start,
             active_cols: active_d_cols,
             physical_cols: d_physical_cols,
             row_weights: d_weights,
-            ratio: group.d_ratio,
+            ratio: group.d_ratio(),
         },
         PackedBLayout {
-            segments: group.physical_b.weight_segments(),
-            physical_footprint: group.physical_b.physical_footprint()?,
-            ratio: group.b_ratio,
+            segments: group.physical_b().weight_segments(),
+            physical_footprint: group.physical_b().physical_footprint()?,
+            ratio: group.b_ratio(),
         },
         PackedALayout {
-            cols: group.z_cols,
-            row_weights: &group.a_row_weights,
-            ratio: group.a_ratio,
+            cols: group.z_cols(),
+            row_weights: group.a_row_weights(),
+            ratio: group.a_ratio(),
         },
     )?;
     Ok(GroupScanPartition { required, segments })

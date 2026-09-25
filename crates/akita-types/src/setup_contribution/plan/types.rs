@@ -412,43 +412,280 @@ impl<E: Field> PhysicalBSetupPlan<E> {
 /// fixture constructor); consumers read it through
 /// [`SetupContributionPlan::groups`].
 pub struct SetupContributionGroupPlan<E: Field> {
-    pub group_id: usize,
-    pub opening_method: crate::OpeningMethod,
-    pub role_dims: CommitmentRingDims,
-    pub a_ratio: usize,
-    pub b_ratio: usize,
-    pub d_ratio: usize,
-    pub a_relation_ratio: usize,
-    pub b_relation_ratio: usize,
-    pub d_relation_ratio: usize,
-    pub opening_subcolumns: usize,
-    pub consistency_weight: E,
-    pub num_claims: usize,
-    pub num_live_blocks: usize,
-    pub num_positions_per_block: usize,
-    pub depth_witness: usize,
-    pub depth_commit: usize,
-    pub depth_open: usize,
-    pub log_basis_inner: u32,
-    pub log_basis_outer: u32,
-    pub log_basis_open: u32,
-    pub d_col_range: Range<usize>,
-    pub z_cols: usize,
-    pub n_a: usize,
-    pub physical_b: PhysicalBSetupPlan<E>,
-    pub a_row_weights: Arc<[E]>,
-    pub fold_gadget: Arc<[E]>,
+    pub(crate) group_id: usize,
+    pub(crate) opening_method: crate::OpeningMethod,
+    pub(crate) role_dims: CommitmentRingDims,
+    pub(crate) a_ratio: usize,
+    pub(crate) b_ratio: usize,
+    pub(crate) d_ratio: usize,
+    pub(crate) a_relation_ratio: usize,
+    pub(crate) b_relation_ratio: usize,
+    pub(crate) d_relation_ratio: usize,
+    pub(crate) opening_subcolumns: usize,
+    pub(crate) consistency_weight: E,
+    pub(crate) num_claims: usize,
+    pub(crate) num_live_blocks: usize,
+    pub(crate) num_positions_per_block: usize,
+    pub(crate) depth_witness: usize,
+    pub(crate) depth_commit: usize,
+    pub(crate) depth_open: usize,
+    pub(crate) log_basis_inner: u32,
+    pub(crate) log_basis_outer: u32,
+    pub(crate) log_basis_open: u32,
+    pub(crate) d_col_range: Range<usize>,
+    pub(crate) z_cols: usize,
+    pub(crate) n_a: usize,
+    pub(crate) physical_b: PhysicalBSetupPlan<E>,
+    pub(crate) a_row_weights: Arc<[E]>,
+    pub(crate) fold_gadget: Arc<[E]>,
     /// The non-empty witness units of this group, in layout order. The E and
     /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
     /// are rebuilt from them, so no second layout is ever consulted.
-    pub active_units: Arc<[crate::WitnessUnitLayout]>,
+    pub(crate) active_units: Arc<[crate::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
-    pub num_physical_units: usize,
-    pub d_tensors: Vec<EqPairTensorFamily<E>>,
-    pub a_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) num_physical_units: usize,
+    pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<E: Field> SetupContributionGroupPlan<E> {
+    /// Minimal fixture group: evaluation-trace opening, uniform 64-dimensional
+    /// roles with unit ratios, no claims, live blocks, units or tensors.
+    #[must_use]
+    pub fn from_test_parts(
+        d_col_range: Range<usize>,
+        z_cols: usize,
+        n_a: usize,
+        physical_b: PhysicalBSetupPlan<E>,
+        a_row_weights: Arc<[E]>,
+    ) -> Self {
+        Self {
+            group_id: 0,
+            opening_method: crate::OpeningMethod::EvaluationTrace,
+            role_dims: CommitmentRingDims::uniform(64),
+            a_ratio: 1,
+            b_ratio: 1,
+            d_ratio: 1,
+            a_relation_ratio: 1,
+            b_relation_ratio: 1,
+            d_relation_ratio: 1,
+            opening_subcolumns: 1,
+            consistency_weight: E::one(),
+            num_claims: 0,
+            num_live_blocks: 0,
+            num_positions_per_block: z_cols,
+            depth_witness: 1,
+            depth_commit: 1,
+            depth_open: 1,
+            log_basis_inner: 1,
+            log_basis_outer: 1,
+            log_basis_open: 1,
+            d_col_range,
+            z_cols,
+            n_a,
+            physical_b,
+            a_row_weights,
+            fold_gadget: vec![E::one()].into(),
+            active_units: Vec::new().into(),
+            num_physical_units: 0,
+            d_tensors: Vec::new(),
+            a_tensors: Vec::new(),
+        }
+    }
+
+    /// Mutable A-row weights, for tests that perturb them.
+    pub fn a_row_weights_mut_for_test(&mut self) -> &mut [E] {
+        Arc::make_mut(&mut self.a_row_weights)
+    }
+
+    /// Overwrites the consistency-row weight, for tests that perturb it.
+    pub fn set_consistency_weight_for_test(&mut self, weight: E) {
+        self.consistency_weight = weight;
+    }
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
+    /// Index of this group in the opening batch.
+    #[must_use]
+    pub const fn group_id(&self) -> usize {
+        self.group_id
+    }
+
+    /// Opening method of the consuming fold.
+    #[must_use]
+    pub const fn opening_method(&self) -> crate::OpeningMethod {
+        self.opening_method
+    }
+
+    /// Ring dimensions of the A, B and D roles.
+    #[must_use]
+    pub const fn role_dims(&self) -> CommitmentRingDims {
+        self.role_dims
+    }
+
+    /// `d_a` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn a_ratio(&self) -> usize {
+        self.a_ratio
+    }
+
+    /// `d_b` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn b_ratio(&self) -> usize {
+        self.b_ratio
+    }
+
+    /// `d_d` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn d_ratio(&self) -> usize {
+        self.d_ratio
+    }
+
+    /// `d_a` over the relation coefficient block length.
+    #[must_use]
+    pub const fn a_relation_ratio(&self) -> usize {
+        self.a_relation_ratio
+    }
+
+    /// `d_b` over the relation coefficient block length.
+    #[must_use]
+    pub const fn b_relation_ratio(&self) -> usize {
+        self.b_relation_ratio
+    }
+
+    /// `d_d` over the relation coefficient block length.
+    #[must_use]
+    pub const fn d_relation_ratio(&self) -> usize {
+        self.d_relation_ratio
+    }
+
+    /// D-role subcolumns per opening column.
+    #[must_use]
+    pub const fn opening_subcolumns(&self) -> usize {
+        self.opening_subcolumns
+    }
+
+    /// `eq(tau_1)` weight of this group's consistency row.
+    #[must_use]
+    pub const fn consistency_weight(&self) -> E {
+        self.consistency_weight
+    }
+
+    /// Number of opening claims in this group.
+    #[must_use]
+    pub const fn num_claims(&self) -> usize {
+        self.num_claims
+    }
+
+    /// Number of live witness blocks.
+    #[must_use]
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Positions per witness block.
+    #[must_use]
+    pub const fn num_positions_per_block(&self) -> usize {
+        self.num_positions_per_block
+    }
+
+    /// Inner (witness) gadget depth.
+    #[must_use]
+    pub const fn depth_witness(&self) -> usize {
+        self.depth_witness
+    }
+
+    /// Commitment gadget depth.
+    #[must_use]
+    pub const fn depth_commit(&self) -> usize {
+        self.depth_commit
+    }
+
+    /// Opening gadget depth.
+    #[must_use]
+    pub const fn depth_open(&self) -> usize {
+        self.depth_open
+    }
+
+    /// Inner decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_inner(&self) -> u32 {
+        self.log_basis_inner
+    }
+
+    /// Outer decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_outer(&self) -> u32 {
+        self.log_basis_outer
+    }
+
+    /// Opening decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_open(&self) -> u32 {
+        self.log_basis_open
+    }
+
+    /// Z columns: positions per block times the witness depth.
+    #[must_use]
+    pub const fn z_cols(&self) -> usize {
+        self.z_cols
+    }
+
+    /// Number of A rows of this group.
+    #[must_use]
+    pub const fn n_a(&self) -> usize {
+        self.n_a
+    }
+
+    /// All physical units, including empty chunks that retain replicated Z.
+    #[must_use]
+    pub const fn num_physical_units(&self) -> usize {
+        self.num_physical_units
+    }
+
+    /// This group's column range in the shared physical D matrix.
+    #[must_use]
+    pub fn d_col_range(&self) -> Range<usize> {
+        self.d_col_range.clone()
+    }
+
+    /// Physical B setup plan for this group.
+    #[must_use]
+    pub const fn physical_b(&self) -> &PhysicalBSetupPlan<E> {
+        &self.physical_b
+    }
+
+    /// `eq(tau_1)` weights of this group's A rows.
+    #[must_use]
+    pub fn a_row_weights(&self) -> &[E] {
+        &self.a_row_weights
+    }
+
+    /// The first `depth_fold` fold-gadget scalars, lifted to `E`.
+    #[must_use]
+    pub fn fold_gadget(&self) -> &[E] {
+        &self.fold_gadget
+    }
+
+    /// The non-empty witness units of this group, in layout order.
+    #[must_use]
+    pub fn active_units(&self) -> &[crate::WitnessUnitLayout] {
+        &self.active_units
+    }
+
+    /// D-role eq-pair tensor families.
+    #[must_use]
+    pub fn d_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.d_tensors
+    }
+
+    /// A-role eq-pair tensor families.
+    #[must_use]
+    pub fn a_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.a_tensors
+    }
+
     pub(crate) fn set_projection_ratios(
         &mut self,
         setup_base_ring_dim: usize,
