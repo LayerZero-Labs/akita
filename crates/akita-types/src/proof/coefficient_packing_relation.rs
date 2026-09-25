@@ -54,6 +54,16 @@ pub use test_fixtures::{
 /// Only [`validate_coefficient_packing_batch_groups`] builds one. The prover
 /// expands it into relation events and Stage 2 terms; the verifier reads it
 /// through the accessors below to build compact factors.
+///
+/// Holding one guarantees that `d_d` is nonzero and divides the partial
+/// width, and that the challenge, alpha-power and basis buffers have the
+/// lengths the geometry fixes.
+///
+/// Validation is structural. It checks the supplied prepared point, alpha,
+/// tau1 and claim coefficients against the fold authority's geometry, not
+/// against the transcript: a different point of the same shape validates.
+/// The caller must supply the transcript-derived values, as the verifier's
+/// fold replay does.
 pub struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
     inputs: CoefficientPackingGroupSemanticInputs<'a, F, E>,
     geometry: SubringCoefficientPackingGeometry,
@@ -443,6 +453,15 @@ where
     )?;
     let s = geometry.challenge_subring_dimension();
     let d_d = inputs.level_params.role_dims().d_d();
+    // `RelationRhsLayout::validate` already rejects both cases when the fold
+    // authority builds its relation geometry. Checking here keeps every
+    // division by `d_d` in the prover and verifier consumers local to this
+    // validator.
+    if d_d == 0 || !geometry.partial_base_field_width().is_multiple_of(d_d) {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing digit dimension does not divide the partial width".into(),
+        ));
+    }
     let coefficient_block = inputs
         .relation_plan
         .relation_address_geometry()

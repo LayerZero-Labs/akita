@@ -479,7 +479,6 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
         .collect::<Vec<_>>();
     let family = CoefficientPackingAffineRelationFamily {
         scalar: Extension::from_u64(13),
-        coefficient_weights: coefficient_weights.clone().into(),
         coefficient_len: S,
         base_offset: 0,
         outer_len: LIVE_BLOCKS,
@@ -492,6 +491,7 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
     let compact = CoefficientPackingCompactFactors {
         basis: BasisMode::Lagrange,
         physical_field_len: 1usize << point.len(),
+        coefficient_weights: coefficient_weights.clone().into(),
         direct_opening_point: Arc::from([]),
         packing_z_point: Arc::from([]),
         affine_relation_families: vec![family],
