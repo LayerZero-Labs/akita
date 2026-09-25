@@ -82,7 +82,7 @@ fn stage3_enforces_round_bind_and_completion_order() {
         assert!(backend
             .bind_stage3_challenge(&mut state, round, challenge)
             .is_err());
-        claim = polynomial.evaluate(&challenge);
+        claim = polynomial.evaluate(challenge);
     }
     assert!(backend
         .stage3_round_polynomial(&mut state, 2, claim)

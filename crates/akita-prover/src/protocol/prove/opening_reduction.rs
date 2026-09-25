@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(crate) reduction: ExtensionOpeningReduction<E>,
     pub(crate) protocol_points: Vec<Vec<E>>,
@@ -165,7 +166,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueEorKernel<
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend.eor_round(self.session, round, claim)
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {

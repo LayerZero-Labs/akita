@@ -1,10 +1,11 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
-use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
+use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros};
 use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Ring, Zero};
+use jolt_poly::UnivariatePoly;
 use std::cmp::Ordering;
 use std::ops::Range;
 
@@ -181,7 +182,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     /// linear and binary weights. Expanding
     /// `w(t) l(t) + rho b(t) w(t) (w(t) + 1)` once avoids four separate point
     /// evaluations followed by generic interpolation.
-    fn round_polynomial_with(&self, witness_at: impl Fn(usize) -> E) -> UniPoly<E> {
+    fn round_polynomial_with(&self, witness_at: impl Fn(usize) -> E) -> UnivariatePoly<E> {
         let mut coefficients = [E::zero(); 4];
         let mut cursor = 0usize;
         while cursor < self.weights.len() {
@@ -218,14 +219,14 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         }
         let mut coefficients = coefficients.to_vec();
         trim_trailing_zeros(&mut coefficients);
-        UniPoly::from_coeffs(coefficients)
+        UnivariatePoly::new(coefficients)
     }
 
     pub(crate) fn round_polynomial_compact(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         first_challenge: Option<E>,
-    ) -> UniPoly<E>
+    ) -> UnivariatePoly<E>
     where
         E: Unreduced,
     {
@@ -255,7 +256,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
     fn round_polynomial_compact_initial(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
-    ) -> UniPoly<E>
+    ) -> UnivariatePoly<E>
     where
         E: Unreduced,
     {
@@ -326,10 +327,10 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             reduce_signed_accum::<E>(coefficients[6], coefficients[7]),
         ];
         trim_trailing_zeros(&mut coefficients);
-        UniPoly::from_coeffs(coefficients)
+        UnivariatePoly::new(coefficients)
     }
 
-    pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UniPoly<E> {
+    pub(crate) fn round_polynomial_folded(&self, folded_witness: &[E]) -> UnivariatePoly<E> {
         self.round_polynomial_with(|index| {
             folded_witness.get(index).copied().unwrap_or_else(E::zero)
         })
@@ -472,15 +473,15 @@ mod tests {
         assert_eq!(prover.input_claim(), claim);
         let polynomial = prover.round_polynomial_compact(packed_witness.view(), None);
         assert_eq!(
-            polynomial.evaluate(&F::zero()) + polynomial.evaluate(&F::one()),
+            polynomial.evaluate(F::zero()) + polynomial.evaluate(F::one()),
             claim
         );
         let challenge = F::from_u64(17);
-        let next_claim = polynomial.evaluate(&challenge);
+        let next_claim = polynomial.evaluate(challenge);
         prover.bind(challenge);
         let next = prover.round_polynomial_compact(packed_witness.view(), Some(challenge));
         assert_eq!(
-            next.evaluate(&F::zero()) + next.evaluate(&F::one()),
+            next.evaluate(F::zero()) + next.evaluate(F::one()),
             next_claim
         );
     }
@@ -542,7 +543,7 @@ mod tests {
         for point in 0..=5 {
             let point = F::from_u64(point);
             assert_eq!(
-                polynomial.evaluate(&point),
+                polynomial.evaluate(point),
                 reference_round_evaluation(&terms, &witness, point)
             );
         }

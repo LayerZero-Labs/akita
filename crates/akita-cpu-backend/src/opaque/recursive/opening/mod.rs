@@ -8,7 +8,7 @@ use crate::arithmetic::extension_opening_reduction::{
     num_rounds_from_table_len, reduction_table_len, validate_reduction_tables,
 };
 use akita_algebra::poly::fold_evals_in_place;
-use akita_algebra::uni_poly::UniPoly;
+
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;

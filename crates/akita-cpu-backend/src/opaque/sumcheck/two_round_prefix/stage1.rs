@@ -1,10 +1,11 @@
 use super::common::*;
 use akita_algebra::eq_poly::EqPolynomial;
-#[cfg(test)]
-use akita_sumcheck::UniPoly;
-use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
+use akita_sumcheck::reduce_signed_accum;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Unreduced, Zero};
+use jolt_poly::OmittedConstantPoly;
+#[cfg(test)]
+use jolt_poly::UnivariatePoly;
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
@@ -364,7 +365,7 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
     }
 
     #[cfg(test)]
-    pub(crate) fn reconstruct_round0_poly(&self) -> UniPoly<E> {
+    pub(crate) fn reconstruct_round0_poly(&self) -> UnivariatePoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_poly(),
             Self::B8(state) => state.reconstruct_round0_poly(),
@@ -372,21 +373,21 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
     }
 
     #[cfg(test)]
-    pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+    pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UnivariatePoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_poly(r0),
             Self::B8(state) => state.reconstruct_round1_poly(r0),
         }
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_eq_poly(),
             Self::B8(state) => state.reconstruct_round0_eq_poly(),
         }
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_eq_poly(r0),
             Self::B8(state) => state.reconstruct_round1_eq_poly(r0),
@@ -396,7 +397,7 @@ impl<E: Field + Ring> Stage1PrefixCache<E> {
 
 impl<E: Field + Ring> Stage1B4PrefixCache<E> {
     #[cfg(test)]
-    fn reconstruct_round0_poly(&self) -> UniPoly<E> {
+    fn reconstruct_round0_poly(&self) -> UnivariatePoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.x_row_coeffs[1], self.tau1),
@@ -405,7 +406,7 @@ impl<E: Field + Ring> Stage1B4PrefixCache<E> {
     }
 
     #[cfg(test)]
-    fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+    fn reconstruct_round1_poly(&self, r0: E) -> UnivariatePoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
         let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
@@ -414,25 +415,25 @@ impl<E: Field + Ring> Stage1B4PrefixCache<E> {
         coeff_array_to_poly(coeffs)
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.x_row_coeffs[1], self.tau1),
         );
-        EqFactoredUniPoly::from_q_coeffs(q_x.into())
+        OmittedConstantPoly::from_q_coefficients(q_x.into())
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
         let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
-        EqFactoredUniPoly::from_q_coeffs(q_y.into())
+        OmittedConstantPoly::from_q_coefficients(q_y.into())
     }
 }
 
 impl<E: Field + Ring> Stage1B8PrefixCache<E> {
     #[cfg(test)]
-    fn reconstruct_round0_poly(&self) -> UniPoly<E> {
+    fn reconstruct_round0_poly(&self) -> UnivariatePoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
         let evals: Vec<E> = (0..=5u64)
@@ -443,11 +444,13 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
                 linear_eq_eval(self.tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
             })
             .collect();
-        UniPoly::from_evals(&evals)
+        let mut polynomial = UnivariatePoly::from_evals(&evals);
+        polynomial.trim_trailing_zeros();
+        polynomial
     }
 
     #[cfg(test)]
-    fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
+    fn reconstruct_round1_poly(&self, r0: E) -> UnivariatePoly<E> {
         let l0_at_r0 = linear_eq_eval(self.tau0, r0);
         let evals: Vec<E> = (0..=5u64)
             .map(|y_raw| {
@@ -457,10 +460,12 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
                     * eval_stage1_biquartic_from_full_grid(self.full_grid, r0, y)
             })
             .collect();
-        UniPoly::from_evals(&evals)
+        let mut polynomial = UnivariatePoly::from_evals(&evals);
+        polynomial.trim_trailing_zeros();
+        polynomial
     }
 
-    pub(crate) fn reconstruct_round0_eq_poly(&self) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round0_eq_poly(&self) -> OmittedConstantPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
         let evals: Vec<E> = (0..=4u64)
@@ -474,7 +479,7 @@ impl<E: Field + Ring> Stage1B8PrefixCache<E> {
         interpolate_eq_factored_q_poly(&evals, STAGE1_B8_Q_POLY_DEGREE)
     }
 
-    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> EqFactoredUniPoly<E> {
+    pub(crate) fn reconstruct_round1_eq_poly(&self, r0: E) -> OmittedConstantPoly<E> {
         let evals: Vec<E> = (0..=4u64)
             .map(|y_raw| {
                 let y = E::from_u64(y_raw);
