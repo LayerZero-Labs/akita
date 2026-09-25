@@ -58,34 +58,6 @@ pub use mixed::{
     I16TailParams,
 };
 
-fn reconstruct<F, W, const K: usize, const D: usize>(
-    primes: &[NttPrime<W>; K],
-    garner: &GarnerData<K>,
-    canonical: &[[W; D]; K],
-) -> [F; D]
-where
-    F: CrtNttConvertibleField,
-    W: PrimeWidth,
-{
-    let mut coefficients = [F::zero(); D];
-    for (index, coefficient) in coefficients.iter_mut().enumerate() {
-        let moduli = primes.map(|prime| prime.p.to_i64() as u64);
-        let residues = std::array::from_fn(|limb| i128::from(canonical[limb][index].to_i64()));
-        let mixed_radix = garner.centered_mixed_radix(residues, moduli);
-
-        let mut result = F::from_i128(mixed_radix[0]);
-        let mut partial_product = F::from_i64(primes[0].p.to_i64());
-        for i in 1..K {
-            result += F::from_i128(mixed_radix[i]) * partial_product;
-            if i + 1 < K {
-                partial_product *= F::from_i64(primes[i].p.to_i64());
-            }
-        }
-        *coefficient = result;
-    }
-    coefficients
-}
-
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Host kernel plan selected when these parameters were prepared.
     #[must_use]
@@ -140,6 +112,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     }
 
     fn reconstruct<F: CrtNttConvertibleField>(&self, canonical: &[[W; D]; K]) -> [F; D] {
-        reconstruct(&self.primes, &self.garner, canonical)
+        let (weights, _) = self.garner.field_weights::<F>();
+        let mut digits = canonical.map(|limb| limb.map(|residue| residue.to_i64()));
+        self.garner.centered_mixed_radix(&mut digits);
+        from_fn(|index| {
+            self.garner
+                .digits_to_field(&from_fn(|limb| digits[limb][index]), &weights)
+        })
     }
 }
