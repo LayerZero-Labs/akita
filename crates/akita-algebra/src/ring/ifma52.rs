@@ -340,6 +340,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                     terms = 0;
                 }
                 terms += tile.len();
+                debug_assert!(terms <= IFMA52_ACCUMULATOR_TERMS);
                 for (row, accumulator) in accumulators.iter_mut().enumerate() {
                     let row_start = row * num_cols;
                     accumulator.accumulate(
@@ -404,6 +405,8 @@ mod tests {
         assert_limb_major_i16_matvec::<128>();
         assert_limb_major_i16_matvec::<256>();
         assert_limb_major_i16_matvec::<512>();
+        assert_limb_major_i16_matvec::<1024>();
+        assert_limb_major_i16_matvec::<2048>();
     }
 
     fn assert_mixed_ifma_i16_tail_matvec<const D: usize>() {
@@ -484,6 +487,8 @@ mod tests {
         assert_mixed_ifma_i16_tail_matvec::<128>();
         assert_mixed_ifma_i16_tail_matvec::<256>();
         assert_mixed_ifma_i16_tail_matvec::<512>();
+        assert_mixed_ifma_i16_tail_matvec::<1024>();
+        assert_mixed_ifma_i16_tail_matvec::<2048>();
     }
 
     fn assert_q128_ifma_tail_matvec<W: PrimeWidth, const D: usize>(tail_prime: NttPrime<W>) {
@@ -549,6 +554,8 @@ mod tests {
         assert_q128_ifma_tail_matvec::<_, 512>(i32_tail);
         assert_q128_ifma_tail_matvec::<_, 1024>(I16_TAIL_PRIME);
         assert_q128_ifma_tail_matvec::<_, 1024>(i32_tail);
+        // The i32 tail prime supports negacyclic degrees through 1024.
+        assert_q128_ifma_tail_matvec::<_, 2048>(I16_TAIL_PRIME);
     }
 
     fn assert_q128_tail_reconstruction<W: PrimeWidth>(tail_prime: NttPrime<W>) {
