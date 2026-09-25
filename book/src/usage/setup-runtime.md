@@ -68,7 +68,7 @@ let requirements = SetupRequirements::from_catalog::<DenseConfig>(
     max_num_vars,
     max_total_batched_polys,
 )?)?;
-let setup = akita_setup::new_prover_setup::<Field>(&requirements)?;
+let setup = akita_pcs::new_prover_setup::<Field>(&requirements)?;
 ```
 
 The combined setup uses the same public seed as each per-family setup, so a

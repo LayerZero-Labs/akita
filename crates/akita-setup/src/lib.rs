@@ -101,18 +101,23 @@ where
 // Disk persistence
 // ---------------------------------------------------------------------------
 
-/// Name the setup-prefix registry cache by field modulus and requirements.
+/// Name the setup-prefix registry cache by field modulus, setup seed, and
+/// required prefix slots.
 ///
-/// The key digests the capacity bound and the sorted prefix slot ids, so one
-/// cached registry serves every catalog combination with those requirements.
+/// A prefix commitment is a pure function of the seed-derived matrix and its
+/// slot id, so the capacity bound is deliberately absent from the key: one
+/// cached registry serves every bound and catalog combination that requires
+/// the same slots.
 #[cfg(feature = "disk-persistence")]
 fn prefix_registry_cache_file_name<F: Field + CanonicalEncoding>(
     requirements: &SetupRequirements,
 ) -> Result<String, AkitaError> {
     let mut key = Vec::new();
-    key.extend_from_slice(b"AKITA-SETUP-PREFIX-REQUIREMENTS-V1");
-    key.extend_from_slice(&(requirements.max_num_vars as u64).to_le_bytes());
-    key.extend_from_slice(&(requirements.max_num_batched_polys as u64).to_le_bytes());
+    key.extend_from_slice(b"AKITA-SETUP-PREFIX-SLOTS-V1");
+    key.extend_from_slice(
+        &setup_seed_digest(&sample_akita_setup_seed())
+            .map_err(|err| AkitaError::InvalidSetup(format!("setup-prefix registry key: {err}")))?,
+    );
     requirements
         .prefix_slot_ids
         .serialize_uncompressed(&mut key)
