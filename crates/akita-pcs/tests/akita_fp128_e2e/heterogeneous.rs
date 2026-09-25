@@ -26,8 +26,7 @@ fn heterogeneous_group_types() {
             load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
 
         let setup = onehot_scheme.setup_prover(FINAL_NV, 4).expect("setup");
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), onehot_scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let onehot_k_pre =
             akita_config::unit_onehot_source_chunk_size::<OneHotCfg>().expect("one-hot config");
@@ -62,6 +61,7 @@ fn heterogeneous_group_types() {
             private_handle: onehot_pre_hint,
         } = stack
             .commit(
+                onehot_scheme.schedules(),
                 &stack
                     .import_source(vec![onehot_pre.clone()])
                     .expect("source"),
@@ -69,22 +69,16 @@ fn heterogeneous_group_types() {
             )
             .expect("K=256 precommit");
 
-        // Dense pre-group committed with DenseCfg so its profile matches the
-        // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
-        let dense_setup = dense_scheme
-            .setup_prover(DENSE_PRE_NV, 2)
-            .expect("dense setup");
-        let dense_stack =
-            CpuBackend::<DenseCfg>::new(dense_setup.expanded.clone(), dense_scheme.schedules())
-                .unwrap();
+        // Dense pre-group committed on the same backend under the dense family,
+        // so its profile matches the Dense descriptor in catalog entry
+        // {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
         let akita_cpu_backend::CommitOutput {
             committed_group: dense_commitment,
             private_handle: dense_hint,
-        } = dense_stack
+        } = stack
             .commit(
-                &dense_stack
-                    .import_source(dense_polys.to_vec())
-                    .expect("source"),
+                dense_scheme.schedules(),
+                &stack.import_source(dense_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("dense precommit");
@@ -99,6 +93,7 @@ fn heterogeneous_group_types() {
             private_handle: final_hint,
         } = stack
             .commit(
+                onehot_scheme.schedules(),
                 &stack.import_source(final_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
@@ -141,9 +136,6 @@ fn heterogeneous_group_types() {
             .expect("final prover group"),
         ])
         .expect("prover claims");
-        let dense_hint = stack
-            .import_commitment(&dense_hint)
-            .expect("validated dense transfer");
         let prover_data = SelectedProverOpeningData::from_committed_claims::<OneHotCfg>(
             prover_claims,
             vec![onehot_pre_hint, dense_hint, final_hint],
@@ -239,16 +231,13 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let bounded_setup = bounded_scheme
             .setup_prover(BOUNDED_PRE_NV, 1)
             .expect("bounded dense setup");
-        let bounded_stack = CpuBackend::<BoundedDenseCfg>::new(
-            bounded_setup.expanded.clone(),
-            bounded_scheme.schedules(),
-        )
-        .unwrap();
+        let bounded_stack = CpuBackend::new(bounded_setup.expanded.clone()).unwrap();
         let akita_cpu_backend::CommitOutput {
             committed_group: bounded_commitment,
             private_handle: bounded_hint,
         } = bounded_stack
             .commit(
+                bounded_scheme.schedules(),
                 &bounded_stack
                     .import_source(vec![bounded_dense.clone()])
                     .expect("source"),
@@ -271,8 +260,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let setup = onehot_scheme
             .setup_prover(FINAL_NV, 2)
             .expect("one-hot root setup");
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), onehot_scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let precommitteds =
             PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
@@ -283,6 +271,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             private_handle: final_hint,
         } = stack
             .commit(
+                onehot_scheme.schedules(),
                 &stack.import_source(final_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
@@ -447,8 +436,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
     run_on_large_stack(|| {
         let scheme = load_workspace_scheme::<OneHotCfg>().expect("workspace schedule catalog");
         let setup = scheme.setup_prover(NV, 1).expect("setup");
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let profile = scheme
             .schedules()
@@ -462,16 +450,23 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         let dense =
             akita_cpu_backend::DensePoly::<F>::from_field_evals(NV, &[F::one(); 1usize << NV])
                 .expect("dense poly");
+        // The backend serves every family, so the refusal must come from the
+        // one-hot family's producer admission, not from which backend commits.
         let error = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![dense.clone()]).expect("source"),
-                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
+                akita_cpu_backend::GroupContext::explicit(&profile),
             )
             .map(|_| ())
             .expect_err("a dense source must not commit under a one-hot schedule");
         assert!(
-            matches!(error, akita_error::AkitaError::InvalidInput(_)),
-            "expected InvalidInput, got {error:?}"
+            matches!(
+                &error,
+                akita_error::AkitaError::InvalidInput(message)
+                    if message.contains("not a unit one-hot representation")
+            ),
+            "expected the one-hot representation refusal, got {error:?}"
         );
 
         // The magnitudes really were admissible, so the rejection is the class
@@ -499,6 +494,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         .expect("one-hot poly");
         stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![onehot.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -577,15 +573,14 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         let dense_scheme =
             load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
         let setup = bounded_scheme.setup_prover(NV, 1).expect("bounded setup");
-        let stack =
-            CpuBackend::<BoundedDenseCfg>::new(setup.expanded.clone(), bounded_scheme.schedules())
-                .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let commit = |evals: &[F]| {
             let poly =
                 akita_cpu_backend::DensePoly::from_field_evals(NV, evals).expect("dense poly");
             stack
                 .commit(
+                    bounded_scheme.schedules(),
                     &stack.import_source(vec![poly.clone()]).expect("source"),
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
@@ -650,13 +645,12 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // fine: it declares the whole field, so the guard is specific to a bounded
         // source and costs unbounded configs nothing.
         let full_setup = dense_scheme.setup_prover(NV, 1).expect("setup");
-        let full_stack =
-            CpuBackend::<DenseCfg>::new(full_setup.expanded.clone(), dense_scheme.schedules())
-                .unwrap();
+        let full_stack = CpuBackend::new(full_setup.expanded.clone()).unwrap();
         let poly =
             akita_cpu_backend::DensePoly::from_field_evals(NV, &over_positive).expect("dense poly");
         full_stack
             .commit(
+                dense_scheme.schedules(),
                 &full_stack
                     .import_source(vec![poly.clone()])
                     .expect("source"),
@@ -679,19 +673,20 @@ fn explicit_commitment_transfer_between_backends() {
         let poly = akita_cpu_backend::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let receiver = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let receiver = CpuBackend::new(setup.expanded.clone()).unwrap();
         let hint = receiver
             .import_commitment(&hint)
             .expect("validated commitment transfer");

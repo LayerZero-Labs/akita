@@ -247,14 +247,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )

@@ -336,8 +336,7 @@ fn fp128_onehot_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -345,6 +344,7 @@ fn fp128_onehot_batched() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -399,8 +399,7 @@ fn fp128_dense_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -408,6 +407,7 @@ fn fp128_dense_batched() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -483,8 +483,7 @@ fn fp128_onehot_oversized_setup() {
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(setup_nv, 1).unwrap();
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -492,6 +491,7 @@ fn fp128_onehot_oversized_setup() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -548,8 +548,7 @@ fn fp128_dense_monomial_basis() {
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -557,6 +556,7 @@ fn fp128_dense_monomial_basis() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )

@@ -166,7 +166,7 @@ macro_rules! small_field_test {
                         2,
                     )
                     .expect("setup");
-                    let stack = CpuBackend::<$cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+                    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
                     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
                     let pre_poly = akita_cpu_backend::DensePoly::<$sf>::from_field_evals(
@@ -177,7 +177,7 @@ macro_rules! small_field_test {
                     let akita_cpu_backend::CommitOutput {
                         committed_group: pre_commitment,
                         private_handle: pre_hint,
-                    } = stack.commit(&stack.import_source(vec![pre_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups())
+                    } = stack.commit(scheme.schedules(), &stack.import_source(vec![pre_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups())
                     .expect("precommit");
 
                     let final_n = 1usize << final_nv;
@@ -194,7 +194,7 @@ macro_rules! small_field_test {
                     let akita_cpu_backend::CommitOutput {
                         committed_group: final_commitment,
                         private_handle: final_hint,
-                    } = stack.commit(&stack.import_source(vec![final_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(
+                    } = stack.commit(scheme.schedules(), &stack.import_source(vec![final_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(
                             &precommitteds,
                         ))
                     .expect("final commit");
@@ -332,7 +332,7 @@ scheme.schedules());
                         2,
                     )
                     .expect("setup");
-                    let stack = CpuBackend::<$cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+                    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
                     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
                     let pre_poly = akita_cpu_backend::OneHotPoly::<$sf, u8>::new(
@@ -343,7 +343,7 @@ scheme.schedules());
                     let akita_cpu_backend::CommitOutput {
                         committed_group: pre_commitment,
                         private_handle: pre_hint,
-                    } = stack.commit(&stack.import_source(vec![pre_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups())
+                    } = stack.commit(scheme.schedules(), &stack.import_source(vec![pre_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups())
                     .expect("precommit");
 
                     let final_chunks = (1usize << final_nv) / onehot_k;
@@ -360,7 +360,7 @@ scheme.schedules());
                     let akita_cpu_backend::CommitOutput {
                         committed_group: final_commitment,
                         private_handle: final_hint,
-                    } = stack.commit(&stack.import_source(vec![final_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(
+                    } = stack.commit(scheme.schedules(), &stack.import_source(vec![final_poly.clone()]).expect("source"), akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(
                             &precommitteds,
                         ))
                     .expect("final commit");
@@ -531,13 +531,13 @@ fn fp32_onehot_multi_group() {
         let pre_poly = grouped_poly(pre_params, 1);
 
         let pre_setup = scheme.setup_prover(PRE_NV, 1).expect("pre setup");
-        let pre_stack =
-            CpuBackend::<SmallCfg>::new(pre_setup.expanded.clone(), scheme.schedules()).unwrap();
+        let pre_stack = CpuBackend::new(pre_setup.expanded.clone()).unwrap();
         let akita_cpu_backend::CommitOutput {
             committed_group: pre_commitment,
             private_handle: pre_hint,
         } = pre_stack
             .commit(
+                scheme.schedules(),
                 &pre_stack
                     .import_source(vec![pre_poly.clone()])
                     .expect("source"),
@@ -558,8 +558,7 @@ fn fp32_onehot_multi_group() {
         let final_poly = grouped_poly(final_params, 2);
 
         let setup = scheme.setup_prover(FINAL_NV, 2).expect("setup");
-        let stack = CpuBackend::<SmallCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let pre_hint = stack
             .import_commitment(&pre_hint)
             .expect("validated precommit transfer");
@@ -572,6 +571,7 @@ fn fp32_onehot_multi_group() {
             private_handle: final_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack
                     .import_source(vec![final_poly.clone()])
                     .expect("source"),

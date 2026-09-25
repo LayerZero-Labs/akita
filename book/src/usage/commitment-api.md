@@ -6,19 +6,18 @@ these handles across independent and concurrent proofs.
 
 ## Commit one group
 
-Construct a backend with the setup and trusted catalog, then transfer the
-polynomials into its source storage:
+Construct a backend from the public setup, then transfer the polynomials into
+its source storage. Each commit names the trusted catalog that selects the
+group's profile:
 
 ```rust
-let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 let source = backend.import_source(polynomials)?;
 let CommitOutput {
     committed_group,
     private_handle,
 } = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
@@ -91,6 +90,7 @@ let prior = PrecommittedGroupProfiles::from_ordered_groups(
 )?;
 let final_source = backend.import_source(final_polynomials)?;
 let final_output = backend.commit(
+    scheme.schedules(),
     &final_source,
     GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
@@ -104,7 +104,7 @@ independent case uses its own constructor.
 ## Recursive grouped openings
 
 A `RecursiveCommitmentConfig<BaseConfig>` uses setup offloading for supported
-large verifier workloads. Construct the backend with the recursive catalog.
+large verifier workloads. Commit the final group under the recursive catalog.
 Earlier groups use the reviewed independent commitment profile from the base
 catalog, supplied through `GroupContext::explicit(&base_profile)`. The final
 group uses `GroupContext::scheduler_with_precommitted_groups(&prior)`.

@@ -8,18 +8,20 @@ dependency on the CPU crate.
 
 ## Application ownership
 
-Create one backend for a setup and trusted configuration. Share it explicitly
-through `Arc` when several callers need it:
+Create one backend for a public setup. The backend stores no trusted catalog:
+each commitment names the catalog that selects its profile, and each proof
+admission names the catalog that must contain its schedule. One backend
+therefore serves every configuration family with the same setup, field, and
+extension field. Share it explicitly through `Arc` when several callers need
+it:
 
 ```rust
 let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
 let setup = scheme.setup_prover(nv, num_polys)?;
-let backend = std::sync::Arc::new(CpuBackend::<Cfg>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 let source = backend.import_source(polys)?;
 let committed = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
