@@ -7,7 +7,7 @@
 //! one transform and `R` dots per field-sized CRT prime. The field result is
 //! `sum_l 2^(b*l) * y_l`, where `y_l` is the exact integer product of limb `l`.
 
-use super::exact::ExactCachePlan;
+use super::exact::{ifma52_cache_enabled, I32_TRANSFORM_DOTS, IFMA52_TRANSFORM_DOTS};
 use super::*;
 use jolt_field::{cfg_chunks, cfg_into_iter};
 
@@ -15,10 +15,6 @@ use jolt_field::{cfg_chunks, cfg_into_iter};
 const LIMB_PRIMES: usize = 2;
 /// Largest limb count considered by the planner.
 const MAX_LIMBS: usize = 8;
-/// One i32 prime transform per column, in units of one prime-row pointwise dot.
-const I32_TRANSFORM_DOTS: usize = 6;
-/// One IFMA52 prime transform per column, in units of one prime-row pointwise dot.
-const IFMA52_TRANSFORM_DOTS: usize = 2;
 /// Matrix columns split and transformed per parallel preparation task.
 const PREPARE_TILE_COLUMNS: usize = 16;
 
@@ -98,66 +94,76 @@ pub(super) enum LimbParams<const D: usize> {
 
 pub(super) struct LimbPlan<const D: usize> {
     params: LimbParams<D>,
-    split: LimbSplit,
+    candidate: LimbCandidate,
     width: usize,
     tier: ProtocolRingDispatchTierId,
 }
 
-/// Choose a limb split when it is cheaper than the field-sized `base` plan
-/// for `rows` output rows.
-pub(super) fn limb_plan<F: Field + CanonicalEncoding, const D: usize>(
-    base: &ExactCachePlan<D>,
-    width: usize,
-    rhs_abs_bound: u64,
-    rows: usize,
-) -> Result<Option<LimbPlan<D>>, AkitaError> {
-    let modulus_bits = u128::BITS - field_modulus::<F>()?.leading_zeros();
-    let tail = usize::from(base.needs_tail());
-    // Costs are in half prime-row dots per column; an i16 tail costs half a
-    // prime and an i32 tail beside IFMA52 primes costs a whole one.
-    let (ifma, base_cost) = match base {
-        ExactCachePlan::Q32 { .. } => (false, (4 + tail) * (I32_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q64 { .. } => (false, (6 + tail) * (I32_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q128 { .. } => (false, (12 + tail) * (I32_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q32Ifma52 { .. } => (true, (2 + tail) * (IFMA52_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q64Ifma52 { .. } => (true, 4 * (IFMA52_TRANSFORM_DOTS + rows)),
-        ExactCachePlan::Q128Ifma52 { params, .. } => {
-            let tail = if params.has_tail(q128_primes()[0]) {
-                2
-            } else {
-                tail
-            };
-            (true, (6 + tail) * (IFMA52_TRANSFORM_DOTS + rows))
-        }
-        ExactCachePlan::Limbs(_) => return Ok(None),
-    };
-    let (params, capacity, transform) = if ifma {
-        let params = Ifma52Params::new([IFMA52_PRIMES[0], IFMA52_PRIMES[1]])?;
-        let capacity = params.crt_capacity();
-        (
-            LimbParams::Ifma52(Box::new(params)),
-            capacity,
-            IFMA52_TRANSFORM_DOTS,
+impl<const D: usize> LimbPlan<D> {
+    pub(super) fn cost(&self, rows: usize) -> usize {
+        self.candidate.cost(rows)
+    }
+}
+
+/// A limb split that fits, before its transform tables are built.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct LimbCandidate {
+    split: LimbSplit,
+    ifma: bool,
+}
+
+impl LimbCandidate {
+    /// Smallest limb split of the field whose accumulation fits two limb
+    /// primes at this width and bound, or `None` when none does.
+    pub(super) fn fitting<F: Field + CanonicalEncoding, const D: usize>(
+        width: usize,
+        rhs_abs_bound: u64,
+    ) -> Result<Option<Self>, AkitaError> {
+        let modulus_bits = u128::BITS - field_modulus::<F>()?.leading_zeros();
+        let ifma = ifma52_cache_enabled::<D>();
+        let capacity = if ifma {
+            CrtCapacity::from_prime_moduli([IFMA52_PRIMES[0], IFMA52_PRIMES[1]].map(u128::from))
+        } else if D <= Q32_MAX_RING_D {
+            CrtCapacity::from_prime_moduli(Q32_PRIMES.map(|prime| prime.p as u128))
+        } else {
+            return Ok(None);
+        };
+        Ok(
+            LimbSplit::fitting(modulus_bits, &capacity, D, width, rhs_abs_bound)
+                .map(|split| Self { split, ifma }),
         )
-    } else {
-        let params = CrtNttParamSet::new(Q32_PRIMES);
-        let capacity = params.crt_capacity();
-        (
-            LimbParams::I32(Box::new(params)),
-            capacity,
-            I32_TRANSFORM_DOTS,
-        )
-    };
-    let Some(split) = LimbSplit::fitting(modulus_bits, &capacity, D, width, rhs_abs_bound) else {
-        return Ok(None);
-    };
-    let limb_cost = 2 * LIMB_PRIMES * (transform + rows * split.count);
-    Ok((limb_cost < base_cost).then_some(LimbPlan {
-        params,
-        split,
-        width,
-        tier: protocol_dispatch_tier::<F>(),
-    }))
+    }
+
+    /// Per-column cost over `rows` output rows, in half prime-row dots.
+    pub(super) fn cost(self, rows: usize) -> usize {
+        let transform = if self.ifma {
+            IFMA52_TRANSFORM_DOTS
+        } else {
+            I32_TRANSFORM_DOTS
+        };
+        2 * LIMB_PRIMES * (transform + rows * self.split.count)
+    }
+
+    /// Build the limb primes' transform tables.
+    pub(super) fn plan<F: Field + CanonicalEncoding, const D: usize>(
+        self,
+        width: usize,
+    ) -> Result<LimbPlan<D>, AkitaError> {
+        let params = if self.ifma {
+            LimbParams::Ifma52(Box::new(Ifma52Params::new([
+                IFMA52_PRIMES[0],
+                IFMA52_PRIMES[1],
+            ])?))
+        } else {
+            LimbParams::I32(Box::new(CrtNttParamSet::new(Q32_PRIMES)))
+        };
+        Ok(LimbPlan {
+            params,
+            candidate: self,
+            width,
+            tier: protocol_dispatch_tier::<F>(),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -185,7 +191,7 @@ impl<const D: usize> PreparedLimbMatrix<D> {
     ) -> Self {
         let LimbPlan {
             params,
-            split,
+            candidate: LimbCandidate { split, .. },
             width,
             tier,
         } = plan;
@@ -345,6 +351,7 @@ impl<const D: usize> PreparedLimbMatrix<D> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::exact::ExactCachePlan;
     use super::*;
     use crate::FlatMatrix;
     use akita_algebra::CyclotomicRing;
@@ -415,8 +422,9 @@ mod tests {
         };
         let selected = prepare_ntt_cache(view(), mode).expect("selected cache");
         let base_plan =
-            exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>().unwrap(), width, bound, None)
-                .expect("base plan");
+            base_exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>().unwrap(), width, bound)
+                .expect("base plan")
+                .expect("base capacity");
         let base = prepare_exact_ntt_cache(view(), None, base_plan).expect("base cache");
         assert!(!base.uses_limb_split());
         let rhs = alternating_rhs::<D>(width, (bound - 1) as i16);
@@ -450,6 +458,21 @@ mod tests {
         }
         assert!(selected.iter().any(|limbs| *limbs));
         assert!(selected.iter().any(|limbs| !*limbs));
+    }
+
+    #[test]
+    fn limb_split_is_planned_when_the_base_capacity_is_exceeded() {
+        const D: usize = 2048;
+        type F = Prime64Offset59;
+        let (width, bound) = (16_384, 1 << 15);
+        let selected = || select_crt_ntt_params::<F, D>().expect("protocol parameters");
+        assert!(base_exact_cache_plan::<F, D>(selected(), width, bound)
+            .expect("base plan")
+            .is_none());
+        let plan = prover_exact_cache_plan::<F, D>(selected(), width, bound, width).expect("plan");
+        assert!(matches!(plan, ExactCachePlan::Limbs(_)));
+        // A partial row cannot be limb split, and the base cannot hold it.
+        assert!(prover_exact_cache_plan::<F, D>(selected(), width, bound, width + 1).is_err());
     }
 
     #[test]

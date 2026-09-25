@@ -492,13 +492,13 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     )
     .expect("exact cache");
     // The field-sized plan is the one verifier caches keep.
-    let base_plan = exact_cache_plan::<F, D>(
+    let base_plan = base_exact_cache_plan::<F, D>(
         select_crt_ntt_params::<F, D>().expect("CRT params"),
         COLS,
         1 << 15,
-        None,
     )
-    .expect("base plan");
+    .expect("base plan")
+    .expect("base capacity");
     let base = prepare_exact_ntt_cache(view(), None, base_plan).expect("base cache");
     if ifma52_cache_enabled::<D>() {
         assert!(base.uses_ifma52());
