@@ -875,8 +875,16 @@ where
 /// Validate every packing group of one fold authority, in relation group
 /// order, and hand each one by value to `project`.
 ///
-/// Each validated group is dropped once `project` returns, so only one
-/// group's validation buffers are live at a time.
+/// A group is validated only after the previous group's `project` call has
+/// returned, so a `project` that keeps only its derived output holds one
+/// group's validation buffers at a time. `project` owns the group and may
+/// retain it; nothing here prevents that.
+///
+/// Validation is not transactional. `project` can run for earlier groups
+/// before a later group fails validation or projection, and its side effects
+/// are not rolled back. An `Err` does not mean `project` never ran, so
+/// `project` must not have effects outside the returned values, such as
+/// transcript writes.
 ///
 /// Rejects prepared points for EvaluationTrace groups, duplicate or missing
 /// points, and points outside the relation group order.

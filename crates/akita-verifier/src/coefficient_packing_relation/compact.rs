@@ -104,11 +104,6 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
         coefficient_len: usize,
         point: &[E],
     ) -> Result<E, AkitaError> {
-        if coefficient_len == 0 || !coefficient_len.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "packing affine coefficient axis is malformed".into(),
-            ));
-        }
         let coefficient_bits = coefficient_len.trailing_zeros() as usize;
         let (coefficient_point, _) = point
             .split_at_checked(coefficient_bits)
@@ -154,6 +149,13 @@ impl<E: Field> CoefficientPackingCompactFactors<E> {
             let mut affine = E::zero();
             let mut family_index = 0usize;
             while let Some(family) = self.affine_relation_families.get(family_index) {
+                // Check before the cache lookup: `trailing_zeros` alone would
+                // let a malformed length share a valid length's cache slot.
+                if family.coefficient_len == 0 || !family.coefficient_len.is_power_of_two() {
+                    return Err(AkitaError::InvalidSetup(
+                        "packing affine coefficient axis is malformed".into(),
+                    ));
+                }
                 let coefficient_bits = family.coefficient_len.trailing_zeros() as usize;
                 let coefficient_evaluation = if let Some(evaluation) = coefficient_evaluations
                     .get(coefficient_bits)
