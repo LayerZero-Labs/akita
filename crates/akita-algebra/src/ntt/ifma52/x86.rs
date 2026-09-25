@@ -109,13 +109,14 @@ impl Multiplier {
     }
 }
 
-/// Cooley–Tukey butterfly on `[0, 4p)` inputs with `[0, 4p)` outputs.
+/// Cooley–Tukey butterfly on `[0, 4p)` inputs with `[0, 4p)` outputs. With
+/// `small`, `a` is already below `2p`.
 #[inline(always)]
-unsafe fn ct(a: __m512i, b: __m512i, w: Multiplier, m: Modulus) -> (__m512i, __m512i) {
+unsafe fn ct(a: __m512i, b: __m512i, w: Multiplier, m: Modulus, small: bool) -> (__m512i, __m512i) {
     // SAFETY: the caller enables AVX-512F and AVX-512IFMA.
     unsafe {
         let t = w.mul(b, m);
-        let a = m.reduce_4p(a);
+        let a = if small { a } else { m.reduce_4p(a) };
         (
             _mm512_add_epi64(a, t),
             _mm512_sub_epi64(_mm512_add_epi64(a, m.two_p), t),
@@ -155,16 +156,34 @@ unsafe fn gs_last<const D: usize>(
 }
 
 /// Stages `s .. s + log2 R` of the forward transform on `R` vectors spaced
-/// evenly across block `index - 2^s` of stage `s`.
+/// evenly across block `index - 2^s` of stage `s`. With `small`, the inputs
+/// are below `2p`.
+///
+/// Stage `s` is peeled so that every loop body is uniform: a flag that varies
+/// by level stops LLVM from fully unrolling the nest, which leaves `x` on the
+/// stack.
 #[inline(always)]
 unsafe fn forward_butterflies<const D: usize, const R: usize>(
     x: &mut [__m512i; R],
     index: usize,
     tw: &Ifma52Twiddles<D>,
     m: Modulus,
+    small: bool,
 ) {
-    let mut half = R / 2;
-    let mut level = 0;
+    let half = R / 2;
+    // SAFETY: stage `s` has `2^s` blocks, so `index < D`; the caller enables
+    // AVX-512F and AVX-512IFMA.
+    unsafe {
+        let w = Multiplier::splat(
+            *tw.forward.get_unchecked(index),
+            *tw.forward_precon.get_unchecked(index),
+        );
+        for t in 0..half {
+            (x[t], x[t + half]) = ct(x[t], x[t + half], w, m, small);
+        }
+    }
+    let mut half = R / 4;
+    let mut level = 1;
     while half > 0 {
         for group in 0..1 << level {
             let entry = (index << level) + group;
@@ -176,7 +195,7 @@ unsafe fn forward_butterflies<const D: usize, const R: usize>(
                     *tw.forward_precon.get_unchecked(entry),
                 );
                 for t in 2 * half * group..2 * half * group + half {
-                    (x[t], x[t + half]) = ct(x[t], x[t + half], w, m);
+                    (x[t], x[t + half]) = ct(x[t], x[t + half], w, m, false);
                 }
             }
         }
@@ -229,6 +248,7 @@ unsafe fn forward_pass<const D: usize, const R: usize>(
     tw: &Ifma52Twiddles<D>,
     m: Modulus,
     load: &impl Fn(usize) -> __m512i,
+    small: bool,
 ) {
     let blocks = 1 << stage;
     let stride = D / blocks / R;
@@ -240,7 +260,7 @@ unsafe fn forward_pass<const D: usize, const R: usize>(
             // lies in block `block`, and `values` is 64-byte aligned.
             unsafe {
                 let mut x: [__m512i; R] = core::array::from_fn(|t| load(start + t * stride));
-                forward_butterflies::<D, R>(&mut x, blocks + block, tw, m);
+                forward_butterflies::<D, R>(&mut x, blocks + block, tw, m, small);
                 for (t, value) in x.into_iter().enumerate() {
                     _mm512_store_si512(values.add(start + t * stride).cast(), value);
                 }
@@ -286,6 +306,7 @@ unsafe fn forward_tail<const D: usize>(
     tw: &Ifma52Twiddles<D>,
     m: Modulus,
     load: &impl Fn(usize) -> __m512i,
+    small: bool,
 ) {
     // SAFETY: the caller enables AVX-512F and AVX-512IFMA; `values` is 64-byte
     // aligned and holds `D` values; `forward_lanes` has one entry per
@@ -296,7 +317,7 @@ unsafe fn forward_tail<const D: usize>(
         for group in 0..D / 64 {
             let base = 64 * group;
             let mut x: [__m512i; 8] = core::array::from_fn(|t| load(base + 8 * t));
-            forward_butterflies::<D, 8>(&mut x, D / 64 + group, tw, m);
+            forward_butterflies::<D, 8>(&mut x, D / 64 + group, tw, m, small);
             for pair in 0..4 {
                 let lanes = tw.forward_lanes.get_unchecked(4 * group + pair);
                 let (a, b) = (x[2 * pair], x[2 * pair + 1]);
@@ -304,14 +325,14 @@ unsafe fn forward_tail<const D: usize>(
                     _mm512_shuffle_i64x2::<0x44>(a, b),
                     _mm512_shuffle_i64x2::<0xee>(a, b),
                 );
-                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[0]), m);
+                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[0]), m, false);
                 let (a, b) = (
                     _mm512_permutex2var_epi64(a, low_pairs, b),
                     _mm512_permutex2var_epi64(a, high_pairs, b),
                 );
-                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[1]), m);
+                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[1]), m, false);
                 let (a, b) = (_mm512_unpacklo_epi64(a, b), _mm512_unpackhi_epi64(a, b));
-                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[2]), m);
+                let (a, b) = ct(a, b, Multiplier::lanes(&lanes[2]), m, false);
                 let pointer = values.add(base + 16 * pair);
                 _mm512_store_si512(pointer.cast(), a);
                 _mm512_store_si512(pointer.add(8).cast(), b);
@@ -361,14 +382,15 @@ unsafe fn inverse_head<const D: usize, const LAST: bool>(
     }
 }
 
-/// Forward transform whose first pass reads its inputs, each below `4p`,
-/// through `load`.
+/// Forward transform whose first pass reads its inputs, each below `4p` (or
+/// `2p` with `small`), through `load`.
 #[inline(always)]
 unsafe fn forward_from<const D: usize>(
     values: *mut u64,
     tw: &Ifma52Twiddles<D>,
     m: Modulus,
     load: impl Fn(usize) -> __m512i,
+    small: bool,
 ) {
     let outer = D.trailing_zeros() - 6;
     let head = outer % 3;
@@ -376,20 +398,20 @@ unsafe fn forward_from<const D: usize>(
     // aligned and holds `D` values.
     unsafe {
         if outer == 0 {
-            return forward_tail(values, tw, m, &load);
+            return forward_tail(values, tw, m, &load, small);
         }
         match head {
-            1 => forward_pass::<D, 2>(values, 0, tw, m, &load),
-            2 => forward_pass::<D, 4>(values, 0, tw, m, &load),
-            _ => forward_pass::<D, 8>(values, 0, tw, m, &load),
+            1 => forward_pass::<D, 2>(values, 0, tw, m, &load, small),
+            2 => forward_pass::<D, 4>(values, 0, tw, m, &load, small),
+            _ => forward_pass::<D, 8>(values, 0, tw, m, &load, small),
         }
         let stored = |i: usize| _mm512_load_si512(values.add(i).cast());
         let mut stage = if head == 0 { 3 } else { head };
         while stage < outer {
-            forward_pass::<D, 8>(values, stage, tw, m, &stored);
+            forward_pass::<D, 8>(values, stage, tw, m, &stored, false);
             stage += 3;
         }
-        forward_tail(values, tw, m, &stored);
+        forward_tail(values, tw, m, &stored, false);
     }
 }
 
@@ -409,6 +431,7 @@ pub(super) unsafe fn forward<const D: usize>(
             Modulus::new(prime),
             #[inline(always)]
             |i| _mm512_load_si512(values.add(i).cast()),
+            false,
         )
     }
 }
@@ -437,6 +460,7 @@ pub(super) unsafe fn forward_i16<const D: usize>(
                     m.p,
                 )
             },
+            true,
         )
     }
 }
