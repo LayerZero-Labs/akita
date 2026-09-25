@@ -202,6 +202,10 @@ impl<E: Field> SumcheckInstanceVerifier<E> for ProductVerifier<E> {
 }
 
 fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
+    // The negative-check choice leads the input so large tables cannot starve it.
+    let negative = reader.u8() % 4;
+    let tamper_offset = reader.u32() as usize;
+    let tamper_mask = reader.u8().max(1);
     let rounds = usize::from(reader.u8() % 11);
     let degree = 1 + usize::from(reader.u8() % 4);
     let invocation = reader.u32();
@@ -279,7 +283,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
     );
     stats::count("sumcheck_honest");
 
-    match reader.u8() % 4 {
+    match negative {
         0 => {
             let mut delta = gen::ext_scalar::<F, E>(reader);
             if delta == E::zero() {
@@ -293,8 +297,8 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
         }
         1 if !proof.is_empty() => {
             let mut tampered = proof.clone();
-            let offset = reader.u32() as usize % tampered.len();
-            tampered[offset] ^= reader.u8().max(1);
+            let offset = tamper_offset % tampered.len();
+            tampered[offset] ^= tamper_mask;
             assert!(
                 matches!(verify(&tampered, claim), Err(AkitaError::InvalidProof)),
                 "a tampered sumcheck proof must be rejected"
@@ -302,7 +306,7 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F>>(reader: &mut Reader<'_>) {
             stats::count("sumcheck_tampered");
         }
         2 if !proof.is_empty() => {
-            let len = reader.u32() as usize % proof.len();
+            let len = tamper_offset % proof.len();
             assert!(
                 matches!(verify(&proof[..len], claim), Err(AkitaError::InvalidProof)),
                 "truncated proof"

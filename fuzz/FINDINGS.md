@@ -24,6 +24,10 @@ panicked at crates/akita-types/src/sis/decomposition_digits.rs:223:5: invalid lo
 
 The terminal audit passes the artifact's `log_basis` to `num_digits_for_bound`
 before any range check, and `compute_num_digits` asserts `0 < log_basis < 128`.
+A second site of the same defect: `audit_committed_params` reaches
+`compute_num_digits_field_width` (`decomposition_digits.rs:248`, same
+assertion) with a zero `opening.log_basis_open` or `profile.outer.digits
+.log_basis` in a recursive fold's group (found in `fp32_dense_recursive`).
 Artifact admission is documented as the validating boundary for approved
 parameter bytes ("Akita validates them before setup or proof work begins";
 `crates/akita-config/tests/trusted_schedule_artifact.rs` checks rejection of
@@ -42,9 +46,10 @@ cd fuzz && cargo run --release -p akita-fuzz-dev -- replay schedule_artifact \
   regressions/schedule_artifact/f5-terminal-log-basis-zero.bin
 ```
 
-Suggested fix: validate the terminal `GadgetDigits` (as
-`GadgetDigits::validate` does for group roles) before computing digit counts
-in `audit_terminal`. Not fixed here: this change set is test infrastructure
+Suggested fix: validate every artifact-supplied `log_basis` (as
+`GadgetDigits::validate` does) before computing digit counts in
+`audit_terminal` and `audit_committed_params`, or make the digit-count
+helpers return `Option`. Not fixed here: this change set is test infrastructure
 only. Until it is fixed the `schedule_artifact` lane keeps rediscovering it;
 occurrences only increment the finding's count.
 
