@@ -183,6 +183,8 @@ graph TD
   (`DirectScan`), so `akita-verifier` is a `[dev-dependencies]` entry. It must
   never become a normal dependency: `scripts/check-crate-deps.sh
   akita-cpu-backend` walks normal edges only and forbids `akita-verifier`.
+  The cpu-backend `parallel` feature forwards `akita-verifier/parallel`, so
+  those tests run the scan with the same parallelism as the prover side.
 - `akita-setup` owns application-side setup persistence. Restoring an artifact
   requires backend validation before it becomes an opaque commitment handle;
   serialized process-local identities carry no authority.

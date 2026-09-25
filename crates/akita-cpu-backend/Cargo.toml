@@ -35,7 +35,8 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
   "test-support",
 ] }
 # Test-only: `relation_tests` checks prover relation witnesses against the
-# verifier's setup-contribution evaluators. Never a normal dependency.
+# verifier's setup-contribution evaluators. Never a normal dependency; the
+# `parallel` feature below forwards to it only in test builds.
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 
 [features]
@@ -71,6 +72,7 @@ parallel = [
   "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
+  "akita-verifier/parallel",
 ]
 
 [[bench]]
