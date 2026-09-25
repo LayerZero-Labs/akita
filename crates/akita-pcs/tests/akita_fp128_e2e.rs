@@ -79,6 +79,10 @@
 //! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound`. The
 //!   producer-side guard enforces the *declared* interval, which is
 //!   strictly tighter than what the digits can represent.
+//! - `final_group_admitted_under_another_producer_contract_is_refused`. Dense
+//!   and bounded producers publish the same commitment under one descriptor, so
+//!   only the contract recorded on the handle separates them, and the dense
+//!   catalog refuses a final group the bounded family admitted.
 
 #![allow(missing_docs)]
 

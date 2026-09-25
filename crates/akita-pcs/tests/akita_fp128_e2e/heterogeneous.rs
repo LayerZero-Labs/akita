@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_prover::CommitmentHandleMetadata;
 use jolt_field::Zero;
 use jolt_field::{One, Ring};
 
@@ -652,6 +653,102 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("full-width dense accepts every field element");
+    });
+}
+
+// Nothing in a proof binds which producer contract admitted a group, and one
+// frozen descriptor does not name its producer: `fp128::Dense` and
+// `fp128::DenseBounded` admit the same small source under the dense descriptor
+// and publish the same commitment. The handle records the admitting contract,
+// and a proving catalog, which plans its final group under its own config's
+// contract, must refuse a final group admitted under another one.
+#[test]
+fn final_group_admitted_under_another_producer_contract_is_refused() {
+    type BoundedDenseCfg = fp128::DenseBounded;
+    const NV: usize = 14;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let dense_scheme =
+            load_workspace_scheme::<DenseCfg>().expect("workspace dense schedule catalog");
+        let bounded_scheme = load_workspace_scheme::<BoundedDenseCfg>()
+            .expect("workspace bounded-dense schedule catalog");
+        let setup = dense_scheme.setup_prover(NV, 1).expect("setup");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let profile = dense_scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(NV, 1),
+            ))
+            .expect("dense row")
+            .profiles()
+            .final_group;
+        let evals = (0..1usize << NV)
+            .map(|i| F::from_u64((i % 257) as u64))
+            .collect::<Vec<_>>();
+        let poly = akita_cpu_backend::DensePoly::from_field_evals(NV, &evals).expect("dense poly");
+
+        let dense = stack
+            .commit(
+                dense_scheme.schedules(),
+                &stack.import_source(vec![poly.clone()]).expect("source"),
+                akita_cpu_backend::GroupContext::explicit(&profile),
+            )
+            .expect("dense commit");
+        let bounded = stack
+            .commit(
+                bounded_scheme.schedules(),
+                &stack.import_source(vec![poly]).expect("source"),
+                akita_cpu_backend::GroupContext::explicit(&profile),
+            )
+            .expect("the bounded family admits the same small source");
+        assert_eq!(
+            dense.committed_group, bounded.committed_group,
+            "the public commitment cannot tell the two producers apart"
+        );
+        assert_eq!(
+            dense.private_handle.producer_contract(),
+            DenseCfg::committed_source_contract().expect("dense producer contract")
+        );
+        assert_eq!(
+            bounded.private_handle.producer_contract(),
+            bounded_contract()
+        );
+
+        let point = (0..NV)
+            .map(|i| F::from_u64((i + 5) as u64))
+            .collect::<Vec<_>>();
+        let opening = dense_opening_lagrange(&evals, &point);
+        let claims = |commitment| {
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                point.clone(),
+                vec![opening],
+                commitment,
+            )
+            .expect("group claims")])
+            .expect("claims")
+        };
+        SelectedProverOpeningData::from_committed_claims::<DenseCfg>(
+            claims(dense.committed_group),
+            vec![dense.private_handle],
+            dense_scheme.schedules(),
+        )
+        .expect("the dense handle matches the dense catalog");
+        let error = SelectedProverOpeningData::from_committed_claims::<DenseCfg>(
+            claims(bounded.committed_group),
+            vec![bounded.private_handle],
+            dense_scheme.schedules(),
+        )
+        .map(|_| ())
+        .expect_err("a bounded-admitted final group must not open under the dense catalog");
+        assert!(
+            matches!(
+                &error,
+                akita_error::AkitaError::InvalidInput(message)
+                    if message.contains("different producer contract")
+            ),
+            "expected the producer-contract refusal, got {error:?}"
+        );
     });
 }
 

@@ -16,6 +16,17 @@ impl CommitmentHandleMetadata for Handle {
     fn metadata(&self) -> SourceMetadata {
         SourceMetadata::try_new(1, 0).expect("fixture public shape")
     }
+    fn producer_contract(&self) -> sis::CommittedSourceContract {
+        sis::CommittedSourceContract::try_new(
+            sis::CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 64,
+                log_open_bound: None,
+            },
+        )
+        .expect("fixture producer contract")
+    }
 }
 impl AcceptedFoldHandle for Handle {
     fn metadata(&self) -> AcceptedFoldMetadata {

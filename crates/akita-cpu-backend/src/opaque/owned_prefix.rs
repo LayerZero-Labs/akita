@@ -5,7 +5,8 @@ use crate::{CpuBackend, DensePoly};
 use akita_error::AkitaError;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{Commitment, FpExtEncoding, SetupPrefixSlotId};
+use akita_types::sis::{CommittedSourceClass, CommittedSourceContract};
+use akita_types::{Commitment, DecompositionParams, FpExtEncoding, SetupPrefixSlotId};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
@@ -158,6 +159,17 @@ where
             .first()
             .ok_or(AkitaError::InvalidProof)?
             .clone();
+        // Setup prefixes are public uniform field elements, planned as
+        // full-width balanced digits rather than under any family's contract.
+        let profile = &id.commitment_profile;
+        let producer_contract = CommittedSourceContract::try_new(
+            CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: profile.inner.digits.log_basis,
+                log_commit_bound: profile.inner.matrix.sis_modulus_profile().field_bits(),
+                log_open_bound: None,
+            },
+        )?;
         let committed = Arc::new(CommittedSource {
             commitment_id: self.owner().next_operation_id()?,
             source: cached.source.clone(),
@@ -166,6 +178,7 @@ where
                 id.commitment_profile.group.num_vars(),
             )?,
             parameters: id.commitment_profile,
+            producer_contract,
             public: Commitment::new(public_commitment),
             retained: artifact.hint.clone(),
         });

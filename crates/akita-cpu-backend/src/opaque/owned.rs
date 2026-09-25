@@ -32,7 +32,8 @@ where
         }
     }
 }
-/// A reusable commitment retaining the exact source and parameters it committed.
+/// A reusable commitment retaining the exact source and parameters it
+/// committed, and the producer contract that admitted the source.
 pub struct CommitmentHandle<F: Field + CanonicalEncoding, E: Field> {
     pub(super) owner: u64,
     pub(super) committed: Arc<CommittedSource<F, E>>,
@@ -54,6 +55,7 @@ pub(super) struct CommittedSource<F: Field + CanonicalEncoding, E: Field> {
     pub(super) metadata: SourceMetadata,
     pub(super) commitment_id: u128,
     pub(super) parameters: GroupCommitPhaseParams,
+    pub(super) producer_contract: sis::CommittedSourceContract,
     pub(super) public: Commitment<F>,
     pub(super) retained: crate::commitment::PortableCommitmentHandle<F>,
 }
@@ -69,6 +71,9 @@ where
 {
     fn metadata(&self) -> SourceMetadata {
         self.committed.metadata
+    }
+    fn producer_contract(&self) -> sis::CommittedSourceContract {
+        self.committed.producer_contract
     }
 }
 
@@ -426,6 +431,7 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommitmentHandle")
             .field("metadata", &self.committed.metadata)
+            .field("producer_contract", &self.committed.producer_contract)
             .finish_non_exhaustive()
     }
 }

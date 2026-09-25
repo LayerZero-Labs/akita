@@ -65,6 +65,9 @@ where
                 source: source.storage,
                 metadata: committed.metadata,
                 parameters: committed.parameters,
+                // Recomputation above proves the same source and commitment,
+                // so the admitting contract carries over unchanged.
+                producer_contract: committed.producer_contract,
                 public: committed.public.clone(),
                 retained,
             }),
@@ -82,8 +85,9 @@ where
     /// `family`, retaining its exact source and parameters.
     ///
     /// `family` supplies the catalog row for scheduler contexts and the
-    /// declared committed-source contract that admits the source. One backend
-    /// can commit groups from different families that share `F` and `E`.
+    /// declared committed-source contract that admits the source. The handle
+    /// records that contract. One backend can commit groups from different
+    /// families that share `F` and `E`.
     pub fn commit<Cfg>(
         &self,
         family: &TrustedScheduleCatalog<Cfg>,
@@ -108,7 +112,7 @@ where
         )?;
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
-        let profile = crate::commitment::resolve_commit_params::<Cfg, _>(
+        let (profile, producer_contract) = crate::commitment::resolve_commit_params::<Cfg, _>(
             &sources,
             &prepared.expanded,
             family,
@@ -123,6 +127,7 @@ where
                 source: source.storage.clone(),
                 metadata: source.metadata,
                 parameters: *committed_group.profile(),
+                producer_contract,
                 public: committed_group.commitment().clone(),
                 retained: prover_state,
             }),
@@ -139,6 +144,7 @@ mod tests {
     use super::*;
     use crate::{AkitaProverSetup, DensePoly};
     use akita_config::proof_optimized::fp64;
+    use akita_prover::CommitmentHandleMetadata;
     use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout};
     use jolt_field::Ring;
 
@@ -201,6 +207,14 @@ mod tests {
                     .import_commitment(&actual.private_handle)
                     .unwrap();
                 assert_eq!(transferred.committed.retained, expected.prover_state);
+                assert_eq!(
+                    actual.private_handle.producer_contract(),
+                    Cfg::committed_source_contract().unwrap()
+                );
+                assert_eq!(
+                    transferred.producer_contract(),
+                    actual.private_handle.producer_contract()
+                );
             })
             .unwrap()
             .join()

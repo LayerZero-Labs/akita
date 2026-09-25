@@ -142,13 +142,20 @@ let final_output = backend.commit(
 
 The catalog passed to `commit` is the producer contract for that group: it
 fixes the commit profile and the source class and coefficient bound that
-admission enforces. The handle does not record it, and opening does not check
-it again, because schedule rows carry no producer identity. The application
-must therefore commit each group under the configuration whose contract the
-proving catalog's row assumes for that group. A mismatch cannot make a false
-claim verify, since the verifier enforces the row's frozen caps. The proof's
-completeness and grinding budget, however, no longer follow from the planner's
-model, so an honest proof can fail.
+admission enforces. The handle records that contract, and
+`CommitmentHandleMetadata::producer_contract` returns it. Opening data built
+with `SelectedProverOpeningData::from_committed_claims::<Cfg>` rejects a final
+group whose recorded contract differs from `Cfg::committed_source_contract()`,
+since the proving catalog plans its final group under that contract.
+
+Schedule rows carry no producer identity for precommitted groups, so opening
+does not check them. The application must commit each precommitted group under
+the configuration whose contract the proving catalog's row assumes for that
+group, and it can compare each handle's `producer_contract()` with the contract
+it planned. A mismatch cannot make a false claim verify, since the verifier
+enforces the row's frozen caps. The proof's completeness and grinding budget,
+however, no longer follow from the planner's model, so an honest proof can
+fail. Proof bytes do not bind the producer contract.
 
 The setup must cover every family that commits on the backend. When the
 proving catalog's rows already include each precommitted profile, its own
