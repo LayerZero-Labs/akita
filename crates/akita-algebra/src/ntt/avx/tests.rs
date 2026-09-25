@@ -1,7 +1,12 @@
+//! Each kernel test returns early when the CPU lacks the kernel's features,
+//! so a pass on such a host covers only the scalar code.
+//! [`avx512_hardware_tests_do_not_skip`] fails instead; the portability
+//! workflow runs it under Intel SDE.
+
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
-use crate::ntt::tables::{I16_TAIL_PRIME, Q128_RAW_PRIMES};
+use crate::ntt::tables::{I16_TAIL_PRIME, Q128_RAW_PRIMES, Q64_PRIMES};
 
 const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures {
     avx2: true,
@@ -373,9 +378,18 @@ fn assert_transforms_match_scalar<W: PrimeWidth, const D: usize>(
     );
 }
 
+/// The shipped `i32` primes that support negacyclic degree `D`: all of the
+/// q128 set through 1024 and the q64 set at 2048.
+fn i32_primes<const D: usize>() -> impl Iterator<Item = i32> {
+    Q128_RAW_PRIMES
+        .into_iter()
+        .chain(Q64_PRIMES.map(|prime| prime.p))
+        .filter(|p| ((p - 1) as usize).is_multiple_of(2 * D))
+}
+
 fn assert_ntt_i32_transforms_match_scalar<const D: usize>(use_avx512: bool) {
     // SAFETY (each entry): the caller checks the target features.
-    for raw_prime in Q128_RAW_PRIMES {
+    for raw_prime in i32_primes::<D>() {
         assert_transforms_match_scalar::<i32, D>(
             NttPrime::compute(raw_prime),
             [
@@ -395,6 +409,7 @@ fn assert_ntt_i32_transforms_match_scalar_all_sizes(use_avx512: bool) {
     assert_ntt_i32_transforms_match_scalar::<256>(use_avx512);
     assert_ntt_i32_transforms_match_scalar::<512>(use_avx512);
     assert_ntt_i32_transforms_match_scalar::<1024>(use_avx512);
+    assert_ntt_i32_transforms_match_scalar::<2048>(use_avx512);
 }
 
 #[test]
@@ -457,7 +472,7 @@ fn assert_fused_transforms_match_scalar<W: PrimeWidth, const D: usize>(
 
 fn assert_fused_ntt_i32_matches_scalar<const D: usize>(use_avx512: bool) {
     // SAFETY (each entry): the caller checks the target features.
-    for raw_prime in Q128_RAW_PRIMES {
+    for raw_prime in i32_primes::<D>() {
         assert_fused_transforms_match_scalar::<i32, D>(
             NttPrime::compute(raw_prime),
             &|a, digits, prime, tw| unsafe { forward_ntt_i8_i32(a, digits, prime, tw, use_avx512) },
@@ -484,6 +499,7 @@ fn fused_ntt_i32_matches_scalar() {
         assert_fused_ntt_i32_matches_scalar::<256>(use_avx512);
         assert_fused_ntt_i32_matches_scalar::<512>(use_avx512);
         assert_fused_ntt_i32_matches_scalar::<1024>(use_avx512);
+        assert_fused_ntt_i32_matches_scalar::<2048>(use_avx512);
     }
 }
 
@@ -492,7 +508,8 @@ const I16_PRIMES: [i16; 3] = [I16_TAIL_PRIME.p, 13313, 15361];
 
 fn assert_ntt_i16_transforms_match_scalar<const D: usize>() {
     // SAFETY (each entry): the caller checks AVX2 support.
-    // 13313 and 15361 support negacyclic degrees through 512.
+    // 13313 and 15361 support negacyclic degrees through 512, and 12289
+    // through 2048.
     for raw_prime in I16_PRIMES
         .into_iter()
         .filter(|p| ((p - 1) as usize).is_multiple_of(2 * D))
@@ -530,6 +547,7 @@ fn avx2_ntt_i16_transforms_match_scalar() {
     assert_ntt_i16_transforms_match_scalar::<256>();
     assert_ntt_i16_transforms_match_scalar::<512>();
     assert_ntt_i16_transforms_match_scalar::<1024>();
+    assert_ntt_i16_transforms_match_scalar::<2048>();
 }
 
 #[test]
@@ -754,4 +772,18 @@ fn avx2_add_reduce_i16_matches_scalar_with_tail() {
     let mut scalar_acc = acc_init;
     scalar_add_reduce_i16(&mut scalar_acc, &other, prime);
     assert_eq!(avx_acc, scalar_acc);
+}
+
+#[test]
+#[ignore = "requires AVX-512F/DQ/BW hardware or emulation"]
+fn avx512_hardware_tests_do_not_skip() {
+    assert!(
+        avx512_transform_available(),
+        "AVX-512F/DQ/BW is unavailable"
+    );
+    q128_i32_crt_ops_match_scalar_at_vector_boundaries();
+    avx512_ntt_i32_transforms_match_scalar();
+    fused_ntt_i32_matches_scalar();
+    avx512_pointwise_mul_acc_i32_matches_scalar_with_tail();
+    avx512_add_reduce_i32_matches_scalar_with_tail();
 }

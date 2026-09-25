@@ -2,6 +2,8 @@
 
 use akita_error::AkitaError;
 
+use super::prime::is_prime;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
@@ -31,9 +33,10 @@ pub struct Ifma52Prime {
 impl Ifma52Prime {
     /// Validate and prepare one IFMA52 prime.
     pub fn new(modulus: u64) -> Result<Self, AkitaError> {
-        if modulus <= (1 << 49) || modulus >= (1 << 50) || modulus & 1 == 0 {
+        // The range check runs first, so the cast is lossless.
+        if modulus <= (1 << 49) || modulus >= (1 << 50) || !is_prime(modulus as i64) {
             return Err(AkitaError::InvalidSetup(
-                "IFMA52 modulus must be odd and between 2^49 and 2^50".into(),
+                "IFMA52 modulus must be a prime between 2^49 and 2^50".into(),
             ));
         }
         let mut prime = Self {
@@ -181,7 +184,10 @@ impl<const D: usize> Ifma52Twiddles<D> {
             )));
         }
         let exponent = (prime.modulus - 1) / (2 * D as u64);
-        let psi = (2u64..)
+        // For a prime modulus the search stops at the least quadratic
+        // non-residue, which is small; the bound turns any other outcome into
+        // an error instead of an endless search.
+        let psi = (2..1 << 16)
             .map(|candidate| prime.pow(candidate, exponent))
             .find(|&candidate| prime.pow(candidate, D as u64) == prime.modulus - 1)
             .ok_or_else(|| AkitaError::InvalidSetup("IFMA52 root search failed".into()))?;
@@ -246,12 +252,14 @@ pub(crate) fn forward<const D: usize>(
     twiddles: &Ifma52Twiddles<D>,
     use_ifma: bool,
 ) {
+    debug_assert!(values.0.iter().all(|&value| value < prime.modulus));
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     let _ = use_ifma;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_ifma {
         // SAFETY: runtime feature detection covers every enabled instruction.
         unsafe { x86::forward(values, prime, twiddles) };
+        debug_assert!(values.0.iter().all(|&value| value < 4 * prime.modulus));
         return;
     }
     scalar_forward(&mut values.0, prime, twiddles);
@@ -272,6 +280,7 @@ pub(crate) fn forward_i16<const D: usize>(
     if use_ifma {
         // SAFETY: runtime feature detection covers every enabled instruction.
         unsafe { x86::forward_i16(values, coefficients, prime, twiddles) };
+        debug_assert!(values.0.iter().all(|&value| value < 4 * prime.modulus));
         return;
     }
     values.0 = coefficients.map(|coefficient| prime.canonical_i16(coefficient));
@@ -292,10 +301,13 @@ pub(crate) fn inverse<const D: usize>(
     let _ = use_ifma;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_ifma {
+        debug_assert!(values.0.iter().all(|&value| value < 2 * prime.modulus));
         // SAFETY: runtime feature detection covers every enabled instruction.
         unsafe { x86::inverse(values, prime, twiddles) };
+        debug_assert!(values.0.iter().all(|&value| value < prime.modulus));
         return;
     }
+    debug_assert!(values.0.iter().all(|&value| value < prime.modulus));
     scalar_inverse(&mut values.0, prime, twiddles);
 }
 
@@ -523,11 +535,20 @@ mod tests {
     }
 
     #[test]
-    fn prime_requires_an_odd_modulus_between_2_49_and_2_50() {
-        for modulus in [(1 << 49) - 1, 1 << 49, (1 << 50) - 2, (1 << 50) + 1] {
+    fn prime_requires_a_prime_modulus_between_2_49_and_2_50() {
+        // 2^49 + 1 and 2^50 - 1 are multiples of 3, and
+        // 1125899772623531 = 33554393 * 33554467.
+        for modulus in [
+            (1 << 49) - 1,
+            1 << 49,
+            (1 << 49) + 1,
+            1_125_899_772_623_531,
+            (1 << 50) - 1,
+            (1 << 50) + 1,
+        ] {
             assert!(Ifma52Prime::new(modulus).is_err(), "{modulus}");
         }
-        for modulus in [(1 << 49) + 1, (1 << 50) - 1] {
+        for modulus in IFMA52_PRIMES {
             assert!(Ifma52Prime::new(modulus).is_ok(), "{modulus}");
         }
     }
@@ -545,7 +566,7 @@ mod tests {
             return;
         }
         at_degrees!(round_trip, true, 64, 128, 256, 512, 1024, 2048);
-        at_degrees!(negacyclic_product, true, 64, 128, 256, 512, 1024);
+        at_degrees!(negacyclic_product, true, 64, 128, 256, 512, 1024, 2048);
         at_degrees!(saturated_accumulator, true, 64, 512);
         simd_matches_scalar::<64>();
         simd_matches_scalar::<128>();
@@ -559,18 +580,35 @@ mod tests {
         for &modulus in &IFMA52_PRIMES {
             let prime = Ifma52Prime::new(modulus).expect("prime");
             let twiddles = Ifma52Twiddles::<D>::compute(prime).expect("twiddles");
-            let digits: [i16; D] =
-                std::array::from_fn(|index| (index as i16).wrapping_mul(12_345) ^ 0x5a5a);
-            let (mut simd, mut scalar) = (Ifma52Residues([0; D]), Ifma52Residues([0; D]));
-            forward_i16(&mut simd, &digits, prime, &twiddles, true);
-            forward_i16(&mut scalar, &digits, prime, &twiddles, false);
-            assert_eq!(canonical(simd, prime), scalar, "forward, D={D}");
+            // The extreme canonical and `i16` inputs drive the lazy forward
+            // outputs toward `4p`.
+            for fill in [0, modulus - 1] {
+                let (mut simd, mut scalar) = (Ifma52Residues([fill; D]), Ifma52Residues([fill; D]));
+                forward(&mut simd, prime, &twiddles, true);
+                forward(&mut scalar, prime, &twiddles, false);
+                assert!(simd.0.iter().all(|&value| value < 4 * modulus));
+                assert_eq!(canonical(simd, prime), scalar, "forward {fill}, D={D}");
+            }
+            for digits in [
+                std::array::from_fn(|index| (index as i16).wrapping_mul(12_345) ^ 0x5a5a),
+                [i16::MIN; D],
+                [i16::MAX; D],
+                std::array::from_fn(|index| [i16::MIN, i16::MAX][index % 2]),
+            ] {
+                let (mut simd, mut scalar) = (Ifma52Residues([0; D]), Ifma52Residues([0; D]));
+                forward_i16(&mut simd, &digits, prime, &twiddles, true);
+                forward_i16(&mut scalar, &digits, prime, &twiddles, false);
+                assert!(simd.0.iter().all(|&value| value < 4 * modulus));
+                assert_eq!(canonical(simd, prime), scalar, "forward_i16, D={D}");
+            }
 
             let lazy = Ifma52Residues(sample::<D>(prime, 5).0.map(|value| value + modulus));
-            let (mut simd, mut scalar) = (lazy, canonical(lazy, prime));
-            inverse(&mut simd, prime, &twiddles, true);
-            inverse(&mut scalar, prime, &twiddles, false);
-            assert_eq!(simd, scalar, "inverse, D={D}");
+            for lazy in [lazy, Ifma52Residues([2 * modulus - 1; D])] {
+                let (mut simd, mut scalar) = (lazy, canonical(lazy, prime));
+                inverse(&mut simd, prime, &twiddles, true);
+                inverse(&mut scalar, prime, &twiddles, false);
+                assert_eq!(simd, scalar, "inverse, D={D}");
+            }
         }
     }
 

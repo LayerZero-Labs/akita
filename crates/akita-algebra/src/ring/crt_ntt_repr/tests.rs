@@ -195,3 +195,30 @@ fn lazy_pointwise_dot_rejects_non_i32_parameter_sets() {
         &mut scratch,
     );
 }
+
+/// Only i32 parameters carry the NEON Barrett tables.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn i16_twiddles_hold_only_montgomery_tables() {
+    const D: usize = 1024;
+    assert_eq!(size_of::<<i16 as PrimeWidth>::NeonTables<D>>(), 0);
+    // Eight D-entry tables, then D^-1 and the stage count (16 bytes with
+    // padding), rounded up to the 64-byte struct alignment.
+    let tables = 8 * D * size_of::<i16>() + 2 * size_of::<usize>();
+    assert_eq!(
+        size_of::<crate::ntt::butterfly::NttTwiddles<i16, D>>(),
+        tables.next_multiple_of(64)
+    );
+}
+
+/// Embedding applications and rayon workers may run on 2 MiB stacks, which
+/// the workspace `RUST_MIN_STACK` does not raise for an explicit size.
+#[test]
+fn q128_parameters_build_on_a_2_mib_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| CrtNttParamSet::<i32, Q128_NUM_PRIMES, 1024>::new(q128_primes()))
+        .expect("spawn")
+        .join()
+        .expect("build Q128 parameters");
+}

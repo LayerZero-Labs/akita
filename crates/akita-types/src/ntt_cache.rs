@@ -426,7 +426,7 @@ impl<W: PrimeWidth, const D: usize> PreparedIfma52Tail<W, D> {
     /// Whether this tail is a nonempty prefix of `neg` over `prime`, the tail
     /// prime bound to `neg`.
     fn matches<const K: usize>(&self, neg: &Ifma52NttMatrix<K, D>, prime: NttPrime<W>) -> bool {
-        neg.has_tail::<W>()
+        neg.has_tail(prime)
             && !self.negacyclic.is_empty()
             && self.negacyclic.len() <= neg.len()
             && self.params.primes == [prime]
@@ -582,7 +582,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             } => validate!(neg, cyc, params, tail, *exact),
             Self::Q32Ifma52 { neg, tail } => {
                 let tail_matches = match tail {
-                    None => !neg.has_tail::<i16>(),
+                    None => !neg.has_tail(I16_TAIL_PRIME),
                     Some(tail) => tail.matches(neg, I16_TAIL_PRIME),
                 };
                 if neg.is_empty() || !tail_matches {
@@ -614,7 +614,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             } => validate!(neg, cyc, params, tail, *exact),
             Self::Q128Ifma52 { neg, tail } => {
                 let tail_matches = match tail {
-                    None => !neg.has_tail::<i16>() && !neg.has_tail::<i32>(),
+                    None => !neg.has_tail(I16_TAIL_PRIME) && !neg.has_tail(q128_primes()[0]),
                     Some(Q128Ifma52Tail::I16(tail)) => tail.matches(neg, I16_TAIL_PRIME),
                     Some(Q128Ifma52Tail::I32(tail)) => tail.matches(neg, q128_primes()[0]),
                 };

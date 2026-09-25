@@ -160,6 +160,9 @@ removed_api_patterns=(
   'refresh_segments'
   'evaluate_setup_index_weight_mle'
   'prepare_setup_index_tensors'
+  'ReducedCoefficientFunctional'
+  'CompactFactorInputs'
+  'prepare_coefficient_packing_batch_groups'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

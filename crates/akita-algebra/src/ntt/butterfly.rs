@@ -10,7 +10,7 @@
 //! - inverse-cyclic NTT using `omega^{-1}`
 //! - post-untwist by `psi^{-i}`
 
-use super::prime::{MontCoeff, NttPrime, PrimeWidth};
+use super::prime::{pow_mod, MontCoeff, NttPrime, PrimeWidth};
 use super::NttKernelPlan;
 
 /// Whether the x86 transforms handle degree `D`, for either sealed width.
@@ -62,9 +62,9 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) d_inv: MontCoeff<W>,
     /// Number of active stages in the twiddle arrays (`log2(D)`).
     pub(crate) num_stages: usize,
-    /// Barrett-form tables for the NEON transforms.
+    /// Barrett-form tables for the NEON transforms; empty for `i16`.
     #[cfg(target_arch = "aarch64")]
-    pub(crate) barrett: super::neon::BarrettTwiddles<W, D>,
+    pub(crate) barrett: W::NeonTables<D>,
 }
 
 impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
@@ -158,7 +158,7 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
         );
 
         #[cfg(target_arch = "aarch64")]
-        let barrett = super::neon::BarrettTwiddles::compute(
+        let barrett = W::neon_tables(
             prime,
             &fwd_twiddles,
             &inv_twiddles,
@@ -532,18 +532,4 @@ fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
         }
     }
     panic!("no primitive root found for p={p}");
-}
-
-/// Modular exponentiation: `base^exp mod modulus`.
-fn pow_mod(mut base: i64, mut exp: i64, modulus: i64) -> i64 {
-    let mut result = 1i64;
-    base %= modulus;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = result * base % modulus;
-        }
-        base = base * base % modulus;
-        exp >>= 1;
-    }
-    result
 }

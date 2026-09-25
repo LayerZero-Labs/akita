@@ -100,7 +100,7 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
             ) {
                 let mut params = Ifma52Params::new([IFMA52_PRIMES[0]])?;
                 if needs_tail {
-                    params = params.with_tail(I16_TAIL_PRIME.p)?;
+                    params = params.with_tail(I16_TAIL_PRIME)?;
                 }
                 Ok(ExactCachePlan::Q32Ifma52 {
                     params: Box::new(params),
@@ -157,9 +157,9 @@ fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
                 // Prefer the 14-bit tail, whose transforms and products run
                 // at twice the lane count, whenever its capacity suffices.
                 if requirement(I16_TAIL_PRIME.p as u128) == Some(true) {
-                    params = params.with_tail(I16_TAIL_PRIME.p)?;
+                    params = params.with_tail(I16_TAIL_PRIME)?;
                 } else if needs_tail {
-                    params = params.with_tail(i32_tail.p)?;
+                    params = params.with_tail(i32_tail)?;
                 }
                 Ok(ExactCachePlan::Q128Ifma52 {
                     params: Box::new(params),
@@ -270,8 +270,8 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
         ExactCachePlan::Q128Ifma52 { params, needs_tail } => {
             // A tail retained without a planned one is exactness-only: the
             // base primes suffice, so it takes the cheaper 14-bit prime.
-            if params.has_tail::<i32>() {
-                let tail_prime = q128_primes()[0];
+            let tail_prime = q128_primes()[0];
+            if params.has_tail(tail_prime) {
                 let (neg, tail) =
                     prepare_ifma52_exact(matrix, tail_prefix_len, *params, tail_prime, needs_tail)?;
                 PreparedNttCacheRepr::Q128Ifma52 {
@@ -321,8 +321,8 @@ fn prepare_ifma52_exact<
     // installed by an earlier stronger request even when the current request's
     // exactness bound fits the IFMA base residues by themselves.
     let retain_tail = needs_tail || tail_prefix_len.is_some_and(|length| length > 0);
-    if retain_tail && !params.has_tail::<W>() {
-        params = params.with_tail(tail_prime.p)?;
+    if retain_tail && !params.has_tail(tail_prime) {
+        params = params.with_tail(tail_prime)?;
     }
     let tail = retain_tail
         .then(|| prepare_ifma52_tail(matrix, tail_prefix_len, tail_prime))
@@ -384,7 +384,7 @@ mod tests {
         let flat =
             FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime128OffsetA7F7, D>::zero(); 10]);
         let base = || Ifma52Params::new(IFMA52_PRIMES).expect("IFMA52 parameters");
-        let i32_tail = base().with_tail(q128_primes()[0].p).expect("i32 tail");
+        let i32_tail = base().with_tail(q128_primes()[0]).expect("i32 tail");
         for (params, needs_tail, tail_bytes) in [
             (base(), false, core::mem::size_of::<i16>()),
             (i32_tail, true, core::mem::size_of::<i32>()),
@@ -418,8 +418,8 @@ mod tests {
             match exact_cache_plan::<F, D>(params, width, 1 << 15, None).expect("plan") {
                 ExactCachePlan::Q128Ifma52 { params, needs_tail } => (
                     needs_tail,
-                    params.has_tail::<i16>(),
-                    params.has_tail::<i32>(),
+                    params.has_tail(I16_TAIL_PRIME),
+                    params.has_tail(q128_primes()[0]),
                 ),
                 _ => panic!("expected the q128 IFMA52 plan"),
             }

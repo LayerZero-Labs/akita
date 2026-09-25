@@ -124,12 +124,18 @@ fn main() {
     let monitor_enabled = enable_trace && env_flag("AKITA_PROFILE_MONITOR", true);
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     tracing::info!(
-        max_cached_ring_switch_elements = CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+        max_cached_ring_switch_elements = CpuBackend::<
+            akita_config::proof_optimized::fp128::Field,
+            akita_config::proof_optimized::fp128::Field,
+        >::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
         "CPU resource policy"
     );
     eprintln!(
         "[profile] cpu_policy: max_cached_ring_switch_elements={}",
-        CpuBackend::<akita_config::proof_optimized::fp128::OneHot>::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
+        CpuBackend::<
+            akita_config::proof_optimized::fp128::Field,
+            akita_config::proof_optimized::fp128::Field,
+        >::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
     );
     modes::log_active_fp128_prime_probe();
 

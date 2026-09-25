@@ -71,7 +71,8 @@ The `disk-persistence` feature stores the public setup matrix and setup prefix
 registry. It does not store backend NTT caches.
 
 Cache entries use versioned filenames, and prefix registry names include a
-digest of the resolved schedule. Old, truncated, corrupt, or mismatched entries
+digest of the setup requirements: the capacity bound and the sorted setup
+prefix slot ids. Old, truncated, corrupt, or mismatched entries
 are not accepted as current setup. Akita logs the load failure and regenerates
 the setup. If saving the replacement fails, Akita logs a warning and continues
 with the in-memory setup.
