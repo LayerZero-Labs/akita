@@ -147,14 +147,15 @@ CRT-capability selector keeps the base profile when
 the 12289 i16 tail. A schedule whose accumulation exceeds both profiles is
 rejected as an invalid setup.
 
-The verifier warms the strongest representation selected by the validated
-terminal schedule before transcript replay. Prepared forms are derived from
-the coefficient setup, keyed by ring dimension, and never serialized. Groups
-share one base prefix; its optional tail is only as long as the largest
-tail-requiring group. Thus a base-only schedule never constructs the tail, and
-a larger base-only group cannot unnecessarily extend one required by a smaller
-group. Shape and setup-prefix checks happen before either kernel indexes
-prepared state.
+`AkitaVerifier` construction prepares the terminal matrix before any proof
+arrives. It keeps one prepared entry per ring dimension, covering the longest
+terminal prefix and the widest terminal row among its admitted schedule rows.
+A shorter product reads a prefix of that entry, and exact CRT capacity is
+monotone in the row width, so the widest row's profile is exact for every
+narrower one. The entry carries the i16 tail only when the widest row needs it.
+Prepared forms are derived from the coefficient setup and never serialized.
+Verification only reads them, and shape and setup-prefix checks happen before
+either kernel indexes prepared state.
 
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.
