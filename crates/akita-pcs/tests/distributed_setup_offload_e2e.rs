@@ -2,7 +2,7 @@
 //! setup-offload profile.
 //!
 //! This test uses `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>` (the
-//! production `W8R2` preset, `fp128_d64_onehot_recursive_multi_chunk_w8r2`
+//! production `W8R2` preset, `fp128_onehot_recursive_multi_chunk_w8r2`
 //! family): two precommitted singleton groups at `nv=16` and a two-polynomial
 //! final group at `nv=32`. That schedule combines the `W8R2` chunked witness
 //! layout (8 chunks on the two leading fold levels) with recursive setup
@@ -175,13 +175,13 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         .enumerate()
     {
         assert_eq!(group.profile.inner.matrix.ring_dimension(), 512);
-        let expected_subring_dimension = 256;
+        let expected_subring_dimension = 64;
         assert_eq!(
             group.opening.opening_method,
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: expected_subring_dimension,
             },
-            "precommitted group {group_index} must preserve its exact packing domain"
+            "precommitted group {group_index} must use the shipped row's level-0 packing policy"
         );
         let geometry = SubringCoefficientPackingGeometry::try_new(
             W8R2Cfg::EXT_DEGREE,
@@ -189,7 +189,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             expected_subring_dimension,
         )
         .expect("valid precommitted packing geometry");
-        assert_eq!(geometry.packing_factor(), 2);
+        assert_eq!(geometry.packing_factor(), 8);
     }
     assert_eq!(
         schedule.recursive_folds[1].params.opening_method(),

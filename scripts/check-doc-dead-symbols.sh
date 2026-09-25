@@ -154,6 +154,12 @@ removed_api_patterns=(
   'MultilinearPolynomial\b'
   'multilinear_polynomial'
   'BatchDecomposeFoldOutcome'
+  'DirectScanState'
+  'direct_scan_state'
+  'materialize_direct_scan'
+  'refresh_segments'
+  'evaluate_setup_index_weight_mle'
+  'prepare_setup_index_tensors'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

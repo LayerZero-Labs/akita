@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-impl<E: Field> SetupContributionPlan<E> {
+impl<E: Field> DirectScan<E> {
     pub(crate) fn evaluate_direct_by_rows<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -14,21 +14,22 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let plan = &self.plan;
         let d_d = alpha_pows_d.len();
         let d_b = alpha_pows_b.len();
         let mut acc = E::zero();
-        if self.d_rows != 0 {
+        if plan.d_rows != 0 {
             let d_view =
                 setup
                     .shared_matrix
-                    .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
-            for (group_index, group) in self.groups.iter().enumerate() {
+                    .ring_view_dyn(plan.d_rows, plan.d_physical_cols, d_d)?;
+            for (group_index, group) in plan.groups.iter().enumerate() {
                 let (e_eq_slice, _, _) = self
-                    .direct_scan_state
+                    .mode
                     .weights(group_index)
                     .ok_or(AkitaError::InvalidProof)?
                     .slices();
-                for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
+                for (row_idx, &row_weight) in plan.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
                         continue;
                     }
@@ -44,9 +45,9 @@ impl<E: Field> SetupContributionPlan<E> {
             }
         }
 
-        for (group_index, group) in self.groups.iter().enumerate() {
+        for (group_index, group) in plan.groups.iter().enumerate() {
             let direct = self
-                .direct_scan_state
+                .mode
                 .weights(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             let (_, _t_eq_slice, z_eq_slice) = direct.slices();

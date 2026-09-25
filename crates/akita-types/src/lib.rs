@@ -180,9 +180,9 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
+    ensure_setup_envelope, shared_setup_fold_gadget, DirectScan, PreparedCoefficientFunctional,
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupProjectionGeometry,
+    SetupIndexWeightMle, SetupProjectionGeometry,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,

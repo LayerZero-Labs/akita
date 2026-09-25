@@ -7,6 +7,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         weights: &DirectScanWeights<E>,
+        partition: &GroupScanPartition<E>,
         base_pows: &[E],
         d_weights: &[E],
         a_projection: &RoleProjection<E>,
@@ -21,7 +22,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
     {
         let setup_flat = setup_view.as_slice();
         let (e_eq_slice, t_eq_slice, z_eq_slice) = (&weights.e[..], &weights.t[..], &weights.z[..]);
-        if self.required > setup_flat.len() {
+        if partition.required > setup_flat.len() {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
             ));
@@ -36,7 +37,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
         }
 
         cfg_try_fold_reduce!(
-            self.segments.as_ref(),
+            partition.segments.as_slice(),
             E::zero,
             |acc, segment| {
                 dispatch_segment_roles!(segment, Ok(acc), |HAS_D, HAS_B, HAS_A| {
