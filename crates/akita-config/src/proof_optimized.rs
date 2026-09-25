@@ -83,10 +83,15 @@ where
     // level's A/B/D matrices, every frozen precommitted group, the compression maps,
     // and the fold tail, so it dominates any per-level recomputation here.
     schedule.root.params.validate_opening_batch(layout)?;
-    ensure_required_setup_field_elements(
-        setup_matrix_field_elements_for_schedule(schedule)?,
-        setup.shared_matrix.as_field_slice().len(),
-    )
+    let required_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    let available_field_elements = setup.shared_matrix.as_field_slice().len();
+    if required_field_elements <= available_field_elements {
+        return Ok(());
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "schedule requires {required_field_elements} physical setup field elements, but setup \
+         provides {available_field_elements}"
+    )))
 }
 
 /// Whether a concrete schedule's direct verifier matrix uses fit setup.
@@ -104,19 +109,6 @@ pub fn verifier_schedule_fits_setup(
 ) -> Result<bool, AkitaError> {
     let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout)?;
     Ok(required.num_field_elements <= setup.shared_matrix.as_field_slice().len())
-}
-
-fn ensure_required_setup_field_elements(
-    required_field_elements: usize,
-    available_field_elements: usize,
-) -> Result<(), AkitaError> {
-    if required_field_elements <= available_field_elements {
-        return Ok(());
-    }
-    Err(AkitaError::InvalidSetup(format!(
-        "schedule requires {required_field_elements} physical setup field elements, but setup \
-         provides {available_field_elements}"
-    )))
 }
 
 // ---------------------------------------------------------------------------
