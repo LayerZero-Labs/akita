@@ -40,30 +40,50 @@ pub fn from_signed<F: Field + CanonicalEncoding>(negative: bool, magnitude: u128
 pub enum Domain {
     /// Every field element.
     Full,
-    /// Centered magnitude at most this value.
-    Centered(u128),
+    /// Centered values in `[-negative, positive]`. Balanced digits reach one
+    /// further on the negative side, so the two bounds generally differ.
+    Centered { negative: u128, positive: u128 },
 }
 
 impl Domain {
-    pub fn clamp<F: Field + CanonicalEncoding>(self, value: F) -> F {
+    pub const fn symmetric(bound: u128) -> Self {
+        Domain::Centered {
+            negative: bound,
+            positive: bound,
+        }
+    }
+
+    /// Largest admissible magnitude on one side.
+    pub fn reach<F: Field + CanonicalEncoding>(self, negative: bool) -> u128 {
+        let half = modulus::<F>() / 2;
         match self {
-            Domain::Full => value,
-            Domain::Centered(bound) => {
-                let c = centered(value);
-                let magnitude = c.unsigned_abs();
-                if magnitude <= bound {
-                    value
+            Domain::Full => half,
+            Domain::Centered {
+                negative: n,
+                positive: p,
+            } => {
+                if negative {
+                    n.min(half)
                 } else {
-                    from_signed::<F>(c < 0, magnitude % (bound + 1))
+                    p.min(half)
                 }
             }
         }
     }
 
-    fn max_magnitude<F: Field + CanonicalEncoding>(self) -> u128 {
+    pub fn clamp<F: Field + CanonicalEncoding>(self, value: F) -> F {
         match self {
-            Domain::Full => modulus::<F>() / 2,
-            Domain::Centered(bound) => bound,
+            Domain::Full => value,
+            Domain::Centered { .. } => {
+                let c = centered(value);
+                let magnitude = c.unsigned_abs();
+                let reach = self.reach::<F>(c < 0);
+                if magnitude <= reach {
+                    value
+                } else {
+                    from_signed::<F>(c < 0, magnitude % (reach + 1))
+                }
+            }
         }
     }
 }
@@ -80,7 +100,7 @@ pub fn scalar<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, domain: Dom
 pub fn scalar_from<F: Field + CanonicalEncoding>(mode: u8, payload: [u8; 16], domain: Domain) -> F {
     let raw = u128::from_le_bytes(payload);
     let negative = payload[15] & 0x80 != 0;
-    let max = domain.max_magnitude::<F>();
+    let max = domain.reach::<F>(negative);
     let bits = 128 - max.leading_zeros();
     let small_delta = u128::from(payload[1] % 4);
     let value = match mode % 16 {
@@ -163,10 +183,10 @@ pub fn table<F: Field + CanonicalEncoding>(
     let seed = reader.u64();
     let constant: F = scalar(reader, domain);
     let mut rng = SplitMix64::new(seed);
-    let max = domain.max_magnitude::<F>();
+    let reach = |negative: bool| domain.reach::<F>(negative);
     let mut entries: Vec<F> = (0..len)
         .map(|index| {
-            let value = match pattern % 14 {
+            let value = match pattern % 15 {
                 0 => F::zero(),
                 1 => constant,
                 2 => {
@@ -182,8 +202,8 @@ pub fn table<F: Field + CanonicalEncoding>(
                 6 => {
                     let r = rng.next_u64();
                     match r % 4 {
-                        0 => from_signed::<F>(r & 4 != 0, max),
-                        1 => from_signed::<F>(r & 4 != 0, max.saturating_sub(1)),
+                        0 => from_signed::<F>(r & 4 != 0, reach(r & 4 != 0)),
+                        1 => from_signed::<F>(r & 4 != 0, reach(r & 4 != 0).saturating_sub(1)),
                         2 => F::zero(),
                         _ => from_signed::<F>(r & 4 != 0, 1),
                     }
@@ -207,21 +227,38 @@ pub fn table<F: Field + CanonicalEncoding>(
                 10 => F::from_i64(i64::from(rng.next_u64() as i16)),
                 11 => {
                     let r = rng.next_u128();
-                    from_signed::<F>(r & 1 == 1, (r >> 1) % (max + 1))
+                    from_signed::<F>(r & 1 == 1, (r >> 1) % (reach(r & 1 == 1) + 1))
                 }
                 12 => F::from_i64(i64::from((index % 256) as u8 as i8)),
+                // All within i8; the first edit below breaks it by one.
+                14 => F::from_i64(i64::from(rng.next_u64() as i8)),
                 _ => F::from_u64(rng.next_u64()),
             };
             domain.clamp(value)
         })
         .collect();
+    // Dense sources whose every value fits i8 take a separate commitment
+    // kernel; pattern 14 keeps the table there except one boundary neighbor.
+    let small = pattern % 15 == 14;
     let edits = usize::from(reader.u8() % 64);
-    for _ in 0..edits {
+    for edit in 0..edits {
         if len == 0 {
             break;
         }
         let index = reader.u32() as usize % len;
-        entries[index] = scalar(reader, domain);
+        let value = scalar(reader, domain);
+        entries[index] = if !small {
+            value
+        } else if edit == 0 {
+            let neighbor = [127i64, -128, 128, -129][usize::from(reader.u8() % 4)];
+            domain.clamp(F::from_i64(neighbor))
+        } else {
+            Domain::Centered {
+                negative: 128,
+                positive: 127,
+            }
+            .clamp(value)
+        };
     }
     entries
 }
@@ -262,8 +299,9 @@ pub fn onehot_indices(
             break;
         }
         let chunk = reader.u32() as usize % num_chunks;
-        let value = reader.u8();
-        indices[chunk] = (value & 1 == 1).then_some((usize::from(value >> 1) % chunk_size) as u8);
+        let present = reader.bool();
+        let position = usize::from(reader.u8()) % chunk_size;
+        indices[chunk] = present.then_some(position as u8);
     }
     indices
 }

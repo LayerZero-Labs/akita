@@ -62,9 +62,8 @@ fn case<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, (min_basis, max_b
         1 => full_levels + 1,
         _ => 1 + usize::from(reader.u8()) % full_levels.max(1),
     };
-    if (levels as u32).saturating_mul(log_basis) > 128 + log_basis {
-        return;
-    }
+    // `BalancedDecomposePow2Params` admits at most `128 + log_basis` bits.
+    let levels = levels.min(((128 + log_basis) / log_basis) as usize);
     let (max_negative, max_positive) = representable(levels, log_basis);
     let bound = max_negative.min(max_positive);
     // At exactly the field width the centering threshold folds large values to
@@ -73,7 +72,10 @@ fn case<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, (min_basis, max_b
     let domain = if exact_width || bound >= q / 2 {
         Domain::Full
     } else {
-        Domain::Centered(bound)
+        Domain::Centered {
+            negative: max_negative,
+            positive: max_positive,
+        }
     };
 
     // Multiples of 8 keep the SIMD bulk path reachable; the tail stays covered.

@@ -11,7 +11,7 @@ use crate::gen::{self, modulus, Domain};
 use crate::input::Reader;
 use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_field::{
+use jolt_field::{One, 
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne,
     Unreduced, WithCommitAccumulator, Zero,
 };
@@ -47,7 +47,8 @@ where
         + PseudoMersenne
         + MulBaseUnreduced<F>
         + Fold
-        + WithCommitAccumulator,
+        + WithCommitAccumulator
+        + 'static,
 {
     stats::count("field_base");
     let q = BigUint::from(modulus::<F>());
@@ -123,6 +124,9 @@ where
     }
 
     unreduced_sums::<F, F>(reader);
+    if std::any::TypeId::of::<F>() == std::any::TypeId::of::<fp128::Field>() {
+        fp128_deferred_ring_evaluation(reader);
+    }
     fold_matches_definition::<F>(a, b, gen::scalar(reader, Domain::Full));
     commit_accumulator::<F>(reader);
 }
@@ -133,6 +137,24 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + Unreduced + MulBaseUnreduced<F>,
 {
+    // Single-term reduction must agree with the reduced multiply whatever
+    // `SUM_IS_EXACT` says; per-term paths depend on it.
+    let (x, y) = (
+        gen::ext_scalar::<F, E>(reader),
+        gen::ext_scalar::<F, E>(reader),
+    );
+    let s: F = gen::scalar(reader, Domain::Full);
+    assert_eq!(
+        E::reduce_product(x.mul_unreduced(y)),
+        x * y,
+        "single-term product reduction"
+    );
+    assert_eq!(
+        E::reduce_product(x.mul_base_unreduced(s)),
+        x.mul_base(s),
+        "single-term base-product reduction"
+    );
+
     let terms = 1 + usize::from(reader.u8() % 32);
     let mut product = <E as Unreduced>::Product::zero();
     let mut base_product = <E as Unreduced>::Product::zero();
@@ -167,6 +189,44 @@ where
             "exact base-product accumulation"
         );
     }
+}
+
+/// `akita_algebra::ring::eval::eval_ring_at_pows_fast` sums up to `D` (at
+/// most 1024 for q128) `mul_base_unreduced` products and reduces once, relying
+/// on the fp128 accumulator's documented `~2^64`-term headroom even though
+/// `SUM_IS_EXACT` stays `false`. Check exactly that use at full width.
+fn fp128_deferred_ring_evaluation(reader: &mut Reader<'_>) {
+    type F = fp128::Field;
+    let terms = match reader.u8() % 4 {
+        0 => 1024,
+        1 => 64,
+        _ => 1 + usize::from(reader.u16()) % 1024,
+    };
+    let base: F = gen::scalar(reader, Domain::Full);
+    let step: F = gen::scalar(reader, Domain::Full);
+    let extreme = reader.bool();
+    let mut accumulator = <F as Unreduced>::Product::zero();
+    let mut expected = F::zero();
+    let mut coefficient = base;
+    let mut power = F::one();
+    for _ in 0..terms {
+        // Extreme mode keeps both factors at `-1`, the largest canonical value.
+        let (c, p) = if extreme {
+            (-F::one(), -F::one())
+        } else {
+            (coefficient, power)
+        };
+        accumulator += p.mul_base_unreduced(c);
+        expected += p * c;
+        coefficient += step;
+        power *= base + F::one();
+    }
+    assert_eq!(
+        F::reduce_product(accumulator),
+        expected,
+        "fp128 deferred sum of {terms} products"
+    );
+    stats::count("field_fp128_deferred");
 }
 
 fn fold_matches_definition<E: Fold>(even: E, odd: E, r: E) {

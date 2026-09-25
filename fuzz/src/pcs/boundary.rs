@@ -50,11 +50,23 @@ fn fixture_bytes(seed: u64) -> Vec<u8> {
     bytes
 }
 
-fn out_of_domain<F: Field + CanonicalEncoding>(bound: u128, reader: &mut Reader<'_>) -> F {
-    let q = gen::modulus::<F>();
-    let span = q / 2 - bound;
-    let magnitude = bound + 1 + reader.u128() % span.max(1);
-    gen::from_signed::<F>(reader.bool(), magnitude)
+/// A value just past one side of `domain`, never back inside the other.
+fn out_of_domain<F: Field + CanonicalEncoding>(
+    domain: Domain,
+    reader: &mut Reader<'_>,
+) -> Option<F> {
+    let half = gen::modulus::<F>() / 2;
+    let negative = reader.bool();
+    let reach = domain.reach::<F>(negative);
+    if reach >= half {
+        return None;
+    }
+    let span = half - reach;
+    let magnitude = match reader.u8() % 3 {
+        0 => reach + 1,
+        _ => reach + 1 + reader.u128() % span,
+    };
+    Some(gen::from_signed::<F>(negative, magnitude))
 }
 
 impl<Cfg: PcsOps> FamilyImpl<Cfg> {
@@ -397,7 +409,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 );
             }
             4 => {
-                let Domain::Centered(bound) = plan.source.domain else {
+                let Domain::Centered { .. } = plan.source.domain else {
                     return;
                 };
                 if plan.source.onehot_only.is_some() || !matches!(plan.origin, Origin::Final) {
@@ -406,7 +418,10 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 let len = 1usize << plan.num_vars;
                 let mut table: Vec<Cfg::Field> = gen::table(reader, len, plan.source.domain);
                 let index = reader.u32() as usize % len;
-                table[index] = out_of_domain::<Cfg::Field>(bound, reader);
+                let Some(value) = out_of_domain::<Cfg::Field>(plan.source.domain, reader) else {
+                    return;
+                };
+                table[index] = value;
                 let polys: Vec<_> = (0..plan.num_polys)
                     .map(|_| {
                         DensePoly::from_field_evals(plan.num_vars, table.as_slice())
@@ -433,7 +448,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 }
                 let len = 1usize << plan.num_vars;
                 let domain = if reader.bool() {
-                    Domain::Centered(1)
+                    Domain::symmetric(1)
                 } else {
                     Domain::Full
                 };

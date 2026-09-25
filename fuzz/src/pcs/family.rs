@@ -11,6 +11,7 @@ use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext, O
 use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_types::sis::CommittedSourceClass;
+use akita_types::GroupCommitPhaseParams;
 use akita_types::{
     AkitaVerifierSetup, BasisMode, CommittedGroup, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims, PrecommittedGroupProfiles,
@@ -108,20 +109,40 @@ pub struct FamilyImpl<Cfg: PcsOps> {
     pub(super) fixtures: Mutex<HashMap<usize, Arc<Honest<Cfg>>>>,
 }
 
-/// Source class declared by a config, as a generator domain.
+/// Source class declared by a config; the domain is filled per profile.
 pub fn source_spec<Cfg: CommitmentConfig>() -> SourceSpec {
-    let decomposition = Cfg::decomposition();
-    let domain = match decomposition.log_open_bound {
-        Some(_) => Domain::Centered((1u128 << (decomposition.log_commit_bound - 1)) - 1),
-        None => Domain::Full,
-    };
     SourceSpec {
         onehot_only: match Cfg::committed_source_class() {
             CommittedSourceClass::UnitOneHot { source_chunk_size } => Some(source_chunk_size),
             CommittedSourceClass::BalancedSignedDigit => None,
         },
-        domain,
+        domain: Domain::Full,
     }
+}
+
+/// Coefficients `Cfg` admits for a group committed under `profile`: the
+/// production predicate `CommittedSourceContract::accepted_bounds`, i.e. the
+/// declared bound intersected with what the profile's A digits represent.
+pub fn source_for<Cfg: CommitmentConfig>(profile: &GroupCommitPhaseParams) -> SourceSpec {
+    let spec = source_spec::<Cfg>();
+    if spec.onehot_only.is_some() {
+        return spec;
+    }
+    let contract = Cfg::committed_source_contract().expect("shipped configs have valid contracts");
+    let digits = profile.inner.digits;
+    let half = gen::modulus::<Cfg::Field>() / 2;
+    let domain = match contract.accepted_bounds(digits.log_basis, digits.num_digits) {
+        (negative, positive)
+            if negative.unwrap_or(half) >= half && positive.unwrap_or(half) >= half =>
+        {
+            Domain::Full
+        }
+        (negative, positive) => Domain::Centered {
+            negative: negative.unwrap_or(half),
+            positive: positive.unwrap_or(half),
+        },
+    };
+    SourceSpec { domain, ..spec }
 }
 
 fn field_tag<Cfg: CommitmentConfig>() -> &'static str {
@@ -324,7 +345,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     && candidate.profiles().final_group == *profile
             });
             let (origin, source) = if owned_here {
-                (Origin::OwnSingleton(*profile), self.source)
+                (Origin::OwnSingleton(*profile), source_for::<Cfg>(profile))
             } else {
                 let owner = index
                     .iter()
@@ -364,7 +385,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             num_vars: final_group.num_vars(),
             num_polys: final_group.num_polynomials(),
             origin: Origin::Final,
-            source: self.source,
+            source: source_for::<Cfg>(&profiles.final_group),
         });
         Ok(groups)
     }
@@ -1008,7 +1029,7 @@ impl<Cfg: PcsOps> Family for FamilyImpl<Cfg> {
                 field: field_tag::<Cfg>(),
                 family: self.name(),
                 profile: row.profiles().final_group,
-                source: self.source,
+                source: source_for::<Cfg>(&row.profiles().final_group),
             })
             .collect()
     }
