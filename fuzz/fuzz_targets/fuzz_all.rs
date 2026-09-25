@@ -1,18 +1,24 @@
 #![no_main]
 
-//! Every target in one instrumented binary, selected by `AKITA_FUZZ_TARGET`.
-//! The campaign ships this instead of one ~1.4 GiB sanitizer binary per target.
+//! Every target in one instrumented binary. `AKITA_FUZZ_TARGET` selects one
+//! (the campaign always sets it); without it the first input byte picks the
+//! target, so `cargo fuzz run fuzz_all` fuzzes all of them together. The
+//! campaign ships this binary instead of one ~1.4 GiB sanitizer build per target.
 
+use akita_fuzz::targets::{by_name, ALL};
 use std::sync::OnceLock;
 
-static TARGET: OnceLock<fn(&[u8])> = OnceLock::new();
+static TARGET: OnceLock<Option<fn(&[u8])>> = OnceLock::new();
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
-    let run = TARGET.get_or_init(|| {
-        let name =
-            std::env::var("AKITA_FUZZ_TARGET").expect("AKITA_FUZZ_TARGET must name a target");
-        akita_fuzz::targets::by_name(&name)
-            .unwrap_or_else(|| panic!("unknown AKITA_FUZZ_TARGET {name}"))
+    let selected = TARGET.get_or_init(|| {
+        std::env::var("AKITA_FUZZ_TARGET").ok().map(|name| {
+            by_name(&name).unwrap_or_else(|| panic!("unknown AKITA_FUZZ_TARGET {name}"))
+        })
     });
-    run(data);
+    match (selected, data.split_first()) {
+        (Some(run), _) => run(data),
+        (None, Some((&index, rest))) => (ALL[usize::from(index) % ALL.len()].1)(rest),
+        (None, None) => {}
+    }
 });

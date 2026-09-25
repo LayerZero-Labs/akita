@@ -232,6 +232,8 @@ Run them with `cargo run --release -p akita-fuzz-dev -- <command>` from `fuzz/`.
 
 `cargo fuzz run <target>` also works directly from `fuzz/` for quick local
 sessions; it reads the schedule artifacts from the source tree.
+`cargo fuzz run fuzz_all` without `AKITA_FUZZ_TARGET` fuzzes every target,
+choosing one by the first input byte.
 
 ## Adding a target
 
