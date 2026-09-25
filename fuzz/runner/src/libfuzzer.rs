@@ -245,6 +245,22 @@ fn frame_function(line: &str) -> Option<String> {
         .then(|| function.to_string())
 }
 
+/// Parse `#N 0xADDR  (/path/binary+0xOFFSET)` frames left unsymbolized when
+/// no `llvm-symbolizer` is installed. Offsets are stable within one build, so
+/// they still deduplicate (binutils `addr2line` is far too slow on a sanitizer
+/// binary of this size to run inside the campaign loop).
+fn raw_frame(line: &str) -> Option<(usize, String, String)> {
+    if line.contains(" in ") {
+        return None;
+    }
+    let open = line.find("(/")?;
+    let rest = &line[open + 1..];
+    let close = rest.find(')')?;
+    let (binary, offset) = rest[..close].rsplit_once("+0x")?;
+    let prefix_end = line.find("0x")?;
+    Some((prefix_end, binary.to_string(), format!("0x{offset}")))
+}
+
 /// Stable `(id, text)` deduplicating findings of one root cause.
 pub fn signature(kind: &str, target: &str, lines: &[String]) -> (String, String) {
     let mut key = None;
@@ -267,10 +283,19 @@ pub fn signature(kind: &str, target: &str, lines: &[String]) -> (String, String)
             .filter_map(|line| frame_function(line))
             .take(3)
             .collect();
-        if frames.is_empty() {
+        if !frames.is_empty() {
+            return frames.join(" <- ");
+        }
+        let raw: Vec<String> = lines
+            .iter()
+            .filter_map(|line| raw_frame(line))
+            .take(6)
+            .map(|(_, _, offset)| offset)
+            .collect();
+        if raw.is_empty() {
             "no stack".into()
         } else {
-            frames.join(" <- ")
+            format!("unsymbolized frames {}", raw.join(" <- "))
         }
     });
     let text = format!("{kind} in {target}: {key}");
@@ -370,6 +395,23 @@ mod tests {
         assert_eq!(id_a, signature("panic", "decompose", &b).0);
         assert_ne!(id_a, signature("panic", "decompose", &c).0);
         assert!(text_a.contains("src/targets/decompose.rs:112"), "{text_a}");
+    }
+
+    #[test]
+    fn unsymbolized_stacks_key_on_offsets() {
+        let report = lines("==1== ERROR: libFuzzer: out-of-memory (malloc(99))\n    #0 0x5 (/d/fuzz_all+0x10) (BuildId: 1)\n    #1 0x6 (/d/fuzz_all+0x20) (BuildId: 1)");
+        let (_, text) = signature("oom", "pcs_dense", &report);
+        assert!(text.ends_with("unsymbolized frames 0x10 <- 0x20"), "{text}");
+    }
+
+    #[test]
+    fn parses_raw_frames() {
+        let line = "    #3 0x5575265e4b63  (/d/bin/fuzz_all+0x13f82b63) (BuildId: 2e99)";
+        assert_eq!(
+            raw_frame(line),
+            Some((7, "/d/bin/fuzz_all".into(), "0x13f82b63".into()))
+        );
+        assert_eq!(raw_frame("    #3 0x1 in akita::f /x.rs:1"), None);
     }
 
     #[test]

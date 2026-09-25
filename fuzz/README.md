@@ -208,9 +208,14 @@ target code without instrumentation, which is convenient under a debugger:
 cd fuzz && cargo run --release -p akita-fuzz-dev -- replay pcs_dense input.bin
 ```
 
-Rust panics are symbolized by the standard library from the binaries' line
-tables. AddressSanitizer reports need `llvm-symbolizer` (`apt install llvm`)
-for function names; `prepare` bundles one when it is on `PATH`.
+Rust panics are symbolized by the standard library from the binary's line
+tables. AddressSanitizer, timeout, and out-of-memory stacks need
+`llvm-symbolizer` for function names: install it on the build machine
+(`apt install llvm`, then `prepare` bundles it) or the campaign machine.
+Without it, stacks show `fuzz_all+0xOFFSET` frames and findings are
+deduplicated by those offsets, which are stable within one build.
+(binutils `addr2line` also works for manual triage but takes minutes on a
+binary this size.)
 
 ## Developer commands
 
