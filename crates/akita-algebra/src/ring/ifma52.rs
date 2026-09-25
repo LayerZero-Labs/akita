@@ -24,7 +24,8 @@ struct Ifma52Tail<const K: usize> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ifma52Params<const K: usize, const D: usize> {
     primes: [Ifma52Prime; K],
-    twiddles: [Ifma52Twiddles<D>; K],
+    /// Boxed for the same reason as `CrtNttParamSet::twiddles`.
+    twiddles: Box<[Ifma52Twiddles<D>; K]>,
     garner: GarnerData<K>,
     use_ifma: bool,
     tail: Option<Ifma52Tail<K>>,
@@ -44,11 +45,12 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .map_err(|_| AkitaError::InvalidSetup("IFMA52 prime count mismatch".into()))?;
-        let twiddles: [Ifma52Twiddles<D>; K] = primes
+        let twiddles: Box<[Ifma52Twiddles<D>; K]> = primes
             .iter()
             .copied()
             .map(Ifma52Twiddles::compute)
             .collect::<Result<Vec<_>, _>>()?
+            .into_boxed_slice()
             .try_into()
             .map_err(|_| AkitaError::InvalidSetup("IFMA52 twiddle count mismatch".into()))?;
         let garner = GarnerData::try_from_moduli(moduli)?;
@@ -180,7 +182,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
             let centered = ring.centered_coefficients_i128();
             for (limb, (prime, twiddles)) in limbs
                 .iter_mut()
-                .zip(params.primes.iter().zip(&params.twiddles))
+                .zip(params.primes.iter().zip(params.twiddles.iter()))
             {
                 let mut transformed = Ifma52Residues(
                     centered.map(|value| value.rem_euclid(i128::from(prime.modulus)) as u64),
