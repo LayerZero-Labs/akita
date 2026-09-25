@@ -95,7 +95,7 @@ pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
 
 /// CRT primes and per-prime Montgomery constants for `logq = 128`.
 pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
-    std::array::from_fn(|k| NttPrime::compute(Q128_RAW_PRIMES[k]))
+    Q128_RAW_PRIMES.map(NttPrime::new)
 }
 
 /// Validate CRT+NTT `ring_d` against a profile-specific maximum.
@@ -122,6 +122,7 @@ pub fn validate_profile_crt_ring_degree(
 mod tests {
     use super::*;
     use crate::ntt::crt::GarnerData;
+    use crate::ntt::prime::is_prime;
 
     #[test]
     fn six_product_i32_lazy_reduction_fits_signed_wide() {
@@ -155,20 +156,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    fn is_prime(n: i64) -> bool {
-        if n <= 1 {
-            return false;
-        }
-        let mut divisor = 2;
-        while divisor * divisor <= n {
-            if n % divisor == 0 {
-                return false;
-            }
-            divisor += 1;
-        }
-        true
     }
 
     fn largest_eligible_i32_primes(count: usize, root_order: i64) -> Vec<i32> {
