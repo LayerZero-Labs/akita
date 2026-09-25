@@ -26,13 +26,14 @@ struct PackedALayout<'a, E> {
 pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
 impl<E: Field> SetupContributionGroupPlan<E> {
-    pub(crate) fn refresh_segments(
-        &mut self,
-        weights: &DirectScanWeights<E>,
+    /// Partition this group's projected setup footprint into scan jobs.
+    pub(super) fn scan_partition(
+        &self,
+        active_d_cols: usize,
         d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<GroupScanPartition<E>, AkitaError> {
         if d_weights.len() != d_rows {
             return Err(AkitaError::InvalidSize {
                 expected: d_rows,
@@ -42,7 +43,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
         let (required, segments) = build_packed_segments(
             PackedDLayout {
                 active_col_start: self.d_col_range.start,
-                active_cols: weights.e.len(),
+                active_cols: active_d_cols,
                 physical_cols: d_physical_cols,
                 row_weights: d_weights,
                 ratio: self.d_ratio,
@@ -58,9 +59,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
                 ratio: self.a_ratio,
             },
         )?;
-        self.required = required;
-        self.segments = segments.into();
-        Ok(())
+        Ok(GroupScanPartition { required, segments })
     }
 }
 
@@ -131,72 +130,75 @@ fn build_packed_segments<E: Field>(
     endpoints.sort_unstable();
     endpoints.dedup();
 
-    let segments = (0..endpoints.len().saturating_sub(1))
-        .filter_map(|idx| {
-            let lo = endpoints[idx];
-            let hi = endpoints[idx + 1];
-            if lo == hi {
-                return None;
-            }
+    let malformed = || AkitaError::InvalidSetup("packed setup segment is malformed".into());
+    let mut segments = Vec::new();
+    for window in endpoints.windows(2) {
+        let &[lo, hi] = window else {
+            return Err(malformed());
+        };
+        if lo == hi {
+            continue;
+        }
 
-            let d_idx = lo / d.ratio;
-            let has_d = if d.physical_cols == 0 || d.active_cols == 0 || lo >= d_required {
-                false
-            } else {
-                let d_col = d_idx % d.physical_cols;
-                d_col >= d.active_col_start && d_col < e_end
-            };
-            let d_row = if has_d { d_idx / d.physical_cols } else { 0 };
-            let d_start_abs = if has_d {
-                d_row * d.physical_cols + d.active_col_start
-            } else {
-                0
-            };
-            let d_weight = if has_d {
-                d.row_weights[d_row]
-            } else {
-                E::zero()
-            };
+        let d_idx = lo.checked_div(d.ratio).ok_or_else(malformed)?;
+        let has_d = if d.physical_cols == 0 || d.active_cols == 0 || lo >= d_required {
+            false
+        } else {
+            let d_col = d_idx.checked_rem(d.physical_cols).ok_or_else(malformed)?;
+            d_col >= d.active_col_start && d_col < e_end
+        };
+        let (d_start_abs, d_weight) = if has_d {
+            let d_row = d_idx.checked_div(d.physical_cols).ok_or_else(malformed)?;
+            let d_start_abs = d_row
+                .checked_mul(d.physical_cols)
+                .and_then(|start| start.checked_add(d.active_col_start))
+                .ok_or_else(malformed)?;
+            let d_weight = *d.row_weights.get(d_row).ok_or_else(malformed)?;
+            (d_start_abs, d_weight)
+        } else {
+            (0, E::zero())
+        };
 
-            let b_idx = lo / b.ratio;
-            let b_segment = b.segments.iter().find(|segment| {
-                b_idx >= segment.physical_start
-                    && b_idx < segment.physical_start.saturating_add(segment.len)
-            });
-            let has_b = b_segment.is_some();
-            let b_start_abs = b_segment.map_or(0, |segment| segment.physical_start);
-            let b_terms =
-                b_segment.map_or_else(|| Arc::from([]), |segment| Arc::clone(&segment.terms));
+        let b_idx = lo.checked_div(b.ratio).ok_or_else(malformed)?;
+        let b_segment = b.segments.iter().find(|segment| {
+            b_idx >= segment.physical_start
+                && b_idx < segment.physical_start.saturating_add(segment.len)
+        });
+        let has_b = b_segment.is_some();
+        let b_start_abs = b_segment.map_or(0, |segment| segment.physical_start);
+        let b_terms = b_segment.map_or_else(|| Arc::from([]), |segment| Arc::clone(&segment.terms));
 
-            let a_idx = lo / a.ratio;
-            let has_a = a.cols != 0 && lo < a_required;
-            let a_row = if has_a { a_idx / a.cols } else { 0 };
-            let a_start_abs = if has_a { a_row * a.cols } else { 0 };
-            let a_row_weight = if has_a {
-                a.row_weights[a_row]
-            } else {
-                E::zero()
-            };
+        let has_a = a.cols != 0 && lo < a_required;
+        let (a_start_abs, a_row_weight) = if has_a {
+            let a_row = lo
+                .checked_div(a.ratio)
+                .and_then(|a_idx| a_idx.checked_div(a.cols))
+                .ok_or_else(malformed)?;
+            let a_start_abs = a_row.checked_mul(a.cols).ok_or_else(malformed)?;
+            let a_row_weight = *a.row_weights.get(a_row).ok_or_else(malformed)?;
+            (a_start_abs, a_row_weight)
+        } else {
+            (0, E::zero())
+        };
 
-            if !has_d && !has_b && !has_a {
-                return None;
-            }
+        if !has_d && !has_b && !has_a {
+            continue;
+        }
 
-            Some(GroupSetupSegment {
-                lo,
-                hi,
-                has_d,
-                d_start_abs,
-                d_weight,
-                has_b,
-                b_start_abs,
-                b_terms,
-                has_a,
-                a_start_abs,
-                a_row_weight,
-            })
-        })
-        .collect::<Vec<_>>();
+        segments.push(GroupSetupSegment {
+            lo,
+            hi,
+            has_d,
+            d_start_abs,
+            d_weight,
+            has_b,
+            b_start_abs,
+            b_terms,
+            has_a,
+            a_start_abs,
+            a_row_weight,
+        });
+    }
     let mut jobs = Vec::new();
     for segment in segments {
         let mut lo = segment.lo;

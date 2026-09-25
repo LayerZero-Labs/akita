@@ -1,4 +1,3 @@
-use super::kernels::GroupSetupSegment;
 use crate::{
     CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
     RelationAddressGeometry, SetupProjectionGeometry, WitnessLayout,
@@ -306,13 +305,9 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
-    pub(crate) setup_relation_address: PreparedRelationAddress<E>,
-    pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-    pub(crate) direct_scan_state: DirectScanState<E>,
 }
 
 /// Coefficient functional used by the one fused direct-setup traversal.
@@ -377,28 +372,6 @@ pub(crate) enum ProjectedEqPairTensorState {
     RelationFactored,
 }
 
-impl<E: Field> SetupContributionPlan<E> {
-    /// Prepared D/B/A column equality slices for `group_id`.
-    ///
-    /// The D-role slice is laid out
-    /// `(claim, block, opening_subcolumn, opening_digit)`, the B-role slice
-    /// `(claim, block, A_row, outer_subcolumn, commit_digit)`, and the A-role
-    /// slice `(position, witness_digit)` after contraction over units and fold
-    /// digits. Subcolumn axes have length one for uniform roles.
-    /// Tests compare these slices against independent address oracles.
-    #[cfg(test)]
-    #[must_use]
-    pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
-        let group_index = self
-            .groups
-            .iter()
-            .position(|group| group.group_id == group_id)?;
-        self.direct_scan_state
-            .weights(group_index)
-            .map(DirectScanWeights::slices)
-    }
-}
-
 pub(crate) struct DirectScanWeights<E> {
     pub(crate) e: Vec<E>,
     pub(crate) t: Vec<E>,
@@ -415,29 +388,6 @@ impl<E> DirectScanWeights<E> {
 pub(crate) struct ReducedDirectScanWeights<E> {
     pub(crate) weights: DirectScanWeights<E>,
     pub(crate) roles: [ReducedRoleCoefficientState<E>; 3],
-}
-
-pub(crate) enum DirectScanState<E: Field> {
-    Unprepared,
-    Lifted {
-        alpha: E,
-        groups: Vec<DirectScanWeights<E>>,
-    },
-    Reduced {
-        alpha: E,
-        coefficient_point: Arc<[E]>,
-        groups: Vec<ReducedDirectScanWeights<E>>,
-    },
-}
-
-impl<E: Field> DirectScanState<E> {
-    pub(crate) fn weights(&self, group_index: usize) -> Option<&DirectScanWeights<E>> {
-        match self {
-            Self::Unprepared => None,
-            Self::Lifted { groups, .. } => groups.get(group_index),
-            Self::Reduced { groups, .. } => groups.get(group_index).map(|group| &group.weights),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -466,7 +416,6 @@ pub(crate) struct PhysicalBSetupPlan<E: Field> {
     pub(super) logical_row_weights: Arc<[E]>,
     pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
     pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> PhysicalBSetupPlan<E> {
@@ -492,7 +441,6 @@ impl<E: Field> PhysicalBSetupPlan<E> {
             logical_row_weights,
             weight_segments: weight_segments.into(),
             relation_tensors: Vec::new(),
-            setup_tensors: Vec::new(),
         })
     }
 
@@ -555,22 +503,16 @@ pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) physical_b: PhysicalBSetupPlan<E>,
-    pub(crate) required: usize,
-    pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    /// Exact non-empty block ranges used by the partitioned E and T roles.
-    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// The non-empty witness units of this group, in layout order. The E and
+    /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
+    /// are rebuilt from them, so no second layout is ever consulted.
+    pub(crate) active_units: Arc<[crate::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SetupUnitRange {
-    pub(crate) global_block_start: usize,
-    pub(crate) num_live_blocks: usize,
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
