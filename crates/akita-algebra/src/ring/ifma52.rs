@@ -168,6 +168,8 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
 pub struct Ifma52NttMatrix<const K: usize, const D: usize> {
     limbs: [Vec<Ifma52Residues<D>>; K],
     params: Ifma52Params<K, D>,
+    /// Largest centered coefficient magnitude of any prepared entry.
+    entry_abs_bound: u128,
 }
 
 impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
@@ -201,12 +203,16 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                 tile.push(entries);
             }
         }
-        cfg_into_iter!(tiles)
+        let entry_abs_bound = cfg_into_iter!(tiles)
             .enumerate()
-            .for_each(|(tile_index, mut tile)| {
+            .map(|(tile_index, mut tile)| {
                 let tile_len = tile.first().map_or(0, |entries| entries.len());
+                let mut tile_bound = 0;
                 for offset in 0..tile_len {
                     let centered = entry(tile_index * PREPARE_TILE_ENTRIES + offset);
+                    for value in centered {
+                        tile_bound = tile_bound.max(value.unsigned_abs());
+                    }
                     for (entries, (prime, twiddles)) in tile
                         .iter_mut()
                         .zip(params.primes.iter().zip(params.twiddles.iter()))
@@ -219,10 +225,14 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                         forward(transformed, *prime, twiddles, params.use_ifma);
                     }
                 }
-            });
+                tile_bound
+            })
+            .max()
+            .unwrap_or(0);
         Self {
             limbs,
             params: params.clone(),
+            entry_abs_bound,
         }
     }
 
@@ -333,6 +343,19 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                 "prepared IFMA52 matrix prefix is undersized".into(),
             ));
         }
+        let rhs_abs_bound = rhs.iter().flatten().map(|value| value.unsigned_abs()).max();
+        // Centered residues of the odd modulus `2A + 1` are exactly `[-A, A]`.
+        let entry_modulus = self.entry_abs_bound.saturating_mul(2).saturating_add(1);
+        if !self.params.crt_capacity().supports_modulus(
+            num_cols,
+            D,
+            entry_modulus,
+            rhs_abs_bound.map_or(0, u64::from),
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "IFMA52 CRT capacity does not cover this mat-vec".into(),
+            ));
+        }
 
         let mut canonical = vec![[Ifma52Residues([0; D]); K]; num_rows];
         if num_rows == 0 || num_cols == 0 {
@@ -426,6 +449,19 @@ mod tests {
     }
 
     #[test]
+    fn limb_major_i16_matvec_rejects_accumulations_past_crt_capacity() {
+        const D: usize = 64;
+        type F = Prime64Offset59;
+        let params = Ifma52Params::<1, D>::new([IFMA52_PRIMES[0]]).expect("params");
+        // One 50-bit prime covers 2 * 64 * 2^30 * 1 but not 2 * 64 * 2^30 * 2^15.
+        let prepared = Ifma52NttMatrix::prepare_centered(1, |_| [1_i128 << 30; D], &params);
+        let small = [[1_i16; D]];
+        assert!(prepared.mat_vec_i16::<F>(1, &small).is_ok());
+        let large = [[i16::MIN; D]];
+        assert!(prepared.mat_vec_i16::<F>(1, &large).is_err());
+    }
+
+    #[test]
     fn limb_major_i16_matvec_matches_ring_arithmetic_at_all_ifma_dimensions() {
         assert_limb_major_i16_matvec::<64>();
         assert_limb_major_i16_matvec::<128>();
@@ -451,9 +487,11 @@ mod tests {
                 }))
             })
             .collect::<Vec<_>>();
-        let rhs = (0..3)
+        // Width 2 and digits in [-1, 1] keep the worst case `2 * 2 * D * A` below
+        // `p * 12289` at D = 2048, while the sums still pass `p / 2`.
+        let rhs = (0..2)
             .map(|column| {
-                std::array::from_fn(|coefficient| ((column * 3 + coefficient * 2) % 5) as i16 - 2)
+                std::array::from_fn(|coefficient| ((column * 3 + coefficient * 2) % 3) as i16 - 1)
             })
             .collect::<Vec<_>>();
         let prepared = Ifma52NttMatrix::prepare(&matrix, &params);
@@ -462,10 +500,10 @@ mod tests {
             .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
             .collect::<Vec<_>>();
         let actual = prepared
-            .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 2, &rhs, &tail_params)
+            .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 3, &rhs, &tail_params)
             .expect("mixed matvec");
         let expected = matrix
-            .chunks_exact(3)
+            .chunks_exact(2)
             .map(|row| {
                 row.iter()
                     .zip(&rhs)
