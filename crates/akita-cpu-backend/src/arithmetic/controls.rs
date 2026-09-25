@@ -1,11 +1,10 @@
 //! Application-facing cache controls and public resource diagnostics.
 use super::{CpuBackend, PreparedCrtNttProfile, PreparedNttCacheMetric};
 use crate::opaque::NttExecutionRequirements;
-use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::FoldSchedule;
 
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+impl<F: jolt_field::Field + jolt_field::CanonicalEncoding, E> CpuBackend<F, E> {
     /// Prepare the CPU cache union for a complete commit-and-prove workload.
     pub fn prewarm(&self, schedule: &FoldSchedule) -> Result<(), AkitaError> {
         let prepared = self.prepared()?;

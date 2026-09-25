@@ -449,7 +449,7 @@ fn recursive_packing_phases_share_one_relation_authority() {
     let source_refs = sources.iter().collect::<Vec<_>>();
     let batch =
         <RecursiveWitnessFlat as RootOpeningSource<F, 256>>::opening_batch(&source_refs).unwrap();
-    let partials = CpuBackend::for_arithmetic_tests()
+    let partials = CpuBackend::<F, E>::for_arithmetic_tests()
         .coefficient_packing_partials_batch(None, batch, SubringCoefficientPackingPlan { point })
         .unwrap();
     let d_input = materialize_coefficient_packing_d_input::<F, 128>(

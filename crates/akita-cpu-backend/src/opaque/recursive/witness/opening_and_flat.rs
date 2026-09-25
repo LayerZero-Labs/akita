@@ -13,10 +13,9 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
-impl<F, E, Cfg> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
-    for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::consumer_kernels::CpuWitnessOpeningKernel<F, E>
+    for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: ExtField<F>
         + jolt_field::Unreduced
@@ -671,10 +670,8 @@ where
     }
 }
 
-impl<F, Cfg, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D>
-    for CpuBackend<Cfg>
+impl<F, E, const D: usize> OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
@@ -724,10 +721,9 @@ where
     }
 }
 
-impl<F, Cfg, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D>
-    for CpuBackend<Cfg>
+impl<F, E, const D: usize> OpeningBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, D>
+    for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F>,
     F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(

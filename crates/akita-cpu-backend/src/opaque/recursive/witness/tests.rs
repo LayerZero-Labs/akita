@@ -26,7 +26,7 @@ fn suffix_batch_fold_rejects_mixed_extents_and_count_mismatch() {
         };
         2
     ];
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let run = |refs: &[&RecursiveWitnessFlat]| {
         OpeningBatchKernel::decompose_fold_batch(
             &backend,
@@ -182,7 +182,7 @@ fn relation_session_rejects_round_and_challenge_misuse() {
 fn public_stage2_dispatch_rejects_exhausted_round_and_preserves_finish() {
     use crate::opaque::{OpaqueStage2Kernel, ProofContext, ProofScope};
 
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let scope = ProofScope::admitted(
         &backend,
@@ -440,7 +440,7 @@ fn suffix_witness_decompose_fold_is_deterministic() {
 #[test]
 fn backend_rejects_foreign_and_expired_sessions_independently() {
     use crate::opaque::{OpaqueStage1Kernel, OpaqueStage2Kernel, ProofContext, ProofScope};
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let scope = ProofScope::admitted(
         &backend,
@@ -465,7 +465,7 @@ fn backend_rejects_foreign_and_expired_sessions_independently() {
         2
     );
 
-    let foreign = CpuBackend::for_arithmetic_tests();
+    let foreign = CpuBackend::<F, F>::for_arithmetic_tests();
     let foreign_proof = foreign.owner().begin_test_scope(vec![1]).unwrap();
     let foreign_scope = ProofScope::admitted(
         &foreign,

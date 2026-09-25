@@ -18,8 +18,8 @@ fn recursive_commit_selects_exact_i16_from_inner_basis_inner() {
     let packed =
         PackedSignedDigits::from_i8_digits(coeffs.into_iter().flatten().collect(), 2).unwrap();
     let commit = |log_basis_inner| {
-        CpuBackend::for_arithmetic_tests()
-            .recursive_packed_witness_commit_rows::<_, D>(
+        CpuBackend::<F, F>::for_arithmetic_tests()
+            .recursive_packed_witness_commit_rows::<D>(
                 &prepared,
                 packed.zero_padded(2 * D).unwrap(),
                 1,
@@ -58,7 +58,7 @@ fn dense_coeff_commit_selects_exact_i16_from_inner_basis_inner() {
         CyclotomicRing::from_coefficients([F::from_i8(-1); D]),
     ];
     let commit = |log_basis_inner| {
-        CpuBackend::for_arithmetic_tests()
+        CpuBackend::<F, F>::for_arithmetic_tests()
             .dense_commit_rows(
                 &prepared,
                 1,
@@ -108,7 +108,7 @@ fn dense_i16_commit_matches_schoolbook_composition_inner() {
         let num_digits_inner =
             compute_num_digits_field_width(<F as CanonicalEncoding>::MODULUS_BITS, log_basis_inner);
         let row_width = block.len() * num_digits_inner;
-        let actual = CpuBackend::for_arithmetic_tests()
+        let actual = CpuBackend::<F, F>::for_arithmetic_tests()
             .dense_commit_rows(
                 &prepared,
                 n_a,

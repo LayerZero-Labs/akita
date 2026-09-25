@@ -59,8 +59,8 @@ fn prover_claims<'a, Cfg>(
     point: &'a [F],
     evaluations: &[F],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: CommitmentHandle<Cfg::Field, F, Cfg>,
-) -> SelectedProverOpeningData<'a, F, CommitmentHandle<Cfg::Field, F, Cfg>, Cfg::Field>
+    hint: CommitmentHandle<Cfg::Field, F>,
+) -> SelectedProverOpeningData<'a, F, CommitmentHandle<Cfg::Field, F>, Cfg::Field>
 where
     Cfg: CommitmentConfig<ExtField = F>,
 {
@@ -121,7 +121,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     });
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
 
     let source = stack.import_source(vec![poly.clone()]).unwrap();
 
@@ -130,6 +130,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             black_box(
                 stack
                     .commit(
+                        scheme.schedules(),
                         &source,
                         akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                     )
@@ -143,6 +144,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &source,
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -267,6 +269,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 private_handle: h,
             } = stack
                 .commit(
+                    scheme.schedules(),
                     &source,
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
@@ -348,7 +351,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
     let setup = scheme.setup_prover(nv, 1).unwrap();
-    let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
@@ -360,6 +363,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
             black_box(
                 stack
                     .commit(
+                        scheme.schedules(),
                         &source,
                         akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                     )
@@ -373,6 +377,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &source,
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -460,6 +465,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 private_handle: h,
             } = stack
                 .commit(
+                    scheme.schedules(),
                     &source,
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )

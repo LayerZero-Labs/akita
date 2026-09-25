@@ -66,9 +66,8 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let stack = CpuBackend::<ProtocolCfg>::with_ring_switch_cache_limit(
+    let stack = CpuBackend::with_ring_switch_cache_limit(
         setup.expanded.clone(),
-        scheme.schedules(),
         max_cached_ring_switch_elements,
     )
     .expect("cached backend");
@@ -94,6 +93,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -167,6 +167,7 @@ where
         private_handle: final_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )

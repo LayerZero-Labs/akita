@@ -32,12 +32,12 @@ pub(crate) struct CpuRecursiveWitnessAssemblyState<F: Field + CanonicalEncoding>
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn begin_cpu_recursive_witness<F, E, Cfg>(
-    backend: &crate::opaque::CpuBackend<Cfg>,
+pub(crate) fn begin_cpu_recursive_witness<F, E>(
+    backend: &crate::opaque::CpuBackend<F, E>,
     prepared: &crate::opaque::CpuPreparedSetup<F>,
     binding: crate::opaque::OperationBinding,
     opening_bindings: Vec<crate::opaque::OperationBinding>,
-    prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>],
+    prepared_group_openings: &[crate::opaque::CpuPreparedOpeningHandle<F, E>],
     commitment_material: Vec<CpuCommitmentMaterial<F>>,
     level: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
@@ -50,7 +50,6 @@ pub(crate) fn begin_cpu_recursive_witness<F, E, Cfg>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
     E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let ctx = OperationCtx::new(
         backend,
@@ -79,7 +78,7 @@ where
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             group_dims.d_d(),
-            |D_D| prepare_group_opening_witness::<F, E, Cfg, D_D>(
+            |D_D| prepare_group_opening_witness::<F, E, D_D>(
                 opening,
                 level,
                 opening_batch,
@@ -100,7 +99,7 @@ where
         ProtocolDispatchSlot::Role(RingRole::Opening),
         F,
         dims.d_d(),
-        |D_D| prepare_opening_relation_rows::<F, crate::opaque::CpuBackend<Cfg>, D_D>(
+        |D_D| prepare_opening_relation_rows::<F, crate::opaque::CpuBackend<F, E>, D_D>(
             &ctx,
             opening_batch,
             &group_openings,
@@ -148,8 +147,8 @@ where
     ))
 }
 
-pub(crate) fn finish_cpu_recursive_witness<F, Cfg>(
-    backend: &crate::opaque::CpuBackend<Cfg>,
+pub(crate) fn finish_cpu_recursive_witness<F, E>(
+    backend: &crate::opaque::CpuBackend<F, E>,
     prepared: &crate::opaque::CpuPreparedSetup<F>,
     build_handle: crate::opaque::CpuWitnessBuildHandle<F>,
     fold_inputs: Vec<crate::opaque::RecursiveWitnessFoldInput<crate::opaque::CpuAcceptedFold<F>>>,
@@ -158,7 +157,6 @@ pub(crate) fn finish_cpu_recursive_witness<F, Cfg>(
 ) -> Result<crate::opaque::CpuWitnessHandle, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
 {
     for (group_index, fold_input) in fold_inputs.iter().enumerate() {
         let group_params = build_handle

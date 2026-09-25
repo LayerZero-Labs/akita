@@ -260,7 +260,7 @@ impl<F: Field> CpuAcceptedFold<F> {
 
     pub(crate) fn a_relation_quotients<const D: usize>(
         &self,
-        backend: &crate::opaque::CpuBackend<impl akita_config::CommitmentConfig>,
+        backend: &crate::opaque::CpuBackend<F, impl Sized>,
         prepared: &crate::opaque::CpuPreparedSetup<F>,
         n_a: usize,
         log_basis_open: u32,
@@ -347,10 +347,9 @@ where
     }
 }
 
-impl<F, Cfg, const D: usize> FoldRelationKernel<CpuAcceptedFold<F>, F, D>
-    for crate::opaque::CpuBackend<Cfg>
+impl<F, E, const D: usize> FoldRelationKernel<CpuAcceptedFold<F>, F, D>
+    for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring,
 {
     fn a_relation_from_fold(
@@ -598,7 +597,7 @@ where
 
     #[cfg(test)]
     pub(crate) fn from_cpu_for_test<const D: usize>(
-        _ctx: &crate::opaque::OperationCtx<'_, F, crate::opaque::CpuBackend>,
+        _ctx: &crate::opaque::OperationCtx<'_, F, crate::opaque::CpuBackend<F, F>>,
         global: DecomposeFoldWitness,
         params: &akita_types::GroupOpenPhaseParams,
         source_claims: usize,
@@ -801,12 +800,11 @@ where
     })
 }
 
-impl<S, F, Cfg, const D: usize> TerminalFoldResponseKernel<S, F, D>
-    for crate::opaque::CpuBackend<Cfg>
+impl<S, F, E, const D: usize> TerminalFoldResponseKernel<S, F, D>
+    for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
-    crate::opaque::CpuBackend<Cfg>: OpeningBatchKernel<S, F, D>,
+    crate::opaque::CpuBackend<F, E>: OpeningBatchKernel<S, F, D>,
 {
     fn probe_terminal(
         &self,
@@ -827,11 +825,10 @@ where
     }
 }
 
-impl<S, F, Cfg, const D: usize> FoldResponseKernel<S, F, D> for crate::opaque::CpuBackend<Cfg>
+impl<S, F, E, const D: usize> FoldResponseKernel<S, F, D> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + jolt_field::Ring + 'static,
-    crate::opaque::CpuBackend<Cfg>: OpeningBatchKernel<S, F, D>,
+    crate::opaque::CpuBackend<F, E>: OpeningBatchKernel<S, F, D>,
 {
     fn probe(
         &self,
@@ -843,9 +840,8 @@ where
     }
 }
 
-impl<F, Cfg> FoldHandleBackend<F> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> FoldHandleBackend<F> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     type AcceptedFold = CpuAcceptedFold<F>;
