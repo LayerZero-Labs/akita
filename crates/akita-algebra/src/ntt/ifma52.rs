@@ -2,6 +2,8 @@
 
 use akita_error::AkitaError;
 
+use super::prime::is_prime;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
@@ -31,9 +33,10 @@ pub struct Ifma52Prime {
 impl Ifma52Prime {
     /// Validate and prepare one IFMA52 prime.
     pub fn new(modulus: u64) -> Result<Self, AkitaError> {
-        if modulus <= (1 << 49) || modulus >= (1 << 50) || modulus & 1 == 0 {
+        // The range check runs first, so the cast is lossless.
+        if modulus <= (1 << 49) || modulus >= (1 << 50) || !is_prime(modulus as i64) {
             return Err(AkitaError::InvalidSetup(
-                "IFMA52 modulus must be odd and between 2^49 and 2^50".into(),
+                "IFMA52 modulus must be a prime between 2^49 and 2^50".into(),
             ));
         }
         let mut prime = Self {
@@ -181,7 +184,10 @@ impl<const D: usize> Ifma52Twiddles<D> {
             )));
         }
         let exponent = (prime.modulus - 1) / (2 * D as u64);
-        let psi = (2u64..)
+        // For a prime modulus the search stops at the least quadratic
+        // non-residue, which is small; the bound turns any other outcome into
+        // an error instead of an endless search.
+        let psi = (2..1 << 16)
             .map(|candidate| prime.pow(candidate, exponent))
             .find(|&candidate| prime.pow(candidate, D as u64) == prime.modulus - 1)
             .ok_or_else(|| AkitaError::InvalidSetup("IFMA52 root search failed".into()))?;
@@ -523,11 +529,20 @@ mod tests {
     }
 
     #[test]
-    fn prime_requires_an_odd_modulus_between_2_49_and_2_50() {
-        for modulus in [(1 << 49) - 1, 1 << 49, (1 << 50) - 2, (1 << 50) + 1] {
+    fn prime_requires_a_prime_modulus_between_2_49_and_2_50() {
+        // 2^49 + 1 and 2^50 - 1 are multiples of 3, and
+        // 1125899772623531 = 33554393 * 33554467.
+        for modulus in [
+            (1 << 49) - 1,
+            1 << 49,
+            (1 << 49) + 1,
+            1_125_899_772_623_531,
+            (1 << 50) - 1,
+            (1 << 50) + 1,
+        ] {
             assert!(Ifma52Prime::new(modulus).is_err(), "{modulus}");
         }
-        for modulus in [(1 << 49) + 1, (1 << 50) - 1] {
+        for modulus in IFMA52_PRIMES {
             assert!(Ifma52Prime::new(modulus).is_ok(), "{modulus}");
         }
     }
