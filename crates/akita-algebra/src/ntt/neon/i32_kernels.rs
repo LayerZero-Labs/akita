@@ -368,7 +368,8 @@ unsafe fn forward_dif_tail<const D: usize>(a: *mut i32, fwd: &BarrettTable<i32, 
 /// output `i` by `scale(i)` inside the last stage. Outputs lie in `(-p, p)`.
 ///
 /// The first two stages run deinterleaved, middle stages are paired into
-/// radix-4 passes, and the last two stages form one pass together with the
+/// radix-4 passes (with one radix-8 pass when their count is odd and
+/// `D >= 512`), and the last two stages form one pass together with the
 /// scaling. Requires `D >= 32`.
 #[inline(always)]
 unsafe fn inverse_dit_stages<const D: usize>(
@@ -394,9 +395,42 @@ unsafe fn inverse_dit_stages<const D: usize>(
         base += 16;
     }
 
-    // Stages 4 through D/8, two at a time where possible.
+    // Stages 4 through D/8, two at a time where possible. An odd number of
+    // them would leave a lone radix-2 pass; from D = 512 the first three run
+    // as one radix-8 pass instead. At D = 128 those three are the whole range
+    // and the radix-8 pass measured slower than radix 4 plus radix 2.
     let quarter = D / 4;
     let mut len = 4usize;
+    if quarter >= 128 && quarter.trailing_zeros() % 2 == 1 {
+        let mut x = 0usize;
+        while x < D {
+            let u: [int32x4_t; 8] = core::array::from_fn(|k| vld1q_s32(a.add(x + 4 * k)));
+            let w = Multiplier::load(inv, 3);
+            let (v0, v1) = dit_butterfly(u[0], u[1], w, m);
+            let (v2, v3) = dit_butterfly(u[2], u[3], w, m);
+            let (v4, v5) = dit_butterfly(u[4], u[5], w, m);
+            let (v6, v7) = dit_butterfly(u[6], u[7], w, m);
+            let w0 = Multiplier::load(inv, 7);
+            let w1 = Multiplier::load(inv, 11);
+            let (y0, y2) = dit_butterfly(v0, v2, w0, m);
+            let (y1, y3) = dit_butterfly(v1, v3, w1, m);
+            let (y4, y6) = dit_butterfly(v4, v6, w0, m);
+            let (y5, y7) = dit_butterfly(v5, v7, w1, m);
+            let w = |k: usize| Multiplier::load(inv, 15 + 4 * k);
+            let z = [
+                dit_butterfly(y0, y4, w(0), m),
+                dit_butterfly(y1, y5, w(1), m),
+                dit_butterfly(y2, y6, w(2), m),
+                dit_butterfly(y3, y7, w(3), m),
+            ];
+            for (k, (lo, hi)) in z.into_iter().enumerate() {
+                vst1q_s32(a.add(x + 4 * k), lo);
+                vst1q_s32(a.add(x + 4 * k + 16), hi);
+            }
+            x += 32;
+        }
+        len = 32;
+    }
     while 4 * len <= quarter {
         let mut start = 0usize;
         while start < D {
