@@ -284,8 +284,7 @@ unsafe fn forward_dif_stages<const D: usize>(
         let half = len / 2;
         let mut start = 0usize;
         while start < D {
-            let mut j = 0usize;
-            while j < half {
+            let unit = |j: usize| {
                 let x = start + j;
                 let u0 = vld1q_s32(a.add(x));
                 let u1 = vld1q_s32(a.add(x + half));
@@ -301,7 +300,18 @@ unsafe fn forward_dif_stages<const D: usize>(
                 vst1q_s32(a.add(x + half), z1);
                 vst1q_s32(a.add(x + len), z2);
                 vst1q_s32(a.add(x + len + half), z3);
-                j += 4;
+            };
+            // Two independent units per iteration overlap their twiddle
+            // multiply chains.
+            if half >= 8 {
+                let mut j = 0usize;
+                while j < half {
+                    unit(j);
+                    unit(j + 4);
+                    j += 8;
+                }
+            } else {
+                unit(0);
             }
             start += 2 * len;
         }
@@ -700,16 +710,7 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     let p_d = vdup_n_s32(p);
     let pinv_d = vdup_n_s32(pinv);
     let mut i = 0usize;
-    while i + 4 <= d {
-        let mut low_sum = vdupq_n_s64(0);
-        let mut high_sum = vdupq_n_s64(0);
-        for product in 0..COUNT {
-            let l = vld1q_s32(lhs[product].add(i));
-            let r = vld1q_s32(rhs[product].add(i));
-            low_sum = vmlal_s32(low_sum, vget_low_s32(l), vget_low_s32(r));
-            high_sum = vmlal_high_s32(high_sum, l, r);
-        }
-
+    let finish = |i: usize, low_sum: int64x2_t, high_sum: int64x2_t| {
         let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
         let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
         let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
@@ -720,6 +721,36 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
             acc.add(i),
             reduce_range_4x_i32(vaddq_s32(accumulator, batch), m.p, m.two_p),
         );
+    };
+    while i + 8 <= d {
+        let mut low0 = vdupq_n_s64(0);
+        let mut high0 = vdupq_n_s64(0);
+        let mut low1 = vdupq_n_s64(0);
+        let mut high1 = vdupq_n_s64(0);
+        for product in 0..COUNT {
+            let l0 = vld1q_s32(lhs[product].add(i));
+            let r0 = vld1q_s32(rhs[product].add(i));
+            let l1 = vld1q_s32(lhs[product].add(i + 4));
+            let r1 = vld1q_s32(rhs[product].add(i + 4));
+            low0 = vmlal_s32(low0, vget_low_s32(l0), vget_low_s32(r0));
+            high0 = vmlal_high_s32(high0, l0, r0);
+            low1 = vmlal_s32(low1, vget_low_s32(l1), vget_low_s32(r1));
+            high1 = vmlal_high_s32(high1, l1, r1);
+        }
+        finish(i, low0, high0);
+        finish(i + 4, low1, high1);
+        i += 8;
+    }
+    while i + 4 <= d {
+        let mut low_sum = vdupq_n_s64(0);
+        let mut high_sum = vdupq_n_s64(0);
+        for product in 0..COUNT {
+            let l = vld1q_s32(lhs[product].add(i));
+            let r = vld1q_s32(rhs[product].add(i));
+            low_sum = vmlal_s32(low_sum, vget_low_s32(l), vget_low_s32(r));
+            high_sum = vmlal_high_s32(high_sum, l, r);
+        }
+        finish(i, low_sum, high_sum);
         i += 4;
     }
 
