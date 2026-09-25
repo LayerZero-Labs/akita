@@ -76,6 +76,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
             let ring_end = ((end - 1) / num_digits) + 1;
             let digit_offset = start - ring_start * num_digits;
             let tile_len = end - start;
+            let mut ntt_d = CyclotomicCrtNtt::<W, K, D>::zero();
 
             for block_idx in 0..num_live_blocks {
                 let block = blocks[block_idx];
@@ -95,7 +96,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
                     if CHECK_ZERO && is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    ntt_d.assign_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                     }

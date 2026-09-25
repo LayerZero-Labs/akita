@@ -333,13 +333,13 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
             .unwrap_or(0) as i32;
         let lut = CenteredMontLut::new(tail_params, rhs_abs_bound);
         let mut tail_accumulators = vec![CyclotomicCrtNtt::zero(); num_rows];
+        let mut transformed = CyclotomicCrtNtt::zero();
         for (column, digits) in rhs.iter().enumerate() {
             if digits.iter().all(|digit| *digit == 0) {
                 continue;
             }
             let centered = digits.map(i32::from);
-            let transformed =
-                CyclotomicCrtNtt::from_centered_i32_with_lut(&centered, tail_params, &lut);
+            transformed.assign_centered_i32_with_lut(&centered, tail_params, &lut);
             for (accumulator, row) in tail_accumulators
                 .iter_mut()
                 .zip(tail_matrix.chunks_exact(num_cols))

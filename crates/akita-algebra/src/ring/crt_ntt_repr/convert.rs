@@ -56,24 +56,32 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
         }
     }
 
-    pub(super) fn transform(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+    /// Overwrite `out` with the CRT+NTT image of `coefficients`.
+    ///
+    /// Writing into a caller-owned buffer avoids zero-filling and moving a
+    /// `K * D` residue array for every transformed column.
+    pub(super) fn transform_into(
+        &self,
+        coefficients: &[i16; D],
+        out: &mut CyclotomicCrtNtt<W, K, D>,
+    ) {
         match &self.strategy {
             CenteredI16NttStrategy::Lut(lut) => {
                 let centered = coefficients.map(i32::from);
-                CyclotomicCrtNtt::from_centered_i32_with_lut(&centered, self.params, lut)
+                out.assign_centered_i32_with_lut(&centered, self.params, lut);
             }
             #[cfg(target_arch = "aarch64")]
-            CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients),
+            CenteredI16NttStrategy::NeonI16 => self.transform_neon_i16(coefficients, out),
             #[cfg(target_arch = "aarch64")]
-            CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients),
+            CenteredI16NttStrategy::NeonI32 => self.transform_neon_i32(coefficients, out),
         }
     }
 
     #[cfg(target_arch = "aarch64")]
-    fn transform_neon_i16(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+    fn transform_neon_i16(&self, coefficients: &[i16; D], out: &mut CyclotomicCrtNtt<W, K, D>) {
         debug_assert_eq!(size_of::<W>(), size_of::<i16>());
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), twiddles) in limbs
+        for ((limb, prime), twiddles) in out
+            .limbs
             .iter_mut()
             .zip(self.params.primes.iter())
             .zip(self.params.twiddles.iter())
@@ -92,14 +100,13 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             }
             forward_ntt(limb, *prime, twiddles, self.params.kernel_plan);
         }
-        CyclotomicCrtNtt { limbs }
     }
 
     #[cfg(target_arch = "aarch64")]
-    fn transform_neon_i32(&self, coefficients: &[i16; D]) -> CyclotomicCrtNtt<W, K, D> {
+    fn transform_neon_i32(&self, coefficients: &[i16; D], out: &mut CyclotomicCrtNtt<W, K, D>) {
         debug_assert_eq!(size_of::<W>(), size_of::<i32>());
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for ((limb, prime), twiddles) in limbs
+        for ((limb, prime), twiddles) in out
+            .limbs
             .iter_mut()
             .zip(self.params.primes.iter())
             .zip(self.params.twiddles.iter())
@@ -118,7 +125,6 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             }
             forward_ntt(limb, *prime, twiddles, self.params.kernel_plan);
         }
-        CyclotomicCrtNtt { limbs }
     }
 }
 
@@ -229,15 +235,16 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self { limbs }
     }
 
-    /// Convert centered i32 coefficients into negacyclic CRT+NTT form using a
-    /// precomputed Montgomery lookup table.
-    pub fn from_centered_i32_with_lut(
+    /// Overwrite `self` with the negacyclic CRT+NTT image of centered i32
+    /// coefficients, using a precomputed Montgomery lookup table.
+    pub fn assign_centered_i32_with_lut(
+        &mut self,
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, ((limb, prime), tw)) in limbs
+    ) {
+        for (k, ((limb, prime), tw)) in self
+            .limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
@@ -251,39 +258,44 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
-        Self { limbs }
     }
 
-    /// Like [`Self::from_i8_with_params`] but uses a precomputed
-    /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
-    /// (Montgomery multiply) with a table lookup.
+    /// Overwrite `self` with the negacyclic image of small digits, like
+    /// [`Self::from_i8_with_params`] but with a precomputed [`DigitMontLut`]
+    /// in place of per-coefficient `from_canonical` (Montgomery multiply).
+    ///
+    /// Callers reuse one buffer across columns, which avoids zero-filling
+    /// and moving a `K * D` residue array per transformed column.
     #[inline]
-    pub fn from_i8_with_lut(
+    pub fn assign_i8_with_lut(
+        &mut self,
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, limb) in limbs.iter_mut().enumerate() {
+    ) {
+        for (k, limb) in self.limbs.iter_mut().enumerate() {
             lut.fill_negacyclic_limb(k, digits, params, limb);
         }
-        Self { limbs }
     }
 
-    /// Convert small integer digits into cyclic CRT+NTT domain using a
+    /// Overwrite `self` with the cyclic image of small digits using a
     /// precomputed [`DigitMontLut`].
     #[inline]
-    pub fn from_i8_cyclic_with_lut(
+    pub fn assign_i8_cyclic_with_lut(
+        &mut self,
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
-    ) -> Self {
-        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
+    ) {
+        for (k, (limb, tw)) in self
+            .limbs
+            .iter_mut()
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
             lut.fill_limb(k, digits, params, limb);
             forward_ntt_cyclic(limb, params.primes[k], tw, params.kernel_plan);
         }
-        Self { limbs }
     }
 
     /// Convert centered i32 coefficients into both negacyclic and cyclic
