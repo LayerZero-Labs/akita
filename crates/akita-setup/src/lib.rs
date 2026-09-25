@@ -744,6 +744,119 @@ mod tests {
         }
 
         #[test]
+        fn combined_recursive_prefix_registry_persists_and_serves_each_family() {
+            type OneHotRec = akita_config::RecursiveCommitmentConfig<fp128::OneHot>;
+            type MultiChunkRec = akita_config::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+            // The four-polynomial grouped roots are the rows at which both
+            // recursive families carry a setup-prefix slot.
+            const MAX_VARS: usize = 32;
+            const MAX_POLYS: usize = 4;
+
+            with_test_cache_dir("combined-recursive-prefixes", || {
+                // Debug ring-dispatch arithmetic in the prefix commitments needs
+                // the same enlarged stack as the backend's commitment fixtures.
+                std::thread::Builder::new()
+                    .stack_size(64 * 1024 * 1024)
+                    .spawn(|| {
+                        let onehot = SetupRequirements::from_catalog::<OneHotRec>(
+                            &akita_config::test_support::workspace_schedule_catalog::<OneHotRec>()
+                                .expect("recursive one-hot catalog"),
+                            MAX_VARS,
+                            MAX_POLYS,
+                        )
+                        .expect("recursive one-hot requirements");
+                        let multichunk =
+                            SetupRequirements::from_catalog::<MultiChunkRec>(
+                                &akita_config::test_support::workspace_schedule_catalog::<
+                                    MultiChunkRec,
+                                >()
+                                .expect("recursive multi-chunk catalog"),
+                                MAX_VARS,
+                                MAX_POLYS,
+                            )
+                            .expect("recursive multi-chunk requirements");
+                        assert!(!onehot.prefix_slot_ids().is_empty());
+                        assert!(!multichunk.prefix_slot_ids().is_empty());
+                        assert_ne!(onehot.prefix_slot_ids(), multichunk.prefix_slot_ids());
+
+                        // The cache identity is the slot set: independent of union
+                        // order and of repeated slots, and distinct per set.
+                        let combined = onehot.clone().union(multichunk.clone()).unwrap();
+                        let reversed = multichunk.clone().union(onehot.clone()).unwrap();
+                        let overlapping = combined.clone().union(onehot.clone()).unwrap();
+                        assert_eq!(combined, reversed);
+                        assert_eq!(combined, overlapping);
+                        let key = |requirements: &SetupRequirements<TestF>| {
+                            prefix_registry_cache_file_name::<TestF>(requirements).unwrap()
+                        };
+                        assert_eq!(key(&combined), key(&reversed));
+                        assert_eq!(key(&combined), key(&overlapping));
+                        assert_ne!(key(&combined), key(&onehot));
+                        assert_ne!(key(&onehot), key(&multichunk));
+
+                        let registry_path = get_prefix_registry_storage_path::<TestF>(&combined)
+                            .expect("registry path");
+                        let matrix_path =
+                            get_public_matrix_storage_path::<TestF>(&sample_akita_setup_seed())
+                                .expect("matrix path");
+                        let remove_cached = || {
+                            let _ = fs::remove_file(&registry_path);
+                            let _ = fs::remove_file(&matrix_path);
+                        };
+                        remove_cached();
+
+                        let generated = new_prover_setup::<TestF>(&combined).expect("cold setup");
+                        assert!(registry_path.exists() && matrix_path.exists());
+                        let stored: std::collections::BTreeSet<_> = generated
+                            .prefix_slots
+                            .iter()
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        assert!(stored.iter().eq(combined.prefix_slot_ids()));
+
+                        let loaded = new_prover_setup::<TestF>(&combined).expect("warm setup");
+                        assert_eq!(loaded.expanded, generated.expanded);
+                        assert_eq!(loaded.prefix_slots, generated.prefix_slots);
+
+                        // One backend imports each family's own slots from the shared
+                        // registry, recomputing every artifact it did not produce.
+                        let backend = akita_cpu_backend::CpuBackend::<TestF, TestF>::new(
+                            loaded.expanded.clone(),
+                        )
+                        .unwrap();
+                        for family in [&onehot, &multichunk] {
+                            let imported = backend
+                                .import_setup_prefixes(
+                                    &loaded.prefix_slots,
+                                    family.prefix_slot_ids(),
+                                )
+                                .expect("family prefixes import from the combined registry");
+                            for id in family.prefix_slot_ids() {
+                                assert!(imported.get(id).is_some());
+                            }
+                        }
+
+                        // A cached registry missing a required slot is rebuilt on load.
+                        let partial = AkitaProverSetup {
+                            expanded: loaded.expanded.clone(),
+                            prefix_slots: backend
+                                .export_setup_prefixes(onehot.prefix_slot_ids())
+                                .unwrap(),
+                        };
+                        save_prover_setup::<TestF>(&partial, &combined).unwrap();
+                        let repaired =
+                            new_prover_setup::<TestF>(&combined).expect("repaired setup");
+                        assert_eq!(repaired.prefix_slots, generated.prefix_slots);
+
+                        remove_cached();
+                    })
+                    .unwrap()
+                    .join()
+                    .unwrap();
+            });
+        }
+
+        #[test]
         fn setup_uses_cache_on_second_call() {
             with_test_cache_dir("second-call", || {
                 const MAX_VARS: usize = 14;
