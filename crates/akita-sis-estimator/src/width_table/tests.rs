@@ -261,3 +261,60 @@ fn q128_d512_rows_are_estimated_directly() {
     assert!(rows.iter().all(|row| row.d == 512));
     assert!(rows.iter().all(|row| row.max_width == 100_000));
 }
+
+#[test]
+fn explicit_canonical_origins_preserve_native_work_items() {
+    let native = InfinityWidthTableConfig::default();
+    let expected = infinity_width_work_items(&native).unwrap();
+    let mut explicit = native.clone();
+    explicit.explicit_origins = Some(
+        canonical_scalar_origins()
+            .into_iter()
+            .map(
+                |(modulus_profile, d, coeff_linf_bound)| InfinityWidthOrigin {
+                    modulus_profile,
+                    d,
+                    coeff_linf_bound,
+                },
+            )
+            .collect(),
+    );
+    assert_eq!(infinity_width_work_items(&explicit).unwrap(), expected);
+    assert!(is_production_infinity_width_table_config(&native));
+    assert!(!is_production_infinity_width_table_config(&explicit));
+}
+
+#[test]
+fn explicit_origins_are_opt_in_and_reject_empty_coverage() {
+    let origin = InfinityWidthOrigin {
+        modulus_profile: AkitaModulusProfileId::Q32Offset99,
+        d: 64,
+        coeff_linf_bound: 123,
+    };
+    assert!(!canonical_scalar_origins().contains(&(
+        origin.modulus_profile,
+        origin.d,
+        origin.coeff_linf_bound
+    )));
+    let mut config = InfinityWidthTableConfig {
+        profiles: vec![origin.modulus_profile],
+        ring_dims: vec![origin.d],
+        coeff_linf_bounds: vec![origin.coeff_linf_bound],
+        max_rank: 1,
+        ..InfinityWidthTableConfig::default()
+    };
+    assert!(infinity_width_work_items(&config).is_err());
+    config.explicit_origins = Some(vec![origin]);
+    let items = infinity_width_work_items(&config).unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(origin_is_requested(&config, items[0]));
+    assert!(!origin_is_requested(
+        &config,
+        InfinityWidthWorkItem {
+            coeff_linf_bound: 124,
+            ..items[0]
+        }
+    ));
+    config.explicit_origins = Some(Vec::new());
+    assert!(infinity_width_work_items(&config).is_err());
+}
