@@ -1236,10 +1236,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         log = "\n".join(
             [
                 "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=107 "
-                "accounted_bytes=107 akita_fold_bytes=100 nonce_stream_bytes=7 tail_bytes=0",
+                "accounted_bytes=107 akita_fold_bytes=100 packed_nonce_estimate_bytes=7 tail_bytes=0",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
-                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=5 "
-                "expanded_query_count=12",
+                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 "
+                "native_nonce_max_bytes=8 run_count=5 expanded_query_count=12",
                 "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
                 "component=fold_response query=response_search protocol=none stage=None "
                 "round=None group=None kind=fold_response loss_factor=0 grind_bits=0 "
@@ -1289,9 +1289,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
 
         self.assertIn("Transcript grinding bits", report)
-        self.assertIn("Proof-global packed nonce stream", report)
+        self.assertIn("Additive per-message LEB128 maxima", report)
         self.assertIn("54<br><sub>Merge base</sub><br>12", report)
-        self.assertIn("2<br><sub>Merge base</sub><br>20", report)
         self.assertIn(
             "Stage 1 | sumcheck stage 0, rounds 2 to 4 | 4 | 3 | 14 | 3 | 42",
             report,
@@ -1302,9 +1301,117 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("because they require no nonce bits", report)
         self.assertIn("**L0 subtotal**", report)
         self.assertIn("rounds are shown as ranges", report)
-        self.assertIn("rounds the stream to bytes once", report)
+        self.assertIn("encodes each present nonce independently", report)
         self.assertIn("stored in a 32 bit field", report)
         self.assertIn("12 bit fold response", report)
+
+        legacy_baseline_plan = dict(plan)
+        legacy_baseline_plan.pop("native_nonce_max_bytes")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                [],
+                summary["proof_levels"],
+                None,
+                None,
+                baseline_proof,
+                None,
+                plan,
+                legacy_baseline_plan,
+            )
+        self.assertIn("Additive per-message LEB128 maxima", output.getvalue())
+
+    def test_merge_base_nonce_stream_name_maps_to_packed_estimate(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = "\n".join(
+            [
+                "INFO proof summary label=onehot_fp128 levels=0 proof_size_bytes=7 "
+                "accounted_bytes=7 akita_fold_bytes=0 nonce_stream_bytes=7 tail_bytes=0",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=1 "
+                "expanded_query_count=1",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=stage2 query=claim_batch protocol=none stage=None round=None "
+                "group=None kind=proof_of_work loss_factor=1 grind_bits=47 nonce_bits=54 "
+                "multiplicity=1 run_nonce_bits=54",
+            ]
+        )
+
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        self.assertEqual(summary["packed_nonce_estimate_bytes"], 7)
+        self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
+
+    def test_native_proof_summary_preserves_packed_and_wire_nonce_metrics(self) -> None:
+        from scripts.profile_bench_report import (
+            extract_summary,
+            l2_grind_observations_for_run,
+            missing_required_run_metrics,
+            validate_case_consistency,
+        )
+
+        log = "\n".join(
+            [
+                "INFO native proof nonce bytes role=prover native_nonce_bytes_actual=6",
+                "INFO native fold response nonce role=prover level=0 accepted_nonce=0 "
+                "rejected_attempts=0 attempts=1 encoded_bytes=1",
+                "INFO native fold response nonce role=prover level=1 accepted_nonce=2 "
+                "rejected_attempts=2 attempts=3 encoded_bytes=1",
+                "INFO native proof summary label=onehot_fp128 levels=2 "
+                "proof_size_bytes=101 native_nonce_max_bytes=9",
+                "INFO native terminal response plan label=onehot_fp128 "
+                "planned_terminal_response_bytes=40",
+                "INFO native terminal response bytes native_terminal_z_bytes=3 "
+                "native_terminal_e_field_elements=1 native_terminal_t_field_elements=1",
+                "INFO native proof byte accounting label=onehot_fp128 accounted_bytes=101 "
+                "native_nonce_bytes_observed=6 native_non_nonce_bytes_observed=95",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=54 packed_nonce_estimate_bytes=7 padding_bits=2 "
+                "native_nonce_max_bytes=9 run_count=1 expanded_query_count=1",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=stage2 query=claim_batch protocol=none stage=None "
+                "round=None group=None kind=proof_of_work loss_factor=1 grind_bits=47 "
+                "nonce_bits=54 multiplicity=1 run_nonce_bits=54",
+            ]
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+
+        self.assertEqual(summary["proof_size_bytes"], 101)
+        self.assertEqual(summary["accounted_bytes"], 101)
+        self.assertEqual(summary["proof_encoding"], "spongefish_native")
+        self.assertEqual(summary["native_nonce_bytes_actual"], 6)
+        self.assertEqual(summary["native_non_nonce_bytes"], 95)
+        self.assertEqual(summary["native_non_nonce_bytes_observed"], 95)
+        self.assertEqual(summary["native_nonce_max_bytes"], 9)
+        self.assertEqual(summary["native_terminal_response_bytes"], 39)
+        self.assertEqual(summary["native_terminal_response_max_bytes"], 40)
+        self.assertEqual(
+            summary["native_fold_response_retries"],
+            [
+                {"level": 0, "retries": [0]},
+                {"level": 1, "retries": [2]},
+            ],
+        )
+        self.assertEqual(summary["nonce_stream_bits"], 54)
+        self.assertEqual(summary["grinding_plan"]["packed_nonce_estimate_bytes"], 7)
+        self.assertEqual(summary["grinding_plan"]["native_nonce_max_bytes"], 9)
+        self.assertNotIn("proof_levels", missing_required_run_metrics(summary))
+        without_diagnostics = dict(summary)
+        without_diagnostics.pop("accounted_bytes")
+        without_diagnostics.pop("native_nonce_bytes_observed")
+        without_diagnostics.pop("native_non_nonce_bytes_observed")
+        missing = missing_required_run_metrics(without_diagnostics)
+        self.assertNotIn("accounted_bytes", missing)
+        self.assertNotIn("native_nonce_bytes_observed", missing)
+        self.assertNotIn("native_non_nonce_bytes_observed", missing)
+        summary["planned_levels"] = [{"level": 0, "security_route": "L2"}]
+        summary["exit_code"] = 0
+        self.assertEqual(l2_grind_observations_for_run(summary), [])
+        impossible = dict(summary)
+        impossible["proof_size_bytes"] = 5
+        impossible["accounted_bytes"] = 5
+        with self.assertRaisesRegex(ValueError, "nonce bytes exceed the complete proof"):
+            validate_case_consistency(impossible)
 
     def test_grinding_round_groups_split_when_security_terms_change(self) -> None:
         from scripts.profile_bench_fold_details import aggregate_grinding_runs
@@ -1538,6 +1645,60 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertNotIn("Setup Mode", report)
         table_lines = [line for line in report.splitlines() if line.startswith("|")]
         self.assertLessEqual(max(line.count("|") for line in table_lines), 8)
+
+    def test_native_matrix_omits_legacy_columns_and_labels_legacy_baseline(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
+
+        current = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "setup_s": 1.0,
+                "commit_s": 2.0,
+                "prove_total_s": 3.0,
+                "verify_total_s": 0.004,
+                "verify_single_total_s": 0.005,
+                "setup_vector_bytes": 1024,
+                "setup_ntt_cache_bytes": 2048,
+                "verifier_ntt_cache_bytes": 512,
+                "max_rss_kib": 4096,
+                "proof_encoding": "spongefish_native",
+                "proof_size_bytes": 100,
+                "native_non_nonce_bytes": 94,
+                "native_nonce_bytes_actual": 6,
+                "native_nonce_max_bytes": 9,
+                "native_terminal_response_bytes": 39,
+                "native_terminal_response_max_bytes": 40,
+                "akita_levels": 2,
+                "planned_levels": [
+                    {"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}
+                ],
+                "grind_retry_observations": [
+                    {"level": 0, "retries": [0, 2, 1]}
+                ],
+            }
+        )
+        baseline = dict(current)
+        baseline.pop("proof_encoding")
+        baseline.pop("native_non_nonce_bytes")
+        baseline.pop("native_nonce_bytes_actual")
+        baseline.pop("native_nonce_max_bytes")
+        baseline.pop("native_terminal_response_bytes")
+        baseline.pop("native_terminal_response_max_bytes")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_matrix_summary([current], {str(current["case_id"]): baseline})
+        report = output.getvalue()
+
+        self.assertNotIn("Fold payload", report)
+        self.assertIn("| Terminal response |", report)
+        self.assertIn("Terminal response planned maximum", report)
+        self.assertIn("legacy proof format; no native delta", report)
+        self.assertNotIn("n/a", report)
+
     def test_fold_dimension_schedule_collapses_uniform_suffix(self) -> None:
         from scripts.profile_bench_report import fold_dimension_schedule
 

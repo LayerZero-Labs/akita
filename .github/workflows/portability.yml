@@ -28,7 +28,7 @@ jobs:
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features --features transcript-blake2b
       - name: Test binary arithmetic and exact-cache boundary
         run: |
-          cargo test --release -p akita-algebra --lib binary
+          cargo test --release -p akita-algebra --lib --features labinius-binary binary
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
 
@@ -47,7 +47,7 @@ jobs:
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: |
-          cargo test --release -p akita-algebra --lib binary
+          cargo test --release -p akita-algebra --lib --features labinius-binary binary
           cargo test --release -p akita-algebra --lib ntt
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
@@ -69,10 +69,11 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
         run: |
-          cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib binary
-          cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
-          cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored
-          cargo test --release --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib --features labinius-binary binary
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ntt::avx -- --include-ignored
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
 
   wasm-serialization:
     name: Wasm serialization check

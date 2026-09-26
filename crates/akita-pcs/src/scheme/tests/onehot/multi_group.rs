@@ -32,7 +32,7 @@ fn multi_group_root_round_trip_onehot<ProtocolCfg>(
     multi_group_key: &akita_types::AkitaScheduleLookupKey,
     check_group_binding: bool,
     max_cached_ring_switch_elements: usize,
-) -> AkitaBatchedProof<OneHotF, OneHotF>
+) -> Vec<u8>
 where
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
@@ -66,9 +66,8 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let stack = CpuBackend::<ProtocolCfg>::with_ring_switch_cache_limit(
+    let stack = CpuBackend::with_ring_switch_cache_limit(
         setup.expanded.clone(),
-        scheme.schedules(),
         max_cached_ring_switch_elements,
     )
     .expect("cached backend");
@@ -94,6 +93,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -167,6 +167,7 @@ where
         private_handle: final_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
@@ -237,42 +238,16 @@ where
     .expect("multi-group prover data");
     let selection = prover_claims.selection();
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     let proof = scheme
         .batched_prove(
             &setup,
             prover_claims,
             &stack,
-            &mut prover_transcript,
+            b"test/multi-group-unequal",
             BasisMode::Lagrange,
         )
         .expect("multi-group prove");
-    assert!(proof.num_fold_levels() >= 2);
-    let planned_stage3 = multi_group_schedule
-        .recursive_folds
-        .iter()
-        .filter(|fold| fold.params.setup_prefix().is_some())
-        .count();
-    let proved_stage3 = proof
-        .nonterminal_folds()
-        .filter(|fold| fold.stage3_sumcheck_proof().is_some())
-        .count();
-    assert_eq!(
-        proved_stage3, planned_stage3,
-        "proof stage-3 payloads must follow the config-selected schedule"
-    );
-
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize multi-group proof");
-    let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize multi-group proof");
-    assert_eq!(decoded, proof);
+    assert!(multi_group_schedule.num_fold_levels() >= 2);
 
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
@@ -296,12 +271,11 @@ where
     );
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     scheme
         .batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"test/multi-group-unequal",
             GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
             BasisMode::Lagrange,
         )
@@ -324,13 +298,12 @@ where
             .expect("swapped final verifier group"),
         ])
         .expect("swapped verifier claims");
-        let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
                 .batched_verify(
-                    &decoded,
+                    &proof,
                     &verifier_setup,
-                    &mut swapped_transcript,
+                    b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
                     BasisMode::Lagrange,
@@ -348,13 +321,12 @@ where
                 .expect("tampered final verifier group"),
         ])
         .expect("tampered verifier claims");
-        let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
                 .batched_verify(
-                    &decoded,
+                    &proof,
                     &verifier_setup,
-                    &mut tampered_transcript,
+                    b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
                     BasisMode::Lagrange,

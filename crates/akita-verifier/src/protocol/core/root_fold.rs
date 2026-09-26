@@ -1,44 +1,21 @@
 use super::*;
 use akita_types::Commitment;
 
-/// Verify the folded root proof payload.
-///
-/// This replays the canonical root transcript layout: batch-shape header,
-/// commitments, padded opening points, per-claim field openings, row
-/// EOR if present, the complete opening payload, native public row coefficients,
-/// y-rings, ring switch, stage-1 when present, stage-2, and stage-3 setup
-/// sumcheck when required by the intermediate branch. Extension-field EOR
-/// retains its earlier internally coupled row coefficients.
-///
-/// # Errors
-///
-/// Returns an error if the proof shape is inconsistent, any public trace check
-/// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(super) fn verify_root<F, E, T>(
-    proof: &FoldLevelProof<F, E>,
+pub(super) fn verify_root_native<F, E>(
     setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&FoldParams>,
-    next_witness_ring_dim: usize,
-    next_t_state: Option<&[u8]>,
-) -> Result<FoldVerifyOutput<E>, AkitaError>
+    terminal: &TerminalFoldParams,
+) -> Result<NativeFoldVerifyOutput<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    if proof.extension_opening_reduction().is_some()
-        || root_lp.source_encoding
-            != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
-    {
-        return Err(AkitaError::InvalidProof);
-    }
     root_lp.validate_opening_batch(opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
         if !matches!(
@@ -50,40 +27,6 @@ where
             return Err(AkitaError::InvalidProof);
         }
     }
-    let setup_contribution_mode = next_fold_params
-        .map_or(SetupContributionMode::Direct, |params| {
-            params.predecessor_setup_contribution_mode()
-        });
-    let next_fold_level_params = next_fold_params.map(|params| &params.params);
-    let stage3_sumcheck_proof = proof
-        .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
-        .map(|(proof, _)| proof);
-    let next_witness = match (proof.next_w_payload(), next_t_state) {
-        (Some(commitment), None) => {
-            let next_params = next_fold_level_params.ok_or(AkitaError::InvalidProof)?;
-            let ring_dim = next_params
-                .outer_payload_geometry()?
-                .transcript_ring_dimension();
-            PreparedNextWitness::Commitment {
-                commitment,
-                ring_dim,
-            }
-        }
-        (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
-        _ => return Err(AkitaError::InvalidProof),
-    };
-    let openings = claims.flat_evaluations();
-    let num_claims = opening_batch.num_total_polynomials();
-    if openings.len() != num_claims {
-        return Err(AkitaError::InvalidProof);
-    }
-    // Transcript binding, D-free and byte-identical to the prover's absorb
-    // (`ProverOpeningData::append_to_transcript`): batch shape header, then each
-    // group commitment's flat coefficients under `ring_dim` in `OpeningClaims`
-    // order, then each group's complete opening point. Each group's committed row count is
-    // validated against its (final vs frozen-precommit) params before the
-    // absorb, so a swapped/truncated group commitment rejects here.
-    opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     let relation_geometry = RelationWitnessGeometry::for_level(root_lp, opening_batch, E::DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     for group_index in 0..opening_batch.num_groups() {
@@ -97,121 +40,140 @@ where
             .last()
             .ok_or(AkitaError::InvalidProof)?
             .ring_dimension();
-        commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)?;
+        akita_transcript::public_native_fields_verifier(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
+                stage: 1,
+                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
+                detail: u32::try_from(ring_dim).map_err(|_| AkitaError::InvalidProof)?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            commitment.rows().coeffs(),
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
     }
-    for group in claims.groups() {
-        for coord in group.point() {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-        }
+    for (group_index, group) in claims.groups().iter().enumerate() {
+        akita_transcript::public_native_extensions_verifier::<F, E>(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_ROOT_STATEMENT,
+                stage: 2,
+                group: u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            group.point(),
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
     }
-    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-
-    // D-free root replay: typed kernels dispatch inside `verify_fold` and the
-    // geometry prefix modules on per-role dimensions. A scalar root is the
-    // one-group case of the same grouped layout; grouped roots (`G > 1`) never
-    // collapse into a synthetic single group.
-    verify_root_inner::<F, E, T>(
-        proof,
-        setup,
-        transcript,
+    let openings = claims.flat_evaluations();
+    let material = verify_coefficient_packing_root_prefix::<F, E>(
         claims,
         &openings,
         opening_batch,
-        stage3_sumcheck_proof,
-        next_fold_level_params,
-        next_witness_ring_dim,
         basis,
         root_lp,
-        next_witness,
+    )?;
+    akita_transcript::public_native_extensions_verifier::<F, E>(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+            stage: 2,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        &openings,
     )
-}
-
-/// Root-fold replay orchestrator (D-free).
-///
-/// Reached from [`verify_root`]; per-role typed kernels dispatch inside
-/// [`verify_fold`] and the geometry prefix modules. Geometry forks only the
-/// prefix (single-field vs extension-claim), both producing a
-/// [`FoldPrefix`]; [`PreparedFoldReplay`] assembly is shared.
-///
-/// This builds one prepared opening point per group (mirroring the prover's
-/// `finish_prepared_fold` loop and its per-group padded-point absorbs),
-/// concatenates the group commitment rows in relation-matrix row (final-first)
-/// order, sizes the next witness from the grouped witness layout, and hands a
-/// per-group `PreparedFoldReplay` to [`verify_fold`]. Extension-field groups
-/// share one EOR sumcheck while retaining group-local opening geometry.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] for a non-fold root or malformed group
-/// shape, and propagates layout/replay errors.
-#[allow(clippy::too_many_arguments)]
-fn verify_root_inner<F, E, T>(
-    proof: &FoldLevelProof<F, E>,
-    setup: &AkitaVerifierSetup<F>,
-    transcript: &mut T,
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
-    openings: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
-    next_fold_level_params: Option<&CommittedGroupParams>,
-    next_witness_ring_dim: usize,
-    basis: BasisMode,
-    root_lp: &CommittedGroupParams,
-    next_witness: PreparedNextWitness<'_, F>,
-) -> Result<FoldVerifyOutput<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
-        claims,
-        openings,
-        opening_batch,
-        basis,
-        root_lp,
-    )?;
-    // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
-    // the prover's `RingRelationProver` commitment-row concatenation and
-    // `RelationWitnessGeometry` block order.
+    .map_err(|_| AkitaError::InvalidProof)?;
+    let payload_geometry = relation_layout.opening_payload_geometry()?;
+    let opening_payload = akita_transcript::receive_native_field_group::<F>(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+            detail: u32::try_from(payload_geometry.transcript_ring_dimension())
+                .map_err(|_| AkitaError::InvalidProof)?,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        payload_geometry.transmitted_coefficients(),
+    )
+    .map(RingVec::from_coeffs)
+    .map_err(|_| AkitaError::InvalidProof)?;
+    let prefix = finalize_native_claims::<F, E>(opening_batch, material, grinding, 0)?;
     let order = opening_batch.root_group_order()?;
-    let mut commitment_payloads = Vec::with_capacity(order.len());
-    for &group_index in &order {
-        let commitment = claims.group_commitment(group_index)?;
-        commitment_payloads.push(commitment.rows().clone());
-    }
-
+    let commitment_payloads = order
+        .into_iter()
+        .map(|group_index| Ok(claims.group_commitment(group_index)?.rows().clone()))
+        .collect::<Result<Vec<_>, AkitaError>>()?;
     let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::DEGREE)?;
-    let opening_payload = proof.opening_payload.clone();
-    let prefix = bind_opening_payload_and_finalize_claims(
+    let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
+        if let Some(next) = next_fold_params {
+            let ring_dim = next.params.d_a();
+            let coefficient_count = next
+                .params
+                .outer_payload_geometry()?
+                .transmitted_coefficients();
+            let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
+            (
+                NativeNextWitnessPlan::OuterPayload { coefficient_count },
+                ring_dim,
+                committed_len / ring_dim,
+                matches!(
+                    next.predecessor_setup_contribution_mode(),
+                    SetupContributionMode::Recursive
+                )
+                .then_some(&next.params),
+            )
+        } else {
+            let ring_dim = terminal.d_a();
+            let coefficient_count = terminal
+                .response_shape
+                .layout
+                .groups
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .t_field_elems;
+            let committed_len = akita_types::witness_commitment_domain_len(witness_len, ring_dim)?;
+            (
+                NativeNextWitnessPlan::TerminalT { coefficient_count },
+                ring_dim,
+                committed_len / ring_dim,
+                None,
+            )
+        };
+    let challenge_field_bits = F::MODULUS_BITS
+        .checked_mul(
+            u32::try_from(E::DEGREE)
+                .map_err(|_| AkitaError::InvalidSetup("extension degree overflow".into()))?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge field width overflow".into()))?;
+    let level_layout = akita_types::native_nonterminal_level_layout(
+        F::MODULUS_BITS,
+        challenge_field_bits,
         root_lp,
-        opening_batch,
-        &opening_payload,
-        claim_material,
-        transcript,
-        0,
+        root_lp.relation_address_geometry(
+            opening_batch,
+            E::DEGREE,
+            next_witness_ring_dim,
+            witness_len,
+        )?,
+        next_fold_params.map(|next| &next.params),
     )?;
-    let committed_witness_len =
-        akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
-    let prepared = PreparedFoldReplay {
-        lp: root_lp,
-        level: 0,
-        opening_payload,
-        opening_shape: opening_batch.clone(),
-        commitment_payloads,
-        prefix,
-        w_len: witness_len,
-        payload: PreparedFoldPayload::Recursive {
-            stage1: &proof.stage1,
-            stage2: &proof.stage2,
+    verify_fold_native(
+        setup,
+        grinding,
+        NativePreparedFoldReplay {
+            lp: root_lp,
+            level: 0,
+            opening_payload,
+            opening_shape: opening_batch.clone(),
+            commitment_payloads,
+            prefix,
+            w_len: witness_len,
+            level_layout,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: committed_witness_len / next_witness_ring_dim,
-            stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
+            next_opening_source_len,
+            stage3,
+            evaluation_trace_basis: basis,
         },
-        evaluation_trace_basis: basis,
-    };
-    verify_fold::<F, E, T>(setup, transcript, prepared).map_err(|error| {
-        AkitaError::InvalidInput(format!("compressed root fold failed: {error:?}"))
-    })
+    )
 }

@@ -79,6 +79,10 @@
 //! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound`. The
 //!   producer-side guard enforces the *declared* interval, which is
 //!   strictly tighter than what the digits can represent.
+//! - `final_group_admitted_under_another_producer_contract_is_refused`. Dense
+//!   and bounded producers publish the same commitment under one descriptor, so
+//!   only the contract recorded on the handle separates them, and the dense
+//!   catalog refuses a final group the bounded family admitted.
 
 #![allow(missing_docs)]
 
@@ -89,11 +93,8 @@ mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims,
+    BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use common::*;
 use matrix_drivers::*;
@@ -339,8 +340,7 @@ fn fp128_onehot_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -348,38 +348,28 @@ fn fp128_onehot_batched() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
+        let session = b"completeness/fp128_onehot_batched";
         let proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<OneHotCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<OneHotCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -413,8 +403,7 @@ fn fp128_dense_batched() {
             .collect();
 
         let setup = scheme.setup_prover(nv, batch_size).unwrap();
-        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -422,38 +411,28 @@ fn fp128_dense_batched() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
+        let session = b"completeness/fp128_dense_batched";
         let proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<DenseCfg>(&pt[..], &openings, &commitment, hint, scheme.schedules()),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<DenseCfg>(&pt[..], &openings, &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -508,8 +487,7 @@ fn fp128_onehot_oversized_setup() {
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(setup_nv, 1).unwrap();
-        let stack = CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -517,13 +495,13 @@ fn fp128_onehot_oversized_setup() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
+        let session = b"completeness/fp128_onehot_oversized_setup";
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -535,28 +513,17 @@ fn fp128_onehot_oversized_setup() {
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -585,8 +552,7 @@ fn fp128_dense_monomial_basis() {
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::<DenseCfg>::new(setup.expanded.clone(), scheme.schedules())
-            .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -594,13 +560,13 @@ fn fp128_dense_monomial_basis() {
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("commit");
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
+        let session = b"completeness/fp128_dense_monomial_basis";
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -612,28 +578,17 @@ fn fp128_dense_monomial_basis() {
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                session,
                 BasisMode::Monomial,
             )
             .expect("monomial prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                session,
                 verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Monomial,
             )

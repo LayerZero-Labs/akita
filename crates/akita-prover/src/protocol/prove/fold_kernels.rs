@@ -20,7 +20,7 @@ fn resolve_evaluation_trace_claim<E: Field>(
     row_coefficients: &[E],
 ) -> Result<PreparedEvaluationTraceClaim<E>, AkitaError> {
     if reduction.is_some_and(|reduction| {
-        reduction.proof.final_claims.len() != opening_batch.num_total_polynomials()
+        reduction.final_claims.len() != opening_batch.num_total_polynomials()
             || reduction.final_factors.len() != opening_batch.num_groups()
     }) {
         return Err(AkitaError::InvalidProof);
@@ -39,7 +39,7 @@ fn resolve_evaluation_trace_claim<E: Field>(
         })?;
     let claimed = match reduction {
         Some(reduction) => opening_batch
-            .batched_eval_target(row_coefficients, &reduction.proof.final_claims)
+            .batched_eval_target(row_coefficients, &reduction.final_claims)
             .map_err(|_| AkitaError::InvalidProof)?,
         None => expected,
     };
@@ -73,17 +73,16 @@ where
         .collect()
 }
 
-pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E, T>(
+pub(in crate::protocol) fn prepare_evaluation_trace_claim<F, E>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -91,10 +90,10 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients_native::<F, E>(
         opening_batch,
         akita_types::GrindingSite::EvaluationBatch { level },
-        transcript,
+        grinding,
     )?;
     let resolved = resolve_evaluation_trace_claim(
         reduction.as_ref(),
@@ -117,13 +116,7 @@ mod tests {
         final_factors: Vec<TestF>,
     ) -> ExtensionOpeningReduction<TestF> {
         ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: Vec::new(),
-                sumcheck: SumcheckProof {
-                    round_polys: Vec::new(),
-                },
-                final_claims,
-            },
+            final_claims,
             final_factors,
         }
     }

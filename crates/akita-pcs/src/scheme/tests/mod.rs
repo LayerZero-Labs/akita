@@ -18,15 +18,9 @@ use akita_cpu_backend::CpuBackend;
 use akita_cpu_backend::{DensePoly, OneHotPoly};
 use akita_prover::CommitmentHandleMetadata;
 use akita_prover::SelectedProverOpeningData;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
+use akita_serialization::AkitaSerialize;
+use akita_types::lagrange_weights;
 use akita_types::CommittedGroupParams;
-use akita_types::DigitRangePlan;
-use akita_types::ExtensionOpeningReductionProof;
-use akita_types::{lagrange_weights, RingVec};
-use akita_types::{
-    AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, TerminalLevelProofShape,
-};
 use akita_types::{
     CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
     OpeningClaimsLayout, PolynomialGroupClaims,
@@ -78,7 +72,7 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
 
     let expected_capacity =
         akita_config::SetupRequirements::from_catalog::<Cfg>(scheme.schedules(), 14, 1)
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(
@@ -239,7 +233,7 @@ type VerifyFixture = (
     Scheme,
     AkitaVerifierSetup<F>,
     CommittedGroup<F>,
-    AkitaBatchedProof<F, F>,
+    Vec<u8>,
     Vec<F>,
     F,
     CommittedGroupParams,
@@ -253,14 +247,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -277,7 +271,6 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let commitments = [commitment];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
         .batched_prove(
             &setup,
@@ -289,7 +282,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
                 prover_state,
             ),
             &stack,
-            &mut prover_transcript,
+            b"test/prove",
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -325,124 +318,6 @@ fn debug_make_onehot_poly(
         .collect();
 
     OneHotPoly::<OneHotF, u8>::new(onehot_k, indices).expect("debug onehot poly")
-}
-
-fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
-    let num_ring_elems = output_witness_len.div_ceil(level_d);
-    num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
-}
-
-/// Derive the structural proof shape from the schedule. The terminal carries
-/// only optional EOR and the clear terminal response; nonces are proof-level.
-fn expected_same_point_batched_shape(
-    scheme: &OneHotScheme,
-    max_num_vars: usize,
-    num_claims: usize,
-    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
-) -> AkitaBatchedProofShape {
-    let opening_batch =
-        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let key = akita_types::AkitaScheduleLookupKey::single(
-        opening_batch
-            .root_final_group_layout()
-            .expect("batched root group layout"),
-    );
-    let schedule = scheme
-        .schedules()
-        .resolve_key(&key)
-        .expect("batched root runtime plan")
-        .schedule()
-        .clone();
-    let root_step = &schedule.root;
-    let root_params = &root_step.params;
-    let num_fold_levels = schedule.num_fold_levels();
-    let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
-
-    assert!(
-        num_fold_levels >= 2,
-        "folded-only schedules have a root and terminal fold"
-    );
-
-    let root_successor = schedule.recursive_folds.first();
-    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .opening_payload_geometry()
-            .expect("opening payload geometry")
-            .transmitted_coefficients()
-    };
-    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .outer_payload_geometry()
-            .expect("commitment payload geometry")
-            .transmitted_coefficients()
-    };
-    let root_stage1 = DigitRangePlan::new(1usize << root_params.open().digits.log_basis)
-        .expect("scheduled root range basis")
-        .proof_shapes_for_route(root_rounds, root_params.inner().matrix.security_route())
-        .expect("scheduled root Stage 1 shape");
-    let root_shape = LevelProofShape {
-        extension_opening_reduction: None,
-        opening_payload_coeffs: opening_payload_coeffs(root_params),
-        stage1_stages: root_stage1.0,
-        stage1_norm: root_stage1.1,
-        stage2_sumcheck_proof: vec![3; root_rounds],
-        stage3_sumcheck: None,
-        next_witness_binding: match root_successor {
-            Some(successor) => {
-                let next_level_params = &successor.params;
-                NextWitnessBindingShape::OuterPayload {
-                    coeffs: commitment_payload_coeffs(next_level_params),
-                }
-            }
-            None => NextWitnessBindingShape::TerminalInnerState,
-        },
-    };
-    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
-    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
-    // terminal step. (We've already consumed the root.)
-    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
-    let mut input_witness_len = root_step.output_witness_len;
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        assert_eq!(step.input_witness_len, input_witness_len);
-        let level_params = &step.params;
-        let output_witness_len = step.output_witness_len;
-        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
-        let stage1 = DigitRangePlan::new(1usize << level_params.open().digits.log_basis)
-            .expect("scheduled range basis")
-            .proof_shapes_for_route(rounds, level_params.inner().matrix.security_route())
-            .expect("scheduled Stage 1 shape");
-        recursive_folds.push(LevelProofShape {
-            extension_opening_reduction: None,
-            opening_payload_coeffs: opening_payload_coeffs(level_params),
-            stage1_stages: stage1.0,
-            stage1_norm: stage1.1,
-            stage2_sumcheck_proof: vec![3; rounds],
-            stage3_sumcheck: None,
-            next_witness_binding: match schedule.recursive_folds.get(index + 1) {
-                Some(successor) => {
-                    let next_level_params = &successor.params;
-                    NextWitnessBindingShape::OuterPayload {
-                        coeffs: commitment_payload_coeffs(next_level_params),
-                    }
-                }
-                None => NextWitnessBindingShape::TerminalInnerState,
-            },
-        });
-        input_witness_len = output_witness_len;
-    }
-    // Terminal fold step (always present in the multi-fold case); the
-    // structural terminal field encodes its witness shape.
-    assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
-    let terminal = TerminalLevelProofShape {
-        extension_opening_reduction: None,
-        terminal_response: schedule.terminal.response_shape.clone(),
-    };
-    AkitaBatchedProofShape {
-        nonce_stream_bits: proof.nonce_stream.bit_len(),
-        root: root_shape,
-        recursive_folds,
-        terminal,
-    }
 }
 
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {

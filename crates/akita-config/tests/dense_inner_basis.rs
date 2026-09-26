@@ -63,7 +63,7 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
 }
 
 #[test]
-fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
+fn dense_nv26_selected_schedules_keep_inner_basis_independent() {
     let fp32 = snapshot::<fp32::Dense>();
     let fp64 = snapshot::<fp64::Dense>();
     let fp128 = snapshot::<fp128::Dense>();
@@ -94,22 +94,22 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 7,
+            inner_basis: 11,
             opening_basis: 3,
-            positions: 128,
-            blocks: 512,
-            outer_slices: 8,
-            inner_digits: 10,
+            positions: 256,
+            blocks: 256,
+            outer_slices: 4,
+            inner_digits: 6,
             n_a: 1,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_310_720,
+            a_input_raw: 1_572_864,
             a_output_raw: 1_024,
             b_input_raw: 1_441_792,
             b_output_raw: 128,
             d_input_raw: 1_441_792,
             d_output_raw: 128,
-            next_witness: 20_971_072,
+            next_witness: 18_308_480,
         }
     );
 

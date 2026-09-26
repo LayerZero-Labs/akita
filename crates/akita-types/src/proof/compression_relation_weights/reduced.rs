@@ -268,43 +268,6 @@ pub struct ReducedCompressionRelationWeights<E: Field> {
     alpha: E,
 }
 
-/// Evaluate one complete canonical compression map through exact reduced
-/// coefficient functionals.
-///
-/// This is the checked boundary between [`crate::CompressionMapPlan`] geometry
-/// and the public setup prefix. It reads map coefficients from that authority
-/// instead of reconstructing them from witness offsets. The full equality
-/// interval is factored into its low coefficient coordinates and high column
-/// coordinates, so each setup coefficient is consumed once after at most two
-/// shared native terminal kernels are prepared.
-pub fn evaluate_reduced_compression_map<F, E>(
-    setup: &AkitaExpandedSetup<F>,
-    span: &CompressionWitnessSpan,
-    point: &[E],
-    physical_field_len: usize,
-    alpha: E,
-) -> Result<E, AkitaError>
-where
-    F: Field,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    if !physical_field_len.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "compression relation domain must be a power of two".into(),
-        ));
-    }
-    let expected_variables = physical_field_len.trailing_zeros() as usize;
-    if point.len() != expected_variables {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_variables,
-            actual: point.len(),
-        });
-    }
-    let columns = CompressionMapColumns::new(setup, span, physical_field_len)?;
-    EvaluatedReducedCompressionMatrix::prepare(&columns, point, alpha)?
-        .evaluate(columns.physical_start)
-}
-
 impl<E: Field> ReducedCompressionRelationWeights<E> {
     /// Add the complete reduced F/H ring-relation table to one checked padded
     /// Stage-2 destination.
@@ -388,12 +351,6 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
             evaluation += event.row_weight * matrix.evaluate(columns.physical_start)?;
         }
         Ok(evaluation)
-    }
-
-    /// Padded physical field domain covered by this table.
-    #[must_use]
-    pub fn physical_field_len(&self) -> usize {
-        self.linear.physical_field_len()
     }
 }
 
@@ -562,7 +519,6 @@ mod tests {
             physical_field_len,
         )
         .unwrap();
-        assert_eq!(program.physical_field_len(), physical_field_len);
 
         let compression_rows = row_families
             .iter()
@@ -696,12 +652,8 @@ mod tests {
                 evaluation + akita_algebra::offset_eq::eq_eval_at_index(&point, physical) * residue
             })
         });
-        assert_eq!(
-            evaluate_reduced_compression_map(&setup, &span, &point, 2048, alpha).unwrap(),
-            expected
-        );
         let row_weight = F::from_u64(23);
-        let program = ReducedCompressionRelationWeights {
+        let program_for = |span: &CompressionWitnessSpan| ReducedCompressionRelationWeights {
             linear: CompressionRelationWeights {
                 events: Vec::new(),
                 alpha_powers: Vec::new(),
@@ -714,6 +666,11 @@ mod tests {
             }],
             alpha,
         };
+        let program = program_for(&span);
+        assert_eq!(
+            program.evaluate_at_point(&setup, &point).unwrap(),
+            row_weight * expected
+        );
         let mut dense = vec![F::zero(); 2048];
         program.accumulate_dense(&setup, &mut dense).unwrap();
         assert_eq!(
@@ -721,18 +678,15 @@ mod tests {
             row_weight * expected
         );
         let malformed_span = CompressionWitnessSpan::new_for_test(map, 2040..2048);
-        assert!(
-            evaluate_reduced_compression_map(&setup, &malformed_span, &point, 2048, alpha).is_err()
-        );
+        assert!(program_for(&malformed_span)
+            .evaluate_at_point(&setup, &point)
+            .is_err());
         let out_of_domain_span =
             CompressionWitnessSpan::new_for_test(map, 2040..2040 + setup_coefficients);
-        assert!(
-            evaluate_reduced_compression_map(&setup, &out_of_domain_span, &point, 2048, alpha)
-                .is_err()
-        );
+        assert!(program_for(&out_of_domain_span)
+            .evaluate_at_point(&setup, &point)
+            .is_err());
         let oversized_point = vec![F::one(); 4_096];
-        assert!(
-            evaluate_reduced_compression_map(&setup, &span, &oversized_point, 2048, alpha).is_err()
-        );
+        assert!(program.evaluate_at_point(&setup, &oversized_point).is_err());
     }
 }

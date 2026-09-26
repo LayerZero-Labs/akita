@@ -47,7 +47,7 @@ mod test_support;
 
 pub use akita_algebra::fft;
 pub use akita_algebra::fft::SmoothFftField;
-pub use akita_algebra::Module;
+pub use akita_config::SetupRequirements;
 pub use akita_error::AkitaError;
 // Specialized field surfaces mirror jolt-field's curated exports.
 #[doc(hidden)]
@@ -56,9 +56,11 @@ pub use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
     OneHotPoly, SourceHandle,
 };
-pub use akita_prover::{ProverBackend, ProverOpeningData, SelectedProverOpeningData};
+pub use akita_prover::{
+    CommitmentHandleMetadata, ProverBackend, ProverOpeningData, SelectedProverOpeningData,
+};
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-pub use akita_transcript::{AkitaTranscript, Transcript};
+pub use akita_setup::new_prover_setup;
 pub use akita_types::{
     BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };

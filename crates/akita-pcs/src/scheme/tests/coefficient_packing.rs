@@ -78,10 +78,6 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         .params
         .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
-    assert_eq!(
-        prefix.source_encoding(),
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-    );
     assert!(matches!(
         prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
@@ -188,32 +184,23 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()
                 .slot_id()
                 .expect("setup prefix group");
-            assert_eq!(
-                setup_prefix.d_setup(),
-                setup_prefix
-                    .commitment_profile
-                    .inner
-                    .matrix
-                    .ring_dimension(),
-                "the prefix dispatcher must use its frozen A-ring dimension"
-            );
             let prefix_backend =
-                CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+                CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
             let artifacts = prefix_backend
-                .export_setup_prefixes::<PackingField>(std::slice::from_ref(&setup_prefix))
+                .export_setup_prefixes(std::slice::from_ref(&setup_prefix))
                 .unwrap();
             setup
                 .prefix_slots
                 .insert(artifacts.get(&setup_prefix).unwrap().clone())
                 .unwrap();
-            let stack = CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules())
-                .expect("backend");
+            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_cpu_backend::CommitOutput {
                 committed_group,
                 private_handle: hint,
             } = stack
                 .commit(
+                    scheme.schedules(),
                     &stack
                         .import_source(vec![polynomial.clone()])
                         .expect("source"),
@@ -252,24 +239,10 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     BasisMode::Lagrange => b"packing/root/lagrange".as_slice(),
                     BasisMode::Monomial => b"packing/root/monomial".as_slice(),
                 };
-                let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
                 let proof = scheme
-                    .batched_prove(&setup, prover_data, &stack, &mut prover_transcript, basis)
+                    .batched_prove(&setup, prover_data, &stack, label, basis)
                     .unwrap();
-                assert!(
-                    proof.root.stage3_sumcheck_proof().is_some(),
-                    "packing root must offload its setup contribution through Stage 3"
-                );
-
-                let shape = proof.shape();
-                let mut encoded = Vec::new();
-                proof.serialize_uncompressed(&mut encoded).unwrap();
-                let proof =
-                    AkitaBatchedProof::<PackingField, PackingExt>::deserialize_uncompressed(
-                        encoded.as_slice(),
-                        &shape,
-                    )
-                    .unwrap();
+                assert!(!proof.is_empty());
                 let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                     point.clone(),
                     vec![expected],
@@ -278,27 +251,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap()])
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                let mut verifier_transcript = AkitaTranscript::<PackingField>::new(label);
                 scheme
-                    .batched_verify(
-                        &proof,
-                        &verifier_setup,
-                        &mut verifier_transcript,
-                        statement,
-                        basis,
-                    )
+                    .batched_verify(proof.as_slice(), &verifier_setup, label, statement, basis)
                     .unwrap();
 
                 if basis == BasisMode::Lagrange {
                     let mut malformed = proof.clone();
-                    malformed.root.extension_opening_reduction =
-                        Some(ExtensionOpeningReductionProof {
-                            partials: vec![PackingExt::zero()],
-                            sumcheck: akita_sumcheck::SumcheckProof {
-                                round_polys: Vec::new(),
-                            },
-                            final_claims: Vec::new(),
-                        });
+                    malformed.truncate(malformed.len().saturating_sub(1));
                     let verifier_claims =
                         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                             point.clone(),
@@ -308,26 +267,15 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .unwrap()])
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                    #[cfg(feature = "logging-transcript")]
-                    let mut transcript = akita_transcript::LoggingTranscript::wrap(
-                        AkitaTranscript::<PackingField>::new(label),
-                    );
-                    #[cfg(not(feature = "logging-transcript"))]
-                    let mut transcript = AkitaTranscript::<PackingField>::new(label);
                     assert!(scheme
                         .batched_verify(
-                            &malformed,
+                            malformed.as_slice(),
                             &verifier_setup,
-                            &mut transcript,
+                            label,
                             statement,
                             basis,
                         )
                         .is_err());
-                    #[cfg(feature = "logging-transcript")]
-                    assert!(
-                        transcript.events().is_empty(),
-                        "unexpected packing EOR must reject before transcript replay"
-                    );
 
                     macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
                         ($config:ty, $context:literal) => {{

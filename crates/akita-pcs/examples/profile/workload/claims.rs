@@ -14,11 +14,11 @@ pub(super) fn prover_claims<'a, Cfg>(
     point: &'a [Cfg::ExtField],
     evaluations: &[Cfg::ExtField],
     commitment: &'a CommittedGroup<Cfg::Field>,
-    handle: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+    handle: CommitmentHandle<Cfg::Field, Cfg::ExtField>,
 ) -> SelectedProverOpeningData<
     'a,
     Cfg::ExtField,
-    CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+    CommitmentHandle<Cfg::Field, Cfg::ExtField>,
     Cfg::Field,
 >
 where

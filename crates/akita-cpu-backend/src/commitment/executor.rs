@@ -102,8 +102,8 @@ where
     SP: CommitmentStatePolicy<F>,
 {
     /// Build a CPU executor with an explicit standard-representation registry.
-    pub(crate) fn cpu<Cfg: akita_config::CommitmentConfig>(
-        backend: &'a CpuBackend<Cfg>,
+    pub(crate) fn cpu<E>(
+        backend: &'a CpuBackend<F, E>,
         prepared: &'a CpuPreparedSetup<F>,
         expanded: &AkitaExpandedSetup<F>,
         standard_types: Vec<PolynomialType>,
@@ -681,15 +681,13 @@ where
 {
     /// Complete a CPU root through the public outer-image compression route,
     /// retaining the A-stage rows required by later proving stages.
-    pub(crate) fn execute_full_via_outer_image<Cfg>(
+    pub(crate) fn execute_full_via_outer_image<E>(
         &self,
-        backend: &CpuBackend<Cfg>,
+        backend: &CpuBackend<F, E>,
         profile: GroupCommitPhaseParams,
         sources: &[&dyn CommitmentSource<F>],
     ) -> Result<(CommittedGroup<F>, PortableCommitmentHandle<F>), AkitaError>
-    where
-        Cfg: akita_config::CommitmentConfig<Field = F>,
-    {
+where {
         let plan = CommitmentExecutionPlan::for_root(&profile)?;
         self.trace_route(plan.mode());
         let (image, outer_image) = self
@@ -811,7 +809,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let executor = CommitmentExecutor::cpu(
             &backend,
@@ -849,7 +847,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let mut executor = CommitmentExecutor::cpu(
             &backend,
@@ -893,7 +891,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let mut executor = CommitmentExecutor::cpu(
             &backend,
@@ -930,7 +928,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let executor = CommitmentExecutor::cpu(
             &backend,
@@ -1026,7 +1024,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let mut builder =
             CommitmentExecutorBuilder::new(setup.expanded.as_ref(), ResidentStatePolicy);
@@ -1121,7 +1119,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let mut builder =
             CommitmentExecutorBuilder::new(setup.expanded.as_ref(), ResidentStatePolicy);
@@ -1202,7 +1200,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let executor = CommitmentExecutor::cpu(
             &backend,
@@ -1286,7 +1284,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared_a = backend.prepare_setup(&setup_a).unwrap();
 
         assert!(CommitmentExecutor::cpu(
@@ -1329,7 +1327,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let executor = CommitmentExecutor::cpu(
             &backend,
@@ -1384,7 +1382,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let executor = CommitmentExecutor::cpu(
             &backend,

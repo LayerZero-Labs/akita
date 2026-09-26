@@ -1,6 +1,5 @@
 use rand::{rngs::StdRng, SeedableRng};
 
-use akita_algebra::{Module, VectorModule};
 use jolt_field::{
     pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset275,
     Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne, Ring, Zero, PRIME_OFFSET_MAX,
@@ -67,20 +66,6 @@ fn fp_ext2_fp_ext4_inversion_smoke() {
     ]);
     let invy = y.inverse().unwrap();
     assert!((y * invy) == F4::one());
-}
-
-#[test]
-fn vector_module_ops() {
-    type F = Fp32<251>;
-
-    let a = VectorModule::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
-    let b = VectorModule::<F, 3>([F::from_u64(3), F::from_u64(4), F::from_u64(5)]);
-
-    let c = a + b;
-    assert_eq!(c.0[0], F::from_u64(4));
-
-    let d = a.scale(&F::from_u64(7));
-    assert_eq!(d.0[1], F::from_u64(14));
 }
 
 #[test]

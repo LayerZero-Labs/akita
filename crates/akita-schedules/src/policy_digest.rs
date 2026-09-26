@@ -127,16 +127,20 @@ mod tests {
 
     #[test]
     fn current_selection_objectives_do_not_reuse_retired_identity_tags() {
-        assert_eq!(SelectionPolicyId::MinEstimatedProofPayloadV2.tag(), 4);
-        assert_eq!(SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag(), 5);
+        assert_eq!(SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag(), 13);
         assert_eq!(
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag(),
-            6
+            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag(),
+            14
         );
-        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinEstimatedProofPayloadV2.tag()));
-        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag()));
-        assert!(![1, 2, 3, 4, 5].contains(
-            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag()
+        assert_eq!(
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag(),
+            15
+        );
+        assert!(!(1..=12).contains(&SelectionPolicyId::MinEstimatedExactProofAndWorkV5.tag()));
+        assert!(!(1..=12)
+            .contains(&SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5.tag()));
+        assert!(!(1..=12).contains(
+            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6.tag()
         ));
     }
 }

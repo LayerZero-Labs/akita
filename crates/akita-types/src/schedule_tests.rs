@@ -1,9 +1,10 @@
 use super::*;
+use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
-        nonce_stream_bytes: 0,
+        native_nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -23,21 +24,20 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::GrindingPlan;
 use crate::{
-    canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
-    sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
-    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingRelationMode, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    extension_opening_reduction_level_bytes, native_nonterminal_level_layout, sumcheck_rounds,
+    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
+    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingRelationMode, RingVec, SisModulusProfileId, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress};
-use akita_sumcheck::EqFactoredUniPoly;
-use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+
+use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
@@ -46,8 +46,6 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
-#[path = "schedule_tests/proof_shapes.rs"]
-mod proof_shapes;
 #[path = "schedule_tests/relation_mode.rs"]
 mod relation_mode;
 #[path = "schedule_tests/sis_occurrences.rs"]
@@ -692,9 +690,7 @@ fn terminal_response_fixture(
 fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
-            .map(|_| CompressedUniPoly {
-                coeffs_except_linear_term: vec![F::zero(); degree],
-            })
+            .map(|_| CompressedPoly::new(vec![F::zero(); degree]))
             .collect(),
     }
 }
@@ -705,9 +701,7 @@ fn dummy_eq_factored_sumcheck<F: Field>(
 ) -> EqFactoredSumcheckProof<F> {
     EqFactoredSumcheckProof {
         round_polys: (0..rounds)
-            .map(|_| EqFactoredUniPoly {
-                coeffs_except_constant_term: vec![F::zero(); degree],
-            })
+            .map(|_| OmittedConstantPoly::new(vec![F::zero(); degree]))
             .collect(),
     }
 }
@@ -805,7 +799,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         let opening_layout =
             OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
-                level_proof_bytes(
+                native_nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -818,6 +812,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
+                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -868,7 +863,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level. The proof-level packed nonce
+        // it from the serialized terminal level. Native nonce messages
         // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
@@ -946,7 +941,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
             stage3_sumcheck_proof: None,
         };
         assert_eq!(
-                level_proof_bytes(
+                native_nonterminal_level_layout(
                     128,
                     128,
                     &lp,
@@ -959,6 +954,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     .unwrap(),
                     Some(&next_lp),
                 )
+                .and_then(crate::NativeNonterminalLevelLayout::encoded_len)
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -1011,7 +1007,7 @@ fn scalar_schedule_key_accepts_single_group_layout() {
         AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
-    assert_eq!(key.num_commitment_groups(), 1);
+    assert!(key.precommitteds.is_empty());
 }
 
 #[test]
@@ -1215,7 +1211,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     multi_group_key
         .validate(128)
         .expect("a precommitted group may contain multiple polynomials");
-    assert_eq!(multi_group_key.num_commitment_groups(), 2);
+    assert_eq!(multi_group_key.precommitteds.len(), 1);
     assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
     assert!(!multi_group_key.fits_setup_capacity(20, 4).unwrap());
     assert!(multi_group_key.fits_setup_capacity(20, 5).unwrap());

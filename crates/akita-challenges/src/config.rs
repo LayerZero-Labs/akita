@@ -202,13 +202,6 @@ impl SparseChallengeConfig {
             })
     }
 
-    /// Whether this config matches the production ladder at `ring_d`.
-    #[inline]
-    #[must_use]
-    pub fn matches_production_ladder(&self, ring_d: usize) -> bool {
-        Self::production_for_ring_dim(ring_d).as_ref() == Some(self)
-    }
-
     /// Total Hamming weight.
     #[inline]
     #[must_use]
@@ -229,13 +222,6 @@ impl SparseChallengeConfig {
     #[must_use]
     pub fn challenge_l2_sq_max(&self) -> u128 {
         (self.count_pm1 as u128).saturating_add(4u128.saturating_mul(self.count_pm2 as u128))
-    }
-
-    /// Worst-case number of non-zero coefficients in one sampled challenge.
-    #[inline]
-    #[must_use]
-    pub fn nonzero_count_max(&self) -> usize {
-        self.weight()
     }
 
     /// Worst-case `L_infinity` norm of the sampled coefficients.
@@ -471,15 +457,15 @@ mod entropy_tests {
         };
         assert_eq!(shell.l1_norm(), 51);
         assert_eq!(shell.challenge_l2_sq_max(), 71);
-        assert_eq!(shell.nonzero_count_max(), 41);
+        assert_eq!(shell.weight(), 41);
 
         let uni128 = SparseChallengeConfig::pm1_only(31);
         assert_eq!(uni128.challenge_l2_sq_max(), 31);
-        assert_eq!(uni128.nonzero_count_max(), 31);
+        assert_eq!(uni128.weight(), 31);
 
         let uni256 = SparseChallengeConfig::pm1_only(23);
         assert_eq!(uni256.challenge_l2_sq_max(), 23);
-        assert_eq!(uni256.nonzero_count_max(), 23);
+        assert_eq!(uni256.weight(), 23);
 
         for (d, pm1, pm2, _) in PRODUCTION_FOLD_CHALLENGE_LADDER {
             if *d >= 512 {
