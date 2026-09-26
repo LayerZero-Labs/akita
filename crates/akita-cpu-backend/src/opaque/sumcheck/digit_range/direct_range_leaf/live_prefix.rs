@@ -75,7 +75,7 @@ fn accumulate_live_prefix_tile<E: Field + Ring + Unreduced>(
 }
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
-    fn live_prefix_round_poly(
+    pub(super) fn live_prefix_round_poly(
         &self,
         tile_accumulators: Vec<[E::Product; MAX_DIRECT_RANGE_COEFFICIENTS]>,
     ) -> OmittedConstantPoly<E> {
@@ -95,15 +95,20 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         )
     }
 
-    /// Compute the current round over a flat live-prefix table.
+    /// Compute the current round over a flat live-prefix table with
+    /// `live_pairs` live pairs.
     ///
     /// Sparse ring rounds and live-prefix column rounds share this layout: the live
     /// entries are a prefix of the flat table in binding order, and every later
-    /// entry is zero, which the range polynomial maps to zero.
+    /// entry is zero, which the range polynomial maps to zero. `pairs_for_tile`
+    /// receives a tile's pair range and returns the reader of its pairs.
     #[tracing::instrument(skip_all, name = "LowBasisRangeCheckProver::compute_round_live_prefix")]
-    pub(super) fn compute_round_live_prefix(&self, range_image: &[E]) -> OmittedConstantPoly<E> {
+    pub(super) fn compute_round_live_prefix<P: FnMut(usize) -> (E, E)>(
+        &self,
+        live_pairs: usize,
+        pairs_for_tile: impl Fn(Range<usize>) -> P + Sync,
+    ) -> OmittedConstantPoly<E> {
         debug_assert!(self.rounds_completed < self.num_vars);
-        let live_pairs = range_image.len().div_ceil(2);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
@@ -117,32 +122,28 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                     e_second,
                     block_size,
                     tile_start..tile_end,
-                    |pair| {
-                        let left = 2 * pair;
-                        (
-                            range_image[left],
-                            range_image.get(left + 1).copied().unwrap_or_else(E::zero),
-                        )
-                    },
+                    pairs_for_tile(tile_start..tile_end),
                 )
             })
             .collect();
         self.live_prefix_round_poly(tile_accumulators)
     }
 
-    /// Fold a flat live-prefix table at `r` and compute the next round from the
-    /// folded table in the same pass.
+    /// Fold the current flat live-prefix table into a table of `next_live`
+    /// entries and compute the next round from it in the same pass.
+    ///
+    /// `folds_for_tile` receives a tile's range of folded entries and returns
+    /// the function computing each of them.
     #[tracing::instrument(
         skip_all,
         name = "LowBasisRangeCheckProver::fuse_live_prefix_and_compute_round"
     )]
-    pub(super) fn fuse_live_prefix_and_compute_round(
+    pub(super) fn fuse_live_prefix_and_compute_round<F: FnMut(usize) -> E>(
         &self,
-        range_image: &[E],
-        r: E,
+        next_live: usize,
+        folds_for_tile: impl Fn(Range<usize>) -> F + Sync,
     ) -> (Vec<E>, OmittedConstantPoly<E>) {
-        debug_assert!(self.next_round_uses_live_prefix());
-        let next_live = range_image.len().div_ceil(2);
+        debug_assert!(self.rounds_completed + 1 < self.num_vars);
         let live_pairs = next_live.div_ceil(2);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
@@ -153,6 +154,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .map(|(tile, tile_out)| {
                 let tile_start = tile * tile_pairs;
                 let tile_end = tile_start + tile_out.len().div_ceil(2);
+                let entry_start = 2 * tile_start;
+                let mut fold = folds_for_tile(entry_start..entry_start + tile_out.len());
                 accumulate_live_prefix_tile(
                     &self.polynomial_precomputation,
                     e_first,
@@ -161,11 +164,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                     tile_start..tile_end,
                     |pair| {
                         let local_left = 2 * (pair - tile_start);
-                        let left = fold_prefix_pair_with_zero_padding(range_image, 4 * pair, r);
+                        let left = fold(entry_start + local_left);
                         tile_out[local_left] = left;
                         let right = if local_left + 1 < tile_out.len() {
-                            let right =
-                                fold_prefix_pair_with_zero_padding(range_image, 4 * pair + 2, r);
+                            let right = fold(entry_start + local_left + 1);
                             tile_out[local_left + 1] = right;
                             right
                         } else {

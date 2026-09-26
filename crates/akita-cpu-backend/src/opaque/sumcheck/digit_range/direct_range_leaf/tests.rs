@@ -339,325 +339,93 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
     }
 }
 
-#[test]
-fn stage1_fused_round2_transition_matches_two_pass_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let live_x_cols = 6usize;
-    let y_len = 1usize << ring_bits;
-    for basis in [4usize, 8] {
-        let half = (basis / 2) as i8;
-        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 9 + 5) % basis) as i8 - half)
-            .collect();
-        let compact_range_image = build_compact_range_image(&digit_witness_prefix);
-        let tau0: Vec<F> = (0..(col_bits + ring_bits))
-            .map(|i| F::from_u64((i as u64) + 53))
-            .collect();
-        let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
-
-        let mut prover = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        let round0 = prover.compute_round_eq_factored(0);
-        let r0 = F::from_u64(61);
-        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
-        prover.ingest_challenge(0, r0);
-        let round1 = prover.compute_round_eq_factored(1);
-        let r1 = F::from_u64(67);
-        let _claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
-
-        let expected_range_image =
-            LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
-                &compact_range_image,
-                live_x_cols,
-                y_len,
-                r0,
-                r1,
-            );
-        let mut expected = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        expected.split_eq.bind(r0);
-        expected.split_eq.bind(r1);
-        expected.rounds_completed = 2;
-        let expected_round2 = expected.compute_round_live_prefix(&expected_range_image);
-
-        prover.ingest_challenge(1, r1);
-
-        match &prover.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image, &expected_range_image)
-            }
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected fused stage1 transition to materialize full table")
-            }
-        }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
-    }
-}
-
-#[test]
-fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 4usize;
-    let live_x_cols = 6usize;
-    let y_len = 1usize << ring_bits;
-    let tau0 = ordered_equality_point(
-        &(0..col_bits + ring_bits)
-            .map(|index| F::from_u64(index as u64 + 211))
-            .collect::<Vec<_>>(),
+/// Run every round against the dense kernel on the zero-padded field table.
+fn assert_rounds_match_dense_reference(
+    basis: usize,
+    col_bits: usize,
+    ring_bits: usize,
+    live_x_cols: usize,
+) {
+    let half = (basis / 2) as i8;
+    let num_vars = col_bits + ring_bits;
+    let witness: Vec<i8> = (0..live_x_cols << ring_bits)
+        .map(|i| {
+            let mixed = (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58;
+            (mixed as usize % basis) as i8 - half
+        })
+        .collect();
+    let tau0: Vec<F> = (0..num_vars)
+        .map(|i| F::from_u64(3 * i as u64 + 43))
+        .collect();
+    let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
+    let mut prover = LowBasisRangeCheckProver::new(
+        packed(&witness),
+        &tau0,
+        DigitRangePlan::new(basis).unwrap(),
+        live_x_cols,
         col_bits,
         ring_bits,
-    );
-    let r0 = F::from_u64(223);
-    let r1 = F::from_u64(227);
-    let r2 = F::from_u64(229);
-    for basis in [4usize, 8] {
-        let half = (basis / 2) as i8;
-        let digit_witness: Vec<i8> = (0..live_x_cols * y_len)
-            .map(|index| ((index * 7 + 3) % basis) as i8 - half)
-            .collect();
-        let compact_range_image = build_compact_range_image(&digit_witness);
-        let mut deferred = LowBasisRangeCheckProver::new(
-            packed(&digit_witness),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        deferred.compute_round_eq_factored(0);
-        deferred.ingest_challenge(0, r0);
-        deferred.compute_round_eq_factored(1);
-        deferred.ingest_challenge(1, r1);
+    )
+    .unwrap();
+    let mut reference: Vec<F> = build_compact_range_image(&witness)
+        .into_iter()
+        .map(|s| F::from_i64(i64::from(s)))
+        .collect();
+    reference.resize(1usize << num_vars, F::zero());
+    let mut reference_eq = GruenSplitEq::new(&tau0).unwrap();
+    let precomputation = RangePolynomialPrecomputation::new(basis);
+    let shape =
+        format!("basis={basis} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}");
 
-        assert!(matches!(
-            deferred.range_image,
-            LowBasisRangeImageStorage::Compact(_)
-        ));
-        let deferred_round2 = deferred.compute_round_eq_factored(2);
+    for round in 0..num_vars {
+        let poly = prover.compute_round_eq_factored(round);
+        let expected =
+            compute_range_round_polynomial_from_range_image(&reference_eq, &precomputation, |j| {
+                (reference[2 * j], reference[2 * j + 1])
+            });
+        assert_eq!(poly, expected, "{shape} round={round}");
 
-        let round2_range_image = LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
-            &compact_range_image,
-            live_x_cols,
-            y_len,
-            r0,
-            r1,
+        let r = F::from_u64(5 * round as u64 + 71);
+        prover.ingest_challenge(round, r);
+        reference_eq.bind(r);
+        fold_evals_in_place(&mut reference, r);
+        assert_eq!(
+            matches!(prover.range_image, LowBasisRangeImageStorage::Compact(_)),
+            num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS
+                && round + 1 < octet_prefix::OCTET_PREFIX_ROUNDS,
+            "{shape} storage after round={round}"
         );
-        let mut reference = LowBasisRangeCheckProver::new(
-            packed(&digit_witness),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        reference.split_eq.bind(r0);
-        reference.split_eq.bind(r1);
-        reference.rounds_completed = 2;
-        let reference_round2 = reference.compute_round_live_prefix(&round2_range_image);
-        assert_eq!(deferred_round2, reference_round2);
-
-        let expected_round3_range_image =
-            LowBasisRangeCheckProver::<F>::fold_live_prefix(&round2_range_image, r2);
-        deferred.ingest_challenge(2, r2);
-        match &deferred.range_image {
-            LowBasisRangeImageStorage::Materialized(actual) => {
-                assert_eq!(actual, &expected_round3_range_image)
-            }
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("low-basis range image must materialize after round three")
-            }
-        }
     }
+    assert_eq!(reference.len(), 1);
+    assert_eq!(prover.final_range_image_eval(), reference[0], "{shape}");
 }
 
 #[test]
-fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
-    let col_bits = 5usize;
-    let ring_bits = 2usize;
-    let live_x_cols = 12usize;
-    let y_len = 1usize << ring_bits;
+fn stage1_rounds_match_dense_reference() {
+    const SHAPES: [(usize, usize, usize); 19] = [
+        (3, 2, 5),
+        (3, 2, 6),
+        (3, 2, 8),
+        (1, 2, 2),
+        (2, 2, 3),
+        (3, 3, 5),
+        (0, 4, 1),
+        (3, 4, 6),
+        (2, 6, 3),
+        (5, 2, 12),
+        (4, 6, 16),
+        (2, 3, 1),
+        (7, 7, 100),
+        (5, 0, 20),
+        (4, 1, 9),
+        (1, 1, 2),
+        (0, 2, 1),
+        (2, 1, 3),
+        (0, 3, 1),
+    ];
     for basis in [4usize, 8] {
-        let half = (basis / 2) as i8;
-        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 5 + 11) % basis) as i8 - half)
-            .collect();
-        let tau0: Vec<F> = (0..(col_bits + ring_bits))
-            .map(|i| F::from_u64((i as u64) + 101))
-            .collect();
-        let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
-
-        let mut prover = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        let round0 = prover.compute_round_eq_factored(0);
-        let r0 = F::from_u64(107);
-        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
-        prover.ingest_challenge(0, r0);
-
-        let round1 = prover.compute_round_eq_factored(1);
-        let r1 = F::from_u64(109);
-        let claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
-        prover.ingest_challenge(1, r1);
-
-        let round2 = prover.compute_round_eq_factored(2);
-        let r2 = F::from_u64(113);
-        let claim3 = advance_eq_factored_claim(claim2, prover.current_tau(), &round2, r2);
-
-        let mut expected = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        let expected_round0 = expected.compute_round_eq_factored(0);
-        assert_eq!(expected_round0, round0);
-        expected.ingest_challenge(0, r0);
-        let expected_round1 = expected.compute_round_eq_factored(1);
-        assert_eq!(expected_round1, round1);
-        expected.ingest_challenge(1, r1);
-        let expected_round2 = expected.compute_round_eq_factored(2);
-        assert_eq!(expected_round2, round2);
-
-        let current_range_image = match &expected.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => range_image.clone(),
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected later prefix state to be full")
-            }
-        };
-        let expected_next_range_image =
-            LowBasisRangeCheckProver::<F>::fold_live_prefix(&current_range_image, r2);
-        expected.split_eq.bind(r2);
-        expected.live_x_cols = expected.live_x_cols.div_ceil(2);
-        expected.rounds_completed += 1;
-        let _ = claim3;
-        let expected_round3 = expected.compute_round_live_prefix(&expected_next_range_image);
-
-        prover.ingest_challenge(2, r2);
-
-        match &prover.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image, &expected_next_range_image)
-            }
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected fused later prefix stage to stay full")
-            }
+        for (col_bits, ring_bits, live_x_cols) in SHAPES {
+            assert_rounds_match_dense_reference(basis, col_bits, ring_bits, live_x_cols);
         }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
-    }
-}
-
-#[test]
-fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 4usize;
-    let live_x_cols = 6usize;
-    let y_len = 1usize << ring_bits;
-    for basis in [4usize, 8] {
-        let half = (basis / 2) as i8;
-        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 7 + 9) % basis) as i8 - half)
-            .collect();
-        let compact_range_image = build_compact_range_image(&digit_witness_prefix);
-        let tau0: Vec<F> = (0..(col_bits + ring_bits))
-            .map(|i| F::from_u64((i as u64) + 131))
-            .collect();
-        let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
-
-        let mut prover = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        let round0 = prover.compute_round_eq_factored(0);
-        let r0 = F::from_u64(137);
-        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
-        prover.ingest_challenge(0, r0);
-
-        let round1 = prover.compute_round_eq_factored(1);
-        let r1 = F::from_u64(139);
-        let claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
-        prover.ingest_challenge(1, r1);
-
-        let round2 = prover.compute_round_eq_factored(2);
-        let r2 = F::from_u64(149);
-        let _claim3 = advance_eq_factored_claim(claim2, prover.current_tau(), &round2, r2);
-
-        let mut expected = LowBasisRangeCheckProver::new(
-            packed(&digit_witness_prefix),
-            &tau0,
-            DigitRangePlan::new(basis).unwrap(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-        .unwrap();
-        let expected_round0 = expected.compute_round_eq_factored(0);
-        assert_eq!(expected_round0, round0);
-        expected.ingest_challenge(0, r0);
-        let expected_round1 = expected.compute_round_eq_factored(1);
-        assert_eq!(expected_round1, round1);
-        expected.ingest_challenge(1, r1);
-        let expected_round2 = expected.compute_round_eq_factored(2);
-        assert_eq!(expected_round2, round2);
-
-        let current_range_image = match &expected.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => range_image.clone(),
-            LowBasisRangeImageStorage::Compact(_) => {
-                LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
-                    &compact_range_image,
-                    live_x_cols,
-                    y_len,
-                    r0,
-                    r1,
-                )
-            }
-        };
-        let expected_next_range_image =
-            LowBasisRangeCheckProver::<F>::fold_live_prefix(&current_range_image, r2);
-        expected.split_eq.bind(r2);
-        expected.rounds_completed += 1;
-        let expected_round3 = expected.compute_round_live_prefix(&expected_next_range_image);
-
-        prover.ingest_challenge(2, r2);
-
-        match &prover.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image, &expected_next_range_image)
-            }
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected sparse-x/y fusion to stay full")
-            }
-        }
-        assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
 }

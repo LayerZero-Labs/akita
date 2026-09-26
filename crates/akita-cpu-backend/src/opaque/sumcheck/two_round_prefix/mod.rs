@@ -41,13 +41,10 @@ mod stage2;
 mod tests;
 
 pub(crate) use common::{
-    stage1_b4_digit_from_compact_range_image, stage1_b8_digit_from_compact_range_image,
     stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
     stage2_b8_w_digit,
 };
-pub(crate) use stage1::{
-    build_stage1_prefix_cache, can_use_stage1_two_round_prefix, Stage1PrefixCache,
-};
+pub(crate) use stage1::{build_stage1_prefix_cache, Stage1PrefixCache};
 pub(crate) use stage2::{
     build_stage2_prefix_cache, can_use_stage2_two_round_prefix, Stage2PrefixCache,
 };

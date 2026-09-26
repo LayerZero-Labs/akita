@@ -1,7 +1,7 @@
 use super::common::*;
+#[cfg(test)]
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::reduce_signed_accum;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Unreduced, Zero};
 use jolt_poly::OmittedConstantPoly;
 #[cfg(test)]
@@ -99,171 +99,78 @@ pub(crate) fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(
     stage1_eval_quartic_from_prefix_values(x_rows, x)
 }
 
-/// Whether stage 1 has enough leading y-rounds to use the 2-round prefix path.
-#[inline]
-pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> bool {
-    ring_bits >= 2 && matches!(b, 4 | 8)
-}
-
-/// Build the stage-1 first-two-round prefix payload from the compact
-/// witness columns at the start of stage 1.
+/// Build the stage-1 first-two-round prefix grid from the compact witness by
+/// summing the round-2 equality weight of every quad into its quad class.
 ///
-/// Returns `None` when there are fewer than two leading y-rounds to batch.
-#[tracing::instrument(
-    skip_all,
-    name = "two_round_prefix::build_stage1_prefix_grid_from_m_compact"
-)]
+/// `w_compact` is the flat live prefix of the witness table and `tau0` the
+/// stage-1 point in binding order.
 #[cfg(test)]
 pub(crate) fn build_stage1_prefix_grid_from_m_compact<E: Field + Ring + Unreduced>(
     w_compact: &[i8],
     tau0: &[E],
     b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Option<Stage1PrefixGrid<E>> {
-    let y_len = 1usize << ring_bits;
-    assert_eq!(w_compact.len(), live_x_cols * y_len);
-    let s_compact = w_compact
-        .iter()
-        .map(|&w| {
-            let w = i32::from(w);
-            (w * (w + 1)) as i16
-        })
-        .collect::<Vec<_>>();
-    build_stage1_prefix_grid(&s_compact, tau0, b, live_x_cols, col_bits, ring_bits)
-}
-
-/// Build the stage-1 first-two-round prefix payload from a compact
-/// `s = w(w+1)` source. Packed witnesses derive each range-image value on read.
-#[tracing::instrument(skip_all, name = "two_round_prefix::build_stage1_prefix_cache")]
-pub(crate) fn build_stage1_prefix_cache<
-    E: Field + Ring + Unreduced,
-    S: crate::opaque::sumcheck::digit_range::direct_range_leaf::CompactRangeImageSource + ?Sized,
->(
-    s_compact: &S,
-    tau0: &[E],
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Option<Stage1PrefixCache<E>> {
-    let grid = build_stage1_prefix_grid(s_compact, tau0, b, live_x_cols, col_bits, ring_bits)?;
-    Stage1PrefixCache::new(&grid, tau0, b)
-}
-
-fn build_stage1_prefix_grid<
-    E: Field + Ring + Unreduced,
-    S: crate::opaque::sumcheck::digit_range::direct_range_leaf::CompactRangeImageSource + ?Sized,
->(
-    s_compact: &S,
-    tau0: &[E],
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Option<Stage1PrefixGrid<E>> {
-    if !can_use_stage1_two_round_prefix(ring_bits, b) {
-        return None;
+) -> Stage1PrefixGrid<E> {
+    let class_bits = b / 4;
+    let quad_weights =
+        EqPolynomial::evals(&tau0[2..]).expect("stage-1 prefix dimensions are prevalidated");
+    let mut quad_class_weights = vec![E::zero(); 1usize << (4 * class_bits)];
+    for (quad, digits) in w_compact.chunks(4).enumerate() {
+        let class = digits
+            .iter()
+            .enumerate()
+            .fold(0usize, |class, (offset, &w)| {
+                class | (usize::from((w ^ (w >> 7)) as u8) << (class_bits * offset))
+            });
+        quad_class_weights[class] += quad_weights[quad];
     }
+    build_stage1_prefix_grid(&quad_class_weights, b)
+}
 
-    let y_len = 1usize << ring_bits;
-    assert_eq!(s_compact.len(), live_x_cols * y_len);
-    assert_eq!(tau0.len(), col_bits + ring_bits);
+/// Build the cache for the first two stage-1 rounds.
+///
+/// `quad_class_weights[c]` is the sum of `eq(tau0[2..], q)` over the live quads
+/// `q` of class `c`, where a quad's class packs the classes `k` of its four
+/// range images `k(k+1)`, first entry lowest. Quads of class zero contribute
+/// nothing, so their weight may be omitted.
+#[tracing::instrument(skip_all, name = "two_round_prefix::build_stage1_prefix_cache")]
+pub(crate) fn build_stage1_prefix_cache<E: Field + Ring + Unreduced>(
+    quad_class_weights: &[E],
+    tau0: &[E],
+    b: usize,
+) -> Option<Stage1PrefixCache<E>> {
+    Stage1PrefixCache::new(&build_stage1_prefix_grid(quad_class_weights, b), tau0, b)
+}
 
-    let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits])
-        .expect("stage-1 two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&tau0[ring_bits..])
-        .expect("stage-1 x-prefix dimensions are prevalidated");
-    let y_quads = y_len / 4;
-    debug_assert!(eq_y_suffix.len() >= y_quads);
-    debug_assert!(eq_x.len() >= live_x_cols);
-
+fn build_stage1_prefix_grid<E: Field + Ring + Unreduced>(
+    quad_class_weights: &[E],
+    b: usize,
+) -> Stage1PrefixGrid<E> {
     let evals_except_boolean_core = match b {
-        4 => {
-            let (pos, neg) = cfg_fold_reduce!(
-                0..live_x_cols,
-                || {
-                    (
-                        [E::SmallProduct::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
-                        [E::SmallProduct::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
-                    )
-                },
-                |(mut pos, mut neg), x_col| {
-                    let col_start = x_col * y_len;
-                    let mut quads = s_compact.quad_lookup_iter(col_start..col_start + y_len, 4);
-                    let eq_x_weight = eq_x[x_col];
-                    for &eq_y_weight in eq_y_suffix.iter().take(y_quads) {
-                        let lookup_idx = quads.next().expect("compact range-image quad");
-                        let weight = eq_x_weight * eq_y_weight;
-                        accum_lookup_vector_signed(
-                            &mut pos,
-                            &mut neg,
-                            weight,
-                            &STAGE1_B4_PREFIX_LOOKUP_TABLE[lookup_idx],
-                        );
-                    }
-                    (pos, neg)
-                },
-                |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
-                    for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
-                        *dst += *src;
-                    }
-                    for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
-                        *dst += *src;
-                    }
-                    (pos_a, neg_a)
-                }
-            );
-            (0..STAGE1_B4_PREFIX_EVAL_COUNT)
-                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
-                .collect()
-        }
-        8 => {
-            let class_weights = cfg_fold_reduce!(
-                0..live_x_cols,
-                || [E::zero(); 256],
-                |mut histogram, x_col| {
-                    let col_start = x_col * y_len;
-                    let mut quads = s_compact.quad_lookup_iter(col_start..col_start + y_len, 8);
-                    let eq_x_weight = eq_x[x_col];
-                    for &eq_y_weight in eq_y_suffix.iter().take(y_quads) {
-                        let lookup_idx = quads.next().expect("compact range-image quad");
-                        let weight = eq_x_weight * eq_y_weight;
-                        histogram[lookup_idx] += weight;
-                    }
-                    histogram
-                },
-                |mut left, right| {
-                    for (dst, src) in left.iter_mut().zip(right) {
-                        *dst += src;
-                    }
-                    left
-                }
-            );
-
-            let mut pos = [E::SmallProduct::zero(); STAGE1_PREFIX_EVAL_COUNT];
-            let mut neg = [E::SmallProduct::zero(); STAGE1_PREFIX_EVAL_COUNT];
-            for (lookup_idx, class_weight) in class_weights.into_iter().enumerate() {
-                if !class_weight.is_zero() {
-                    accum_lookup_vector_signed(
-                        &mut pos,
-                        &mut neg,
-                        class_weight,
-                        &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
-                    );
-                }
-            }
-            (0..STAGE1_PREFIX_EVAL_COUNT)
-                .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
-                .collect()
-        }
+        4 => accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B4_PREFIX_LOOKUP_TABLE),
+        8 => accumulate_prefix_lookup_rows(quad_class_weights, &STAGE1_B8_PREFIX_LOOKUP_TABLE),
         _ => unreachable!("unsupported stage-1 two-round prefix basis"),
     };
-
-    Some(Stage1PrefixGrid {
+    Stage1PrefixGrid {
         evals_except_boolean_core,
-    })
+    }
+}
+
+fn accumulate_prefix_lookup_rows<E: Field + Unreduced, const N: usize>(
+    weights: &[E],
+    table: &[[i64; N]],
+) -> Vec<E> {
+    debug_assert_eq!(weights.len(), table.len());
+    let mut pos = [E::SmallProduct::zero(); N];
+    let mut neg = [E::SmallProduct::zero(); N];
+    for (&weight, row) in weights.iter().zip(table) {
+        if !weight.is_zero() {
+            accum_lookup_vector_signed(&mut pos, &mut neg, weight, row);
+        }
+    }
+    pos.into_iter()
+        .zip(neg)
+        .map(|(pos, neg)| reduce_signed_accum::<E>(pos, neg))
+        .collect()
 }
 
 #[cfg(test)]

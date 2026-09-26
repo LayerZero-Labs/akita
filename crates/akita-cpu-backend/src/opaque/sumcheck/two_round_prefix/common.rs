@@ -515,26 +515,6 @@ pub(crate) fn accum_pointwise_signed<E: Field + Unreduced, const N: usize>(
 }
 
 #[inline(always)]
-pub(crate) fn stage1_b4_digit_from_compact_range_image(s: i16) -> usize {
-    match s {
-        0 => 0,
-        2 => 1,
-        other => unreachable!("unexpected compact s value {other}"),
-    }
-}
-
-#[inline(always)]
-pub(crate) fn stage1_b8_digit_from_compact_range_image(s: i16) -> usize {
-    match s {
-        0 => 0,
-        2 => 1,
-        6 => 2,
-        12 => 3,
-        other => unreachable!("unexpected compact s value {other}"),
-    }
-}
-
-#[inline(always)]
 pub(crate) fn stage2_b4_w_digit(w: i8) -> usize {
     let w = i32::from(w);
     debug_assert!((-2..=1).contains(&w));

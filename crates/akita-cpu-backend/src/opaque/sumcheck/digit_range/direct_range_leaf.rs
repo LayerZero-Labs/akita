@@ -41,11 +41,7 @@
 //! degree 4, so round polynomials have degree 5.
 
 use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
-use crate::opaque::sumcheck::two_round_prefix::{
-    build_stage1_prefix_cache, can_use_stage1_two_round_prefix,
-    stage1_b4_digit_from_compact_range_image, stage1_b8_digit_from_compact_range_image,
-    Stage1PrefixCache,
-};
+use crate::opaque::sumcheck::two_round_prefix::{build_stage1_prefix_cache, Stage1PrefixCache};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver};
@@ -56,7 +52,7 @@ use jolt_field::{Fold, Unreduced};
 use jolt_poly::OmittedConstantPoly;
 use std::ops::Range;
 
-use crate::sources::packed_digits::{PackedSignedDigitIter, PackedSignedDigits};
+use crate::sources::packed_digits::PackedSignedDigits;
 
 /// Nonconstant round coefficients `q_1..q_d` of the range polynomial. The
 /// eq-factored driver recovers `q_0` from the running claim, so no kernel
@@ -517,95 +513,15 @@ pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
 }
 
 pub(crate) trait CompactRangeImageSource: Sync {
-    type QuadIter<'a>: ExactSizeIterator<Item = usize>
-    where
-        Self: 'a;
-
     fn len(&self) -> usize;
     fn range_image_value(&self, index: usize) -> i16;
-    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_>;
+
+    /// Write the class `k` of entries `start..start + classes.len()`, where an
+    /// entry's range image is `k(k+1)`. Entries past the table have class zero.
+    fn range_image_classes(&self, start: usize, classes: &mut [u8]);
 }
-
-pub(crate) struct CompactRangeImageQuadIter<I> {
-    values: I,
-    basis: usize,
-}
-
-impl<I, V> Iterator for CompactRangeImageQuadIter<I>
-where
-    I: Iterator<Item = V>,
-    V: CompactRangeImageValue,
-{
-    type Item = usize;
-
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut index = 0usize;
-        let class_bits = self.basis.trailing_zeros() as usize - 1;
-        for offset in 0..4 {
-            let range_image = self.values.next()?.range_image_value();
-            let class = match self.basis {
-                4 => stage1_b4_digit_from_compact_range_image(range_image),
-                8 => stage1_b8_digit_from_compact_range_image(range_image),
-                _ => unreachable!("unsupported compact range-image basis"),
-            };
-            index |= class << (class_bits * offset);
-        }
-        Some(index)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let (minimum, maximum) = self.values.size_hint();
-        (minimum / 4, maximum.map(|maximum| maximum / 4))
-    }
-}
-
-impl<I, V> ExactSizeIterator for CompactRangeImageQuadIter<I>
-where
-    I: ExactSizeIterator<Item = V>,
-    V: CompactRangeImageValue,
-{
-}
-
-pub(crate) struct PackedRangeImageQuadIter<'a> {
-    digits: PackedSignedDigitIter<'a>,
-    class_bits: usize,
-    class_count: usize,
-}
-
-impl Iterator for PackedRangeImageQuadIter<'_> {
-    type Item = usize;
-
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        let digits = self.digits.next_array::<4>()?;
-        let mut index = 0usize;
-        for (offset, digit) in digits.into_iter().enumerate() {
-            let class = if digit >= 0 {
-                digit as usize
-            } else {
-                usize::from(digit.unsigned_abs()) - 1
-            };
-            debug_assert!(class < self.class_count);
-            index |= class << (self.class_bits * offset);
-        }
-        Some(index)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.digits.len() / 4;
-        (remaining, Some(remaining))
-    }
-}
-
-impl ExactSizeIterator for PackedRangeImageQuadIter<'_> {}
 
 impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
-    type QuadIter<'a>
-        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
-    where
-        Self: 'a;
-
     #[inline]
     fn len(&self) -> usize {
         <[V]>::len(self)
@@ -616,21 +532,16 @@ impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
         self[index].range_image_value()
     }
 
-    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
-        debug_assert_eq!(range.len() % 4, 0);
-        CompactRangeImageQuadIter {
-            values: self[range].iter().copied(),
-            basis,
+    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
+        for (offset, class) in classes.iter_mut().enumerate() {
+            *class = self
+                .get(start + offset)
+                .map_or(0, |value| range_image_class(value.range_image_value()));
         }
     }
 }
 
 impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
-    type QuadIter<'a>
-        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
-    where
-        Self: 'a;
-
     #[inline]
     fn len(&self) -> usize {
         self.as_slice().len()
@@ -641,18 +552,12 @@ impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
         self.as_slice()[index].range_image_value()
     }
 
-    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
-        debug_assert_eq!(range.len() % 4, 0);
-        CompactRangeImageQuadIter {
-            values: self[range].iter().copied(),
-            basis,
-        }
+    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
+        self.as_slice().range_image_classes(start, classes);
     }
 }
 
 impl CompactRangeImageSource for PackedSignedDigits {
-    type QuadIter<'a> = PackedRangeImageQuadIter<'a>;
-
     #[inline]
     fn len(&self) -> usize {
         self.len()
@@ -666,16 +571,24 @@ impl CompactRangeImageSource for PackedSignedDigits {
         )
     }
 
-    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
-        debug_assert_eq!(range.len() % 4, 0);
-        PackedRangeImageQuadIter {
-            digits: self
-                .view()
-                .slice(range)
-                .expect("compact range-image quad iterator range is in bounds")
-                .iter(),
-            class_bits: basis.trailing_zeros() as usize - 1,
-            class_count: basis / 2,
+    /// Digits `w` and `-1 - w` share a range image, so the class of `w` is
+    /// `w` for `w >= 0` and `!w` otherwise.
+    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
+        const DECODE_CHUNK: usize = 64;
+        let mut digits = [0i8; DECODE_CHUNK];
+        for (chunk_index, chunk) in classes.chunks_mut(DECODE_CHUNK).enumerate() {
+            let chunk_start = start + chunk_index * DECODE_CHUNK;
+            let live = self.len().saturating_sub(chunk_start).min(chunk.len());
+            let digits = &mut digits[..chunk.len()];
+            if live > 0 {
+                self.view()
+                    .decode_range(chunk_start, &mut digits[..live])
+                    .expect("packed range-image classes are in bounds");
+            }
+            digits[live..].fill(0);
+            for (class, &digit) in chunk.iter_mut().zip(digits.iter()) {
+                *class = (digit ^ (digit >> 7)) as u8;
+            }
         }
     }
 }
@@ -691,6 +604,18 @@ impl CompactRangeImageValue for i8 {
     #[inline(always)]
     fn range_image_value(self) -> i16 {
         range_image_from_digit(self)
+    }
+}
+
+/// Index `k` of a valid range image `k(k+1)`.
+#[inline]
+fn range_image_class(range_image: i16) -> u8 {
+    match range_image {
+        0 => 0,
+        2 => 1,
+        6 => 2,
+        12 => 3,
+        other => unreachable!("{other} is not a low-basis range image"),
     }
 }
 
@@ -711,10 +636,17 @@ fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
         .collect()
 }
 
+/// Compact-table state for rounds 0 through 3, which bind the three digit
+/// positions inside an octet and then pair adjacent octets.
 struct DirectRangePrefixState<E: Field> {
     cache: Stage1PrefixCache<E>,
+    /// Sum of the round-2 equality weight `eq(tau0[3..], octet)` over the live
+    /// octets of each octet class.
+    octet_class_weights: Vec<E>,
     first_challenge: Option<E>,
-    second_challenge: Option<E>,
+    /// The folded value of each quad class after round 1, then of each octet
+    /// class after round 2.
+    class_values: Vec<E>,
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
@@ -738,8 +670,8 @@ pub struct LowBasisRangeCheckProver<E: Field> {
     rounds_completed: usize,
 }
 
-mod initial_round_deferral;
 mod live_prefix;
+mod octet_prefix;
 mod rounds;
 mod sparse_low_variables;
 mod state;

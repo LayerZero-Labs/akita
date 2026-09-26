@@ -205,11 +205,7 @@ fn build_stage1_prefix_grid_from_m_compact_reference(
     live_x_cols: usize,
     _col_bits: usize,
     ring_bits: usize,
-) -> Option<Stage1PrefixGrid<F>> {
-    if !can_use_stage1_two_round_prefix(ring_bits, b) {
-        return None;
-    }
-
+) -> Stage1PrefixGrid<F> {
     let y_len = 1usize << ring_bits;
     let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits])
         .expect("stage-1 reference two-round prefix dimensions are prevalidated");
@@ -244,9 +240,9 @@ fn build_stage1_prefix_grid_from_m_compact_reference(
         }
     }
 
-    Some(Stage1PrefixGrid {
+    Stage1PrefixGrid {
         evals_except_boolean_core,
-    })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -434,7 +430,7 @@ fn stage1_prefix_proof_builder_matches_reference() {
     ];
     let tau0 = ordered_equality_point(&tau0_raw, col_bits, ring_bits);
     assert_eq!(
-        build_stage1_prefix_grid_from_m_compact(&w_compact, &tau0, 8, 5, col_bits, ring_bits),
+        build_stage1_prefix_grid_from_m_compact(&w_compact, &tau0, 8),
         build_stage1_prefix_grid_from_m_compact_reference(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits,
         ),
@@ -994,15 +990,7 @@ fn stage1_prefix_proof_reconstructs_first_two_rounds() {
     ];
     let tau0 = ordered_equality_point(&tau0_raw, col_bits, ring_bits);
 
-    let proof = build_stage1_prefix_grid_from_m_compact(
-        &w_compact,
-        &tau0,
-        b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
-    )
-    .expect("stage1 prefix payload should be available");
+    let proof = build_stage1_prefix_grid_from_m_compact(&w_compact, &tau0, b);
     let cache = Stage1PrefixCache::new(&proof, &tau0, b).expect("stage1 prefix state should build");
 
     let mut prover = LowBasisRangeCheckProver::<F>::new(

@@ -72,7 +72,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             col_bits,
             num_vars,
             basis,
-            prefix_tau: can_use_stage1_two_round_prefix(ring_bits, basis).then(|| tau0.to_vec()),
+            prefix_tau: (num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS).then(|| tau0.to_vec()),
             initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
@@ -143,28 +143,6 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     }
 
     #[inline]
-    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
-        self.prefix_tau.is_some()
-    }
-
-    #[inline]
-    pub(super) fn using_two_round_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_two_round_prefix()
-    }
-
-    #[inline]
-    pub(super) fn defers_compact_range_image_through_third_round(&self) -> bool {
-        matches!(self.basis, 4 | 8) && self.ring_bits() >= 3 && self.can_use_two_round_prefix()
-    }
-
-    #[inline]
-    pub(super) fn awaiting_compact_range_image_third_challenge(&self) -> bool {
-        self.rounds_completed == 2
-            && self.defers_compact_range_image_through_third_round()
-            && matches!(self.range_image, LowBasisRangeImageStorage::Compact(_))
-    }
-
-    #[inline]
     pub(super) fn valid_range_image_values(basis: usize) -> Vec<i16> {
         let half = (basis / 2) as i16;
         (0..half).map(|k| k * (k + 1)).collect()
@@ -174,38 +152,5 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn build_range_image_fold_lut(basis: usize, r: E) -> CompactPairFoldLut<E> {
         let valid_range_images = Self::valid_range_image_values(basis);
         CompactPairFoldLut::from_allowed_values(&valid_range_images, r)
-    }
-
-    pub(super) fn ensure_initial_round_prefix(&mut self) -> &mut DirectRangePrefixState<E> {
-        if self.initial_round_prefix.is_none() {
-            let tau0 = self
-                .prefix_tau
-                .clone()
-                .expect("two-round prefix requested without cached tau");
-            let ring_bits = self.num_vars - self.col_bits;
-            let compact_range_image = match &self.range_image {
-                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness,
-                LowBasisRangeImageStorage::Materialized(_) => {
-                    panic!("two-round prefix can only build from compact table")
-                }
-            };
-            let cache = build_stage1_prefix_cache(
-                compact_range_image,
-                &tau0,
-                self.basis,
-                self.live_x_cols,
-                self.col_bits,
-                ring_bits,
-            )
-            .expect("two-round prefix should be available");
-            self.initial_round_prefix = Some(DirectRangePrefixState {
-                cache,
-                first_challenge: None,
-                second_challenge: None,
-            });
-        }
-        self.initial_round_prefix
-            .as_mut()
-            .expect("two-round prefix should be initialized")
     }
 }

@@ -3,11 +3,13 @@ use jolt_poly::OmittedConstantPoly;
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> OmittedConstantPoly<E> {
-        let use_two_round_prefix = self.using_two_round_prefix();
-        let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
-        let use_sparse_x_y_round = !use_two_round_prefix && self.use_sparse_x_y_round();
+        let use_octet_prefix = self.using_octet_prefix();
+        let use_prefix_x_round = !use_octet_prefix && self.use_prefix_x_round();
+        let use_sparse_x_y_round = !use_octet_prefix && self.use_sparse_x_y_round();
         let rounds_completed = self.rounds_completed;
-        let phase = if use_two_round_prefix || use_prefix_x_round {
+        let phase = if use_octet_prefix {
+            "octet-prefix"
+        } else if use_prefix_x_round {
             "live-prefix"
         } else if use_sparse_x_y_round {
             "sparse-low-variables"
@@ -20,46 +22,44 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             phase
         )
         .entered();
-        let poly = if use_two_round_prefix {
-            let prefix = self.ensure_initial_round_prefix();
-            if rounds_completed == 0 {
-                prefix.cache.reconstruct_round0_eq_poly()
-            } else {
-                let r0 = prefix
-                    .first_challenge
-                    .expect("round 1 prefix polynomial requested before ingesting round 0");
-                prefix.cache.reconstruct_round1_eq_poly(r0)
-            }
-        } else {
-            match &self.range_image {
-                LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                    if use_prefix_x_round {
-                        self.compute_round_compact_prefix_x(compact_range_image)
-                    } else if use_sparse_x_y_round {
-                        self.compute_round_compact_sparse_x_y(compact_range_image)
-                    } else {
-                        compute_range_round_polynomial_from_compact_image(
-                            &self.split_eq,
-                            compact_range_image,
-                            &self.polynomial_precomputation,
-                        )
-                    }
-                }
-                LowBasisRangeImageStorage::Materialized(range_image) => {
-                    if use_prefix_x_round || use_sparse_x_y_round {
-                        self.compute_round_live_prefix(range_image)
-                    } else {
-                        compute_range_round_polynomial_from_range_image(
-                            &self.split_eq,
-                            &self.polynomial_precomputation,
-                            |j| (range_image[2 * j], range_image[2 * j + 1]),
-                        )
-                    }
+        if use_octet_prefix {
+            return self.compute_octet_prefix_round();
+        }
+        match &self.range_image {
+            LowBasisRangeImageStorage::Compact(compact_range_image) => {
+                if use_prefix_x_round {
+                    self.compute_round_compact_prefix_x(compact_range_image)
+                } else if use_sparse_x_y_round {
+                    self.compute_round_compact_sparse_x_y(compact_range_image)
+                } else {
+                    compute_range_round_polynomial_from_compact_image(
+                        &self.split_eq,
+                        compact_range_image,
+                        &self.polynomial_precomputation,
+                    )
                 }
             }
-        };
-
-        poly
+            LowBasisRangeImageStorage::Materialized(range_image) => {
+                if use_prefix_x_round || use_sparse_x_y_round {
+                    let range_image = range_image.as_slice();
+                    self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
+                        move |pair| {
+                            let left = 2 * pair;
+                            (
+                                range_image[left],
+                                range_image.get(left + 1).copied().unwrap_or_else(E::zero),
+                            )
+                        }
+                    })
+                } else {
+                    compute_range_round_polynomial_from_range_image(
+                        &self.split_eq,
+                        &self.polynomial_precomputation,
+                        |j| (range_image[2 * j], range_image[2 * j + 1]),
+                    )
+                }
+            }
+        }
     }
 
     #[tracing::instrument(
@@ -116,144 +116,27 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
             round = self.rounds_completed
         )
         .entered();
-        if self.using_two_round_prefix() {
-            let rounds_completed = self.rounds_completed;
-            self.split_eq.bind(r);
-            if rounds_completed == 0 {
-                self.ensure_initial_round_prefix().first_challenge = Some(r);
-            } else {
-                let r0 = {
-                    let prefix = self.ensure_initial_round_prefix();
-                    prefix
-                        .first_challenge
-                        .expect("round 1 ingest requires the round 0 challenge")
-                };
-                let y_len = match &self.range_image {
-                    LowBasisRangeImageStorage::Compact(digit_witness) => {
-                        digit_witness.len() / self.live_x_cols
-                    }
-                    LowBasisRangeImageStorage::Materialized(_) => {
-                        panic!("two-round prefix expected compact table")
-                    }
-                };
-                if self.defers_compact_range_image_through_third_round() {
-                    self.ensure_initial_round_prefix().second_challenge = Some(r);
-                    let round_poly = match &self.range_image {
-                        LowBasisRangeImageStorage::Compact(compact_range_image) => match self.basis
-                        {
-                            4 => self.compute_binary_range_image_third_round_from_compact_octets(
-                                compact_range_image,
-                                r0,
-                                r,
-                            ),
-                            8 => self.compute_quartic_range_image_third_round_from_compact_octets(
-                                compact_range_image,
-                                r0,
-                                r,
-                            ),
-                            _ => unreachable!("third-round deferral requires a low basis"),
-                        },
-                        LowBasisRangeImageStorage::Materialized(_) => {
-                            unreachable!(
-                                "three-round compact range-image deferral requires compact storage"
-                            )
-                        }
-                    };
-                    self.cached_round_poly = Some(round_poly);
-                } else {
-                    self.range_image = match std::mem::replace(
-                        &mut self.range_image,
-                        LowBasisRangeImageStorage::Materialized(Vec::new()),
-                    ) {
-                        LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                            debug_assert_eq!(self.ring_bits(), 2);
-                            LowBasisRangeImageStorage::Materialized(
-                                Self::fold_compact_range_image_to_round2(
-                                    &compact_range_image,
-                                    self.live_x_cols,
-                                    y_len,
-                                    r0,
-                                    r,
-                                ),
-                            )
-                        }
-                        LowBasisRangeImageStorage::Materialized(_) => {
-                            unreachable!("two-round prefix should hold compact table")
-                        }
-                    };
-                }
-            }
-            self.rounds_completed += 1;
-            if self.rounds_completed < self.num_vars {
-                if self.cached_round_poly.is_none() {
-                    self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
-                }
-            } else {
-                self.cached_round_poly = None;
-            }
-            return;
+        if self.using_octet_prefix() {
+            self.ingest_octet_prefix_challenge(r);
+        } else {
+            self.ingest_generic_challenge(r);
         }
-
-        if self.awaiting_compact_range_image_third_challenge() {
-            let (r0, r1) = {
-                let prefix = self.ensure_initial_round_prefix();
-                (
-                    prefix
-                        .first_challenge
-                        .expect("compact range-image transition requires the first challenge"),
-                    prefix
-                        .second_challenge
-                        .expect("compact range-image transition requires the second challenge"),
-                )
-            };
-            self.split_eq.bind(r);
-            let y_len = match &self.range_image {
-                LowBasisRangeImageStorage::Compact(digit_witness) => {
-                    digit_witness.len() / self.live_x_cols
-                }
-                LowBasisRangeImageStorage::Materialized(_) => {
-                    unreachable!(
-                        "three-round compact range-image transition requires compact storage"
-                    )
-                }
-            };
-            self.range_image = match std::mem::replace(
-                &mut self.range_image,
-                LowBasisRangeImageStorage::Materialized(Vec::new()),
-            ) {
-                LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                    let range_image = match self.basis {
-                        4 => Self::materialize_binary_range_image_after_third_round(
-                            &compact_range_image,
-                            self.live_x_cols,
-                            y_len,
-                            r0,
-                            r1,
-                            r,
-                        ),
-                        8 => Self::materialize_quartic_range_image_after_third_round(
-                            &compact_range_image,
-                            self.live_x_cols,
-                            y_len,
-                            r0,
-                            r1,
-                            r,
-                        ),
-                        _ => unreachable!("third-round deferral requires a low basis"),
-                    };
-                    LowBasisRangeImageStorage::Materialized(range_image)
-                }
-                LowBasisRangeImageStorage::Materialized(_) => unreachable!(),
-            };
-            self.rounds_completed += 1;
-            if self.rounds_completed < self.num_vars {
+        if self.in_x_phase() {
+            self.live_x_cols = self.live_x_cols.div_ceil(2);
+        }
+        self.rounds_completed += 1;
+        if self.rounds_completed < self.num_vars {
+            if self.cached_round_poly.is_none() {
                 self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
-            } else {
-                self.cached_round_poly = None;
             }
-            return;
+        } else {
+            self.cached_round_poly = None;
         }
+    }
+}
 
+impl<E: Field + Ring + Unreduced + Fold> LowBasisRangeCheckProver<E> {
+    fn ingest_generic_challenge(&mut self, r: E) {
         self.split_eq.bind(r);
         let use_prefix_x_round = self.use_prefix_x_round();
         let use_live_prefix = use_prefix_x_round || self.use_sparse_x_y_round();
@@ -288,8 +171,20 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 if use_live_prefix {
                     if fuse_next_live_prefix {
-                        let (next_range_image, round_poly) =
-                            self.fuse_live_prefix_and_compute_round(&range_image, r);
+                        let range_image = range_image.as_slice();
+                        let (next_range_image, round_poly) = self
+                            .fuse_live_prefix_and_compute_round(
+                                range_image.len().div_ceil(2),
+                                |_| {
+                                    move |entry| {
+                                        fold_prefix_pair_with_zero_padding(
+                                            range_image,
+                                            2 * entry,
+                                            r,
+                                        )
+                                    }
+                                },
+                            );
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::Materialized(next_range_image)
                     } else {
@@ -305,18 +200,6 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
                 }
             }
         };
-
-        if self.in_x_phase() {
-            self.live_x_cols = self.live_x_cols.div_ceil(2);
-        }
-        self.rounds_completed += 1;
-        if self.rounds_completed < self.num_vars {
-            if self.cached_round_poly.is_none() {
-                self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
-            }
-        } else {
-            self.cached_round_poly = None;
-        }
     }
 }
 
