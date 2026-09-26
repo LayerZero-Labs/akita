@@ -22,6 +22,8 @@ pub(super) struct WideMass<E: Field + Unreduced> {
     max_pending: usize,
     /// Digits lie in `[-half, half)`.
     half: usize,
+    #[cfg(test)]
+    force_portable: bool,
 }
 
 impl<E: Field + Unreduced> WideMass<E> {
@@ -36,6 +38,8 @@ impl<E: Field + Unreduced> WideMass<E> {
             // magnitude is at most `b / 2`.
             max_pending: (i32::MAX as usize) / (usize::from(u16::MAX) * (b / 2)),
             half: b / 2,
+            #[cfg(test)]
+            force_portable: false,
         }
     }
 
@@ -62,7 +66,11 @@ impl<E: Field + Unreduced> WideMass<E> {
         let block_len = self.block_len;
         let slots = block * block_len..(block + 1) * block_len;
         #[cfg(target_arch = "aarch64")]
-        if block_len.is_multiple_of(neon::TILE) {
+        let use_neon = block_len.is_multiple_of(neon::TILE);
+        #[cfg(all(test, target_arch = "aarch64"))]
+        let use_neon = use_neon && !self.force_portable;
+        #[cfg(target_arch = "aarch64")]
+        if use_neon {
             if let Some(wide) = (&mut self.wide as &mut dyn std::any::Any)
                 .downcast_mut::<Vec<jolt_field::Fp128x8i32>>()
             {
@@ -78,6 +86,8 @@ impl<E: Field + Unreduced> WideMass<E> {
                 self.half,
                 factor,
                 &digits[row * block_len..][..block_len],
+                #[cfg(test)]
+                self.force_portable,
             );
         }
     }
@@ -106,8 +116,17 @@ impl<E: Field + Unreduced> WideMass<E> {
 
 /// Add `factor * digits[i]` to `masses[i]`.
 #[inline]
-fn add_row<E: Field + Unreduced>(masses: &mut [E::Wide], half: usize, factor: E, digits: &[i8]) {
-    if cfg!(target_arch = "aarch64") {
+fn add_row<E: Field + Unreduced>(
+    masses: &mut [E::Wide],
+    half: usize,
+    factor: E,
+    digits: &[i8],
+    #[cfg(test)] force_portable: bool,
+) {
+    let use_scale = cfg!(target_arch = "aarch64");
+    #[cfg(test)]
+    let use_scale = use_scale && !force_portable;
+    if use_scale {
         // NEON multiplies `i32` lanes natively.
         for (mass, &digit) in masses.iter_mut().zip(digits) {
             *mass += factor.scale_wide(i32::from(digit));
@@ -145,6 +164,12 @@ mod neon {
     use std::any::Any;
     use std::arch::aarch64::*;
 
+    // Raw tile loads assume contiguous eight-i32 elements with no padding.
+    const _: () = {
+        assert!(std::mem::size_of::<Fp128x8i32>() == std::mem::size_of::<[i32; 8]>());
+        assert!(std::mem::align_of::<Fp128x8i32>() == std::mem::align_of::<[i32; 8]>());
+    };
+
     /// Slots per register tile.
     pub(super) const TILE: usize = 8;
 
@@ -168,7 +193,10 @@ mod neon {
                 let lanes = (&wide as &dyn Any)
                     .downcast_ref::<Fp128x8i32>()
                     .expect("wide type was matched by the caller");
-                *limbs = lanes.0.map(|lane| lane as u16);
+                *limbs = lanes.0.map(|lane| {
+                    debug_assert!((0..=i32::from(u16::MAX)).contains(&lane));
+                    lane as u16
+                });
                 *offset = row as usize * row_len;
                 // Bounds for the unchecked row loads below.
                 assert!(*offset + row_len <= digits.len());
@@ -292,6 +320,44 @@ mod tests {
         }
         assert!(masses[..block_len].iter().all(|mass| mass.is_zero()));
         assert_eq!(&masses[block_len..], &expected[..]);
+    }
+
+    #[test]
+    fn native_and_portable_match_at_flush_boundary() {
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        type E = Prime128Offset275;
+        let mut rng = StdRng::seed_from_u64(0x5749_4445);
+        for b in [4, 8] {
+            for block_count in [1, 3] {
+                // Four slots exercise scale_wide on ARM; eight and sixteen
+                // exercise the tiled NEON kernel against digit multiples.
+                for block_len in [4, 8, 16] {
+                    let mut native = WideMass::<E>::new(block_count, block_len, b);
+                    let mut portable = WideMass::<E>::new(block_count, block_len, b);
+                    portable.force_portable = true;
+                    let limit = native.max_rows();
+                    let digits = (0..limit * block_len)
+                        .map(|_| rng.gen_range(-(b as i8 / 2)..b as i8 / 2))
+                        .collect::<Vec<_>>();
+                    let rows = (0..limit)
+                        .map(|row| (E::random(&mut rng), row as u32))
+                        .collect::<Vec<_>>();
+                    for block in 0..block_count {
+                        for (count, pending) in
+                            [(limit - 1, limit - 1), (1, limit), (1, 1), (limit, limit)]
+                        {
+                            native.add_rows(block, &rows[..count], &digits);
+                            portable.add_rows(block, &rows[..count], &digits);
+                            assert_eq!(native.pending[block], pending);
+                            assert_eq!(portable.pending[block], pending);
+                            assert_eq!(native.wide, portable.wide);
+                            assert_eq!(native.reduced, portable.reduced);
+                        }
+                    }
+                    assert_eq!(native.finish(), portable.finish());
+                }
+            }
+        }
     }
 
     #[test]
