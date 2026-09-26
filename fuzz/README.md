@@ -94,8 +94,9 @@ At startup the runner:
   refuses to resume a directory from a different machine without `--adopt`;
 - detects usable CPUs (affinity mask and cgroup `cpu.max`) and memory
   (`MemAvailable` and cgroup `memory.max`) and prints the chosen budget;
-- copies seeds into the writable corpus and runs every lane once over its
-  whole corpus (`-runs=0`): the **honest baseline**. For the end-to-end
+- copies seeds into the writable corpus and runs every lane once over the
+  shipped seeds (`-runs=0`): the **honest baseline**. Each lane starts
+  fuzzing as soon as its own baseline passes. For the end-to-end
   targets each seed is a complete commit/prove/verify of a shipped catalog
   row; any failure is recorded as a finding before fuzzing starts.
 

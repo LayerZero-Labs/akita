@@ -359,17 +359,13 @@ impl Runner {
                 &self.options.extra_args,
             ),
             Purpose::Baseline => {
+                // The baseline checks the shipped seeds (honest statements),
+                // not the accumulated corpus, whose re-execution grows with
+                // every campaign hour.
                 let scratch = artifacts.join("scratch-corpus");
                 std::fs::create_dir_all(&scratch)?;
-                libfuzzer::fuzz_args(
-                    &binary,
-                    lane,
-                    &[&scratch, &corpus],
-                    &artifacts,
-                    0,
-                    true,
-                    &[],
-                )
+                let seeds = self.dist.join("seeds").join(&lane.target);
+                libfuzzer::fuzz_args(&binary, lane, &[&scratch, &seeds], &artifacts, 0, true, &[])
             }
             Purpose::Replay => {
                 let mut args = libfuzzer::base_args(
