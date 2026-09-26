@@ -123,16 +123,23 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         self.in_x_phase() && self.live_x_cols < self.current_x_len()
     }
 
+    /// Whether the round after the current one runs on a live-prefix table, as
+    /// either a sparse ring round or a live-prefix column round.
     #[inline]
-    pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.in_x_phase()
-            && self.rounds_completed + 1 < self.num_vars
-            && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
-    }
-
-    #[inline]
-    pub(super) fn next_use_sparse_x_y_round_after_current(&self) -> bool {
-        !self.in_x_phase() && self.rounds_completed + 1 < self.ring_bits()
+    pub(super) fn next_round_uses_live_prefix(&self) -> bool {
+        let next_round = self.rounds_completed + 1;
+        if next_round >= self.num_vars {
+            return false;
+        }
+        if next_round < self.ring_bits() {
+            return self.live_x_cols < (1usize << self.col_bits);
+        }
+        let next_live_x_cols = if self.in_x_phase() {
+            self.live_x_cols.div_ceil(2)
+        } else {
+            self.live_x_cols
+        };
+        next_live_x_cols < (1usize << (self.num_vars - next_round))
     }
 
     #[inline]

@@ -393,7 +393,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         expected.split_eq.bind(r0);
         expected.split_eq.bind(r1);
         expected.rounds_completed = 2;
-        let expected_round2 = expected.compute_round_materialized_prefix_x(&expected_range_image);
+        let expected_round2 = expected.compute_round_live_prefix(&expected_range_image);
 
         prover.ingest_challenge(1, r1);
 
@@ -470,16 +470,11 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
         reference.split_eq.bind(r0);
         reference.split_eq.bind(r1);
         reference.rounds_completed = 2;
-        let reference_round2 = reference.compute_round_materialized_sparse_x_y(&round2_range_image);
+        let reference_round2 = reference.compute_round_live_prefix(&round2_range_image);
         assert_eq!(deferred_round2, reference_round2);
 
         let expected_round3_range_image =
-            LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-                &round2_range_image,
-                live_x_cols,
-                y_len / 4,
-                r2,
-            );
+            LowBasisRangeCheckProver::<F>::fold_live_prefix(&round2_range_image, r2);
         deferred.ingest_challenge(2, r2);
         match &deferred.range_image {
             LowBasisRangeImageStorage::Materialized(actual) => {
@@ -555,19 +550,13 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
                 panic!("expected later prefix state to be full")
             }
         };
-        let current_y_len = current_range_image.len() / expected.live_x_cols;
-        let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_prefix_x(
-            &current_range_image,
-            expected.live_x_cols,
-            current_y_len,
-            r2,
-        );
+        let expected_next_range_image =
+            LowBasisRangeCheckProver::<F>::fold_live_prefix(&current_range_image, r2);
         expected.split_eq.bind(r2);
         expected.live_x_cols = expected.live_x_cols.div_ceil(2);
         expected.rounds_completed += 1;
         let _ = claim3;
-        let expected_round3 =
-            expected.compute_round_materialized_prefix_x(&expected_next_range_image);
+        let expected_round3 = expected.compute_round_live_prefix(&expected_next_range_image);
 
         prover.ingest_challenge(2, r2);
 
@@ -653,17 +642,11 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
                 )
             }
         };
-        let current_y_len = current_range_image.len() / expected.live_x_cols;
-        let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-            &current_range_image,
-            expected.live_x_cols,
-            current_y_len,
-            r2,
-        );
+        let expected_next_range_image =
+            LowBasisRangeCheckProver::<F>::fold_live_prefix(&current_range_image, r2);
         expected.split_eq.bind(r2);
         expected.rounds_completed += 1;
-        let expected_round3 =
-            expected.compute_round_materialized_sparse_x_y(&expected_next_range_image);
+        let expected_round3 = expected.compute_round_live_prefix(&expected_next_range_image);
 
         prover.ingest_challenge(2, r2);
 
