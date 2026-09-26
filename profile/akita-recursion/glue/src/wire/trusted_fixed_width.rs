@@ -35,7 +35,7 @@ impl<const P: u32> TrustedFixedWidthField for Fp32<P> {
             }
         };
         let canonical = u32::from_le(word);
-        (canonical < P).then(|| Self::from_canonical_u32(canonical))
+        Self::from_u128_checked(u128::from(canonical))
     }
 }
 
@@ -57,7 +57,7 @@ impl<const P: u64> TrustedFixedWidthField for Fp64<P> {
             }
         };
         let canonical = u64::from_le(word);
-        (canonical < P).then(|| Self::from_canonical_u64(canonical))
+        Self::from_u128_checked(u128::from(canonical))
     }
 }
 
