@@ -231,6 +231,25 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
             )
         })
         .expect_err("native verification must bind the session");
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("the statement must fit the setup's batch capacity");
+    assert_eq!(
+        error,
+        AkitaError::InvalidSize {
+            expected: 1,
+            actual: 2
+        },
+        "a malformed statement keeps its own error"
+    );
     let mut truncated = proof.clone();
     truncated.pop().expect("nonempty native proof");
     scheme

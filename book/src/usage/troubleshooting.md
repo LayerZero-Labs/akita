@@ -109,8 +109,13 @@ and verifier work is sequential and all reported thread counts are one.
 ## Verification rejects an artifact
 
 A verifier error does not always mean the proof was wrong. Decode and shape
-errors mean the public artifact was malformed. `AkitaError::InvalidProof`
-means the well-formed proof failed a protocol check.
+errors mean the public artifact was malformed. A statement that does not fit
+the verifier's setup or the selected schedule row returns the failing check's
+own error before transcript replay starts: `InvalidSize` or
+`InvalidPointDimension` for a statement larger than the setup, and
+`InvalidInput` with a message for a claim group or commitment profile that
+does not match. `AkitaError::InvalidProof` means the proof bytes failed a
+protocol check.
 
 Confirm that prover and verifier use the same Akita revision, configuration,
 transcript backend, transcript domain, ordered commitment groups, opening

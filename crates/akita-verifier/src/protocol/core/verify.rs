@@ -35,16 +35,12 @@ where
         let schedules = &self.schedules;
         let selection = statement.selection();
         let claims = statement.into_claims();
-        claims
-            .validate(setup.expanded().descriptor())
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let opening_batch = claims
-            .committed_layout()
-            .map_err(|_| AkitaError::InvalidProof)?;
+        claims.validate(setup.expanded().descriptor())?;
+        let opening_batch = claims.committed_layout()?;
         let (final_group, precommitteds) = claims
             .groups()
             .split_last()
-            .ok_or(AkitaError::InvalidProof)?;
+            .ok_or_else(|| AkitaError::InvalidInput("statement has no claim groups".to_string()))?;
         let final_descriptor = *final_group.commitment().profile();
         if final_descriptor.group.num_vars() != final_group.num_vars()
             || final_descriptor.group.num_polynomials() != final_group.num_evaluations()
@@ -54,27 +50,26 @@ where
                     || descriptor.group.num_polynomials() != group.num_evaluations()
             })
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "claim group shape does not match its commitment profile".to_string(),
+            ));
         }
         for group in claims.groups() {
             let committed = group.commitment();
             let descriptor = committed.profile();
-            descriptor
-                .validate_frozen_precommit(Cfg::decomposition().field_bits())
-                .map_err(|_| AkitaError::InvalidProof)?;
-            let source_coefficients = descriptor
-                .outer_slice_count
-                .complete_source_coefficients(
-                    descriptor.outer.matrix.output_rank(),
-                    descriptor.outer.matrix.ring_dimension(),
-                )
-                .map_err(|_| AkitaError::InvalidProof)?;
+            descriptor.validate_frozen_precommit(Cfg::decomposition().field_bits())?;
+            let source_coefficients = descriptor.outer_slice_count.complete_source_coefficients(
+                descriptor.outer.matrix.output_rank(),
+                descriptor.outer.matrix.ring_dimension(),
+            )?;
             let plan = akita_types::CompressionChainPlan::for_complete_source(
                 descriptor.outer.matrix.sis_table_key().modulus_profile,
                 source_coefficients,
             )?;
             if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidInput(
+                    "commitment length does not match its compression chain".to_string(),
+                ));
             }
         }
         let batch_profile = CommittedGroupBatchProfile {
@@ -84,23 +79,20 @@ where
                 .map(|group| *group.commitment().profile())
                 .collect(),
         };
-        batch_profile
-            .validate(Cfg::decomposition().field_bits())
-            .map_err(|_| AkitaError::InvalidProof)?;
+        batch_profile.validate(Cfg::decomposition().field_bits())?;
         let resolved = schedules.resolve_selection(selection)?;
-        resolved
-            .validate_opening_layout(&opening_batch)
-            .map_err(|_| AkitaError::InvalidProof)?;
+        resolved.validate_opening_layout(&opening_batch)?;
         if resolved.profiles() != &batch_profile {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "commitment profiles do not match the selected schedule row".to_string(),
+            ));
         }
         let schedule = resolved.schedule();
         let root_params = &schedule.root_fold().params;
         let expected_final_descriptor = akita_types::GroupCommitPhaseParams::try_from_params(
             final_descriptor.group,
             root_params,
-        )
-        .map_err(|_| AkitaError::InvalidProof)?;
+        )?;
         if final_descriptor != expected_final_descriptor
             || root_params.precommitted_groups().len() != precommitteds.len()
             || root_params
@@ -111,7 +103,9 @@ where
                     params.profile != *claims_group.commitment().profile()
                 })
         {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "commitment profiles do not match the selected schedule's root fold".to_string(),
+            ));
         }
         validate_schedule_ring_dims(schedule)?;
         if !self.admits(selection.row_digest) {
@@ -119,9 +113,7 @@ where
                 "selected schedule row does not fit this verifier's setup".to_string(),
             ));
         }
-        schedule
-            .validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)
-            .map_err(|_| AkitaError::InvalidProof)?;
+        schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
         let (grinding_plan, descriptor_bytes) = transcript_instance_descriptor::<Cfg::Field, Cfg>(
             &setup.expanded().descriptor,
             &opening_batch,
@@ -142,10 +134,8 @@ where
                     group.commitment().commitment(),
                 )
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let raw_claims =
-            OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
+            .collect::<Result<Vec<_>, _>>()?;
+        let raw_claims = OpeningClaims::from_groups(raw_groups)?;
         let root = verify_root_native::<Cfg::Field, Cfg::ExtField>(
             setup,
             &mut grinding,
