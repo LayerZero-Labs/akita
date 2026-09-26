@@ -1,13 +1,15 @@
 use std::hint::black_box;
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
+use akita_algebra::ntt::prime::I32_LAZY_DOT_BATCH;
 use akita_algebra::ntt::NttTwiddles;
 use akita_algebra::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
     Q64_PRIMES,
 };
 use akita_algebra::{
-    CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff, NttKernelPlan, NttPrime,
+    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff, NttKernelPlan,
+    NttPrime,
 };
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
@@ -183,6 +185,104 @@ fn bench_q64_forward_inputs<const D: usize>(c: &mut Criterion) {
     group.finish();
 }
 
+/// Forward conversions and accumulation used by the ring-switch quotient
+/// rows: signed digits into both transform domains, a centered-`i32` pair,
+/// and six column products reduced per product or as one lazy dot.
+fn bench_quotient_inputs<const K: usize, const D: usize>(
+    c: &mut Criterion,
+    profile: &str,
+    primes: [NttPrime<i32>; K],
+) {
+    const CENTERED_MAX_ABS: i32 = 1 << 12;
+    let params = CrtNttParamSet::<_, K, D>::new(primes);
+    let digit_lut = DigitMontLut::new_with_digit_bound(&params, 8);
+    let centered_lut = CenteredMontLut::new(&params, CENTERED_MAX_ABS);
+    let mut state = 0x7c1f_42d9_e3a5_b106u64;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let digits: Vec<[i8; D]> = (0..FORWARD_INPUT_POOL)
+        .map(|_| std::array::from_fn(|_| (next() % 16) as i8 - 8))
+        .collect();
+    let centered: Vec<[i32; D]> = (0..FORWARD_INPUT_POOL)
+        .map(|_| {
+            std::array::from_fn(|_| {
+                (next() % (2 * CENTERED_MAX_ABS as u64 + 1)) as i32 - CENTERED_MAX_ABS
+            })
+        })
+        .collect();
+    let lhs: Vec<CyclotomicCrtNtt<i32, K, D>> = (0..I32_LAZY_DOT_BATCH)
+        .map(|seed| input::<K, D>(&primes, 31 * seed as i32 + 5))
+        .collect();
+    let rhs: Vec<CyclotomicCrtNtt<i32, K, D>> = (0..I32_LAZY_DOT_BATCH)
+        .map(|seed| input::<K, D>(&primes, 57 * seed as i32 + 11))
+        .collect();
+    let mut group = c.benchmark_group(format!("{profile}_quotient_inputs"));
+
+    group.bench_with_input(BenchmarkId::new("signed_i8_negacyclic", D), &D, |b, _| {
+        let mut index = 0usize;
+        b.iter(|| {
+            index = (index + 1) % FORWARD_INPUT_POOL;
+            black_box(CyclotomicCrtNtt::from_i8_with_lut(
+                black_box(&digits[index]),
+                &params,
+                &digit_lut,
+            ))
+        })
+    });
+    group.bench_with_input(BenchmarkId::new("signed_i8_cyclic", D), &D, |b, _| {
+        let mut index = 0usize;
+        b.iter(|| {
+            index = (index + 1) % FORWARD_INPUT_POOL;
+            black_box(CyclotomicCrtNtt::from_i8_cyclic_with_lut(
+                black_box(&digits[index]),
+                &params,
+                &digit_lut,
+            ))
+        })
+    });
+    group.bench_with_input(BenchmarkId::new("centered_i32_pair", D), &D, |b, _| {
+        let mut index = 0usize;
+        b.iter(|| {
+            index = (index + 1) % FORWARD_INPUT_POOL;
+            // SAFETY: every generated coefficient lies within the LUT bound.
+            black_box(unsafe {
+                CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
+                    black_box(&centered[index]),
+                    &params,
+                    &centered_lut,
+                )
+            })
+        })
+    });
+    group.bench_with_input(BenchmarkId::new("mac_x6", D), &D, |b, _| {
+        b.iter_batched(
+            CyclotomicCrtNtt::<i32, K, D>::zero,
+            |mut accumulator| {
+                for (lhs, rhs) in lhs.iter().zip(&rhs) {
+                    accumulator.add_assign_pointwise_mul(black_box(lhs), black_box(rhs), &params);
+                }
+                black_box(accumulator)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.bench_with_input(BenchmarkId::new("dot_x6", D), &D, |b, _| {
+        b.iter_batched(
+            CyclotomicCrtNtt::<i32, K, D>::zero,
+            |mut accumulator| {
+                accumulator.add_assign_pointwise_dot(black_box(&lhs), black_box(&rhs), &params);
+                black_box(accumulator)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench_profile::<Q32_NUM_PRIMES, 64>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 128>(c, "q32", Q32_PRIMES);
@@ -206,6 +306,11 @@ fn benches(c: &mut Criterion) {
     bench_q64_forward_inputs::<256>(c);
     bench_q64_forward_inputs::<512>(c);
     bench_q64_forward_inputs::<1024>(c);
+
+    bench_quotient_inputs::<Q128_NUM_PRIMES, 64>(c, "q128", q128);
+    bench_quotient_inputs::<Q128_NUM_PRIMES, 256>(c, "q128", q128);
+    bench_quotient_inputs::<Q64_NUM_PRIMES, 64>(c, "q64", Q64_PRIMES);
+    bench_quotient_inputs::<Q64_NUM_PRIMES, 256>(c, "q64", Q64_PRIMES);
 
     bench_i16_tail::<64>(c);
     bench_i16_tail::<128>(c);

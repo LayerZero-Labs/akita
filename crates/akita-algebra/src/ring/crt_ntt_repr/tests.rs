@@ -140,3 +140,64 @@ fn q128_parameters_build_on_a_2_mib_stack() {
         .join()
         .expect("build Q128 parameters");
 }
+
+/// Digit LUT conversions take the fused SIMD paths where the platform has
+/// them; both must match the scalar negacyclic and cyclic references.
+fn check_digit_lut_conversions<W: PrimeWidth, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+) {
+    use crate::ntt::butterfly::forward_ntt_cyclic;
+    use crate::ntt::NttKernelPlan;
+
+    for bound in [8_u64, 128] {
+        let lut = DigitMontLut::new_with_digit_bound(params, bound);
+        let low = -(bound as i64);
+        let cases: [[i8; D]; 3] = [
+            [low as i8; D],
+            [(bound - 1) as i8; D],
+            std::array::from_fn(|i| (low + (i as i64 * 37 + 11) % (2 * bound as i64)) as i8),
+        ];
+        for (case, digits) in cases.iter().enumerate() {
+            assert_eq!(
+                CyclotomicCrtNtt::from_i8_with_lut(digits, params, &lut),
+                CyclotomicCrtNtt::from_i8_with_params(digits, params),
+                "negacyclic D={D}, bound={bound}, case={case}"
+            );
+            let mut expected = [[MontCoeff::from_raw(W::default()); D]; K];
+            for ((limb, prime), tw) in expected
+                .iter_mut()
+                .zip(params.primes.iter())
+                .zip(params.twiddles.iter())
+            {
+                *limb = digits.map(|digit| prime.from_canonical(W::from_i64(i64::from(digit))));
+                forward_ntt_cyclic(limb, *prime, tw, NttKernelPlan::SCALAR);
+            }
+            let actual = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, &lut);
+            for (k, (actual, expected)) in actual.limbs.iter().zip(expected.iter()).enumerate() {
+                let p = params.primes[k].p.to_i64();
+                let canonical = |x: &MontCoeff<W>| x.raw().to_i64().rem_euclid(p);
+                assert!(
+                    actual
+                        .iter()
+                        .map(canonical)
+                        .eq(expected.iter().map(canonical)),
+                    "cyclic D={D}, bound={bound}, case={case}, limb={k}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn digit_lut_conversions_match_scalar_references() {
+    fn all_sizes<W: PrimeWidth, const K: usize>(primes: [NttPrime<W>; K]) {
+        check_digit_lut_conversions(&CrtNttParamSet::<W, K, 16>::new(primes));
+        check_digit_lut_conversions(&CrtNttParamSet::<W, K, 64>::new(primes));
+        check_digit_lut_conversions(&CrtNttParamSet::<W, K, 256>::new(primes));
+    }
+    all_sizes(Q32_PRIMES);
+    all_sizes(Q64_PRIMES);
+    all_sizes(q128_primes());
+    all_sizes(synthetic_i16_primes());
+    all_sizes([I16_TAIL_PRIME]);
+}

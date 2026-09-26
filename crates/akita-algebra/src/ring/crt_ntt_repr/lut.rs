@@ -5,7 +5,7 @@ use std::mem::size_of;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx;
-use crate::ntt::butterfly::forward_ntt;
+use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic};
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
@@ -228,9 +228,10 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         }
     }
 
-    /// Convert one signed-digit limb and apply its forward negacyclic NTT.
+    /// Convert one signed-digit limb and apply its forward negacyclic NTT, or
+    /// with `CYCLIC` its forward cyclic NTT.
     #[inline]
-    pub(super) fn fill_negacyclic_limb<const D: usize>(
+    pub(super) fn fill_ntt_limb<const CYCLIC: bool, const D: usize>(
         &self,
         k: usize,
         digits: &[i8; D],
@@ -242,26 +243,30 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan()) {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
+            let use_avx512 = params.kernel_plan().uses_avx512_transform();
             // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
             // identifies W. MontCoeff is transparent, while NttPrime and
             // NttTwiddles have stable C layouts. Both arrays contain D >= 64
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
                 if size_of::<W>() == size_of::<i16>() {
-                    avx::forward_ntt_i8_i16(
-                        &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
-                        digits,
-                        *(&prime as *const _ as *const NttPrime<i16>),
-                        &*(tw as *const _ as *const NttTwiddles<i16, D>),
-                    );
+                    let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]);
+                    let prime = *(&prime as *const _ as *const NttPrime<i16>);
+                    let tw = &*(tw as *const _ as *const NttTwiddles<i16, D>);
+                    if CYCLIC {
+                        avx::forward_ntt_cyclic_i8_i16(dst, digits, prime, tw);
+                    } else {
+                        avx::forward_ntt_i8_i16(dst, digits, prime, tw);
+                    }
                 } else {
-                    avx::forward_ntt_i8_i32(
-                        &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
-                        digits,
-                        *(&prime as *const _ as *const NttPrime<i32>),
-                        &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                        params.kernel_plan().uses_avx512_transform(),
-                    );
+                    let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]);
+                    let prime = *(&prime as *const _ as *const NttPrime<i32>);
+                    let tw = &*(tw as *const _ as *const NttTwiddles<i32, D>);
+                    if CYCLIC {
+                        avx::forward_ntt_cyclic_i8_i32(dst, digits, prime, tw, use_avx512);
+                    } else {
+                        avx::forward_ntt_i8_i32(dst, digits, prime, tw, use_avx512);
+                    }
                 }
             }
             return;
@@ -276,23 +281,25 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             // and NttTwiddles have stable C layouts. Both input arrays have D
             // elements and do not overlap.
             unsafe {
-                neon::forward_ntt_i8_i32(
-                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
-                    digits,
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                );
+                let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]);
+                let prime = *(&prime as *const _ as *const NttPrime<i32>);
+                let tw = &*(tw as *const _ as *const NttTwiddles<i32, D>);
+                if CYCLIC {
+                    neon::forward_ntt_cyclic_i8_i32(dst, digits, prime, tw);
+                } else {
+                    neon::forward_ntt_i8_i32(dst, digits, prime, tw);
+                }
             }
             return;
         }
 
         self.fill_limb(k, digits, params, dst);
-        forward_ntt(
-            dst,
-            params.primes[k],
-            &params.twiddles[k],
-            params.kernel_plan(),
-        );
+        let (prime, tw, plan) = (params.primes[k], &params.twiddles[k], params.kernel_plan());
+        if CYCLIC {
+            forward_ntt_cyclic(dst, prime, tw, plan);
+        } else {
+            forward_ntt(dst, prime, tw, plan);
+        }
     }
 }
 

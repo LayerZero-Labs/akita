@@ -16,6 +16,32 @@ pub(super) fn is_zero_plane<const D: usize>(plane: &[i8; D]) -> bool {
     plane.iter().all(|&d| d == 0)
 }
 
+/// Splits `columns` into runs of consecutive nonzero columns, each at most
+/// `batch` wide, so one lazy pointwise dot covers each run.
+#[inline]
+pub(super) fn for_each_nonzero_column_run(
+    columns: std::ops::Range<usize>,
+    batch: usize,
+    is_zero: impl Fn(usize) -> bool,
+    mut run: impl FnMut(std::ops::Range<usize>),
+) {
+    let mut start = columns.start;
+    for column in columns.clone() {
+        if is_zero(column) {
+            if start < column {
+                run(start..column);
+            }
+            start = column + 1;
+        } else if column + 1 - start == batch {
+            run(start..column + 1);
+            start = column + 1;
+        }
+    }
+    if start < columns.end {
+        run(start..columns.end);
+    }
+}
+
 #[inline]
 pub(super) fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
     row.iter().all(|&d| d == 0)

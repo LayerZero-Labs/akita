@@ -20,9 +20,9 @@ pub(crate) use i16_kernels::{
 #[cfg(feature = "parallel")]
 pub use i32_kernels::add_reduce_i32;
 pub(crate) use i32_kernels::{
-    centered_i8_to_mont_i32, forward_ntt_centered_i16_i32, forward_ntt_cyclic_i32, forward_ntt_i32,
-    forward_ntt_i8_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32, pointwise_dot_acc_i32,
-    pointwise_mul_acc_i32,
+    centered_i8_to_mont_i32, forward_ntt_centered_i16_i32, forward_ntt_cyclic_i32,
+    forward_ntt_cyclic_i8_i32, forward_ntt_i32, forward_ntt_i8_i32, inverse_ntt_cyclic_i32,
+    inverse_ntt_i32, pointwise_dot_acc_i32, pointwise_mul_acc_i32,
 };
 pub(crate) use twiddles::BarrettTwiddles;
 

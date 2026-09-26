@@ -63,8 +63,9 @@ pub mod custom_source {
 #[doc(hidden)]
 pub mod benchmark_support {
     pub use crate::kernels::linear::{
-        decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
-        mat_vec_mul_ntt_i8_dense_single_row,
+        centered_quotient_rows_with_i16_tail, decompose_rows_i8_into,
+        fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_digits_i8,
+        mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, FusedQuotientRows,
     };
     pub use crate::sources::poly_helpers::{
         balanced_ring_decompose_fold_partitioned, DecomposeParams,
