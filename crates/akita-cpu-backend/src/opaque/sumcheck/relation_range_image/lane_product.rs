@@ -92,7 +92,7 @@ where
     while block_start < pairs.end {
         let high = block_start >> low_bits;
         let block_end = ((high + 1) << low_bits).min(pairs.end);
-        let mut inner = [ProductSum::<E>::zero(); 3];
+        let mut inner = ProductNorm::<E, SKIP_LINEAR>::zero();
         for pair in block_start..block_end {
             let (left, right) = (2 * pair, 2 * pair + 1);
             let w0 = entry(tables.witness, left);
@@ -114,18 +114,14 @@ where
             }
             let dw = w1 - w0;
             let e_in = tables.eq_low[pair & low_mask];
-            inner[0].add(e_in, w0.square() + w0);
-            if !SKIP_LINEAR {
-                inner[1].add(e_in, dw * (w0 + w0 + E::one()));
-            }
-            inner[2].add(e_in, dw.square());
+            inner.add(w0, dw, e_in);
             relation[0].add(w0, q0);
             relation[1].add(w1, q1);
             relation[2].add(dw, q1 - q0);
         }
         let e_out = tables.eq_high[high];
-        for (norm, inner) in norm.iter_mut().zip(inner) {
-            *norm += e_out * inner.finish();
+        for (norm, inner) in norm.iter_mut().zip(inner.reduce()) {
+            *norm += e_out * inner;
         }
         block_start = block_end;
     }
@@ -256,9 +252,9 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
                     totals
                 });
         let norm = if skip_linear {
-            NormRoundTerms::SkipLinear([norm[0], norm[2]])
+            NormRoundTerms::from_totals::<true>(norm)
         } else {
-            NormRoundTerms::Full(norm)
+            NormRoundTerms::from_totals::<false>(norm)
         };
         Some((norm, relation))
     }

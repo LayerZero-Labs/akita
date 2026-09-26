@@ -11,135 +11,79 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> (NormRoundTerms<E>, [E; 3]) {
+        if self.can_skip_norm_linear_coeff() {
+            self.compute_round_compact_dense_terms_with_skip_linear::<true>(
+                compact_witness,
+                live_pairs,
+                relation_pair,
+            )
+        } else {
+            self.compute_round_compact_dense_terms_with_skip_linear::<false>(
+                compact_witness,
+                live_pairs,
+                relation_pair,
+            )
+        }
+    }
+
+    fn compute_round_compact_dense_terms_with_skip_linear<const SKIP_LINEAR: bool>(
+        &self,
+        compact_witness: PackedSignedDigitView<'_>,
+        live_pairs: usize,
+        relation_pair: impl Fn(usize) -> (E, E) + Sync,
+    ) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
         debug_assert!(live_pairs <= num_first * num_second);
 
-        if self.can_skip_norm_linear_coeff() {
-            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..num_second,
-                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
-                |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::SmallProduct::zero(); 2];
-                    let base = j_high * num_first;
-                    for (j_low, &e_in) in e_first.iter().enumerate() {
-                        let j = base + j_low;
-                        if j >= live_pairs {
-                            break;
-                        }
-                        let w0 = compact_witness.get(2 * j).map_or(0, i32::from);
-                        let w1 = compact_witness.get(2 * j + 1).map_or(0, i32::from);
-                        let dw = w1 - w0;
-                        let w0_i64 = w0 as i64;
-                        let dw_i64 = dw as i64;
-
-                        let q0 = w0_i64 * (w0_i64 + 1);
-                        if q0 != 0 {
-                            inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
-                        }
-                        let q2 = dw_i64 * dw_i64;
-                        if q2 != 0 {
-                            inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
-                        }
-
-                        let (p0, p1) = relation_pair(2 * j);
-                        self.accumulate_fused_relation_linear_signed(
-                            &mut rel,
-                            w0_i64,
-                            dw_i64,
-                            2 * j,
-                            p0,
-                            p1,
-                        );
+        let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
+            0..num_second,
+            || (
+                FieldNorm::<E, SKIP_LINEAR>::zero(),
+                [E::SmallProduct::zero(); 6]
+            ),
+            |(mut virt, mut rel), j_high| {
+                let mut inner_virt = CompactNorm::<E, SKIP_LINEAR>::zero();
+                let base = j_high * num_first;
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = base + j_low;
+                    if j >= live_pairs {
+                        break;
                     }
+                    let w0 = compact_witness.get(2 * j).map_or(0, i32::from);
+                    let w1 = compact_witness.get(2 * j + 1).map_or(0, i32::from);
+                    let dw = w1 - w0;
+                    let w0_i64 = w0 as i64;
+                    let dw_i64 = dw as i64;
 
-                    let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
-                    let e_out = e_second[j_high];
-                    virt[0] += e_out * reduced_inner[0];
-                    virt[1] += e_out * reduced_inner[1];
+                    inner_virt.add(w0_i64, dw_i64, e_in);
 
-                    (virt, rel)
-                },
-                |(mut va, mut ra), (vb, rb)| {
-                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                        *ai += *bi;
-                    }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
-                    (va, ra)
+                    let (p0, p1) = relation_pair(2 * j);
+                    self.accumulate_fused_relation_linear_signed(
+                        &mut rel,
+                        w0_i64,
+                        dw_i64,
+                        2 * j,
+                        p0,
+                        p1,
+                    );
                 }
-            );
 
-            (
-                NormRoundTerms::SkipLinear(virt_coeffs),
-                reduce_compact_rel(rel_accum),
-            )
-        } else {
-            let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..num_second,
-                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
-                |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::SmallProduct::zero(); 4];
-                    let base = j_high * num_first;
-                    for (j_low, &e_in) in e_first.iter().enumerate() {
-                        let j = base + j_low;
-                        if j >= live_pairs {
-                            break;
-                        }
-                        let w0 = compact_witness.get(2 * j).map_or(0, i32::from);
-                        let w1 = compact_witness.get(2 * j + 1).map_or(0, i32::from);
-                        let dw = w1 - w0;
-                        let w0_i64 = w0 as i64;
-                        let dw_i64 = dw as i64;
+                let reduced_inner = inner_virt.reduce();
+                let e_out = e_second[j_high];
+                virt.scaled_add(e_out, reduced_inner);
 
-                        let q0 = w0_i64 * (w0_i64 + 1);
-                        if q0 != 0 {
-                            inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
-                        }
-                        let q1 = dw_i64 * (2 * w0_i64 + 1);
-                        accum_small_signed::<E>(&mut inner_virt, 1, e_in, q1);
-                        let q2 = dw_i64 * dw_i64;
-                        if q2 != 0 {
-                            inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
-                        }
+                (virt, rel)
+            },
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                add_assign_all(&mut ra, &rb);
+                (va, ra)
+            }
+        );
 
-                        let (p0, p1) = relation_pair(2 * j);
-                        self.accumulate_fused_relation_linear_signed(
-                            &mut rel,
-                            w0_i64,
-                            dw_i64,
-                            2 * j,
-                            p0,
-                            p1,
-                        );
-                    }
-
-                    let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
-                    let e_out = e_second[j_high];
-                    virt[0] += e_out * reduced_inner[0];
-                    virt[1] += e_out * reduced_inner[1];
-                    virt[2] += e_out * reduced_inner[2];
-
-                    (virt, rel)
-                },
-                |(mut va, mut ra), (vb, rb)| {
-                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                        *ai += *bi;
-                    }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
-                    (va, ra)
-                }
-            );
-
-            (
-                NormRoundTerms::Full(virt_coeffs),
-                reduce_compact_rel(rel_accum),
-            )
-        }
+        (virt_coeffs.into_terms(), reduce_compact_rel(rel_accum))
     }
 
     /// `(p(left), p(left + 1))` for the factored relation weight
@@ -195,103 +139,68 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         live_pairs: usize,
         relation_pair: impl Fn(usize) -> (E, E) + Sync,
     ) -> (NormRoundTerms<E>, [E; 3]) {
+        if self.can_skip_norm_linear_coeff() {
+            self.compute_folded_dense_round_terms_with_skip_linear::<true>(
+                folded_witness,
+                live_pairs,
+                relation_pair,
+            )
+        } else {
+            self.compute_folded_dense_round_terms_with_skip_linear::<false>(
+                folded_witness,
+                live_pairs,
+                relation_pair,
+            )
+        }
+    }
+
+    fn compute_folded_dense_round_terms_with_skip_linear<const SKIP_LINEAR: bool>(
+        &self,
+        folded_witness: &[E],
+        live_pairs: usize,
+        relation_pair: impl Fn(usize) -> (E, E) + Sync,
+    ) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
         debug_assert!(live_pairs <= num_first * num_second);
 
-        if self.can_skip_norm_linear_coeff() {
-            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..num_second,
-                || ([E::zero(); 2], [E::zero(); 3]),
-                |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::zero(); 2];
-                    let base = j_high * num_first;
+        let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
+            0..num_second,
+            || (FieldNorm::<E, SKIP_LINEAR>::zero(), [E::zero(); 3]),
+            |(mut virt, mut rel), j_high| {
+                let mut inner_virt = FieldNorm::<E, SKIP_LINEAR>::zero();
+                let base = j_high * num_first;
 
-                    for (j_low, &e_in) in e_first.iter().enumerate() {
-                        let j = base + j_low;
-                        if j >= live_pairs {
-                            break;
-                        }
-                        let w0 = folded_witness.get(2 * j).copied().unwrap_or_else(E::zero);
-                        let w1 = folded_witness
-                            .get(2 * j + 1)
-                            .copied()
-                            .unwrap_or_else(E::zero);
-                        let dw = w1 - w0;
-
-                        inner_virt[0] += e_in * (w0.square() + w0);
-                        inner_virt[1] += e_in * dw.square();
-
-                        let (p0, p1) = relation_pair(2 * j);
-                        self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
+                for (j_low, &e_in) in e_first.iter().enumerate() {
+                    let j = base + j_low;
+                    if j >= live_pairs {
+                        break;
                     }
+                    let w0 = folded_witness.get(2 * j).copied().unwrap_or_else(E::zero);
+                    let w1 = folded_witness
+                        .get(2 * j + 1)
+                        .copied()
+                        .unwrap_or_else(E::zero);
+                    let dw = w1 - w0;
 
-                    let e_out = e_second[j_high];
-                    virt[0] += e_out * inner_virt[0];
-                    virt[1] += e_out * inner_virt[1];
+                    inner_virt.add(w0, dw, e_in);
 
-                    (virt, rel)
-                },
-                |(mut va, mut ra), (vb, rb)| {
-                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                        *ai += *bi;
-                    }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
-                    (va, ra)
+                    let (p0, p1) = relation_pair(2 * j);
+                    self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
                 }
-            );
-            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
-        } else {
-            let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..num_second,
-                || ([E::zero(); 3], [E::zero(); 3]),
-                |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::zero(); 3];
-                    let base = j_high * num_first;
 
-                    for (j_low, &e_in) in e_first.iter().enumerate() {
-                        let j = base + j_low;
-                        if j >= live_pairs {
-                            break;
-                        }
-                        let w0 = folded_witness.get(2 * j).copied().unwrap_or_else(E::zero);
-                        let w1 = folded_witness
-                            .get(2 * j + 1)
-                            .copied()
-                            .unwrap_or_else(E::zero);
-                        let dw = w1 - w0;
-                        let two_w0_plus_one = w0 + w0 + E::one();
+                virt.scaled_add(e_second[j_high], inner_virt.totals());
 
-                        inner_virt[0] += e_in * (w0.square() + w0);
-                        inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                        inner_virt[2] += e_in * dw.square();
-
-                        let (p0, p1) = relation_pair(2 * j);
-                        self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
-                    }
-
-                    let e_out = e_second[j_high];
-                    virt[0] += e_out * inner_virt[0];
-                    virt[1] += e_out * inner_virt[1];
-                    virt[2] += e_out * inner_virt[2];
-
-                    (virt, rel)
-                },
-                |(mut va, mut ra), (vb, rb)| {
-                    for (ai, bi) in va.iter_mut().zip(vb.iter()) {
-                        *ai += *bi;
-                    }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
-                    (va, ra)
-                }
-            );
-            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
-        }
+                (virt, rel)
+            },
+            |(mut va, mut ra), (vb, rb)| {
+                va.merge(vb);
+                add_assign_all(&mut ra, &rb);
+                (va, ra)
+            }
+        );
+        (virt_coeffs.into_terms(), rel_coeffs)
     }
 
     pub(super) fn compute_folded_dense_round_terms(

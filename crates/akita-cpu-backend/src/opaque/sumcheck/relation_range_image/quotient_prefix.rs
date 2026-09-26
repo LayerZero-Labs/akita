@@ -329,7 +329,7 @@ fn lookup_pairs<E: Field + Unreduced, const G: usize, const SKIP_LINEAR: bool>(
     while block_start < pairs.end {
         let high = block_start >> low_bits;
         let block_end = ((high + 1) << low_bits).min(pairs.end);
-        let mut inner = [ProductSum::<E>::zero(); 3];
+        let mut inner = ProductNorm::<E, SKIP_LINEAR>::zero();
         for pair in block_start..block_end {
             let w0 = fold_entry(2 * pair);
             let w1 = fold_entry(2 * pair + 1);
@@ -340,15 +340,11 @@ fn lookup_pairs<E: Field + Unreduced, const G: usize, const SKIP_LINEAR: bool>(
             }
             let dw = w1 - w0;
             let e_in = eq_low[pair & low_mask];
-            inner[0].add(e_in, w0.square() + w0);
-            if !SKIP_LINEAR {
-                inner[1].add(e_in, dw * (w0 + w0 + E::one()));
-            }
-            inner[2].add(e_in, dw.square());
+            inner.add(w0, dw, e_in);
         }
         let e_out = eq_high[high];
-        for (total, inner) in totals.iter_mut().zip(inner) {
-            *total += e_out * inner.finish();
+        for (total, inner) in totals.iter_mut().zip(inner.reduce()) {
+            *total += e_out * inner;
         }
         block_start = block_end;
     }
@@ -641,7 +637,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 }
             }
         }
-        NormRoundTerms::Full([at_zero, at_one - at_zero - at_infinity, at_infinity])
+        NormRoundTerms::from_totals::<false>([at_zero, at_one - at_zero - at_infinity, at_infinity])
     }
 
     /// Equality weights of the quad corners `[00, 10, 01, 11]` at `(r0, r1)`.
@@ -670,9 +666,9 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             _ => unreachable!("compact prefix rounds are capped by MAX_PREFIX_ROUNDS"),
         };
         if skip_linear {
-            NormRoundTerms::SkipLinear([totals[0], totals[2]])
+            NormRoundTerms::from_totals::<true>(totals)
         } else {
-            NormRoundTerms::Full(totals)
+            NormRoundTerms::from_totals::<false>(totals)
         }
     }
 

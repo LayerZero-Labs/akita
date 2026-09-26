@@ -130,8 +130,17 @@ enum NormRoundTerms<E: Field> {
     SkipLinear([E; 2]),
 }
 
-type CompactVirtAccum<E> = [<E as Unreduced>::SmallProduct; 4];
-type CompactVirtSkipLinearAccum<E> = [<E as Unreduced>::SmallProduct; 2];
+impl<E: Field> NormRoundTerms<E> {
+    #[inline(always)]
+    fn from_totals<const SKIP_LINEAR: bool>(totals: [E; 3]) -> Self {
+        if SKIP_LINEAR {
+            Self::SkipLinear([totals[0], totals[2]])
+        } else {
+            Self::Full(totals)
+        }
+    }
+}
+
 type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 6];
 
 #[inline]
@@ -157,25 +166,6 @@ fn accum_small_signed<E: Field + Unreduced>(
     } else {
         accum[pos_idx] += prod;
     }
-}
-
-#[inline]
-fn reduce_compact_virt<E: Field + Unreduced>(virt: CompactVirtAccum<E>) -> [E; 3] {
-    [
-        E::reduce_small_product(virt[0]),
-        reduce_signed_accum::<E>(virt[1], virt[2]),
-        E::reduce_small_product(virt[3]),
-    ]
-}
-
-#[inline]
-fn reduce_compact_virt_skip_linear<E: Field + Unreduced>(
-    virt: CompactVirtSkipLinearAccum<E>,
-) -> [E; 2] {
-    [
-        E::reduce_small_product(virt[0]),
-        E::reduce_small_product(virt[1]),
-    ]
 }
 
 #[inline]
@@ -288,6 +278,8 @@ mod dense_terms;
 mod evaluation_trace;
 mod lane_product;
 mod lifecycle;
+mod norm;
+use norm::{CompactNorm, FieldNorm, ProductNorm};
 mod prepared_linear_lane;
 mod quotient_prefix;
 mod round_flow;
