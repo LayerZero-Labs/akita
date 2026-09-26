@@ -118,6 +118,7 @@ struct Job {
     output_closed: bool,
     exited_at: Option<Instant>,
     inited_after: Option<u64>,
+    watchdog_stopped: bool,
 }
 
 enum Message {
@@ -447,7 +448,16 @@ impl Runner {
             let _ = sender.send(Message::Closed(id));
         });
         let budget_s = match purpose {
-            Purpose::Fuzz => self.slice_for(lane) + 600,
+            // Corpus re-execution happens before libFuzzer honors
+            // `-max_total_time`, so allow for it on top of the slice.
+            Purpose::Fuzz => {
+                let init = self
+                    .state
+                    .lanes
+                    .get(&lane.name())
+                    .map_or(0, |state| state.init_seconds);
+                self.slice_for(lane) + init.saturating_mul(2) + 600
+            }
             Purpose::Baseline => 3600,
             Purpose::Replay => 600,
         };
@@ -475,6 +485,7 @@ impl Runner {
                 output_closed: false,
                 exited_at: None,
                 inited_after: None,
+                watchdog_stopped: false,
             },
         );
         Ok(id)
@@ -554,6 +565,7 @@ impl Runner {
                         let name = job.lane.name();
                         Self::signal(job, libc::SIGTERM);
                         job.terminated_at = Some(now);
+                        job.watchdog_stopped = true;
                         self.event(&format!(
                             "watchdog: {name} exceeded its wall-clock deadline; terminating"
                         ));
@@ -609,8 +621,14 @@ impl Runner {
             state.cov = state.cov.max(job.status.cov);
             state.peak_rss_mb = state.peak_rss_mb.max(job.status.rss_mb);
             if job.purpose == Purpose::Fuzz {
-                if let Some(init) = job.inited_after {
-                    state.init_seconds = init;
+                match job.inited_after {
+                    Some(init) => state.init_seconds = init,
+                    // Stopped while still re-executing the corpus: that took
+                    // at least this long, so the next job gets more time.
+                    None if job.watchdog_stopped => {
+                        state.init_seconds = state.init_seconds.max(elapsed as u64);
+                    }
+                    None => {}
                 }
             }
             state.ft = state.ft.max(job.status.ft);
@@ -644,6 +662,12 @@ impl Runner {
             .any(|line| line.contains("panicked at") || line.contains("ERROR:"));
         if artifact.is_some() || failure_output {
             self.record_finding(&job, artifact.as_deref(), &tail, elapsed);
+        } else if job.watchdog_stopped && !job.status.inited {
+            let init = self.lane_state(&name).init_seconds;
+            self.event(&format!(
+                "{name}: corpus re-execution outlasted the deadline ({elapsed:.0}s); next job allows {}s",
+                init.saturating_mul(2)
+            ));
         } else if !job.status.inited && elapsed < STARTUP_GRACE_S as f64 {
             self.lane_state(&name).startup_failures += 1;
             let last: Vec<&str> = tail
