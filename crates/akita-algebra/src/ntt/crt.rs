@@ -205,9 +205,9 @@ const RADIX_MASK: i32 = RADIX - 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GarnerData<const K: usize> {
     /// CRT moduli `p_i`, each in `[2, 2^62)`.
-    pub moduli: [u64; K],
+    moduli: [u64; K],
     /// `gamma[i][j]` = `p_j^{-1} mod p_i` for `j < i`.
-    pub gamma: [[u64; K]; K],
+    gamma: [[u64; K]; K],
     /// Shoup quotients `floor(gamma[i][j] * 2^64 / p_i)`.
     gamma_shoup: [[u64; K]; K],
     /// Least multiple of `p_i` that is at least `floor(p_j / 2)`, so adding it
@@ -219,6 +219,16 @@ pub struct GarnerData<const K: usize> {
 }
 
 impl<const K: usize> GarnerData<K> {
+    /// CRT moduli used to construct this immutable precomputation.
+    pub fn moduli(&self) -> &[u64; K] {
+        &self.moduli
+    }
+
+    /// Garner inverses used to construct the cached Shoup quotients.
+    pub fn gamma(&self) -> &[[u64; K]; K] {
+        &self.gamma
+    }
+
     /// Compute Garner constants from a set of NTT primes.
     pub fn compute<W: PrimeWidth>(primes: &[NttPrime<W>; K]) -> Self {
         Self::try_from_moduli(primes.map(|prime| prime.p.to_i64() as u64))
