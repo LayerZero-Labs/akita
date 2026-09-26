@@ -15,8 +15,6 @@ pub(crate) use position_sample::MAX_STACK_RING_DIM;
 #[cfg(feature = "labinius-challenges")]
 pub(crate) use position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
 pub(crate) use signed_sparse::SignedSparseScratch;
-#[cfg(feature = "labinius-challenges")]
-pub(crate) use xof::shake256;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
 use akita_error::AkitaError;

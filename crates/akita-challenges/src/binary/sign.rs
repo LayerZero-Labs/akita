@@ -1,5 +1,6 @@
 use super::BinaryChallengeProfile;
-use crate::sampler::shake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 
 const SIGN_DOMAIN: &[u8] = b"akita/labinius/binary-sign/v1";
 
@@ -22,5 +23,7 @@ pub(super) fn coefficient_signs(
         input[support_offset + position / 8] |= 1 << (position % 8);
     }
     output.resize(support.len(), 0);
-    shake256(input, output);
+    let mut xof = Shake256::default();
+    xof.update(input);
+    xof.finalize_xof().read(output);
 }

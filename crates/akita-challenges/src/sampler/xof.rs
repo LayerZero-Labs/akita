@@ -31,29 +31,11 @@ impl IndexedXofPrefix {
     fn reader(&self, coordinate_index: u64) -> IndexedShakeReader {
         let mut state = self.state;
         absorb_bytes(&mut state, GROUP_ROOT_LEN, &coordinate_index.to_le_bytes());
-        finalize_reader(state, COORDINATE_INPUT_LEN)
-    }
-}
-
-/// SHAKE256 with the same padding and squeeze path as indexed challenge draws.
-#[cfg(any(test, feature = "labinius-challenges"))]
-pub(crate) fn shake256(input: &[u8], output: &mut [u8]) {
-    let mut state = [0u64; 25];
-    let mut chunks = input.chunks_exact(SHAKE256_RATE);
-    for block in &mut chunks {
-        absorb_bytes(&mut state, 0, block);
+        xor_state_byte(&mut state, COORDINATE_INPUT_LEN, SHAKE_DOMAIN_SUFFIX);
+        xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
         keccak::f1600(&mut state);
+        IndexedShakeReader { state, pos: 0 }
     }
-    let remainder = chunks.remainder();
-    absorb_bytes(&mut state, 0, remainder);
-    finalize_reader(state, remainder.len()).read(output);
-}
-
-fn finalize_reader(mut state: [u64; 25], absorbed: usize) -> IndexedShakeReader {
-    xor_state_byte(&mut state, absorbed, SHAKE_DOMAIN_SUFFIX);
-    xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
-    keccak::f1600(&mut state);
-    IndexedShakeReader { state, pos: 0 }
 }
 
 fn absorb_bytes(state: &mut [u64; 25], offset: usize, bytes: &[u8]) {
@@ -285,19 +267,6 @@ mod tests {
         reused.fill_bytes(&mut reused_bytes);
         fresh.fill_bytes(&mut fresh_bytes);
         assert_eq!(reused_bytes, fresh_bytes);
-    }
-
-    #[test]
-    fn arbitrary_input_shake_matches_the_independent_implementation() {
-        let input = (0..=255).collect::<Vec<u8>>();
-        let mut expected_xof = Shake256::default();
-        expected_xof.update(&input);
-        let mut expected_reader = expected_xof.finalize_xof();
-        let mut expected = [0u8; 300];
-        expected_reader.read(&mut expected);
-        let mut actual = [0u8; 300];
-        shake256(&input, &mut actual);
-        assert_eq!(actual, expected);
     }
 
     #[test]

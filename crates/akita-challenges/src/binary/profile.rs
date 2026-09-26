@@ -1,6 +1,7 @@
 use std::sync::LazyLock;
 
 use akita_error::AkitaError;
+use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 use num_bigint::BigUint;
 
 use super::combinatorics::BinomialCdfRow;
@@ -9,6 +10,15 @@ static CYCLOTOMIC_243_COUNTS: LazyLock<BinomialCdfRow> =
     LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic243.degree()));
 static CYCLOTOMIC_729_COUNTS: LazyLock<BinomialCdfRow> =
     LazyLock::new(|| BinomialCdfRow::new(BinaryScalarRing::Cyclotomic729.degree()));
+const FOLD_ROOT_ENTROPY_BITS: u32 = (FOLD_CHALLENGE_SEED_LEN * 8) as u32;
+
+fn required_budget(fold_width: u64, lambda_fold: u32) -> Option<BigUint> {
+    if fold_width == 0 || lambda_fold > FOLD_ROOT_ENTROPY_BITS {
+        return None;
+    }
+    let required = BigUint::from(fold_width) << lambda_fold;
+    (required <= (BigUint::from(1u8) << FOLD_ROOT_ENTROPY_BITS)).then_some(required)
+}
 
 /// Supported inert binary scalar rings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -132,6 +142,7 @@ impl BinaryChallengeProfile {
     ///
     /// Fixed-weight search stops at half the scalar degree, where the binomial
     /// shell is maximal. Bounded-weight search includes the full support ball.
+    /// The requested budget must also fit the entropy of one fold-root draw.
     pub fn minimum_for_budget(
         scalar_ring: BinaryScalarRing,
         family: BinaryChallengeFamily,
@@ -143,13 +154,17 @@ impl BinaryChallengeProfile {
                 "binary challenge fold width must be nonzero".into(),
             ));
         }
+        let required = required_budget(fold_width, lambda_fold).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "binary challenge budget exceeds the {FOLD_ROOT_ENTROPY_BITS}-bit fold-root capacity"
+            ))
+        })?;
         let degree = scalar_ring.degree();
         if lambda_fold as usize > degree || (lambda_fold as usize == degree && fold_width > 1) {
             return Err(AkitaError::UnsupportedSchedule(format!(
                 "binary challenge budget exceeds the degree-{degree} residue capacity"
             )));
         }
-        let required = BigUint::from(fold_width) << lambda_fold;
         let maximum_weight = match family {
             BinaryChallengeFamily::FixedWeight => degree / 2,
             BinaryChallengeFamily::BoundedWeight => degree,
@@ -206,17 +221,16 @@ impl BinaryChallengeProfile {
         &self.cardinality
     }
 
-    /// Exact comparison against `fold_width * 2^lambda_fold`.
+    /// Exact comparison against `fold_width * 2^lambda_fold`, capped by the
+    /// entropy of the fold root from which the family is sampled.
     #[must_use]
     pub fn meets_budget(&self, fold_width: u64, lambda_fold: u32) -> bool {
         let degree = self.scalar_ring.degree();
-        if fold_width == 0
-            || lambda_fold as usize > degree
-            || (lambda_fold as usize == degree && fold_width > 1)
-        {
+        if lambda_fold as usize > degree || (lambda_fold as usize == degree && fold_width > 1) {
             return false;
         }
-        self.cardinality >= (BigUint::from(fold_width) << lambda_fold)
+        required_budget(fold_width, lambda_fold)
+            .is_some_and(|required| self.cardinality >= required)
     }
 
     /// Maximum coefficient infinity norm over the family.
@@ -347,6 +361,25 @@ mod tests {
             BinaryChallengeProfile::fixed_weight(BinaryScalarRing::Cyclotomic729, 243).unwrap();
         assert!(profile.cardinality().bits() > 256);
         assert_eq!(profile.cardinality().bits(), 482);
+    }
+
+    #[test]
+    fn fold_root_entropy_caps_degree_486_budgets() {
+        let ring = BinaryScalarRing::Cyclotomic729;
+        let family = BinaryChallengeFamily::BoundedWeight;
+        let profile = BinaryChallengeProfile::bounded_weight(ring, ring.degree()).unwrap();
+
+        assert!(!profile.meets_budget(1, 300));
+        assert!(BinaryChallengeProfile::minimum_for_budget(ring, family, 1, 300).is_err());
+        assert!(profile.meets_budget(1, 256));
+        assert!(profile.meets_budget(2, 255));
+        assert!(profile.meets_budget(3, 254));
+        assert!(!profile.meets_budget(2, 256));
+        assert!(!profile.meets_budget(3, 255));
+        assert!(BinaryChallengeProfile::minimum_for_budget(ring, family, 1, 256).is_ok());
+        assert!(BinaryChallengeProfile::minimum_for_budget(ring, family, 2, 256).is_err());
+        assert!(BinaryChallengeProfile::minimum_for_budget(ring, family, 3, 254).is_ok());
+        assert!(BinaryChallengeProfile::minimum_for_budget(ring, family, 3, 255).is_err());
     }
 
     #[test]
