@@ -398,6 +398,17 @@ impl Runner {
             Purpose::Merge => {
                 let merged = artifacts.join("merged");
                 std::fs::create_dir_all(&merged)?;
+                // Merge a private snapshot: running jobs replace and remove
+                // corpus files (`-reduce_inputs`), which aborts a merge that
+                // reads the live directory.
+                let snapshot = artifacts.join("snapshot");
+                std::fs::create_dir_all(&snapshot)?;
+                for file in &merge_snapshot {
+                    let source = corpus.join(file);
+                    if std::fs::hard_link(&source, snapshot.join(file)).is_err() {
+                        let _ = std::fs::copy(&source, snapshot.join(file));
+                    }
+                }
                 let mut args = libfuzzer::base_args(
                     &binary,
                     libfuzzer::Limits {
@@ -410,7 +421,7 @@ impl Runner {
                     "-merge=1".to_string(),
                     format!("-max_len={}", lane.max_len),
                     merged.display().to_string(),
-                    corpus.display().to_string(),
+                    snapshot.display().to_string(),
                 ]);
                 args
             }
