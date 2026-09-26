@@ -6,9 +6,13 @@
 //! packed first entry lowest. So round 2 sums over at most `2^(8 class_bits)`
 //! classes, each weighted by the total round-2 equality weight of its live
 //! octets, and rounds 0 and 1 need only the quad-class marginals of those
-//! weights. Round 3 pairs adjacent octets and reads, per class, the folded value,
-//! its range polynomial value and the Taylor factors that depend on it alone, so
-//! each pair pays only for the powers of its difference. Its challenge
+//! weights. Round 3 pairs adjacent octets. Its linear sum
+//! `sum eq(pair) (Q(right) - Q(left))` separates over the classes of the two
+//! octets, so the same scan also sums each pair's round-3 equality weight into
+//! the classes of its even and odd octets; the round-2 weights are a `tau3`
+//! blend of those two tables. The higher round-3 terms read, per class, the
+//! folded value and the Taylor factors that depend on it alone, so each pair
+//! pays only for the powers of its difference. The round-3 challenge
 //! materializes the field table, fused with round 4.
 //!
 //! Class-zero octets contribute nothing to any of these rounds, since all their
@@ -18,8 +22,8 @@ use super::*;
 
 /// Rounds served from the compact table before it is materialized.
 pub(super) const OCTET_PREFIX_ROUNDS: usize = 4;
-/// Octets per tile of the class-weight histogram.
-const HISTOGRAM_TILE_OCTETS: usize = 1 << 12;
+/// Octet pairs per tile of the class-weight histogram.
+const HISTOGRAM_TILE_PAIRS: usize = 1 << 11;
 /// Octet classes per round-2 accumulation chunk.
 const ROUND2_CLASS_CHUNK: usize = 1 << 12;
 
@@ -30,71 +34,144 @@ fn class_bits(basis: usize) -> usize {
     basis / 4
 }
 
-/// Pack eight range-image classes, first entry lowest.
-#[inline(always)]
-fn pack_octet_class(classes: [u8; 8], class_bits: usize) -> u16 {
-    let x = u64::from_le_bytes(classes);
-    let packed = if class_bits == 2 {
-        let x = (x | (x >> 6)) & 0x000f_000f_000f_000f;
-        let x = (x | (x >> 12)) & 0x0000_00ff_0000_00ff;
-        (x | (x >> 24)) & 0xffff
-    } else {
-        let x = (x | (x >> 7)) & 0x0003_0003_0003_0003;
-        let x = (x | (x >> 14)) & 0x0000_000f_0000_000f;
-        (x | (x >> 28)) & 0xff
-    };
-    packed as u16
-}
-
-/// Classes of `octets` of the compact table; octets past the table have class
-/// zero.
-fn octet_classes<S: CompactRangeImageSource + ?Sized>(
-    source: &S,
-    octets: Range<usize>,
+/// Reads octet classes straight from the packed digit bytes.
+///
+/// An octet of `w`-bit digits fills exactly `w` bytes, first digit lowest, so
+/// octet `o` is the little-endian word of bytes `w o .. w (o + 1)`. Widths up
+/// to three bits look up each half of that word in a table of packed quad
+/// classes; wider digits are classified one at a time.
+struct OctetClassReader<'a> {
+    encoded: &'a [u8],
+    bit_width: usize,
     class_bits: usize,
-) -> Vec<u16> {
-    let mut entry_classes = vec![0u8; 8 * octets.len()];
-    source.range_image_classes(8 * octets.start, &mut entry_classes);
-    entry_classes
-        .chunks_exact(8)
-        .map(|classes| {
-            pack_octet_class(
-                classes.try_into().expect("octet has eight entries"),
-                class_bits,
-            )
-        })
-        .collect()
+    quad_classes: [u8; 1 << 12],
 }
 
-/// Sum the round-2 equality weight `e_first[o & mask] * e_second[o >> bits]` of
-/// every live octet `o` into its class.
-fn octet_class_weights<E: Field, S: CompactRangeImageSource + ?Sized>(
-    source: &S,
+impl<'a> OctetClassReader<'a> {
+    fn new(source: &'a PackedSignedDigits, class_bits: usize) -> Self {
+        let bit_width = usize::from(source.bit_width());
+        let mut quad_classes = [0u8; 1 << 12];
+        if bit_width <= 3 {
+            for (quad, slot) in quad_classes
+                .iter_mut()
+                .enumerate()
+                .take(1 << (4 * bit_width))
+            {
+                *slot = packed_digit_classes(quad as u64, bit_width, class_bits, 4) as u8;
+            }
+        }
+        Self {
+            encoded: source.encoded_bytes(),
+            bit_width,
+            class_bits,
+            quad_classes,
+        }
+    }
+
+    /// Classes of `octets`; octets past the table have class zero.
+    fn classes(&self, octets: Range<usize>) -> Vec<u16> {
+        match self.bit_width {
+            1 => self.classes_of_width::<1>(octets),
+            2 => self.classes_of_width::<2>(octets),
+            3 => self.classes_of_width::<3>(octets),
+            4 => self.classes_of_width::<4>(octets),
+            5 => self.classes_of_width::<5>(octets),
+            6 => self.classes_of_width::<6>(octets),
+            7 => self.classes_of_width::<7>(octets),
+            8 => self.classes_of_width::<8>(octets),
+            _ => unreachable!("packed signed digits are one to eight bits wide"),
+        }
+    }
+
+    fn classes_of_width<const W: usize>(&self, octets: Range<usize>) -> Vec<u16> {
+        let whole = (self.encoded.len() / W).min(octets.end);
+        let mut classes = Vec::with_capacity(octets.len());
+        classes.extend(
+            self.encoded[W * octets.start.min(whole)..W * whole]
+                .chunks_exact(W)
+                .map(|bytes| self.word_class::<W>(little_endian_word(bytes))),
+        );
+        // The encoding stops at the last live digit, so the final octet may be
+        // partial and later octets have no bytes at all.
+        classes.extend((whole.max(octets.start)..octets.end).map(|octet| {
+            let bytes = self.encoded.get(W * octet..).unwrap_or(&[]);
+            self.word_class::<W>(little_endian_word(&bytes[..bytes.len().min(W)]))
+        }));
+        classes
+    }
+
+    #[inline(always)]
+    fn word_class<const W: usize>(&self, word: u64) -> u16 {
+        if W <= 3 {
+            let quad_mask = (1u64 << (4 * W)) - 1;
+            let low = self.quad_classes[(word & quad_mask) as usize];
+            let high = self.quad_classes[((word >> (4 * W)) & quad_mask) as usize];
+            u16::from(low) | u16::from(high) << (4 * self.class_bits)
+        } else {
+            packed_digit_classes(word, W, self.class_bits, 8)
+        }
+    }
+}
+
+/// Pack the classes of the first `count` `bit_width`-bit two's-complement
+/// digits of `word`, first digit lowest. Digits `w` and `-1 - w` share a range
+/// image, so the class of `w` is `w` for `w >= 0` and `!w` otherwise.
+#[inline(always)]
+fn packed_digit_classes(word: u64, bit_width: usize, class_bits: usize, count: usize) -> u16 {
+    let unused_bits = 64 - bit_width;
+    (0..count).fold(0, |packed, digit| {
+        let value = (((word >> (digit * bit_width)) << unused_bits) as i64) >> unused_bits;
+        let class = (value ^ (value >> 63)) as u16 & ((1 << class_bits) - 1);
+        packed | class << (digit * class_bits)
+    })
+}
+
+#[inline(always)]
+fn little_endian_word(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .rev()
+        .fold(0, |word, &byte| word << 8 | u64::from(byte))
+}
+
+/// Sum the round-3 equality weight `e_first[p & mask] * e_second[p >> bits]`
+/// of every live octet pair `p` into the classes of its even (`[0]`) and odd
+/// (`[1]`) octets.
+fn octet_pair_class_weights<E: Field>(
+    reader: &OctetClassReader<'_>,
+    live_pairs: usize,
     e_first: &[E],
     e_second: &[E],
-    class_bits: usize,
-) -> Vec<E> {
-    let num_classes = 1usize << (8 * class_bits);
-    let live_octets = source.len().div_ceil(8);
+) -> Vec<[E; 2]> {
+    let num_classes = 1usize << (8 * reader.class_bits);
     let first_mask = e_first.len() - 1;
     let first_bits = e_first.len().trailing_zeros();
     cfg_fold_reduce!(
-        0..live_octets.div_ceil(HISTOGRAM_TILE_OCTETS),
-        || vec![E::zero(); num_classes],
+        0..live_pairs.div_ceil(HISTOGRAM_TILE_PAIRS),
+        || vec![[E::zero(); 2]; num_classes],
         |mut weights, tile| {
-            let start = tile * HISTOGRAM_TILE_OCTETS;
-            let end = (start + HISTOGRAM_TILE_OCTETS).min(live_octets);
-            for (octet, class) in (start..end).zip(octet_classes(source, start..end, class_bits)) {
-                if class != 0 {
-                    weights[usize::from(class)] +=
-                        e_first[octet & first_mask] * e_second[octet >> first_bits];
+            let start = tile * HISTOGRAM_TILE_PAIRS;
+            let end = (start + HISTOGRAM_TILE_PAIRS).min(live_pairs);
+            let classes = reader.classes(2 * start..2 * end);
+            for (pair, classes) in (start..end).zip(classes.chunks_exact(2)) {
+                let (even, odd) = (usize::from(classes[0]), usize::from(classes[1]));
+                if even | odd == 0 {
+                    continue;
+                }
+                let weight = e_first[pair & first_mask] * e_second[pair >> first_bits];
+                if even != 0 {
+                    weights[even][0] += weight;
+                }
+                if odd != 0 {
+                    weights[odd][1] += weight;
                 }
             }
             weights
         },
         |mut left, right| {
             for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
+                left[0] += right[0];
+                left[1] += right[1];
             }
             left
         }
@@ -152,19 +229,13 @@ fn folded_quad_values<E: Field + Ring>(class_bits: usize, r0: E, r1: E) -> Vec<E
 #[derive(Clone, Copy)]
 pub(super) struct OctetClassTerms<E> {
     value: E,
-    /// `Q(value)`.
-    range: E,
     shifted: E,
     /// `shifted^2 - 7`.
     second: E,
 }
 
 /// Round-3 terms of every octet class after round 2.
-fn octet_class_terms<E: Field + Ring>(
-    quad_values: &[E],
-    r2: E,
-    basis: usize,
-) -> Vec<OctetClassTerms<E>> {
+fn octet_class_terms<E: Field + Ring>(quad_values: &[E], r2: E) -> Vec<OctetClassTerms<E>> {
     let quad_mask = quad_values.len() - 1;
     let quad_bits = quad_values.len().trailing_zeros();
     cfg_into_iter!(0..quad_values.len() * quad_values.len())
@@ -174,7 +245,6 @@ fn octet_class_terms<E: Field + Ring>(
             let shifted = value - E::from_u64(5);
             OctetClassTerms {
                 value,
-                range: range_polynomial_eval(value, basis),
                 shifted,
                 second: shifted.square() - E::from_u64(7),
             }
@@ -182,24 +252,46 @@ fn octet_class_terms<E: Field + Ring>(
         .collect()
 }
 
-/// Round-3 sums of one octet pair in [`LinearSum::RangeDifference`] form.
+/// Add `weight` times the round-3 terms of one octet pair above the linear one.
 #[inline(always)]
-fn octet_pair_sums<E: Field + Ring>(
-    sums: &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS],
+fn accumulate_octet_pair_terms<E: Field + Ring + Unreduced>(
+    sums: &mut TaylorSums<E>,
     degree_q: usize,
     left: &OctetClassTerms<E>,
     right: &OctetClassTerms<E>,
+    weight: E,
 ) {
     let delta = right.value - left.value;
     let delta_squared = delta.square();
-    sums[0] = right.range - left.range;
     if degree_q == 2 {
-        sums[1] = delta_squared;
+        sums[1] += delta_squared.mul_unreduced(weight);
     } else {
-        sums[1] = left.second * delta_squared;
-        sums[2] = left.shifted * (delta_squared * delta);
-        sums[3] = delta_squared.square();
+        let weighted_delta_squared = weight * delta_squared;
+        sums[1] += left.second.mul_unreduced(weighted_delta_squared);
+        sums[2] += (left.shifted * delta).mul_unreduced(weighted_delta_squared);
+        sums[3] += delta_squared.mul_unreduced(weighted_delta_squared);
     }
+}
+
+/// Round-3 linear sum `sum eq(pair) (Q(right) - Q(left))`, gathered per octet
+/// class from the pair-class weights.
+fn octet_range_difference<E: Field + Ring + Unreduced>(
+    terms: &[OctetClassTerms<E>],
+    pair_class_weights: &[[E; 2]],
+    basis: usize,
+) -> E::Product {
+    cfg_fold_reduce!(
+        0..terms.len(),
+        E::Product::zero,
+        |mut sum, class| {
+            let [even, odd] = pair_class_weights[class];
+            if even != odd {
+                sum += range_polynomial_eval(terms[class].value, basis).mul_unreduced(odd - even);
+            }
+            sum
+        },
+        |left, right| left + right
+    )
 }
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
@@ -235,16 +327,27 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let class_bits = class_bits(self.basis);
         let (e_first, e_second) = self
             .split_eq
-            .remaining_eq_tables_after(2)
-            .expect("octet prefix has at least three rounds");
-        let octet_class_weights =
-            octet_class_weights(self.compact_range_image(), e_first, e_second, class_bits);
+            .remaining_eq_tables_after(3)
+            .expect("octet prefix has at least four rounds");
+        let source = self.compact_range_image();
+        let octet_pair_class_weights = octet_pair_class_weights(
+            &OctetClassReader::new(source, class_bits),
+            source.len().div_ceil(16),
+            e_first,
+            e_second,
+        );
+        let tau3 = tau0[3];
+        let octet_class_weights: Vec<E> = octet_pair_class_weights
+            .iter()
+            .map(|&[even, odd]| even + tau3 * (odd - even))
+            .collect();
         let quad_class_weights = quad_class_weights(&octet_class_weights, class_bits, tau0[2]);
         let cache = build_stage1_prefix_cache(&quad_class_weights, tau0, self.basis)
             .expect("octet prefix has at least two rounds");
         self.initial_round_prefix = Some(DirectRangePrefixState {
             cache,
             octet_class_weights,
+            octet_pair_class_weights,
             first_challenge: None,
             quad_values: Vec::new(),
             octet_terms: Vec::new(),
@@ -273,24 +376,25 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 let terms = prefix.octet_terms.as_slice();
                 let class_bits = class_bits(self.basis);
                 let degree_q = self.polynomial_precomputation.num_coefficients();
-                let live_octets = source.len().div_ceil(8);
-                self.compute_round_live_prefix(
-                    live_octets.div_ceil(2),
-                    LinearSum::RangeDifference,
-                    |pairs| {
-                        let start = pairs.start;
-                        let classes = octet_classes(source, 2 * start..2 * pairs.end, class_bits);
-                        move |pair, sums| {
-                            let local = 2 * (pair - start);
-                            octet_pair_sums(
-                                sums,
-                                degree_q,
-                                &terms[usize::from(classes[local])],
-                                &terms[usize::from(classes[local + 1])],
-                            );
-                        }
-                    },
-                )
+                let reader = OctetClassReader::new(source, class_bits);
+                let mut sums = self.compute_round_live_prefix(source.len().div_ceil(16), |pairs| {
+                    let start = pairs.start;
+                    let classes = reader.classes(2 * start..2 * pairs.end);
+                    move |pair, weight, sums| {
+                        let local = 2 * (pair - start);
+                        accumulate_octet_pair_terms(
+                            sums,
+                            degree_q,
+                            &terms[usize::from(classes[local])],
+                            &terms[usize::from(classes[local + 1])],
+                            weight,
+                        );
+                    }
+                });
+                sums[0] =
+                    octet_range_difference(terms, &prefix.octet_pair_class_weights, self.basis);
+                self.polynomial_precomputation
+                    .round_poly_from_sums(&sums, LinearSum::RangeDifference)
             }
             _ => unreachable!("octet prefix covers rounds 0 through 3"),
         }
@@ -305,34 +409,29 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let quad_mask = quad_values.len() - 1;
         let quad_bits = quad_values.len().trailing_zeros();
         let precomputation = &self.polynomial_precomputation;
-        let num_coeffs_q = precomputation.num_coefficients();
         let chunk_accumulators = cfg_chunks!(prefix.octet_class_weights, ROUND2_CLASS_CHUNK)
             .enumerate()
             .map(|(chunk, weights)| {
                 let mut accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                let mut entry = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 for (offset, &weight) in weights.iter().enumerate() {
                     if weight.is_zero() {
                         continue;
                     }
                     let class = chunk * ROUND2_CLASS_CHUNK + offset;
                     let left = quad_values[class & quad_mask];
-                    compute_entry_coefficients(
-                        &mut entry,
+                    accumulate_entry_terms(
+                        &mut accumulator,
                         precomputation,
                         left,
                         quad_values[class >> quad_bits] - left,
-                    );
-                    accumulate_dense_entry_coeffs(
-                        &mut accumulator[..num_coeffs_q],
-                        &entry[..num_coeffs_q],
                         weight,
                     );
                 }
                 accumulator
             })
             .collect();
-        self.live_prefix_round_poly(chunk_accumulators, LinearSum::Taylor)
+        precomputation
+            .round_poly_from_sums(&sum_tile_sums::<E>(chunk_accumulators), LinearSum::Taylor)
     }
 
     /// Bind an octet-prefix round. The round-3 challenge materializes the
@@ -355,17 +454,17 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 prefix.quad_values = folded_quad_values(class_bits, r0, r);
             }
             2 => {
-                let basis = self.basis;
                 let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                prefix.octet_terms = octet_class_terms(&prefix.quad_values, r, basis);
+                prefix.octet_terms = octet_class_terms(&prefix.quad_values, r);
             }
             3 => {
                 let source = self.compact_range_image();
                 let terms = self.octet_prefix().octet_terms.as_slice();
                 let next_live = source.len().div_ceil(8).div_ceil(2);
+                let reader = OctetClassReader::new(source, class_bits);
                 let folds_for_tile = |entries: Range<usize>| {
                     let start = entries.start;
-                    let classes = octet_classes(source, 2 * start..2 * entries.end, class_bits);
+                    let classes = reader.classes(2 * start..2 * entries.end);
                     move |entry: usize| {
                         let local = 2 * (entry - start);
                         let left = terms[usize::from(classes[local])].value;

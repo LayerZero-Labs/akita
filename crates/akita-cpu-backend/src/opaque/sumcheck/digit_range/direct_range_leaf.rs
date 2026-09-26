@@ -232,7 +232,7 @@ impl RangePolynomialPrecomputation {
     /// coefficients.
     fn round_poly_from_sums<E: Field + Ring + Unreduced>(
         &self,
-        sums: &[E::Product; MAX_DIRECT_RANGE_COEFFICIENTS],
+        sums: &TaylorSums<E>,
         linear: LinearSum,
     ) -> OmittedConstantPoly<E> {
         let mut coefficients: Vec<E> = sums
@@ -309,53 +309,56 @@ fn reduce_small_coeff_accum<E: Field + Unreduced>(pos: E::SmallProduct, neg: E::
     E::reduce_small_product(pos) - E::reduce_small_product(neg)
 }
 
-#[inline]
-fn accumulate_dense_entry_coeffs<E: Field + Unreduced>(
-    accum: &mut [E::Product],
-    entry_coeffs: &[E],
-    e_in: E,
-) {
-    if accum.is_empty() {
-        return;
-    }
+/// Nonconstant Taylor sums of a round, before
+/// [`RangePolynomialPrecomputation::round_poly_from_sums`] scales them.
+type TaylorSums<E> = [<E as Unreduced>::Product; MAX_DIRECT_RANGE_COEFFICIENTS];
 
-    for (acc, &entry) in accum.iter_mut().zip(entry_coeffs.iter()) {
-        *acc += e_in.mul_unreduced(entry);
+/// Sum the accumulators of a round's tiles or chunks.
+fn sum_tile_sums<E: Unreduced>(tile_accumulators: Vec<TaylorSums<E>>) -> TaylorSums<E> {
+    let mut accumulated = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+    for tile_accumulator in tile_accumulators {
+        for (total, term) in accumulated.iter_mut().zip(tile_accumulator) {
+            *total += term;
+        }
     }
+    accumulated
 }
 
-/// Write the nonconstant Taylor terms of `Q(left + X * delta)`, each divided by
-/// its integer factor from [`RangePolynomialPrecomputation::taylor_factors`].
+/// Add `weight` times the nonconstant Taylor terms of `Q(left + X * delta)`,
+/// each divided by its integer factor from
+/// [`RangePolynomialPrecomputation::taylor_factors`], to `sums`.
 ///
 /// With `b = left - 5`, the quartic range polynomial is
 /// `Q = b^4 - 42 b^2 - 64 b + 105`, so its terms at `left` are
-/// `4((b^2 - 21) b delta - 16 delta)`, `6(b^2 - 7) delta^2`, `4 b delta^3` and
-/// `delta^4`, which take seven multiplications.
-#[inline]
-fn compute_entry_coefficients<E: Field + Ring + Unreduced>(
-    out: &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS],
+/// `4((b^2 - 21) b - 16) delta`, `6(b^2 - 7) delta^2`, `4 b delta^3` and
+/// `delta^4`. Every term carries a power of `delta`, so the weight rides on
+/// the powers `weight * delta^k`: five multiplications, one squaring and four
+/// unreduced products. The quadratic terms are `2(left - 1) delta` and
+/// `delta^2`.
+#[inline(always)]
+fn accumulate_entry_terms<E: Field + Ring + Unreduced>(
+    sums: &mut TaylorSums<E>,
     precomp: &RangePolynomialPrecomputation,
     left_range_image: E,
     range_image_delta: E,
+    weight: E,
 ) {
+    let weighted_delta = weight * range_image_delta;
     match precomp.degree_q {
         2 => {
-            out[0] = range_image_delta * (left_range_image - E::one());
-            out[1] = range_image_delta.square();
+            sums[0] += (left_range_image - E::one()).mul_unreduced(weighted_delta);
+            sums[1] += range_image_delta.mul_unreduced(weighted_delta);
         }
         4 => {
             let shifted = left_range_image - E::from_u64(5);
             let shifted_squared = shifted.square();
-            let shifted_delta = shifted * range_image_delta;
-            let delta_squared = range_image_delta.square();
-            let twice_delta = range_image_delta + range_image_delta;
-            let four_times_delta = twice_delta + twice_delta;
-            let eight_times_delta = four_times_delta + four_times_delta;
-            out[0] = (shifted_squared - E::from_u64(21)) * shifted_delta
-                - (eight_times_delta + eight_times_delta);
-            out[1] = (shifted_squared - E::from_u64(7)) * delta_squared;
-            out[2] = shifted_delta * delta_squared;
-            out[3] = delta_squared.square();
+            let weighted_delta_squared = weighted_delta * range_image_delta;
+            let weighted_delta_cubed = weighted_delta_squared * range_image_delta;
+            sums[0] += ((shifted_squared - E::from_u64(21)) * shifted - E::from_u64(16))
+                .mul_unreduced(weighted_delta);
+            sums[1] += (shifted_squared - E::from_u64(7)).mul_unreduced(weighted_delta_squared);
+            sums[2] += shifted.mul_unreduced(weighted_delta_cubed);
+            sums[3] += range_image_delta.mul_unreduced(weighted_delta_cubed);
         }
         _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
     }
@@ -375,19 +378,14 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
         || [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS],
         |mut outer_accum, j_high| {
             let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-            let mut entry = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let (left_range_image, right_range_image) =
                     range_image_pair(j_high * num_first + j_low);
-                compute_entry_coefficients(
-                    &mut entry,
+                accumulate_entry_terms(
+                    &mut inner_accum,
                     polynomial_precomputation,
                     left_range_image,
                     right_range_image - left_range_image,
-                );
-                accumulate_dense_entry_coeffs(
-                    &mut inner_accum[..num_coeffs_q],
-                    &entry[..num_coeffs_q],
                     e_in,
                 );
             }
@@ -492,10 +490,6 @@ pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
 pub(crate) trait CompactRangeImageSource: Sync {
     fn len(&self) -> usize;
     fn range_image_value(&self, index: usize) -> i16;
-
-    /// Write the class `k` of entries `start..start + classes.len()`, where an
-    /// entry's range image is `k(k+1)`. Entries past the table have class zero.
-    fn range_image_classes(&self, start: usize, classes: &mut [u8]);
 }
 
 impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
@@ -508,14 +502,6 @@ impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
     fn range_image_value(&self, index: usize) -> i16 {
         self[index].range_image_value()
     }
-
-    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
-        for (offset, class) in classes.iter_mut().enumerate() {
-            *class = self
-                .get(start + offset)
-                .map_or(0, |value| range_image_class(value.range_image_value()));
-        }
-    }
 }
 
 impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
@@ -527,10 +513,6 @@ impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
     #[inline(always)]
     fn range_image_value(&self, index: usize) -> i16 {
         self.as_slice()[index].range_image_value()
-    }
-
-    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
-        self.as_slice().range_image_classes(start, classes);
     }
 }
 
@@ -547,27 +529,6 @@ impl CompactRangeImageSource for PackedSignedDigits {
                 .expect("packed range-image index is in bounds"),
         )
     }
-
-    /// Digits `w` and `-1 - w` share a range image, so the class of `w` is
-    /// `w` for `w >= 0` and `!w` otherwise.
-    fn range_image_classes(&self, start: usize, classes: &mut [u8]) {
-        const DECODE_CHUNK: usize = 64;
-        let mut digits = [0i8; DECODE_CHUNK];
-        for (chunk_index, chunk) in classes.chunks_mut(DECODE_CHUNK).enumerate() {
-            let chunk_start = start + chunk_index * DECODE_CHUNK;
-            let live = self.len().saturating_sub(chunk_start).min(chunk.len());
-            let digits = &mut digits[..chunk.len()];
-            if live > 0 {
-                self.view()
-                    .decode_range(chunk_start, &mut digits[..live])
-                    .expect("packed range-image classes are in bounds");
-            }
-            digits[live..].fill(0);
-            for (class, &digit) in chunk.iter_mut().zip(digits.iter()) {
-                *class = (digit ^ (digit >> 7)) as u8;
-            }
-        }
-    }
 }
 
 impl CompactRangeImageValue for i16 {
@@ -581,18 +542,6 @@ impl CompactRangeImageValue for i8 {
     #[inline(always)]
     fn range_image_value(self) -> i16 {
         range_image_from_digit(self)
-    }
-}
-
-/// Index `k` of a valid range image `k(k+1)`.
-#[inline]
-fn range_image_class(range_image: i16) -> u8 {
-    match range_image {
-        0 => 0,
-        2 => 1,
-        6 => 2,
-        12 => 3,
-        other => unreachable!("{other} is not a low-basis range image"),
     }
 }
 
@@ -620,6 +569,9 @@ struct DirectRangePrefixState<E: Field> {
     /// Sum of the round-2 equality weight `eq(tau0[3..], octet)` over the live
     /// octets of each octet class.
     octet_class_weights: Vec<E>,
+    /// Sum of the round-3 equality weight `eq(tau0[4..], pair)` over the live
+    /// octet pairs whose even (`[0]`) or odd (`[1]`) octet has each class.
+    octet_pair_class_weights: Vec<[E; 2]>,
     first_challenge: Option<E>,
     /// The folded value of each quad class after round 1.
     quad_values: Vec<E>,

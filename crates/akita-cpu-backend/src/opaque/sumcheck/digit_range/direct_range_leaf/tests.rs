@@ -339,9 +339,11 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
     }
 }
 
-/// Run every round against the dense kernel on the zero-padded field table.
+/// Run every round against the dense kernel on the zero-padded field table,
+/// with the witness packed at `bit_width` bits per digit.
 fn assert_rounds_match_dense_reference(
     basis: usize,
+    bit_width: u8,
     col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
@@ -359,7 +361,7 @@ fn assert_rounds_match_dense_reference(
         .collect();
     let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
     let mut prover = LowBasisRangeCheckProver::new(
-        packed(&witness),
+        PackedSignedDigits::from_i8_digits(witness.clone(), bit_width).unwrap(),
         &tau0,
         DigitRangePlan::new(basis).unwrap(),
         live_x_cols,
@@ -374,8 +376,9 @@ fn assert_rounds_match_dense_reference(
     reference.resize(1usize << num_vars, F::zero());
     let mut reference_eq = GruenSplitEq::new(&tau0).unwrap();
     let precomputation = RangePolynomialPrecomputation::new(basis);
-    let shape =
-        format!("basis={basis} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}");
+    let shape = format!(
+        "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
+    );
 
     for round in 0..num_vars {
         let poly = prover.compute_round_eq_factored(round);
@@ -423,9 +426,20 @@ fn stage1_rounds_match_dense_reference() {
         (2, 1, 3),
         (0, 3, 1),
     ];
+    // The octet prefix reads classes from the packed bytes: table lookups up
+    // to three bits per digit, one digit at a time above that.
     for basis in [4usize, 8] {
-        for (col_bits, ring_bits, live_x_cols) in SHAPES {
-            assert_rounds_match_dense_reference(basis, col_bits, ring_bits, live_x_cols);
+        let log_basis = basis.trailing_zeros() as u8;
+        for bit_width in [log_basis, log_basis + 1, 8] {
+            for (col_bits, ring_bits, live_x_cols) in SHAPES {
+                assert_rounds_match_dense_reference(
+                    basis,
+                    bit_width,
+                    col_bits,
+                    ring_bits,
+                    live_x_cols,
+                );
+            }
         }
     }
 }

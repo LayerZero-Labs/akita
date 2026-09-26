@@ -43,25 +43,24 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 if use_prefix_x_round || use_sparse_x_y_round {
                     let range_image = range_image.as_slice();
                     let precomputation = &self.polynomial_precomputation;
-                    self.compute_round_live_prefix(
-                        range_image.len().div_ceil(2),
-                        LinearSum::Taylor,
-                        |_| {
-                            move |pair, sums| {
+                    let sums =
+                        self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
+                            move |pair, weight, sums| {
                                 let left = range_image[2 * pair];
                                 let right = range_image
                                     .get(2 * pair + 1)
                                     .copied()
                                     .unwrap_or_else(E::zero);
-                                compute_entry_coefficients(
+                                accumulate_entry_terms(
                                     sums,
                                     precomputation,
                                     left,
                                     right - left,
+                                    weight,
                                 );
                             }
-                        },
-                    )
+                        });
+                    precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
                 } else {
                     compute_range_round_polynomial_from_range_image(
                         &self.split_eq,
