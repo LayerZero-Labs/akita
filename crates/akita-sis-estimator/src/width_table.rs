@@ -208,6 +208,8 @@ pub struct InfinityWidthWorkItem {
     pub coeff_linf_bound: u64,
 }
 
+/// Extension seam: explicit offline SIS origins for extensions tracked in #45.
+///
 /// One exact semantic origin admitted to an offline width-table request.
 ///
 /// Production generation derives these origins from Akita's reachable matrix
