@@ -68,8 +68,8 @@ Suggested fix: validate every artifact-supplied `log_basis` (as
 `audit_terminal` and `audit_committed_params`, or make the digit-count
 helpers return `Option`. Not fixed here: this change set is test infrastructure
 only. Until it is fixed the `schedule_artifact` lane keeps rediscovering it;
-occurrences only increment the finding's count. Campaign dedup IDs: `panic-schedule_artifact-d656fe5be7e9` (line 223)
-and `panic-schedule_artifact-a81c207e4e7e` (line 248).
+occurrences only increment the finding's count.
+Campaign dedup IDs: `panic-schedule_artifact-d656fe5be7e9` (line 223) and `panic-schedule_artifact-a81c207e4e7e` (line 248).
 
 ## F-4 (Low, encoding): `CommittedGroup` decoding accepts non-canonical coefficient bounds
 
