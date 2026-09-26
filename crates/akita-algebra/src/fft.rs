@@ -324,6 +324,8 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
     }
 }
 
+/// Extension seam: reusable transform scratch for extensions tracked in #45.
+///
 /// Pre-allocated ping-pong buffers for an iterative mixed-radix FFT.
 ///
 /// Create this through [`SmoothDomain::workspace`] and reuse it for forward
@@ -590,7 +592,6 @@ pub struct SmoothDomain<F> {
 
 impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// Allocate reusable scratch for this domain's transforms.
-    #[cfg(feature = "labinius-trinomial")]
     pub fn workspace(&self) -> FftWorkspace<F> {
         FftWorkspace::new(self.n)
     }
@@ -652,7 +653,6 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     ///
     /// # Panics
     /// If either slice or the workspace has a length different from this domain.
-    #[cfg(feature = "labinius-trinomial")]
     pub fn forward_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
@@ -664,7 +664,6 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     ///
     /// # Panics
     /// If either slice or the workspace has a length different from this domain.
-    #[cfg(feature = "labinius-trinomial")]
     pub fn inverse_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
@@ -1031,6 +1030,26 @@ mod prime_a7f7_tests {
     #[test]
     fn small_fft_matches_naive_dft() {
         assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729]);
+    }
+
+    #[test]
+    fn reusable_workspace_matches_allocating_transforms() {
+        for n in [2, 3, 6, 9, 18, 27, 54, 162, 243] {
+            let domain = SmoothDomain::new(primitive_nth_root::<F>(n), n);
+            let input = (0..n)
+                .map(|i| F::from_u128_checked((i * i + 1) as u128).unwrap())
+                .collect::<Vec<_>>();
+            let mut workspace = domain.workspace();
+            let mut output = vec![F::from_u128_checked(0).unwrap(); n];
+            domain.forward_into(&input, &mut output, &mut workspace);
+            assert_eq!(output, domain.forward(&input));
+            let transformed = output.clone();
+            domain.inverse_into(&transformed, &mut output, &mut workspace);
+            assert_eq!(output, domain.inverse(&transformed));
+            assert_eq!(output, input);
+            domain.forward_into(&input, &mut output, &mut workspace);
+            assert_eq!(output, transformed);
+        }
     }
 
     #[test]
