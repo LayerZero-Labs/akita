@@ -1,5 +1,6 @@
 mod lane_product;
 mod reduced_dense;
+mod reference;
 mod trace_prefix;
 
 use super::*;
