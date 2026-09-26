@@ -596,6 +596,8 @@ mod sparse_low_variables;
 mod state;
 
 #[cfg(test)]
+mod reference_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
