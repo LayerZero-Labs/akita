@@ -25,7 +25,11 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [features]
 default = []
 parallel = ["dep:rayon"]
-labinius-sis = ["akita-types/labinius-sis", "dep:akita-challenges", "akita-challenges/labinius-challenges"]
+labinius-sis = [
+  "akita-types/labinius-sis",
+  "dep:akita-challenges",
+  "akita-challenges/labinius-challenges",
+]
 
 [[bench]]
 name = "fixed_infinity"
