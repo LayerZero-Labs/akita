@@ -89,7 +89,6 @@ use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};
 use jolt_poly::UnivariatePoly;
 use std::mem;
-use std::time::Instant;
 
 use crate::opaque::relation_weights::RelationWeightFactorization;
 use crate::opaque::sumcheck::add_assign_all;
@@ -100,23 +99,29 @@ enum WitnessState<E: Field> {
     FoldedSuffix(Vec<E>),
 }
 
-enum QuotientPrefixState<E: Field> {
-    /// The compact-prefix optimization was not enabled.
-    Disabled,
-    Compact(Box<CompactQuotientPrefix<E>>),
-    /// The compact prefix has materialized a folded witness.
-    Finished,
+enum CoefficientRelation<E: Field> {
+    Factored(RelationWeightFactorization<E>),
+    ReducedDense(DenseRelationWeights<E>),
 }
 
-enum RelationRoundState<E: Field> {
-    QuotientFactored {
+/// State required to serve exactly one kind of Stage 2 round.
+enum Phase<E: Field> {
+    /// Rounds served by the compact quotient prefix engine.
+    CompactPrefix {
+        witness: PackedSignedDigits,
         weights: RelationWeightFactorization<E>,
-        prefix: QuotientPrefixState<E>,
+        engine: Box<CompactQuotientPrefix<E>>,
     },
-    ReducedDense {
-        weights: DenseRelationWeights<E>,
+    /// Coefficient rounds outside the compact prefix.
+    Coefficient {
+        witness: WitnessState<E>,
+        relation: CoefficientRelation<E>,
     },
-    LaneProduct(LaneProduct<E>),
+    /// Lane rounds on the folded witness.
+    Lane {
+        witness: Vec<E>,
+        lane: LaneProduct<E>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -258,11 +263,10 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub(crate) struct RelationRangeImageProver<E: Field> {
-    witness_state: WitnessState<E>,
+    phase: Option<Phase<E>>,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    relation_state: RelationRoundState<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
@@ -272,8 +276,6 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
     prev_norm_poly: Option<UnivariatePoly<E>>,
     cached_round_poly: Option<UnivariatePoly<E>>,
 
-    scan_time_total: f64,
-    fold_time_total: f64,
     rounds_completed: usize,
 }
 
@@ -308,9 +310,17 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     #[inline]
     fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
-        match &self.relation_state {
-            RelationRoundState::QuotientFactored { weights, .. } => Some(weights),
-            RelationRoundState::ReducedDense { .. } | RelationRoundState::LaneProduct(_) => None,
+        match self.phase.as_ref()? {
+            Phase::CompactPrefix { weights, .. } => Some(weights),
+            Phase::Coefficient {
+                relation: CoefficientRelation::Factored(weights),
+                ..
+            } => Some(weights),
+            Phase::Coefficient {
+                relation: CoefficientRelation::ReducedDense(_),
+                ..
+            }
+            | Phase::Lane { .. } => None,
         }
     }
 

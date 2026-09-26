@@ -61,11 +61,12 @@ impl<E: Field> RelationWeightFactorization<E> {
         &self.relation_lane_weights
     }
 
-    pub(crate) fn components_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
-        (
-            &mut self.common_alpha_factor,
-            &mut self.relation_lane_weights,
-        )
+    pub(crate) fn common_alpha_factor_mut(&mut self) -> &mut Vec<E> {
+        &mut self.common_alpha_factor
+    }
+
+    pub(crate) fn take_lane_weights(&mut self) -> Vec<E> {
+        std::mem::take(&mut self.relation_lane_weights)
     }
 
     /// Expand this factorization over its complete padded flat domain.

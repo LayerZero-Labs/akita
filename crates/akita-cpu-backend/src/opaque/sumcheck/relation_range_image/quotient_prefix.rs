@@ -753,29 +753,11 @@ impl<E: Field + Ring + Unreduced + Fold> CompactQuotientPrefix<E> {
 }
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    #[cfg(test)]
     pub(super) fn compact_quotient_prefix(&self) -> Option<&CompactQuotientPrefix<E>> {
-        match &self.relation_state {
-            RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Compact(prefix),
-                ..
-            } => {
-                assert!(
-                    matches!(self.witness_state, WitnessState::CompactPrefix(_)),
-                    "compact quotient prefix requires a compact witness"
-                );
-                Some(prefix)
-            }
-            RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Finished,
-                ..
-            } => {
-                assert!(
-                    matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
-                    "finished quotient prefix requires a folded witness"
-                );
-                None // Materialization finished the compact-prefix optimization.
-            }
-            _ => None, // This relation has no active compact-prefix optimization.
+        match self.phase.as_ref()? {
+            Phase::CompactPrefix { engine, .. } => Some(engine),
+            Phase::Coefficient { .. } | Phase::Lane { .. } => None,
         }
     }
 
@@ -806,44 +788,21 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
     /// Bind `r` in a compact-prefix round. The round before the last prefix
     /// round also materializes the folded witness and caches the last prefix
     /// round's message.
-    pub(super) fn ingest_compact_prefix_challenge(&mut self, r: E) {
-        let RelationRoundState::QuotientFactored { weights, prefix } = &mut self.relation_state
-        else {
-            unreachable!("compact-prefix ingestion requires quotient-factored relation weights");
-        };
-        let WitnessState::CompactPrefix(witness) = &self.witness_state else {
-            unreachable!("compact quotient prefix requires a compact witness");
-        };
-        let QuotientPrefixState::Compact(mut engine) =
-            mem::replace(prefix, QuotientPrefixState::Finished)
-        else {
-            unreachable!("compact-prefix ingestion requires an active compact prefix");
-        };
-        fold_evals_in_place(weights.components_mut().0, r);
+    pub(super) fn ingest_compact_prefix_challenge(
+        &mut self,
+        witness: PackedSignedDigits,
+        mut weights: RelationWeightFactorization<E>,
+        mut engine: Box<CompactQuotientPrefix<E>>,
+        r: E,
+    ) -> Phase<E> {
+        fold_evals_in_place(weights.common_alpha_factor_mut(), r);
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         engine.bind(r);
-        if self.rounds_completed + 1 < engine.last_round() {
-            *prefix = QuotientPrefixState::Compact(engine);
-            return; // More compact-prefix rounds remain before materialization.
+        Phase::CompactPrefix {
+            witness,
+            weights,
+            engine,
         }
-
-        let (folded, norm) = engine.materialize(
-            witness.view(),
-            &self.split_eq,
-            self.can_skip_norm_linear_coeff(),
-        );
-        let relation = match &self.relation_state {
-            RelationRoundState::QuotientFactored { weights, .. } => {
-                engine.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms)
-            }
-            RelationRoundState::ReducedDense { .. } | RelationRoundState::LaneProduct(_) => {
-                unreachable!("compact-prefix materialization preserves quotient-factored weights")
-            }
-        };
-        self.witness_state = WitnessState::FoldedSuffix(folded);
-        let norm_poly = self.norm_poly_from_prefix(norm);
-        self.cached_round_poly = Some(self.combine_polys(&norm_poly, &coeffs_to_poly(relation)));
-        self.prev_norm_poly = Some(norm_poly);
     }
 }

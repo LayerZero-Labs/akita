@@ -19,6 +19,15 @@ pub(super) struct LaneProduct<E: Field> {
 }
 
 impl<E: Field> LaneProduct<E> {
+    /// Lane table `q` whose support is `weights.len()`.
+    pub(super) fn new(weights: Vec<E>) -> Self {
+        Self {
+            weights,
+            witness_scratch: Vec::new(),
+            weight_scratch: Vec::new(),
+        }
+    }
+
     /// Relation weight at the fully bound lane point.
     pub(super) fn final_weight(&self) -> Result<E, AkitaError> {
         match self.weights.as_slice() {
@@ -168,7 +177,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
     /// Terms of the round over `witness`, after folding `witness` and the
     /// weights by `challenge` when one is given. With no `eq` tables (the
     /// final fold) nothing follows and `None` is returned.
-    fn round_terms(
+    pub(super) fn round_terms(
         &mut self,
         witness: &mut Vec<E>,
         challenge: Option<E>,
@@ -256,135 +265,23 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
 }
 
 impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
-    /// Enter the lane-product state once every coefficient variable is bound,
-    /// merging the relation weight and the structured linear terms into one
-    /// lane table.
-    pub(super) fn enter_lane_product(&mut self) {
-        // Validate prefix/witness combinations before changing the relation state.
-        let has_compact_prefix = self.compact_quotient_prefix().is_some();
-        if matches!(self.relation_state, RelationRoundState::LaneProduct(_)) {
-            assert!(
-                !self.in_coefficient_round(),
-                "lane-product state requires bound coefficients"
-            );
-            assert!(
-                matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
-                "lane-product state requires a folded witness"
-            );
-            return; // The lane-product transition already happened.
-        }
-        if self.in_coefficient_round() {
-            assert!(
-                has_compact_prefix || self.rounds_completed == 0
-                    || matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
-                "coefficient rounds outside the compact prefix require a folded witness after round zero"
-            );
-            return; // Coefficient rounds still use the original relation weights.
-        }
-        assert!(
-            !has_compact_prefix,
-            "lane-product transition requires a completed or disabled compact prefix"
-        );
-        if let WitnessState::CompactPrefix(compact_witness) = &self.witness_state {
-            // Only a table without coefficient variables reaches its lane
-            // rounds unfolded.
-            assert_eq!(
-                self.rounds_completed, 0,
-                "compact lane witness requires no coefficient rounds"
-            );
-            let witness = compact_witness
-                .view()
-                .iter()
-                .map(|digit| E::from_i64(i64::from(digit)))
-                .collect();
-            self.witness_state = WitnessState::FoldedSuffix(witness);
-        }
-        let entered = RelationRoundState::LaneProduct(LaneProduct {
-            weights: Vec::new(),
-            witness_scratch: Vec::new(),
-            weight_scratch: Vec::new(),
-        });
-        let (mut weights, weight_scale) = match mem::replace(&mut self.relation_state, entered) {
-            RelationRoundState::QuotientFactored { mut weights, .. } => {
-                assert_eq!(
-                    weights.common_alpha_factor().len(),
-                    1,
-                    "lane-product transition requires bound coefficient weights"
-                );
-                let alpha = weights.common_alpha_factor()[0];
-                (mem::take(weights.components_mut().1), alpha)
-            }
-            RelationRoundState::ReducedDense { weights } => (weights.into_evaluations(), E::one()),
-            RelationRoundState::LaneProduct(_) => unreachable!("checked above"),
-        };
-        let live = self.live_lane_count;
-        // Only a nonzero weight past the live lanes extends the support.
-        let tail = weights.get(live..).unwrap_or_default();
-        #[cfg(feature = "parallel")]
-        let last_nonzero = tail.par_iter().position_last(|weight| !weight.is_zero());
-        #[cfg(not(feature = "parallel"))]
-        let last_nonzero = tail.iter().rposition(|weight| !weight.is_zero());
-        let support = last_nonzero.map_or(live, |last| live + last + 1);
-        weights.resize(support, E::zero());
-        let (live_weights, tail) = weights.split_at_mut(live);
-        if weight_scale != E::one() {
-            cfg_iter_mut!(tail).for_each(|weight| *weight *= weight_scale);
-        }
-        self.linear_terms
-            .drain_into_lane_weights(live_weights, weight_scale);
-        if let RelationRoundState::LaneProduct(lane) = &mut self.relation_state {
-            lane.weights = weights;
-        } else {
-            unreachable!("lane-product transition must install lane-product state");
-        }
-    }
-
-    /// `(combined, range-image)` messages of the current round in the
-    /// lane-product state, entering it first once the coefficient block is
-    /// bound. Returns `None` outside that state.
-    pub(super) fn lane_product_round_polys(
-        &mut self,
-    ) -> Option<(UnivariatePoly<E>, UnivariatePoly<E>)> {
-        self.enter_lane_product();
-        if self.in_coefficient_round() {
-            return None; // Coefficient rounds are computed by the caller.
-        }
-        let skip_linear = self.can_skip_norm_linear_coeff();
-        let (RelationRoundState::LaneProduct(lane), WitnessState::FoldedSuffix(witness)) =
-            (&mut self.relation_state, &mut self.witness_state)
-        else {
-            unreachable!("lane-product rounds require lane-product weights and a folded witness");
-        };
-        let (norm, relation) = lane
-            .round_terms(
-                witness,
-                None,
-                Some(self.split_eq.remaining_eq_tables()),
-                skip_linear,
-            )
-            .expect("a lane-product round with equality tables produces round terms");
-        let (norm_poly, relation_poly) = self.polys_from_terms(norm, relation);
-        Some((self.combine_polys(&norm_poly, &relation_poly), norm_poly))
-    }
-
     /// Bind `r` in the lane-product state: fold the witness and the lane
     /// table and cache the next round's message.
-    pub(super) fn ingest_lane_product_challenge(&mut self, r: E) {
+    pub(super) fn ingest_lane_product_challenge(
+        &mut self,
+        mut witness: Vec<E>,
+        mut lane: LaneProduct<E>,
+        r: E,
+    ) -> Phase<E> {
         self.split_eq.bind(r);
         let last = self.rounds_completed + 1 == self.num_vars;
         let skip_linear = !last && self.can_skip_norm_linear_coeff();
-        let (RelationRoundState::LaneProduct(lane), WitnessState::FoldedSuffix(witness)) =
-            (&mut self.relation_state, &mut self.witness_state)
-        else {
-            unreachable!(
-                "lane-product ingestion requires lane-product weights and a folded witness"
-            );
-        };
         let eq = (!last).then(|| self.split_eq.remaining_eq_tables());
-        let terms = lane.round_terms(witness, Some(r), eq, skip_linear);
+        let terms = lane.round_terms(&mut witness, Some(r), eq, skip_linear);
         self.live_lane_count = self.live_lane_count.div_ceil(2);
         if let Some((norm, relation)) = terms {
             self.cached_round_poly = Some(self.combine_terms(norm, relation));
         }
+        Phase::Lane { witness, lane }
     }
 }

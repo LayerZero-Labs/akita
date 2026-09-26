@@ -2,8 +2,7 @@ use super::*;
 use jolt_poly::UnivariatePoly;
 
 impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
-    fn finish_ingested_round(&mut self, fold_started: Instant) {
-        self.rounds_completed += 1;
+    fn finish_ingested_round(&mut self) {
         if self.rounds_completed < self.num_vars {
             if self.cached_round_poly.is_none() {
                 self.cached_round_poly = Some(self.compute_current_round_poly_from_state());
@@ -11,55 +10,68 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         } else {
             self.cached_round_poly = None;
         }
-        self.fold_time_total += fold_started.elapsed().as_secs_f64();
-        if self.rounds_completed == self.num_vars {
-            tracing::debug!(
-                rounds = self.num_vars,
-                scan_s = self.scan_time_total,
-                fold_s = self.fold_time_total,
-                "stage2 sumcheck rounds complete"
-            );
-        }
     }
 
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UnivariatePoly<E> {
-        let t_scan = Instant::now();
-        let (poly, norm_poly) = if let Some(polys) = self.lane_product_round_polys() {
-            polys
-        } else {
-            match &self.relation_state {
-                RelationRoundState::ReducedDense { weights: dense } => match &self.witness_state {
-                    WitnessState::CompactPrefix(compact_witness) => {
-                        let (virt_terms, rel_terms) = self
-                            .compute_round_compact_reduced_dense_terms(
-                                compact_witness.view(),
-                                dense.evaluations(),
-                            );
-                        let (norm_poly, relation_poly) =
-                            self.polys_from_terms(virt_terms, rel_terms);
-                        (self.combine_polys(&norm_poly, &relation_poly), norm_poly)
-                    }
-                    WitnessState::FoldedSuffix(folded_witness) => {
-                        let (virt_terms, rel_terms) = self
-                            .compute_folded_reduced_dense_round_terms(
-                                folded_witness,
-                                dense.evaluations(),
-                            );
-                        let (norm_poly, relation_poly) =
-                            self.polys_from_terms(virt_terms, rel_terms);
-                        (self.combine_polys(&norm_poly, &relation_poly), norm_poly)
-                    }
-                },
-                RelationRoundState::QuotientFactored { weights, .. } => {
-                    self.compute_quotient_round_from_state(weights)
-                }
-                RelationRoundState::LaneProduct(_) => {
-                    unreachable!("lane-product rounds are computed above")
-                }
+        enum RoundComputation<E: Field> {
+            Polynomials(UnivariatePoly<E>, UnivariatePoly<E>),
+            Terms(NormRoundTerms<E>, [E; 3]),
+        }
+
+        let mut phase = self.phase.take().expect("prover phase is installed");
+        let computation = match &mut phase {
+            Phase::CompactPrefix {
+                weights, engine, ..
+            } => {
+                let (poly, norm) = self.compact_prefix_round_polys(engine, weights);
+                RoundComputation::Polynomials(poly, norm)
+            }
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::ReducedDense(dense),
+            } => {
+                let (virt_terms, rel_terms) = match witness {
+                    WitnessState::CompactPrefix(compact_witness) => self
+                        .compute_round_compact_reduced_dense_terms(
+                            compact_witness.view(),
+                            dense.evaluations(),
+                        ),
+                    WitnessState::FoldedSuffix(folded_witness) => self
+                        .compute_folded_reduced_dense_round_terms(
+                            folded_witness,
+                            dense.evaluations(),
+                        ),
+                };
+                RoundComputation::Terms(virt_terms, rel_terms)
+            }
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::Factored(weights),
+            } => {
+                let (poly, norm) = self.compute_quotient_round_from_state(witness, weights);
+                RoundComputation::Polynomials(poly, norm)
+            }
+            Phase::Lane { witness, lane } => {
+                let (norm, relation) = lane
+                    .round_terms(
+                        witness,
+                        None,
+                        Some(self.split_eq.remaining_eq_tables()),
+                        self.can_skip_norm_linear_coeff(),
+                    )
+                    .expect("lane round equality tables produce terms");
+                RoundComputation::Terms(norm, relation)
+            }
+        };
+        self.phase = Some(phase);
+        let (poly, norm_poly) = match computation {
+            RoundComputation::Polynomials(poly, norm) => (poly, norm),
+            RoundComputation::Terms(virt_terms, relation) => {
+                let (norm, relation) = self.polys_from_terms(virt_terms, relation);
+                (self.combine_polys(&norm, &relation), norm)
             }
         };
         self.prev_norm_poly = Some(norm_poly);
-        self.scan_time_total += t_scan.elapsed().as_secs_f64();
         poly
     }
 }
@@ -67,13 +79,10 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     fn compute_quotient_round_from_state(
         &self,
+        witness: &WitnessState<E>,
         weights: &RelationWeightFactorization<E>,
     ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
-        if let Some(prefix) = self.compact_quotient_prefix() {
-            return self.compact_prefix_round_polys(prefix, weights);
-        }
-
-        let (virt_terms, rel_coeffs) = match &self.witness_state {
+        let (virt_terms, rel_coeffs) = match witness {
             WitnessState::CompactPrefix(compact_witness) => {
                 if self.use_partial_lane_coefficient_round() {
                     self.compute_compact_partial_lane_coefficient_round_terms(
@@ -135,51 +144,49 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 }
 
 impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
-    fn ingest_reduced_dense_challenge(&mut self, r: E) {
+    fn ingest_reduced_dense_challenge(
+        &mut self,
+        witness: WitnessState<E>,
+        mut weights: DenseRelationWeights<E>,
+        r: E,
+    ) -> Phase<E> {
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
-        self.witness_state = match mem::replace(
-            &mut self.witness_state,
-            WitnessState::FoldedSuffix(Vec::new()),
-        ) {
+        let witness = match witness {
             WitnessState::CompactPrefix(compact_witness) => {
                 let compact_view = compact_witness.view();
                 let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
-                WitnessState::FoldedSuffix(Self::materialize_compact_witness(
-                    compact_view,
-                    &fold_lut,
-                ))
+                Self::materialize_compact_witness(compact_view, &fold_lut)
             }
             WitnessState::FoldedSuffix(mut folded_witness) => {
                 fold_evals_in_place(&mut folded_witness, r);
-                WitnessState::FoldedSuffix(folded_witness)
+                folded_witness
             }
         };
-        if let RelationRoundState::ReducedDense { weights } = &mut self.relation_state {
-            weights.bind(r);
-        } else {
-            unreachable!("reduced-dense ingestion requires reduced-dense weights");
+        weights.bind(r);
+        Phase::Coefficient {
+            witness: WitnessState::FoldedSuffix(witness),
+            relation: CoefficientRelation::ReducedDense(weights),
         }
     }
 
     /// Bind `r` in a coefficient round of the factored relation outside the
     /// compact prefix. With partial lanes, a round followed by another
     /// coefficient round also computes and caches the next round's message.
-    fn ingest_factored_coefficient_challenge(&mut self, r: E) {
+    fn ingest_factored_coefficient_challenge(
+        &mut self,
+        witness: WitnessState<E>,
+        mut weights: RelationWeightFactorization<E>,
+        r: E,
+    ) -> Phase<E> {
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
-        let RelationRoundState::QuotientFactored { weights, .. } = &self.relation_state else {
-            unreachable!("factored coefficient ingestion requires quotient-factored weights");
-        };
         let coeff_count = weights.common_alpha_factor().len();
         let partial_lanes = self.use_partial_lane_coefficient_round();
         let fuse_next_round = partial_lanes && self.rounds_completed + 1 < self.coefficient_bits();
         let mut next_alpha_factor = weights.common_alpha_factor().to_vec();
         fold_evals_in_place(&mut next_alpha_factor, r);
-        let folded_witness = match mem::replace(
-            &mut self.witness_state,
-            WitnessState::FoldedSuffix(Vec::new()),
-        ) {
+        let folded_witness = match witness {
             WitnessState::CompactPrefix(compact_witness) => {
                 let compact_view = compact_witness.view();
                 let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
@@ -189,7 +196,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                 let (next_folded_witness, virt_terms, rel_coeffs) = self
                     .fuse_folded_coefficients_and_compute_next_round(
                         &folded_witness,
-                        weights,
+                        &weights,
                         &next_alpha_factor,
                         r,
                     );
@@ -209,11 +216,10 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                 folded_witness
             }
         };
-        self.witness_state = WitnessState::FoldedSuffix(folded_witness);
-        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
-            *weights.components_mut().0 = next_alpha_factor;
-        } else {
-            unreachable!("coefficient folding preserves quotient-factored weights");
+        *weights.common_alpha_factor_mut() = next_alpha_factor;
+        Phase::Coefficient {
+            witness: WitnessState::FoldedSuffix(folded_witness),
+            relation: CoefficientRelation::Factored(weights),
         }
     }
 }
@@ -252,7 +258,6 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
-        let t_fold = Instant::now();
         let _span = tracing::info_span!("RelationRangeImageProver::fold_round").entered();
         if let Some(additional) = &mut self.additional_relation_terms {
             additional.bind(r);
@@ -261,17 +266,27 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             self.prev_norm_claim = prev_norm_poly.evaluate(r);
         }
 
-        if !self.in_coefficient_round() {
-            self.enter_lane_product();
-            self.ingest_lane_product_challenge(r);
-        } else if matches!(self.relation_state, RelationRoundState::ReducedDense { .. }) {
-            self.ingest_reduced_dense_challenge(r);
-        } else if self.compact_quotient_prefix().is_some() {
-            self.ingest_compact_prefix_challenge(r);
-        } else {
-            self.ingest_factored_coefficient_challenge(r);
-        }
+        let phase = self.phase.take().expect("prover phase is installed");
+        let phase = match phase {
+            Phase::CompactPrefix {
+                witness,
+                weights,
+                engine,
+            } => self.ingest_compact_prefix_challenge(witness, weights, engine, r),
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::Factored(weights),
+            } => self.ingest_factored_coefficient_challenge(witness, weights, r),
+            Phase::Coefficient {
+                witness,
+                relation: CoefficientRelation::ReducedDense(weights),
+            } => self.ingest_reduced_dense_challenge(witness, weights, r),
+            Phase::Lane { witness, lane } => self.ingest_lane_product_challenge(witness, lane, r),
+        };
+        self.rounds_completed += 1;
+        let phase = self.advance_phase(phase);
+        self.phase = Some(phase);
         drop(_span);
-        self.finish_ingested_round(t_fold);
+        self.finish_ingested_round();
     }
 }

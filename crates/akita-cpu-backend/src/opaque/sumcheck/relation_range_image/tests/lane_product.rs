@@ -7,9 +7,16 @@ use super::*;
 /// rounds must carry that tail.
 #[test]
 fn stage2_rounds_reach_the_direct_final_evaluation() {
-    let lane_bits = 5usize;
-    let live_lane_count = 19usize;
-    for (b, coefficient_bits) in [(8usize, 6usize), (4, 3), (8, 2), (4, 1), (8, 0)] {
+    for (lane_bits, live_lane_count, b, coefficient_bits) in [
+        (5usize, 19usize, 8usize, 6usize),
+        (5, 19, 4, 3),
+        (5, 19, 8, 2),
+        (5, 19, 4, 1),
+        (5, 19, 8, 0),
+        (0, 1, 8, 6),
+        (0, 1, 4, 3),
+        (0, 1, 8, 1),
+    ] {
         let coeff_count = 1usize << coefficient_bits;
         let num_vars = lane_bits + coefficient_bits;
         let half = (b / 2) as i8;
