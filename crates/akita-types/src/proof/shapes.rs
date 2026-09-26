@@ -1,18 +1,7 @@
 use super::*;
+use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::OpeningClaimsLayout;
-use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
-
-/// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
-pub const SETUP_SUMCHECK_DEGREE: usize = 2;
-
-/// Headerless shape context for one stage in the stage-1 range-check tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AkitaStage1StageShape {
-    /// Eq-factored sumcheck shape `(num_rounds, q_degree)`.
-    pub sumcheck_proof: EqFactoredSumcheckProofShape,
-    /// Number of child claims serialized after the stage proof.
-    pub child_claims: usize,
-}
+use akita_sumcheck::SumcheckProofShape;
 
 /// Public shape of the native extension-opening-reduction messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,43 +72,6 @@ impl Valid for ExtensionOpeningReductionShape {
                     degree, EXTENSION_OPENING_REDUCTION_DEGREE
                 )));
             }
-        }
-        Ok(())
-    }
-}
-
-/// Public layout of the native physical-L2 messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PhysicalL2NormProofWireShape {
-    /// Number of blockwise limb claims; zero for direct mode.
-    pub subclaims: usize,
-    /// Number of final response/limb virtual evaluations.
-    pub virtual_evaluations: usize,
-    /// General final-leaf sumcheck shape.
-    pub sumcheck: SumcheckProofShape,
-}
-
-impl Valid for AkitaStage1StageShape {
-    fn check(&self) -> Result<(), SerializationError> {
-        checked_shape_len(self.sumcheck_proof.0)?;
-        checked_shape_len(self.sumcheck_proof.1)?;
-        checked_shape_len(self.child_claims)?;
-        Ok(())
-    }
-}
-
-impl Valid for PhysicalL2NormProofWireShape {
-    fn check(&self) -> Result<(), SerializationError> {
-        checked_shape_len(self.subclaims)?;
-        checked_shape_len(self.virtual_evaluations)?;
-        if self.virtual_evaluations == 0 {
-            return Err(SerializationError::InvalidData(
-                "L2 norm proof shape requires a virtual evaluation".into(),
-            ));
-        }
-        checked_shape_sequence_len(self.sumcheck.len())?;
-        for &degree in &self.sumcheck {
-            checked_shape_len(degree)?;
         }
         Ok(())
     }

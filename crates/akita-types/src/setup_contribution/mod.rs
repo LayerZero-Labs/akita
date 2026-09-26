@@ -1,6 +1,6 @@
 //! Shared setup-contribution planning for prover and verifier.
 //!
-//! This module owns challenge-free geometry (`geometry.rs`) and the pure
+//! This module owns the challenge-free envelope guard (`geometry.rs`) and the pure
 //! layout/weight derivation for the stage-3 setup product. The prover consumes
 //! the materialized setup-index weight vector: one scalar weight per packed
 //! setup position. Verifier-only evaluation of the same plan (the direct
@@ -17,8 +17,7 @@ mod plan;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use geometry::SetupProjectionGroupGeometry;
-pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
+pub use geometry::ensure_setup_envelope;
 pub use plan::{
     factor_aligned_role_tensors, project_role_tensors, role_projection_evaluation,
     role_tensors_are_aligned, PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm,

@@ -11,9 +11,6 @@ use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Degree bound for one witness factor times one transparent reduction factor.
-pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
-
 /// Tensor-algebra data for one extension-opening reduction instance.
 ///
 /// The `column_partials` are the column view of

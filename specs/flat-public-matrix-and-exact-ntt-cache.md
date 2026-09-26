@@ -1440,7 +1440,7 @@ or pass-through aliases that recreate the old API.
 - `specs/role-native-projected-digit-layout.md`
 - `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup.rs`
-- `crates/akita-types/src/proof/setup_envelope.rs`
+- `crates/akita-types/src/layout/setup_envelope.rs`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-types/src/layout/flat_matrix.rs`
 - `crates/akita-types/src/ntt_cache.rs`

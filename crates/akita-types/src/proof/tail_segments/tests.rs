@@ -1,6 +1,8 @@
 use super::*;
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::SisModulusProfileId;
+use crate::layout::tail_segments::z_payload_budget_from_cap;
+use crate::tail_golomb_rice_low_bits::wire_rice_low_bits;
+use crate::{CommittedGroupParams, SisModulusProfileId};
 use akita_challenges::SparseChallengeConfig;
 use jolt_field::CanonicalEncoding;
 use jolt_field::{Prime128OffsetA7F7, Zero};
