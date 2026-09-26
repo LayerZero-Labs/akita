@@ -229,6 +229,10 @@ fn uniform_biguint_below(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{NativeProverFoldDraw, NativeVerifierFoldDraw};
+    use akita_transcript::{
+        new_native_prover, new_native_verifier, receive_native_bytes, send_native_bytes,
+    };
     use shake::digest::{ExtendableOutput, Update, XofReader};
     use shake::Shake256;
 
@@ -310,6 +314,76 @@ mod tests {
         let first = sample(bounded_profile.clone());
         assert_eq!(first, sample(bounded_profile));
         assert_ne!(first, sample(fixed_profile));
+    }
+
+    #[test]
+    fn native_prover_and_verifier_replay_binary_challenges() {
+        let profile = BinaryChallengeProfile::bounded_weight(
+            super::super::BinaryScalarRing::Cyclotomic243,
+            46,
+        )
+        .unwrap();
+        let proof_message = [9u8, 8, 7];
+        let mut prover =
+            new_native_prover(b"binary-fold/session", b"binary-fold/instance").unwrap();
+        send_native_bytes(&mut prover, &proof_message);
+        let expected = BinaryChallengeSampler::new(profile.clone())
+            .sample_challenges(
+                &mut NativeProverFoldDraw::new(&mut prover, 2, 3),
+                b"binary-fold",
+                8,
+            )
+            .unwrap();
+        let proof = prover.narg_string().to_vec();
+
+        let mut verifier =
+            new_native_verifier(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
+        assert_eq!(
+            receive_native_bytes(&mut verifier, proof_message.len()).unwrap(),
+            proof_message
+        );
+        let actual = BinaryChallengeSampler::new(profile.clone())
+            .sample_challenges(
+                &mut NativeVerifierFoldDraw::new(&mut verifier, 2, 3),
+                b"binary-fold",
+                8,
+            )
+            .unwrap();
+        assert_eq!(actual, expected);
+        verifier.check_eof().unwrap();
+
+        let mut wrong_label =
+            new_native_verifier(b"binary-fold/session", b"binary-fold/instance", &proof).unwrap();
+        receive_native_bytes(&mut wrong_label, proof_message.len()).unwrap();
+        let changed = BinaryChallengeSampler::new(profile)
+            .sample_challenges(
+                &mut NativeVerifierFoldDraw::new(&mut wrong_label, 2, 3),
+                b"other-fold",
+                8,
+            )
+            .unwrap();
+        assert_ne!(changed, expected);
+    }
+
+    #[test]
+    fn draw_failure_is_returned_before_sampling() {
+        struct FailingDraw;
+
+        impl FoldDraw for FailingDraw {
+            fn absorb_and_squeeze(&mut self, _payload: &[u8]) -> Result<[u8; 32], AkitaError> {
+                Err(AkitaError::InvalidProof)
+            }
+        }
+
+        let profile =
+            BinaryChallengeProfile::fixed_weight(super::super::BinaryScalarRing::Cyclotomic243, 47)
+                .unwrap();
+        let result = BinaryChallengeSampler::new(profile).sample_challenges(
+            &mut FailingDraw,
+            b"binary-fold",
+            4,
+        );
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 
     #[test]
