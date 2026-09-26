@@ -14,6 +14,9 @@ pub mod geometry;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
+pub mod relation_address;
+pub mod relation_layout;
+pub(crate) mod relation_rhs_layout;
 pub mod ring_dims;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
@@ -36,6 +39,11 @@ pub use proof_size::{
     native_terminal_response_max_bytes, native_terminal_response_planner_bytes,
     padded_boolean_opening_vars, sumcheck_rounds, terminal_response_bytes,
     try_extension_opening_reduction_level_bytes,
+};
+pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
+pub use relation_layout::{
+    RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
+    RelationWitnessGeometry,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

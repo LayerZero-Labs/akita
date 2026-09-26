@@ -55,8 +55,11 @@ pub fn grouped_witness_body_coefficients(
             "witness group has malformed dimensions".into(),
         ));
     }
-    let opening_geometry =
-        crate::proof::relation::opening_row_geometry(params, source_encoding, extension_degree)?;
+    let opening_geometry = crate::layout::relation_rhs_layout::opening_row_geometry(
+        params,
+        source_encoding,
+        extension_degree,
+    )?;
     let mut total = 0usize;
     for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
         let (z_len, e_len, t_len) = witness_unit_lengths(

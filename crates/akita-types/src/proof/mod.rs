@@ -13,7 +13,6 @@ pub mod commitment;
 pub mod compression_relation_weights;
 mod fold_challenges;
 pub mod relation;
-pub mod relation_address;
 pub mod relation_range_image;
 mod relation_weight_event;
 pub mod ring_relation;
@@ -79,10 +78,8 @@ pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, generate_relation_rhs,
     relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
-    relation_rhs_row_count, relation_row_weight, RelationGroupRows, RelationRhsLayout,
-    RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
+    relation_rhs_row_count, relation_row_weight,
 };
-pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{
     batch_l2_virtual_evaluations, reconstruct_l2_sq_from_gram, PhysicalResponsePlan,
     RelationRangeImageGroupPlan, RelationRangeImagePlan,
