@@ -1,3 +1,5 @@
+#[cfg(feature = "labinius-sis")]
+use akita_sis_estimator::labinius_width_table::certified_max_width;
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
     EstimateConfig,
@@ -91,6 +93,23 @@ fn bench_infinity_optimizer(c: &mut Criterion) {
         }
     }
     group.finish();
+    #[cfg(feature = "labinius-sis")]
+    c.bench_function(
+        "sis_infinity_optimizer/labinius_certified_lookup",
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    certified_max_width(
+                        black_box(AkitaModulusProfileId::Q64Offset23703),
+                        black_box(162),
+                        black_box(2),
+                        black_box(24_116_880),
+                    )
+                    .unwrap(),
+                )
+            });
+        },
+    );
 }
 
 fn configure_group<M: criterion::measurement::Measurement>(
@@ -108,6 +127,10 @@ fn configure_group<M: criterion::measurement::Measurement>(
 }
 
 fn load_cases() -> Vec<InfinityCase> {
+    #[cfg(feature = "labinius-sis")]
+    if CaseSet::from_env() == CaseSet::Labinius {
+        return labinius_cases();
+    }
     match env::var_os(CASES_CSV_ENV) {
         Some(path) => load_cases_csv(&resolve_csv_path(Path::new(&path)), CaseSet::from_env()),
         None => default_cases(),
@@ -126,6 +149,8 @@ enum CaseSet {
     Representative,
     ExhaustiveCi,
     AllTrusted,
+    #[cfg(feature = "labinius-sis")]
+    Labinius,
 }
 
 impl CaseSet {
@@ -134,8 +159,10 @@ impl CaseSet {
             Ok("representative") | Err(_) => Self::Representative,
             Ok("exhaustive-ci") => Self::ExhaustiveCi,
             Ok("all-trusted") => Self::AllTrusted,
+            #[cfg(feature = "labinius-sis")]
+            Ok("labinius") => Self::Labinius,
             Ok(value) => panic!(
-                "{CASE_SET_ENV} must be one of representative, exhaustive-ci, all-trusted; got {value:?}"
+                "{CASE_SET_ENV} must be one of representative, exhaustive-ci, all-trusted, labinius; got {value:?}"
             ),
         }
     }
@@ -276,6 +303,8 @@ fn load_cases_csv(path: &Path, case_set: CaseSet) -> Vec<InfinityCase> {
 fn case_set_includes(case_set: CaseSet, case: &InfinityCase) -> bool {
     match case_set {
         CaseSet::Representative | CaseSet::AllTrusted => true,
+        #[cfg(feature = "labinius-sis")]
+        CaseSet::Labinius => true,
         CaseSet::ExhaustiveCi => {
             let m = case.column_count();
             m <= 512 || (m <= 1024 && case.coeff_linf_bound == 255)
@@ -299,6 +328,28 @@ fn representative_cases(cases: Vec<InfinityCase>) -> Vec<InfinityCase> {
                 .clone()
         })
         .collect()
+}
+
+#[cfg(feature = "labinius-sis")]
+fn labinius_cases() -> Vec<InfinityCase> {
+    vec![
+        InfinityCase {
+            label: "labinius_p64_d162_bounded_w46_delta16".into(),
+            family: AkitaModulusProfileId::Q64Offset23703,
+            d: 162,
+            rank: 1,
+            width: 8,
+            coeff_linf_bound: 24_116_880,
+        },
+        InfinityCase {
+            label: "labinius_p128_d486_fixed_w25_delta16".into(),
+            family: AkitaModulusProfileId::Q128OffsetA7F7,
+            d: 486,
+            rank: 1,
+            width: 8,
+            coeff_linf_bound: 13_107_000,
+        },
+    ]
 }
 
 fn resolve_csv_path(path: &Path) -> PathBuf {
@@ -350,6 +401,8 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
+        #[cfg(feature = "labinius-sis")]
+        AkitaModulusProfileId::Q64Offset23703 => "q64-labinius",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
     }
 }

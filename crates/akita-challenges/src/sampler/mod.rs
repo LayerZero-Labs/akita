@@ -12,6 +12,8 @@ mod signed_sparse;
 mod xof;
 
 pub(crate) use position_sample::MAX_STACK_RING_DIM;
+#[cfg(feature = "labinius-challenges")]
+pub(crate) use position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 

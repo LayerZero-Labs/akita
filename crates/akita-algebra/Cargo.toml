@@ -25,6 +25,11 @@ criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]
+name = "binary162"
+harness = false
+required-features = ["labinius-binary"]
+
+[[bench]]
 name = "crt_ntt_ops"
 harness = false
 
@@ -32,9 +37,21 @@ harness = false
 name = "offset_eq_window"
 harness = false
 
+[[bench]]
+name = "trinomial_ntt"
+harness = false
+required-features = ["labinius-trinomial"]
+
+[[bench]]
+name = "ntt_comparison"
+harness = false
+required-features = ["labinius-trinomial"]
+
 [features]
 default = []
+labinius-binary = []
 parallel = ["dep:rayon", "jolt-field/parallel"]
+labinius-trinomial = []
 
 [lints]
 workspace = true

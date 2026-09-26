@@ -13,6 +13,8 @@ use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
 mod plan;
+#[cfg(feature = "labinius-trinomial")]
+mod trinomial;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +27,8 @@ pub use plan::{
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionGroupPlan,
     SetupContributionPlan,
 };
+#[cfg(feature = "labinius-trinomial")]
+pub use trinomial::{PreparedTrinomialASetupWeights, TrinomialASetupView, TrinomialResponseLayout};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///

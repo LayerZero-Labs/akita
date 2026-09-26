@@ -9,6 +9,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false, optional = true }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 libm = "0.2"
 num-bigint = "0.5.1"
@@ -24,6 +25,11 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [features]
 default = []
 parallel = ["dep:rayon"]
+labinius-sis = [
+  "akita-types/labinius-sis",
+  "dep:akita-challenges",
+  "akita-challenges/labinius-challenges",
+]
 
 [[bench]]
 name = "fixed_infinity"
@@ -32,6 +38,14 @@ harness = false
 [[bench]]
 name = "infinity_optimizer"
 harness = false
+
+[[example]]
+name = "labinius_infinity_width_table"
+required-features = ["labinius-sis"]
+
+[[test]]
+name = "labinius_width_table"
+required-features = ["labinius-sis"]
 
 [lints]
 workspace = true

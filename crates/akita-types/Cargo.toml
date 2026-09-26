@@ -30,6 +30,7 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
+labinius-sis = []
 default = ["transcript-blake2b"]
 test-support = []
 transcript-blake2b = [
@@ -43,6 +44,7 @@ transcript-keccak = [
   "akita-transcript/transcript-keccak",
 ]
 parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+labinius-trinomial = ["akita-algebra/labinius-trinomial"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
@@ -52,6 +54,11 @@ rand = "0.8"
 [[bench]]
 name = "golomb_rice"
 harness = false
+
+[[bench]]
+name = "trinomial_setup"
+harness = false
+required-features = ["labinius-trinomial"]
 
 [lints]
 workspace = true

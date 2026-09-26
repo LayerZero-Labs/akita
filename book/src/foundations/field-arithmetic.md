@@ -228,3 +228,185 @@ A field change must preserve canonical encoding, exact sampling, centered
 conversion, extension-coordinate order, and the bounds assumed by every
 deferred accumulator. Differential tests compare specialized arithmetic with
 the ordinary field operations.
+
+## Binary scalar arithmetic
+
+With the opt-in `labinius-binary` Cargo feature,
+`akita_algebra::binary::BinaryField162` provides arithmetic over
+`F_2[X]/(X^162 + X^81 + 1)`. An element has 162 bit coefficients; addition is
+XOR, and multiplication reduces the polynomial product using
+`X^162 = X^81 + 1`. The modulus is irreducible because 2 has multiplicative
+order 162 modulo 243.
+
+This type is an arithmetic foundation only. It is separate from the prime-field
+extensions used by current commitment configurations and does not enable a
+binary opening protocol or a new schedule.
+
+The canonical encoding contains 21 little-endian bytes, with the top six bits
+zero. Decoding rejects other lengths and nonzero unused bits. Multiplication
+uses six carryless word products and two reduction folds. Runtime dispatch
+selects PMULL on supported ARM CPUs or PCLMUL on supported x86-64 CPUs; a
+portable kernel remains available on other CPUs. Hardware multiplication fuses
+the polynomial product and reduction so the six-word intermediate does not
+cross a function boundary. Hardware squaring needs three carryless products;
+the portable kernel interleaves zero bits instead. Inversion uses an addition
+chain with nine multiplications and returns `None` for zero.
+
+`BinaryField162::dot_product` XOR-accumulates unreduced pairwise products and
+reduces once. It returns `None` when the input lengths differ. The x86-64
+backend processes two pairs per VPCLMUL instruction when AVX2 and VPCLMULQDQ
+are available; all backends produce the same canonical field element.
+
+The implementation and its independent bit-convolution tests live in
+`crates/akita-algebra/src/binary.rs` and `crates/akita-algebra/src/binary/`.
+The `binary162` Criterion target covers scalar multiplication, squaring,
+inversion, deferred-reduction dot products, and multiply-then-sum comparisons.
+
+### Keep binary tables packed across rounds
+
+A product sum-check repeatedly computes a polynomial from two tables, then
+folds each table at a challenge. Converting every table before every operation
+can consume much of the arithmetic speedup. `PackedBinary162` instead stores
+matching words from many field elements together in three arrays. The same
+storage survives all rounds, and `refill` reuses its capacity for another input.
+This layout changes computation storage only; it does not change the scalar
+field or its canonical 21-byte encoding.
+
+The kernel pairs adjacent entries. For a pair `(a0, a1)`, define
+`da = a0 + a1`, where addition is XOR. The folded value at challenge `r` is
+`a0 + r * da`. For paired tables `a` and `b`, the round polynomial is
+
+```text
+g(X) = sum_pairs (a0 + X * da) * (b0 + X * db).
+```
+
+`round_product` takes the current claim `h = g(0) + g(1)` and returns the constant,
+linear, and quadratic coefficients. In characteristic two, `h = c1 + c2`,
+so only `c0` and `c2` require table products; `c1 = h + c2`. The claim is a trusted
+prover hint, not a value authenticated by this kernel. This avoids a redundant
+product per pair, division by two, and integer-point interpolation.
+The caller samples the challenge after
+binding the message, then calls `fold_in_place` on both tables. These arithmetic
+kernels themselves do not run a transcript or establish a valid opening.
+
+The first eliminated variable is the least-significant bit of the table index.
+An unmatched final entry is paired with zero. Folding reduces the live length
+to its ceiling half without allocating; empty and singleton tables are unchanged.
+A round message requires equal lengths of at least two, otherwise it returns
+`None`. The caller is responsible for binding logical lengths and padding to
+the statement. Retained capacity is private scratch, not extra live elements.
+
+The `binary162_packed` benchmark group measures messages and full fold sequences,
+including conversion into reused storage and allocation as separate cases.
+Its array-of-structures (AoS) baseline gathers pairs into reused scratch and
+uses the existing accelerated `BinaryField162::dot_product` API with deferred
+reduction. Prepacked all-round timings exclude the initial copy; conversion-plus-
+all-round timings include refilling both buffers. These compare computation
+kernels, not complete binary proof generation.
+
+### Switch host evaluation claims to F162
+
+A binary consumer can keep its own witness and challenge fields while reducing
+an evaluation claim to F162 arithmetic. The field-switch module supports two
+specific coordinate contracts:
+
+| Source words | Host challenge field | Host basis | Live / padded rows |
+|---|---|---|---|
+| 128-bit polynomial coordinates | `BinaryField128` | `1,x,...,x^127` | 128 / 128 |
+| 64-bit polynomial coordinates | `BinaryField192` | `x^b y^t`, index `64*t+b` | 192 / 256 |
+
+`BinaryField128` uses `x^128+x^7+x^2+x+1`. The second profile uses the base
+field `K = F2[x]/(x^64+x^4+x^3+x+1)` and the cubic extension
+`K[y]/(y^3+y+1)`. Its three words hold the coefficients of `1,y,y^2`.
+In both profiles, bit zero means the constant coefficient. The F128 polynomial
+matches the GHASH polynomial, but these coordinates are not a reflected GHASH
+network encoding. An adapter must convert its actual source representation.
+Host multiplication selects PMULL on AArch64 or PCLMUL on x86 at runtime,
+with a portable fallback. Host equality expansion selects its kernel once per
+table; AVX-512/VPCLMUL processes four host elements together.
+
+To see why switching is possible, write each host equality weight in its binary
+basis. Each basis coordinate is either zero or one, so it selects a subset of
+source words. XOR those words to form one **partial evaluation** per host basis
+coordinate. For example, a row with bits `[1,0,1,0]` has partial `w0 + w2`.
+For host point `r`, source index `j`, and host basis element `beta_k`, this is
+
+```text
+eq_host(r,j) = sum_k beta_k M[k,j], with M[k,j] in F2
+p_k = XOR of w_j for which M[k,j] = 1
+host evaluation = sum_k beta_k * embed_source_in_host(p_k).
+```
+
+The source map `phi` into F162 simply copies the source's 64 or 128 bits into
+low polynomial coordinates. This preserves XOR and is injective. It does not
+preserve field multiplication, and the construction needs no F192-to-F162
+field embedding. After the partials are fixed, seven or eight F162 batching
+coordinates define row weights `lambda_k`. Binary linearity gives
+
+```text
+sum_k lambda_k phi(p_k) = sum_j phi(w_j) c_j
+c_j = sum_k lambda_k M[k,j].
+```
+
+This is an F162 inner product suitable for the packed product-sumcheck kernels.
+F192's final 64 rows are fixed zeros; they are not additional prover choices.
+The partials are indexed by **host challenge-field coordinates**, rather than
+source-bit coordinates. Reversing that orientation changes their meaning even
+when both dimensions happen to be 128.
+
+The final coefficient evaluation need not scan the source. Keep a vector of
+128 or 192 F162 coefficients representing an element of the tensor algebra
+`host tensor_F2 F162`. Start with one and, for each corresponding host/source
+point coordinate `r_i,z_i`, multiply by `r_i tensor 1 + 1 tensor (1+z_i)`.
+This identity follows by expanding the two Boolean equality factors in
+characteristic two. Contract the resulting coefficients with `lambda` to obtain
+`c(z)`. Host multiplication acts by a binary matrix, so its application needs
+XORs; only scaling by `1+z_i` needs F162 products. Scratch is independent of the
+source table length, and work grows with the number of point coordinates.
+No division or tensor-field assumption is needed, including when `c(z)=0`.
+
+The arithmetic path in `binary::field_switch` is:
+
+1. `partial_evaluations` checks the exact source size and fills reusable host
+   equality scratch while constructing `SwitchPartials`.
+2. `SwitchPartials::reconstruct` gives the host evaluation to compare with the
+   authenticated host claim. `try_from_values` checks row count and zero padding
+   for partials supplied by a caller.
+3. `SwitchPartials::batch` gives the F162 claim. `batched_weights` transforms
+   equality scratch for that same host point directly into `PackedBinary162`.
+   For complete 64-element tiles, AVX-512/GFNI or AVX2/GFNI applies the binary
+   coordinate map on supported x86 CPUs. Little-endian AArch64 NEON constructs partials with
+   source-subset tables and maps coefficients with nibble tables. Smaller tables
+   use the portable coordinate/lookup path.
+4. `PackedBinary162::refill_binary_words` copies source words directly into
+   packed storage. AVX-512/VPCLMUL processes four adjacent pairs per message
+   or fold iteration, with narrower hardware and portable fallbacks. At the terminal
+   point, `transparent_weight` independently evaluates the public coefficient
+   factor without enumerating the source table.
+
+Point coordinate zero controls the least-significant table-index bit. The
+source must already contain exactly `2^point.len()` entries; callers own logical
+lengths and explicit source padding. These functions do not serialize a proof,
+run a transcript, authenticate a commitment, or admit a production profile.
+The eventual adapter must bind source ownership/layout before host challenges,
+partials before batching, and each message before its folding challenge. It
+must check the terminal product and open its source factor against the original
+commitment. The relaxed-source extraction and combined error accounting remain
+protocol obligations.
+
+The independent tests check polynomial arithmetic, dense partial matrices,
+host reconstruction, batching, structured coefficient evaluation and complete
+packed folds for both profiles. The `binary_field_switch` Criterion groups in
+the existing `binary162` target separate partial generation, coefficient
+batching, prepared rounds, the combined arithmetic path, host reconstruction
+and structured verifier work. They do not measure complete PCS proofs.
+
+The external comparison runner `scripts/bench-binary-switch-comparison.py`
+accepts a separate LaBinius checkout and links both implementations under the
+same native release settings. It checks the complete partial matrix and every
+round before alternating timed samples. Bit reversal reconciles LaBinius's
+half-table folds with Akita's adjacent-pair folds. Both combined timings include
+row-weight expansion, coefficient construction, source packing and all rounds;
+the initial claim and challenges are provided to both. The reference keeps its
+native partial orientation during timing. The comparison covers the F128
+profile; it does not establish F64/F192 performance against LaBinius.

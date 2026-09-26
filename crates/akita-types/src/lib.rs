@@ -31,6 +31,8 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+#[cfg(feature = "labinius-trinomial")]
+mod relation_bridge;
 mod ring_relation_mode;
 pub mod schedule;
 pub mod schedule_selection;
@@ -171,6 +173,10 @@ pub(crate) use proof::{
     TerminalLevelProof,
 };
 pub use proof_size::{native_nonterminal_level_layout, NativeNonterminalLevelLayout};
+#[cfg(feature = "labinius-trinomial")]
+pub use relation_bridge::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
+#[cfg(feature = "labinius-trinomial")]
+pub use relation_bridge::{RelationPolynomial, RelationPolynomialKind};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleLookupKey,
@@ -188,6 +194,10 @@ pub use setup_contribution::{
     PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
     SetupProjectionGeometry,
+};
+#[cfg(feature = "labinius-trinomial")]
+pub use setup_contribution::{
+    PreparedTrinomialASetupWeights, TrinomialASetupView, TrinomialResponseLayout,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,

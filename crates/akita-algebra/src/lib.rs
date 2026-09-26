@@ -12,6 +12,8 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+#[cfg(feature = "labinius-binary")]
+pub mod binary;
 pub mod eq_poly;
 pub mod fft;
 pub mod ntt;
@@ -23,6 +25,10 @@ pub mod split_eq;
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use fft::SmoothFftField;
+#[cfg(feature = "labinius-trinomial")]
+pub use fft::{
+    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, PRIME64_OFFSET_23703_MODULUS,
+};
 pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
@@ -36,6 +42,12 @@ pub use ring::{
     mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
+};
+#[cfg(feature = "labinius-trinomial")]
+pub use ring::{
+    embed_scalar, pack_scalar_components, unpack_scalar_components, MinusTrinomial, PlusTrinomial,
+    TrinomialError, TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,
+    TrinomialNttWorkspace, TrinomialRing,
 };
 pub use split_eq::GruenSplitEq;
 

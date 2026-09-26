@@ -66,6 +66,10 @@ logging-transcript = [
 ]
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
+labinius-trinomial = [
+  "akita-algebra/labinius-trinomial",
+  "akita-types/labinius-trinomial",
+]
 parallel = [
   "akita-prover/parallel",
   "dep:rayon",
@@ -91,6 +95,11 @@ harness = false
 [[bench]]
 name = "root_kernels"
 harness = false
+
+[[bench]]
+name = "trinomial_relation"
+harness = false
+required-features = ["labinius-trinomial"]
 
 [lints]
 workspace = true
