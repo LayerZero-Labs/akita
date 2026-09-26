@@ -182,6 +182,12 @@ the raw suffix is admitted.
 
 ## What the prover retains
 
+The default portable state is a `PortableCommitmentHandle` owned by the CPU
+backend. Protocol code can inspect its shape but cannot borrow its inner rows,
+compression witnesses, or quotients, or serialize the handle directly.
+Setup-prefix persistence uses the backend-owned `SetupPrefixProverRegistry`
+codec; the verifier registry contains only public commitments.
+
 Commitment produces a public committed group and a prover-only hint. The
 group associates its payload with the frozen commitment profile. That profile
 fixes the geometry needed to interpret the commitment, including the inner
@@ -191,7 +197,7 @@ The hint retains the semantic inner images $\mathbf t_b$ for each
 polynomial. For compressed commitments it also retains the packed compression
 digits and, when quotient lifting is used, the compression quotient images.
 It does not store a second copy of the public commitment or the complete
-outer digit table $\hat{\mathbf t}$. The prover can reconstruct those
+outer digit table $\hat{\mathbf t}$. The CPU backend reconstructs those
 digits from the retained inner images.
 
 The hint avoids repeating work during opening. It is not evidence that the
@@ -265,7 +271,7 @@ metadata, descriptors, and trusted external catalog identity.
 Relevant implementation sources:
 
 - `crates/akita-types/src/commitment_slicing.rs`
-- `crates/akita-prover/src/commitment/api.rs`
+- `crates/akita-cpu-backend/src/commitment/api.rs`
 - `crates/akita-types/src/setup_contribution/plan/physical_b.rs`
 
 Public-stream and view sources:
@@ -291,11 +297,11 @@ count does not create extra stored B matrices.
 
 - `crates/akita-setup/src/lib.rs` constructs setup and validates cached public
   matrices against their seed. Its tests cover seed and cache mismatches.
-- `crates/akita-prover/src/commitment/api.rs` checks standalone commitment
+- `crates/akita-cpu-backend/src/commitment/api.rs` checks standalone commitment
   profiles, computes inner images, and executes sliced outer commitments.
-- `crates/akita-types/src/proof/hints.rs` defines the retained prover state and
+- `crates/akita-cpu-backend/src/commitment/portable.rs` defines the retained prover state and
   tests its canonical serialization and shape checks.
-- `crates/akita-prover/src/protocol/ring_switch/commit.rs` commits recursive
+- `crates/akita-cpu-backend/src/opaque/recursive/commit.rs` commits recursive
   witnesses, selects raw or compressed output, and prepares the A-only terminal
   handoff.
 

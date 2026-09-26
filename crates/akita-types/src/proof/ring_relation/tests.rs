@@ -1,5 +1,3 @@
-#[path = "tests/dimension_tests.rs"]
-mod dimension_tests;
 #[path = "tests/support.rs"]
 mod support;
 
@@ -8,10 +6,10 @@ use crate::layout::GroupOpenPhaseParams;
 use crate::r_decomp_levels;
 use crate::DigitBlocks;
 use crate::{
-    emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, RingOpeningPoint,
+    emit_witness_e_planes, emit_witness_t_planes, relation_rhs_coeff_len, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
 };
+use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
@@ -150,7 +148,6 @@ fn relation_instance_rejects_empty_y() {
         vec![F::one()],
         RingVec::from_ring_elems::<D>(&[CyclotomicRing::one()]),
         RingVec::from_ring_elems::<D>(&[]),
-        RingVec::from_ring_elems::<D>(&[]),
         CommitmentRingDims::uniform(D),
     )
     .expect_err("empty rhs must be rejected");
@@ -204,7 +201,6 @@ fn build_instance(
         vec![F::one(); num_claims],
         RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); num_claims]),
         RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
-        RingVec::from_ring_elems::<D>(&[]),
         CommitmentRingDims::uniform(D),
     )
     .expect("instance")
@@ -215,14 +211,6 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     let num_claims = 3;
     let lp = chunk_test_level_params(1, num_claims);
     assert_eq!(lp.witness_chunk.num_chunks, 1);
-    let _lens = ring_relation_segment_lengths::<F>(
-        &lp,
-        RingRelationOpeningCounts {
-            num_claims,
-            num_t_vectors: num_claims,
-        },
-    )
-    .expect("lengths");
 
     let resolved = build_instance(&lp, num_claims, 4)
         .segment_layout(&lp, None)
@@ -369,7 +357,6 @@ fn relation_segment_layout_uses_same_axis_contract() {
         vec![F::one(); 3],
         RingVec::from_ring_elems::<D>(&[CyclotomicRing::one(); 3]),
         RingVec::from_coeffs(vec![F::zero(); rhs_coeff_len]),
-        RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_layout.n_d]),
         CommitmentRingDims::uniform(D),
     )
     .expect("same-axis relation");
@@ -381,9 +368,14 @@ fn relation_segment_layout_uses_same_axis_contract() {
     assert_eq!(unit.e_range().start, unit.z_range().end);
     assert_eq!(unit.t_range().start, unit.e_range().end);
     assert_eq!(layout.tail_range().start, unit.t_range().end);
-    instance
-        .check_v_shape_for_level(&lp)
-        .expect("v rows match layout");
+    RingRelationInstance::check_v_shape_for_level(
+        &RingVec::from_ring_elems::<D>(&vec![
+            CyclotomicRing::<F, D>::zero();
+            relation_rhs_layout.n_d
+        ]),
+        &lp,
+    )
+    .expect("v rows match layout");
 }
 
 fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
@@ -460,10 +452,6 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
             opening_batch.num_total_polynomials()
         ]),
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
-        RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-            CyclotomicRing::zero();
-            lp.open().matrix.output_rank()
-        ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
     .expect("multi-group instance");
@@ -527,10 +515,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
         vec![F::one(); gamma_len],
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![CyclotomicRing::one(); gamma_len]),
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
-        RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
-            CyclotomicRing::zero();
-            lp.open().matrix.output_rank()
-        ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
     .expect("multi-group instance");
@@ -573,7 +557,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             .expect("group layout")
             .num_polynomials();
         let num_live_blocks = params.num_live_blocks();
-        let depth_witness = params.num_digits_inner();
         let depth_commit = params.num_digits_outer();
         let depth_open = params.num_digits_open();
         let n_a = params.a_rows_len();
@@ -595,7 +578,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             MULTI_GROUP_D,
         )
         .expect("T digits");
-        let depth_fold = params.num_digits_fold();
         for unit in layout.units_for_group(group_index).expect("units") {
             emit_witness_e_planes::<MULTI_GROUP_D>(
                 &mut emitted,
@@ -617,22 +599,6 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
                 num_live_blocks,
             )
             .expect("emit T");
-            let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
-                .map(|index| {
-                    marker::<MULTI_GROUP_D>(500 * group_index + 100 * unit.chunk_index() + index)
-                })
-                .collect::<Vec<_>>();
-            emit_witness_z_planes::<MULTI_GROUP_D>(
-                &mut emitted,
-                unit,
-                params.num_positions_per_block(),
-                depth_witness,
-                depth_fold,
-                &z_source,
-            )
-            .expect("emit Z");
-            let z_range = unit.z_range();
-            assert_eq!(&emitted[z_range], flatten_markers(z_source).as_slice());
 
             let mut expected_e = Vec::new();
             for claim in 0..num_claims {
@@ -766,7 +732,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("packing instance");
@@ -828,7 +793,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("carrier construction is schedule-independent");
@@ -848,7 +812,6 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
         vec![F::one()],
         RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
         RingVec::from_coeffs(vec![F::zero(); rhs_len]),
-        RingVec::from_ring_elems::<PACK_D_D>(&[]),
         lp.role_dims(),
     )
     .expect("wrong-k carrier construction is schedule-independent");

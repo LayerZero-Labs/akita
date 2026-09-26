@@ -5,7 +5,7 @@ use crate::{
     CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
 /// Physical coefficient representation authenticated by a commitment.
@@ -144,8 +144,8 @@ impl GroupCommitPhaseParams {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_params_unchecked_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_params_unchecked_for_test(
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
     ) -> Self {
@@ -189,13 +189,6 @@ impl GroupCommitPhaseParams {
     #[must_use]
     pub fn inner_digits(&self) -> crate::GadgetDigits {
         self.inner.digits
-    }
-
-    /// The B-role gadget decomposition.
-    #[inline]
-    #[must_use]
-    pub fn outer_digits(&self) -> crate::GadgetDigits {
-        self.outer.digits
     }
 
     /// Canonical versioned bytes used for catalog and schedule-key identity.
@@ -286,8 +279,7 @@ impl GroupCommitPhaseParams {
                 "setup-prefix commitment profile must be singleton".into(),
             ));
         }
-        let n_prefix = 1usize
-            .checked_shl(self.group.num_vars() as u32)
+        let n_prefix = checked::pow2(self.group.num_vars())
             .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
         crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
 
@@ -474,11 +466,6 @@ impl AkitaScheduleLookupKey {
             .collect();
         groups.push(self.final_group);
         OpeningClaimsLayout::from_groups(groups)
-    }
-
-    /// Number of commitment groups in this schedule key.
-    pub fn num_commitment_groups(&self) -> usize {
-        self.precommitteds.len() + 1
     }
 
     /// Maximum opening arity across the final and precommitted groups.

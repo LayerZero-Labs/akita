@@ -201,9 +201,11 @@ later execution during preprocessing restoration or in a guest.
 - [x] `SetupRequirements::from_catalog::<Cfg>(&catalog, max_num_vars,
   max_num_batched_polys)` scans only eligible exact catalog rows and accounts for
   both full schedules and independent precommit matrix requirements.
-- [x] Prover setup construction and persisted-setup restoration receive the
-  catalog explicitly, derive recursive prefix slots from it, and use its digest
-  in catalog-dependent cache identity. Neither path invokes the planner.
+- [x] Prover setup construction and persisted-setup restoration receive
+  requirements derived explicitly from the catalog, including its recursive
+  prefix slots. Neither path invokes the planner. PR #76 replaced the
+  catalog-digest cache identity with a slot-keyed one; see
+  [`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md).
 - [x] Commitment, proving, and verification primitives receive the same borrowed
   catalog directly. Proof decoding never installs catalog state.
 - [x] `CommitmentConfig::schedule_catalog()`, config-owned row-resolution
@@ -415,9 +417,10 @@ The same scan collects recursive prefix slots for eligible rows.
 cache loading, coverage checks, repair, and fresh setup generation. These paths
 reuse the requirements instead of rescanning the catalog. Setup generation
 materializes exactly those required slots. Persisted setup restoration
-receives the catalog explicitly, validates the stored registry against the exact
-required identifiers, and keys catalog-dependent persistence by
-`catalog_digest()`.
+receives the requirements, validates the stored registry against the exact
+required identifiers, and keys the registry by field modulus, setup seed, and
+slot set, so one registry serves every catalog combination that needs those
+slots ([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)).
 
 This is a completeness rule, not only an optimization. Setup sizing MUST NOT use
 a second schedule resolver or planner-derived approximation because that could

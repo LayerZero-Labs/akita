@@ -10,16 +10,16 @@ setup construction, transcript work, planning, or the rest of the proof.
 ## Run the benchmark groups
 
 ```bash
-cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
-cargo bench -p akita-pcs --bench ntt_matvec -- width
-cargo bench -p akita-pcs --bench ntt_matvec -- equal_output
-cargo bench -p akita-pcs --bench ntt_matvec -- equal_io
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- rank_ring_dim
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- width
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- equal_output
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- equal_io
 ```
 
 Use a shape filter for one quick comparison:
 
 ```bash
-cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
+cargo bench -p akita-cpu-backend --bench ntt_matvec -- d64_r4_w128
 ```
 
 Prepared cache construction is outside the timed region. The measurement

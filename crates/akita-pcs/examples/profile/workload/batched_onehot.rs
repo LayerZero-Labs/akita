@@ -1,19 +1,17 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
+    onehot_lagrange_opening, proof_size_budgets, prover_claims, random_claim_point,
     report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
-use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
-use akita_prover::OneHotPoly;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_cpu_backend::CpuBackend;
+use akita_cpu_backend::OneHotPoly;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
@@ -45,7 +43,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
+    <FF as Unreduced>::Wide: From<FF> + jolt_field::AdditiveGroup,
+    Cfg::ExtField: jolt_field::MulBaseUnreduced<FF>
+        + ExtField<FF>
+        + FpExtEncoding<FF>
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + Valid,
 {
     let group_layout = PolynomialGroupLayout::new(nv, num_polys);
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
@@ -59,7 +64,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .iter()
         .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &pt))
         .collect();
-    let poly_refs: Vec<&OneHotPoly<FF, u8>> = polys.iter().collect();
 
     let pools = ProfileThreadPools::get();
     let setup_contribution_mode = SetupContributionMode::Direct;
@@ -68,17 +72,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let setup = scheme.setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         if let Some(schedule) = plan {
-            prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+            backend
+                .prewarm(schedule)
+                .expect("prewarm profile execution");
         }
-        let prepared_ntt_metrics = prepared
+        let prepared_ntt_metrics = backend
             .shared_ntt_cache_metrics()
             .expect("prepared setup NTT cache metrics");
         report_timing(label, "setup_expand", setup_expand_secs);
@@ -93,20 +93,20 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
         report_crt_profile(
             label,
-            prepared
+            backend
                 .shared_ntt_profile(layout.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let t0 = Instant::now();
-        let akita_prover::CommitOutput {
+        let source = backend.import_source(polys).unwrap();
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
-            .commit::<_, _>(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            private_handle: hint,
+        } = backend
+            .commit(
+                scheme.schedules(),
+                &source,
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         let commitments = [commitment];
@@ -122,7 +122,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -130,30 +129,29 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let proof = scheme
-            .batched_prove::<_, _, _, _>(
+            .batched_prove(
                 &setup,
-                prover_claims::<Cfg, _>(
+                prover_claims::<Cfg>(
                     scheme.schedules(),
                     selection,
                     &pt[..],
-                    &poly_refs[..],
+                    &openings,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
                 ),
-                &stack,
-                &mut prover_transcript,
+                &backend,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
-        let post_execution_ntt_metrics = prepared
+        let post_execution_ntt_metrics = backend
             .shared_ntt_cache_metrics()
             .expect("post-execution setup NTT cache metrics");
         assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
-        drop(stack);
         (commitments, proof, setup)
     };
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = scheme
@@ -165,20 +163,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let effective_schedule = plan.unwrap_or(&schedule);
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(effective_schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(plan, group_layout),
+            proof_size_budgets::<Cfg>(plan, group_layout),
             "planned",
             setup_contribution_mode,
-            plan,
         );
         emit_runtime_schedule_summary(
             label,
@@ -188,20 +180,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            plan,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(&schedule, group_layout),
+            proof_size_budgets::<Cfg>(&schedule, group_layout),
             "runtime schedule",
             setup_contribution_mode,
-            &schedule,
         );
         emit_runtime_schedule_summary(
             label,
@@ -211,12 +197,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            &schedule,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     }
     tracing::info!(
         label,
@@ -228,7 +209,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     tracing::info!(
         label,
         root_output_witness_len = root_step.output_witness_len,
-        observed_total_bytes = proof.size(),
+        observed_total_bytes = proof.len(),
         "batched planner root-fold summary"
     );
 
@@ -259,11 +240,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             claims,
             BasisMode::Lagrange,
         )

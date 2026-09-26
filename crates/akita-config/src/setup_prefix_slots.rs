@@ -28,7 +28,11 @@ fn setup_prefix_slot_matches(
     Ok(())
 }
 
-pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
+/// Return the canonical setup-prefix registry keys consumed by one schedule.
+///
+/// The supplied root layout is also used to revalidate every frozen prefix
+/// length against the producer whose setup contribution it replaces.
+pub fn required_setup_prefix_slot_ids_for_schedule(
     schedule: &FoldSchedule,
     root_layout: &akita_types::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {

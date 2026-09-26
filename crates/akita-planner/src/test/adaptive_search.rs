@@ -65,6 +65,7 @@ fn assert_selected_grinding_edge_parity(
     let mut previous_rounds = 0;
     let mut edge_sum = TranscriptGrindingCost {
         total_nonce_bits: 0,
+        native_nonce_max_bytes: 0,
         expanded_query_count: 0,
     };
     for (index, fold) in folds.iter().enumerate() {
@@ -107,11 +108,19 @@ fn assert_selected_grinding_edge_parity(
             .expanded_query_count
             .checked_add(edge.expanded_query_count)
             .expect("selected query sum");
+        edge_sum.native_nonce_max_bytes = edge_sum
+            .native_nonce_max_bytes
+            .checked_add(edge.native_nonce_max_bytes)
+            .expect("selected native nonce-byte sum");
         previous_rounds = geometry.relation_point_variable_count();
     }
     assert!(edge_sum.expanded_query_count > 0);
     assert_eq!(edge_sum, candidate);
     assert_eq!(edge_sum.total_nonce_bits, full_plan.total_nonce_bits());
+    assert_eq!(
+        edge_sum.native_nonce_max_bytes,
+        full_plan.native_nonce_max_bytes()
+    );
     assert_eq!(
         edge_sum.expanded_query_count,
         full_plan.expanded_query_count()
@@ -285,7 +294,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -343,7 +352,7 @@ fn proof_first_uniform_search_matches_oracle_and_replans_query_fallback() {
     assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        akita_schedules::expanded_schedule_proof_payload_bytes(
+        akita_schedules::expanded_schedule_native_proof_estimate_bytes(
             &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
             &selected.schedule,
             &policy,
@@ -395,7 +404,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -843,18 +852,11 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     )
     .expect("rank-one-capped nv36 planner");
     let selected_root = &selected.schedule.root.params;
-    assert_eq!(
-        selected_root.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 64,
-            opening: 64,
-        }
-    );
+    assert_eq!(selected_root.role_dims(), d256_mixed);
     assert_eq!(
         selected.schedule.recursive_folds[0].params.role_dims(),
-        selected_root.role_dims(),
-        "exact packed grinding cost keeps the D256 A-role through the first packing fold"
+        d128_mixed,
+        "the additive work score prices the first packing successor's setup scan"
     );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
@@ -873,21 +875,38 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
             assert_eq!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
         }
     }
-    let selected_score = (
-        estimated_first_direct_setup_capacity(&selected),
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        selected.estimate.estimated_num_setup_field_elements,
-    );
-    let rank_one_capped_score = (
-        estimated_first_direct_setup_capacity(&rank_one_capped),
-        rank_one_capped
-            .estimate
-            .estimated_proof_payload_bytes()
-            .unwrap(),
-        rank_one_capped.estimate.estimated_num_setup_field_elements,
-    );
+    let score = |schedule: &akita_types::PlannedFoldSchedule| {
+        let proof_bytes = schedule.estimate.estimated_proof_payload_bytes().unwrap();
+        let root_layout = akita_types::AkitaScheduleLookupKey::single(onehot_group(36, 1))
+            .opening_layout()
+            .unwrap();
+        let work: u128 = std::iter::once(&schedule.schedule.root)
+            .chain(schedule.schedule.recursive_folds.iter())
+            .enumerate()
+            .map(|(level, fold)| {
+                let layout = if level == 0 {
+                    root_layout.clone()
+                } else {
+                    suffix_opening_layout(fold.input_witness_len, None).unwrap()
+                };
+                let natural = akita_types::active_setup_field_len(&fold.params, &layout).unwrap();
+                let scan = direct_setup_scan_work_elements(
+                    natural,
+                    fold.params.role_dims().common_relation_coeff_count(),
+                )
+                .unwrap();
+                (fold.output_witness_len + scan) as u128
+            })
+            .sum();
+        (
+            estimated_first_direct_setup_capacity(schedule),
+            (proof_bytes as u128) * WORK_ELEMENTS_PER_OBJECTIVE_BYTE + work,
+            proof_bytes,
+            schedule.estimate.estimated_num_setup_field_elements,
+        )
+    };
     assert!(
-        selected_score <= rank_one_capped_score,
+        score(&selected) <= score(&rank_one_capped),
         "the expanded domain must not lose on the adaptive direct objective"
     );
 }

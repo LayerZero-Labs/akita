@@ -29,9 +29,6 @@ pub struct SetupProjectionGeometry {
     a_ratio: usize,
     b_ratio: usize,
     d_ratio: usize,
-    a_projection_width: usize,
-    b_projection_width: usize,
-    d_projection_width: usize,
     required: usize,
     setup_index_len: usize,
     ring_bits: usize,
@@ -100,14 +97,11 @@ impl SetupProjectionGeometry {
             a_ratio,
             b_ratio,
             d_ratio,
-            a_footprint,
-            b_footprint,
-            d_footprint,
             required,
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn from_role_footprints(
         role_dims: CommitmentRingDims,
         a_footprint: usize,
@@ -133,23 +127,16 @@ impl SetupProjectionGeometry {
             a_ratio,
             b_ratio,
             d_ratio,
-            a_projection_width,
-            b_projection_width,
-            d_projection_width,
             required,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn from_projected_footprints(
         role_dims: CommitmentRingDims,
         base_ring_dim: usize,
         a_ratio: usize,
         b_ratio: usize,
         d_ratio: usize,
-        a_projection_width: usize,
-        b_projection_width: usize,
-        d_projection_width: usize,
         required: usize,
     ) -> Result<Self, AkitaError> {
         if required == 0 {
@@ -173,9 +160,6 @@ impl SetupProjectionGeometry {
             a_ratio,
             b_ratio,
             d_ratio,
-            a_projection_width,
-            b_projection_width,
-            d_projection_width,
             required,
             setup_index_len,
             ring_bits,
@@ -242,21 +226,6 @@ impl SetupProjectionGeometry {
     }
 
     #[must_use]
-    pub const fn a_projection_width(self) -> usize {
-        self.a_projection_width
-    }
-
-    #[must_use]
-    pub const fn b_projection_width(self) -> usize {
-        self.b_projection_width
-    }
-
-    #[must_use]
-    pub const fn d_projection_width(self) -> usize {
-        self.d_projection_width
-    }
-
-    #[must_use]
     pub const fn required(self) -> usize {
         self.required
     }
@@ -286,7 +255,9 @@ impl SetupProjectionGeometry {
         self.natural_field_len
     }
 
-    pub(crate) fn validate_alpha_power_lengths(
+    /// Check that the lifted alpha-power vectors have one power per role
+    /// coefficient.
+    pub fn validate_alpha_power_lengths(
         self,
         a_len: usize,
         b_len: usize,
@@ -465,9 +436,6 @@ mod tests {
         .expect("mixed-group geometry");
 
         assert_eq!(geometry.base_ring_dim(), 64);
-        assert_eq!(geometry.a_projection_width(), 40);
-        assert_eq!(geometry.b_projection_width(), 21);
-        assert_eq!(geometry.d_projection_width(), 3);
         assert_eq!(geometry.required(), 40);
     }
 }

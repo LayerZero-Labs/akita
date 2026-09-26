@@ -84,7 +84,7 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
 
 fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
     akita_config::SetupRequirements::from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect("derive recursive setup-prefix slots")
         .into_iter()
         .map(|slot| {
@@ -140,6 +140,28 @@ fn mutate_first_json_digit(bytes: &mut [u8], key: &[u8]) {
         b'8'
     } else {
         bytes[digit] + 1
+    };
+}
+
+fn mutate_first_json_number_without_changing_width(bytes: &mut [u8], key: &[u8]) {
+    let value_start = json_value_start(bytes, key, 0);
+    let number_start = bytes[value_start..]
+        .iter()
+        .position(u8::is_ascii_digit)
+        .map(|relative| value_start + relative)
+        .expect("numeric artifact value");
+    let number_end = bytes[number_start..]
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .map(|relative| number_start + relative)
+        .unwrap_or(bytes.len());
+    let last_digit = bytes
+        .get_mut(number_end - 1)
+        .expect("nonempty numeric artifact value");
+    *last_digit = if *last_digit == b'0' {
+        b'1'
+    } else {
+        *last_digit - 1
     };
 }
 
@@ -502,7 +524,7 @@ fn decoder_rejects_format_policy_and_duplicate_row_tampering() {
     assert!(format!("{error}").contains("protocol epoch"));
 
     let mut wrong_policy = bytes.clone();
-    mutate_first_json_digit(&mut wrong_policy, b"\"policy_digest\"");
+    mutate_first_json_number_without_changing_width(&mut wrong_policy, b"\"policy_digest\"");
     let error = TrustedScheduleCatalog::<fp128::Dense>::from_artifact_bytes(&wrong_policy)
         .expect_err("wrong policy digest must reject");
     assert!(format!("{error}").contains("policy"));
@@ -595,7 +617,7 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
 
 #[test]
 fn recursive_prefix_slot_id_fixture() {
-    // These setup-prefix identities bind the regenerated SIS table digest.
+    // These setup-prefix identities bind the generated schedule and policy.
     let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>();
     let multichunk =
         recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
@@ -603,7 +625,7 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             3,
-            "df5adf6bdafb81d3cb374aaa203fd82270d226bd6c504f481cb0dcb7fcb674d3".to_string(),
+            "643eb959607f2fa91a51cb4e445ac706c291481c02edc47d3e6836d6185ea58d".to_string(),
         )
     );
     assert_eq!(
@@ -619,7 +641,7 @@ fn recursive_prefix_slot_id_fixture() {
 fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let dense = checked_in_catalog::<fp128::Dense>();
     let zero_batch = akita_config::SetupRequirements::from_catalog::<fp128::Dense>(&dense, 14, 0)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
     assert!(format!("{zero_batch}").contains("at least 1"));
 
@@ -627,7 +649,7 @@ fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let oversized_vars = akita_config::SetupRequirements::from_catalog::<
         RecursiveCommitmentConfig<fp128::OneHot>,
     >(&recursive, usize::BITS as usize, 1)
-    .map(|requirements| requirements.prefix_slot_ids)
+    .map(|requirements| requirements.prefix_slot_ids().to_vec())
     .expect_err("oversized setup metadata must reject for recursive configs");
     assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
 }
@@ -673,6 +695,73 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
         profile.outer_slice_count,
     )
     .unwrap();
-    assert_eq!(required.matrix_capacity.num_field_elements, expected);
-    assert!(required.prefix_slot_ids.is_empty());
+    assert_eq!(required.matrix_capacity().num_field_elements, expected);
+    assert!(required.prefix_slot_ids().is_empty());
+}
+
+#[test]
+fn setup_requirements_union_covers_both_families_at_one_bound() {
+    type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
+    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    let requirements_at = |max_num_vars, max_num_batched_polys| {
+        (
+            akita_config::SetupRequirements::from_catalog::<OneHot>(
+                &checked_in_catalog::<OneHot>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("one-hot requirements"),
+            akita_config::SetupRequirements::from_catalog::<MultiChunk>(
+                &checked_in_catalog::<MultiChunk>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("multichunk requirements"),
+        )
+    };
+    let (onehot, multichunk) = requirements_at(50, 16);
+    let combined = onehot
+        .clone()
+        .union(multichunk.clone())
+        .expect("same-bound requirements combine");
+
+    assert_eq!(
+        (combined.max_num_vars(), combined.max_num_batched_polys()),
+        (50, 16)
+    );
+    assert_eq!(
+        combined.matrix_capacity().num_field_elements,
+        onehot
+            .matrix_capacity()
+            .num_field_elements
+            .max(multichunk.matrix_capacity().num_field_elements)
+    );
+    assert!(combined
+        .prefix_slot_ids()
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    for slot in onehot
+        .prefix_slot_ids()
+        .iter()
+        .chain(multichunk.prefix_slot_ids())
+    {
+        assert!(combined.prefix_slot_ids().contains(slot));
+    }
+    assert!(
+        combined.prefix_slot_ids().len()
+            <= onehot.prefix_slot_ids().len() + multichunk.prefix_slot_ids().len()
+    );
+    assert_eq!(
+        combined
+            .clone()
+            .union(combined.clone())
+            .expect("idempotent"),
+        combined
+    );
+
+    let (_, smaller_bound) = requirements_at(40, 16);
+    let error = onehot
+        .union(smaller_bound)
+        .expect_err("requirements at different bounds must not combine");
+    assert!(error.to_string().contains("cannot combine"));
 }

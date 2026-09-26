@@ -357,15 +357,15 @@ fn catalog_row_metrics(
     schedule: &FoldSchedule,
 ) -> Result<CatalogRowMetrics, String> {
     let proof_bytes =
-        akita_schedules::expanded_schedule_proof_payload_bytes(key, schedule, &spec.policy)
+        akita_schedules::expanded_schedule_native_proof_estimate_bytes(key, schedule, &spec.policy)
             .map_err(|error| format!("estimate proof payload: {error}"))?;
     let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
         .map_err(|error| format!("estimate setup capacity: {error}"))?
         .num_field_elements;
     let first_direct_setup_capacity = (matches!(
         spec.policy.selection_policy,
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | akita_schedules::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ))
     .then(|| {
         akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(

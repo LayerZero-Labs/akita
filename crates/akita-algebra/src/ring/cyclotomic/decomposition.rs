@@ -88,15 +88,6 @@ pub fn peel_first_balanced_digit(
     }
 }
 
-#[inline(always)]
-fn balanced_digit_to_field<F: CanonicalEncoding>(digit: i128, q: u128) -> F {
-    if digit >= 0 {
-        F::from_u128_reduced(digit as u128)
-    } else {
-        F::from_u128_reduced(q - ((-digit) as u128))
-    }
-}
-
 trait BalancedSignedDigit: Copy + Default {
     const MAX_LOG_BASIS: u32;
     fn from_i128(value: i128) -> Self;
@@ -528,144 +519,14 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
-    /// Balanced decomposition writing directly into a pre-allocated output slice.
-    ///
-    /// `out` must have length exactly `levels`. Each element receives one digit plane.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `out.len() * log_basis > 128 + log_basis`.
-    pub fn balanced_decompose_pow2_into(&self, out: &mut [Self], log_basis: u32) {
-        let levels = out.len();
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
-        assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
-            "levels * log_basis must be <= 128 + log_basis"
-        );
-
-        let half_b = 1i128 << (log_basis - 1);
-        let b = half_b << 1;
-        let mask = b - 1;
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let threshold = decompose_centering_threshold(levels, log_basis, q);
-        let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
-
-        for plane in out.iter_mut() {
-            *plane = Self::zero();
-        }
-
-        if overflow_possible {
-            let (first_plane, remaining) = out
-                .split_first_mut()
-                .expect("balanced_decompose_pow2_into requires at least one plane");
-            for i in 0..D {
-                let canonical = self.coeffs[i]
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128");
-                let (mut c, d0) =
-                    peel_first_balanced_digit(canonical, q, threshold, mask, half_b, b, log_basis);
-                first_plane.coeffs[i] = balanced_digit_to_field::<F>(d0, q);
-
-                for plane in remaining.iter_mut() {
-                    let d = c & mask;
-                    let balanced = if d >= half_b { d - b } else { d };
-                    c = (c - balanced) >> log_basis;
-                    plane.coeffs[i] = balanced_digit_to_field::<F>(balanced, q);
-                }
-            }
-        } else {
-            for i in 0..D {
-                let canonical = self.coeffs[i]
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128");
-                let mut c: i128 = if canonical > threshold {
-                    -((q - canonical) as i128)
-                } else {
-                    canonical as i128
-                };
-
-                for plane in out.iter_mut() {
-                    let d = c & mask;
-                    let balanced = if d >= half_b { d - b } else { d };
-                    c = (c - balanced) >> log_basis;
-                    plane.coeffs[i] = balanced_digit_to_field::<F>(balanced, q);
-                }
-            }
-        }
-    }
-
-    /// Squared Euclidean norm of centered integer coefficients.
-    ///
-    /// Coefficients are centered into `(-q/2, q/2]` and accumulated as
-    /// `sum_i c_i^2`, using saturating arithmetic.
-    #[inline]
-    pub fn coeff_norm_sq(&self) -> u128
-    where
-        F: CanonicalEncoding,
-    {
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let half_q = q / 2;
-        self.coeffs.iter().fold(0u128, |acc, &coeff| {
-            let canonical = coeff
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let centered: i128 = if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
-            let abs = centered.unsigned_abs();
-            acc.saturating_add(abs.saturating_mul(abs))
-        })
-    }
-
-    /// Functional gadget recomposition (`G * digits`) for base `2^log_basis`.
-    ///
-    /// Coefficients from each part are interpreted as one digit plane and
-    /// recombined back into canonical integers (then reduced into the field).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `parts.len() * log_basis > 128`.
-    pub fn gadget_recompose_pow2(parts: &[Self], log_basis: u32) -> Self {
-        if parts.is_empty() {
-            return Self::zero();
-        }
-
-        assert!(
-            log_basis > 0 && log_basis <= 128,
-            "invalid log_basis: {log_basis}"
-        );
-
-        if parts.len() == 1 {
-            return parts[0];
-        }
-
-        let b = F::from_u128_reduced(1u128 << log_basis);
-        let coeffs = from_fn(|i| {
-            let mut acc = F::zero();
-            let mut power = F::one();
-            for part in parts.iter() {
-                acc += part.coeffs[i] * power;
-                power *= b;
-            }
-            acc
-        });
-        Self { coeffs }
-    }
-
-    /// Recompose from i8 digit planes (output of `balanced_decompose_pow2_i8`).
+    /// Recompose from i8 digit planes; the inverse oracle for
+    /// [`Self::balanced_decompose_pow2_i8_into_with_params`].
     ///
     /// # Panics
     ///
     /// Panics if `log_basis` is zero or >= 128.
-    pub fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
+    #[cfg(test)]
+    pub(crate) fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
     where
         F: CanonicalEncoding,
     {
@@ -693,76 +554,6 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
             acc
         });
         Self { coeffs }
-    }
-
-    /// Balanced (centered) base-`2^log_basis` gadget decomposition: `G^{-1}`.
-    ///
-    /// Each coefficient `c` (centered into `(-q/2, q/2]`) is decomposed into
-    /// `levels` balanced digits `d_k ∈ [-b/2, b/2)` satisfying
-    /// `c ≡ Σ_k d_k · b^k  (mod q)`.
-    ///
-    /// Negative digits are stored as their field representation (`q + d`).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis == 0`, `log_basis >= 128`, or `levels * log_basis > 128`.
-    pub fn balanced_decompose_pow2(&self, levels: usize, log_basis: u32) -> Vec<Self> {
-        assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
-        assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
-            "levels * log_basis must be <= 128 + log_basis"
-        );
-        let mut digit_planes = vec![Self::zero(); levels];
-        self.balanced_decompose_pow2_into(&mut digit_planes, log_basis);
-        digit_planes
-    }
-
-    /// Balanced gadget decomposition into native `i8` digits.
-    ///
-    /// Same semantics as [`balanced_decompose_pow2`](Self::balanced_decompose_pow2)
-    /// but stores each digit as `i8` instead of a field element, avoiding
-    /// the cost of `F::from_u128_reduced`.
-    ///
-    /// Requires `log_basis <= 8` so digits fit in `[-128, 127]`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `log_basis` is 0 or > 8, or if `levels * log_basis > 128 + log_basis`.
-    #[inline]
-    pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
-    where
-        F: CanonicalEncoding,
-    {
-        let levels = out.len();
-        assert!(
-            log_basis > 0 && log_basis <= 8,
-            "log_basis must be in 1..=8 for i8 output"
-        );
-        assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
-            "levels * log_basis must be <= 128 + log_basis"
-        );
-
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q);
-    }
-
-    /// Internal variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into)
-    /// that reuses a caller-supplied field modulus.
-    #[inline]
-    pub fn balanced_decompose_pow2_i8_into_with_modulus(
-        &self,
-        out: &mut [[i8; D]],
-        log_basis: u32,
-        q: u128,
-    ) where
-        F: CanonicalEncoding,
-    {
-        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
-        self.balanced_decompose_pow2_i8_into_with_params(out, &params);
     }
 
     #[inline]
@@ -799,104 +590,5 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
             out.as_flattened_mut(),
             &params,
         );
-    }
-
-    /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
-    pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
-    where
-        F: CanonicalEncoding,
-    {
-        let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
-        self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
-        digit_planes
-    }
-
-    /// Allocating signed-i16 balanced decomposition for large bases.
-    #[must_use]
-    pub fn balanced_decompose_pow2_i16(&self, levels: usize, log_basis: u32) -> Vec<[i16; D]>
-    where
-        F: CanonicalEncoding,
-    {
-        let mut digit_planes = vec![[0i16; D]; levels];
-        self.balanced_decompose_pow2_i16_into(&mut digit_planes, log_basis);
-        digit_planes
-    }
-
-    /// Balanced decomposition where the last digit carries the remainder.
-    ///
-    /// The first `levels-1` digits are balanced in `[-b/2, b/2)`, while the
-    /// final digit is the remaining (possibly larger) centered value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `levels` is zero, `log_basis` is zero or >= 128, or
-    /// `(levels - 1) * log_basis >= 128`.
-    pub fn balanced_decompose_pow2_with_carry_into(&self, out: &mut [Self], log_basis: u32)
-    where
-        F: CanonicalEncoding,
-    {
-        let levels = out.len();
-        assert!(levels > 0, "levels must be positive");
-        assert!(
-            log_basis > 0 && log_basis <= 128,
-            "invalid log_basis: {log_basis}"
-        );
-        assert!(
-            ((levels - 1) as u32).saturating_mul(log_basis) < 128,
-            "(levels-1) * log_basis must be < 128"
-        );
-
-        // When levels==1 every coefficient takes the carry path and b/half_b
-        // are unused, so skip the shift that would overflow at log_basis==128.
-        let (b, half_b) = if levels == 1 {
-            (0i128, 0i128)
-        } else {
-            let b = 1i128 << log_basis;
-            (b, b / 2)
-        };
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let half_q = q / 2;
-
-        for i in 0..D {
-            let canonical = self.coeffs[i]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let mut c: i128 = if canonical > half_q {
-                -((q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
-
-            for (plane_idx, plane) in out.iter_mut().enumerate() {
-                let balanced = if plane_idx + 1 == levels {
-                    c
-                } else {
-                    let d = c.rem_euclid(b);
-                    let digit = if d >= half_b { d - b } else { d };
-                    c = (c - digit) / b;
-                    digit
-                };
-
-                plane.coeffs[i] = if balanced >= 0 {
-                    F::from_u128_reduced(balanced as u128)
-                } else {
-                    F::from_u128_reduced(q - ((-balanced) as u128))
-                };
-            }
-        }
-    }
-
-    /// Allocating variant of
-    /// [`balanced_decompose_pow2_with_carry_into`](Self::balanced_decompose_pow2_with_carry_into).
-    pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
-    where
-        F: CanonicalEncoding,
-    {
-        let mut out = vec![Self::zero(); levels];
-        self.balanced_decompose_pow2_with_carry_into(&mut out, log_basis);
-        out
     }
 }

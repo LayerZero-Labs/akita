@@ -17,11 +17,11 @@ mod transcript_grinding_binding;
 
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
-use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
+use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
-    AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
+    AkitaSetupSeed, BasisMode, CompressionPolicyId, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
 };
 use akita_error::AkitaError;
 use akita_serialization::{
@@ -273,16 +273,6 @@ pub fn digest_serializable<S: AkitaSerialize>(
     let mut bytes = Vec::with_capacity(value.uncompressed_size());
     value.serialize_uncompressed(&mut bytes)?;
     Ok(blake2b_256(&bytes))
-}
-
-/// Digest a normalized list of commitment level parameters.
-pub fn digest_level_params(params: &[CommittedGroupParams]) -> DescriptorDigest {
-    let mut bytes = Vec::new();
-    push_usize(&mut bytes, params.len());
-    for params in params {
-        params.append_descriptor_bytes(&mut bytes);
-    }
-    blake2b_256(&bytes)
 }
 
 /// Digest the final effective runtime verifier schedule.

@@ -1,24 +1,20 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
     degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,
-    opening_from_poly, planned_payload_bytes, profile_setup_contribution_mode, prover_claims,
+    opening_from_poly, profile_setup_contribution_mode, proof_size_budgets, prover_claims,
     random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
-use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
+use akita_cpu_backend::DensePoly;
+use akita_cpu_backend::RootPolyShape;
+use akita_cpu_backend::{AkitaProverSetup, CpuBackend, SourceHandle};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::compute::{
-    RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor, RuntimeRootProvePoly,
-};
-use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout,
@@ -34,17 +30,12 @@ use rand::SeedableRng;
 use std::time::Instant;
 
 #[allow(clippy::too_many_arguments)]
-fn run_prove<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF>,
-    P: RuntimeRootProvePoly<FF> + akita_prover::CommitmentSource<FF>,
->(
+fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     scheme: &AkitaCommitmentScheme<Cfg>,
     setup: &AkitaProverSetup<Cfg::Field>,
-    stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend>,
-    poly: &P,
+    backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+    source: &SourceHandle<FF, Cfg::ExtField>,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     group_layout: PolynomialGroupLayout,
@@ -71,12 +62,16 @@ fn run_prove<
         + AkitaSerialize
         + 'static,
     <FF as Unreduced>::Wide: From<FF> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<FF> + ExtField<FF> + Unreduced + Fold + AkitaSerialize + Valid,
-    CpuBackend: RecursiveProveBackend<FF, P, Cfg::ExtField>
-        + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
+    Cfg::ExtField: FpExtEncoding<FF>
+        + ExtField<FF>
+        + jolt_field::MulBaseUnreduced<FF>
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + Valid
+        + 'static,
 {
     let pools = ProfileThreadPools::get();
-    let poly_refs: [&P; 1] = [poly];
     let openings = [opening];
     let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
@@ -88,15 +83,14 @@ fn run_prove<
 
     let (commitments, proof) = {
         let t0 = Instant::now();
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = backend
             .commit(
-                setup,
-                std::slice::from_ref(poly),
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                scheme.schedules(),
+                source,
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -111,20 +105,19 @@ fn run_prove<
             .expect("select generated schedule row")
             .selection();
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = scheme
             .batched_prove(
                 setup,
-                prover_claims::<Cfg, _>(
+                prover_claims::<Cfg>(
                     scheme.schedules(),
                     selection,
                     pt,
-                    &poly_refs[..],
+                    &openings,
                     &commitments[0],
                     hint,
                 ),
-                stack,
-                &mut prover_transcript,
+                backend,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -132,7 +125,7 @@ fn run_prove<
         (commitments, proof)
     };
 
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let runtime_schedule = if plan.is_none() {
@@ -154,12 +147,7 @@ fn run_prove<
     });
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(effective_schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -171,10 +159,9 @@ fn run_prove<
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(plan, group_layout),
+                proof_size_budgets::<Cfg>(plan, group_layout),
                 "planned",
                 setup_contribution_mode,
-                plan,
             );
         }
         emit_runtime_schedule_summary(
@@ -185,22 +172,16 @@ fn run_prove<
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            plan,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         let schedule = effective_schedule;
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(schedule, group_layout),
+                proof_size_budgets::<Cfg>(schedule, group_layout),
                 "runtime schedule",
                 setup_contribution_mode,
-                schedule,
             );
         }
         emit_runtime_schedule_summary(
@@ -211,12 +192,7 @@ fn run_prove<
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            schedule,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, schedule, Cfg::decomposition().field_bits());
     }
 
     let t_verifier_setup = Instant::now();
@@ -252,11 +228,10 @@ fn run_prove<
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             claims,
             BasisMode::Lagrange,
         )
@@ -291,6 +266,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
+    <FF as Unreduced>::Wide: From<FF> + AdditiveGroup,
     Cfg::ExtField: ExtField<FF>
         + FpExtEncoding<FF>
         + Unreduced
@@ -364,17 +340,13 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     if let Some(schedule) = plan {
-        prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+        backend
+            .prewarm(schedule)
+            .expect("prewarm profile execution");
     }
-    let prepared_ntt_metrics = prepared
+    let prepared_ntt_metrics = backend
         .shared_ntt_cache_metrics()
         .expect("prepared setup NTT cache metrics");
     report_timing(label, "setup_expand", setup_expand_secs);
@@ -389,23 +361,24 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     );
     report_crt_profile(
         label,
-        prepared
+        backend
             .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
-    run_prove::<FF, D, Cfg, DensePoly<FF>>(
+    let source = backend.import_source(vec![poly]).unwrap();
+    run_prove::<FF, D, Cfg>(
         label,
         scheme,
         &setup,
-        &stack,
-        &poly,
+        &backend,
+        &source,
         &original_pt,
         opening,
         PolynomialGroupLayout::singleton(nv),
         plan,
         validate_against_planner,
     );
-    let post_execution_ntt_metrics = prepared
+    let post_execution_ntt_metrics = backend
         .shared_ntt_cache_metrics()
         .expect("post-execution setup NTT cache metrics");
     assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
@@ -440,7 +413,14 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
+    <FF as Unreduced>::Wide: From<FF> + jolt_field::AdditiveGroup,
+    Cfg::ExtField: jolt_field::MulBaseUnreduced<FF>
+        + ExtField<FF>
+        + FpExtEncoding<FF>
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + Valid,
 {
     let onehot_poly = make_profile_onehot_poly::<Cfg>(nv, 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
@@ -450,17 +430,13 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup = scheme.setup_prover(nv, 1).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     if let Some(schedule) = plan {
-        prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+        backend
+            .prewarm(schedule)
+            .expect("prewarm profile execution");
     }
-    let prepared_ntt_metrics = prepared
+    let prepared_ntt_metrics = backend
         .shared_ntt_cache_metrics()
         .expect("prepared setup NTT cache metrics");
     report_timing(label, "setup_expand", setup_expand_secs);
@@ -475,23 +451,24 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     report_crt_profile(
         label,
-        prepared
+        backend
             .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
-    run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
+    let source = backend.import_source(vec![onehot_poly]).unwrap();
+    run_prove::<FF, D, Cfg>(
         label,
         scheme,
         &setup,
-        &stack,
-        &onehot_poly,
+        &backend,
+        &source,
         &pt,
         opening,
         PolynomialGroupLayout::new(nv, 1),
         plan,
         validate_against_planner,
     );
-    let post_execution_ntt_metrics = prepared
+    let post_execution_ntt_metrics = backend
         .shared_ntt_cache_metrics()
         .expect("post-execution setup NTT cache metrics");
     assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);

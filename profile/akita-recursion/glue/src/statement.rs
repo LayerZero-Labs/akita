@@ -3,8 +3,8 @@
 use crate::AkitaJoltCase;
 use akita_error::AkitaError;
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, CommittedGroup,
-    GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
+    AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims,
+    OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use jolt_field::Field;
 
@@ -44,10 +44,8 @@ pub struct AkitaJoltInputs<F: Field, const D: usize, E: Field = F> {
     pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
-    /// Proof shape used to decode `proof` after schedule-shape admission.
-    pub proof_shape: AkitaBatchedProofShape,
-    /// The Akita batched proof itself.
-    pub proof: AkitaBatchedProof<F, E>,
+    /// Canonical native Spongefish argument bytes.
+    pub proof: Vec<u8>,
 }
 
 impl<F: Field, const D: usize, E: Field> AkitaJoltInputs<F, D, E> {

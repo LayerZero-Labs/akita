@@ -181,7 +181,7 @@ schedule checks, and verifier equations remain the correctness boundary.
 ## Where the lifecycle enters the code
 
 The public orchestration lives in `crates/akita-pcs/src/scheme/`. The prover
-walk begins in `crates/akita-prover/src/protocol/core/prove.rs`. The verifier
+walk begins in `crates/akita-prover/src/protocol/prove/root.rs`. The verifier
 mirror begins in `crates/akita-verifier/src/protocol/core/verify.rs`.
 
 Those files should remain orchestration layers. Mathematical rules belong to

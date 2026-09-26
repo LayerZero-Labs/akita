@@ -5,6 +5,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 mod field_impls;
+mod poly_impls;
 
 use std::io::{Cursor, Read, Write};
 
@@ -66,17 +67,6 @@ pub enum SerializationError {
 pub trait Valid {
     /// Check that the current value is valid
     fn check(&self) -> Result<(), SerializationError>;
-
-    /// Batch check for efficiency when validating multiple elements.
-    fn batch_check<'a>(batch: impl Iterator<Item = &'a Self>) -> Result<(), SerializationError>
-    where
-        Self: 'a,
-    {
-        for item in batch {
-            item.check()?;
-        }
-        Ok(())
-    }
 }
 
 /// Serializer in little endian format.
@@ -173,18 +163,6 @@ pub trait AkitaDeserialize: Sized {
         ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         Self::deserialize_exact_with_mode(bytes, Compress::No, Validate::Yes, ctx)
-    }
-
-    /// Deserialize from uncompressed form without validation.
-    ///
-    /// This is for trusted internal buffers whose producer and shape have
-    /// already been checked in the same trust domain. Use
-    /// [`Self::deserialize_uncompressed`] for verifier-facing bytes.
-    fn deserialize_uncompressed_unchecked<R: Read>(
-        reader: R,
-        ctx: &Self::Context,
-    ) -> Result<Self, SerializationError> {
-        Self::deserialize_with_mode(reader, Compress::No, Validate::No, ctx)
     }
 
     /// Deserialize one complete artifact with explicit encoding and validation modes.

@@ -33,7 +33,7 @@ axes.
   - [Why use different ring dimensions](#why-use-different-ring-dimensions)
   - [Role-native projection and decomposition](#role-native-projection-and-decomposition)
   - [The four relations in their native rings](#the-four-relations-in-their-native-rings)
-  - [Lift and switch the native rows](#lift-and-switch-the-native-rows)
+  - [Check each row in its native ring](#check-each-row-in-its-native-ring)
   - [Relation to compressed realization](#relation-to-compressed-realization)
   - [Composition with groups and chunks](#composition-with-groups-and-chunks)
 
@@ -803,60 +803,22 @@ subcolumn layout, and every quotient row added by the physical realization is
 stored at that row's exact native dimension. No batch-wide carrier ring is
 introduced for witness storage.
 
-### Lift and switch the native rows
+<a id="lift-and-switch-the-native-rows"></a>
 
-Rows over different quotient rings first become scalar claims over the same
-field. We derive this step for `QuotientLift` below, then describe the
-`ReducedEvaluation` case. If row $i$ has native dimension $d_i$ and semantic form
+### Check each row in its native ring
 
-$$
-L_i(X)=y_i(X)
-\qquad\text{in }F[X]/(X^{d_i}+1),
-$$
+For `EvaluationTrace`, consistency and $\mathbf A$ rows use $d_A$,
+$\mathbf B$ rows use $d_B$, and $\mathbf D$ rows use $d_D$. Apply the
+selected checking method to each row at that row's native dimension $d_i$.
+Quotient lifting uses its modulus factor $\alpha^{d_i}+1$ and private
+quotient digits. Reduced evaluation uses its public kernel $\kappa^{(d_i)}$
+without quotient digits.
 
-then the prover supplies a native quotient $r_i(X)$ such that
-
-$$
-L_i(X)
--(X^{d_i}+1)r_i(X)
-=y_i(X).
-\tag{8}
-$$
-
-Consistency and $\mathbf A$ rows therefore have $R_A$-native quotients,
-$\mathbf B$ rows have $R_B$-native quotients, and $\mathbf D$ rows have
-$R_D$-native quotients. These quotient polynomials are digit-decomposed and
-included in the physical witness.
-
-Ring switching then samples one extension-field element $\alpha$ and evaluates
-every lifted row at that same point:
-
-$$
-\boxed{
-L_i(\alpha)
--(\alpha^{d_i}+1)r_i(\alpha)
-=y_i(\alpha)
-\qquad\text{for every physical row }i.
-}
-\tag{9}
-$$
-
-After Equation (9), all rows are scalar identities over the same extension
-field even though they originated in different cyclotomic rings. Stage 2 can
-therefore batch them with its row challenge $\tau_1$.
-
-This is the precise role of ring switching in the mixed-ring protocol. It does
-not first convert all relations into one common quotient ring. Role-native
-projection makes each relation well formed in its own ring; the native
-quotient lift and evaluation at $\alpha$ then place all row checks in one
-common field.
-
-Reduced evaluation preserves the same native dimensions. It replaces the
-lifted check by public residue weights $\kappa^{(d_i)}$ for each row and omits
-the quotient digits. After evaluation at the shared $\alpha$, these rows are
-also scalar claims over the same field. The [ring-checking
-chapter](./ring-relation-checking.md#from-one-equation-to-the-full-relation)
-derives both methods before row batching.
+Both methods evaluate at the shared field point $\alpha$. The resulting
+scalar claims lie in the same extension field and can be batched with
+$\tau_1$. This does not convert the original relations into one common
+quotient ring. [Checking ring relations over a field](./ring-relation-checking.md#from-one-equation-to-the-full-relation)
+derives the two checks and their handoff to Stage 2.
 
 ### Relation to compressed realization
 
@@ -866,9 +828,9 @@ $\mathbf u=\mathbf B\hat{\mathbf t}$ and
 $\mathbf v_D=\mathbf D\hat{\mathbf e}$ are public. In compressed mode they are
 private intermediate values, and additional $\mathbf F$ and $\mathbf H$ rows
 bind them to smaller public payloads. Those compression rows have their own
-native ring dimensions. Quotient lifting gives each one a quotient and an
-instance of Equation (9); reduced evaluation uses the corresponding residue
-weights without quotient digits.
+native ring dimensions. Quotient lifting gives each one a native quotient;
+reduced evaluation uses the corresponding residue weights without quotient
+digits.
 
 The difference is structural. Mixed $\mathbf A$/$\mathbf B$/$\mathbf D$
 dimensions assign native rings to the existing four semantic relation

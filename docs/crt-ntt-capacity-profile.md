@@ -29,6 +29,7 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | Q64/3xi32 | production | 3 | i32 | 2^64 - 59 | `1073692673, 1073668097, 1073655809` | 90.00 |
 | Q128/6xi32 | portable production | 6 | i32 | 2^128 - 2^32 + 22537 | `1073707009, 1073698817, 1073692673, 1073682433, 1073668097, 1073655809` | 180.00 |
 | Q128/3xu64-IFMA52 | AVX-512 base cache | 3 | u64 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897` | 150.00 |
+| Q128/3xu64+1xi16-IFMA52 | AVX-512 i16-tail exact cache | 4 | 3xu64+1xi16 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897, 12289` | 163.59 |
 | Q128/3xu64+1xi32-IFMA52 | AVX-512 hybrid exact cache | 4 | 3xu64+1xi32 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897, 1073707009` | 180.00 |
 
 ## Safe Widths
@@ -60,6 +61,11 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | Q128/3xu64-IFMA52 | 3 | u64 | 256 | 127 | 127 | 0 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 512 | 63 | 63 | 0 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 1024 | 31 | 31 | 0 |
+| Q128/3xu64+1xi16-IFMA52 | 4 | 3xu64+1xi16 | 64 | 6,291,967 | 6,291,967 | 24,577 |
+| Q128/3xu64+1xi16-IFMA52 | 4 | 3xu64+1xi16 | 128 | 3,145,983 | 3,145,983 | 12,288 |
+| Q128/3xu64+1xi16-IFMA52 | 4 | 3xu64+1xi16 | 256 | 1,572,991 | 1,572,991 | 6,144 |
+| Q128/3xu64+1xi16-IFMA52 | 4 | 3xu64+1xi16 | 512 | 786,495 | 786,495 | 3,072 |
+| Q128/3xu64+1xi16-IFMA52 | 4 | 3xu64+1xi16 | 1024 | 393,247 | 393,247 | 1,536 |
 | Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 64 | 549,737,987,960 | 549,737,987,960 | 2,147,414,015 |
 | Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 128 | 274,868,993,980 | 274,868,993,980 | 1,073,707,007 |
 | Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 256 | 137,434,496,990 | 137,434,496,990 | 536,853,503 |
@@ -68,9 +74,11 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 
 ## Q128 Balanced-Digit Capacity
 
-The portable and hybrid AVX-512 exact products are both about 180 bits.
-The hybrid retains three hot IFMA limbs and adds one 30-bit tail only for
-rows that exceed the roughly 150-bit IFMA base product.
+The portable and i32-tail AVX-512 exact products are both about 180 bits.
+The hybrid retains three hot IFMA limbs and adds one tail only for rows that
+exceed the roughly 150-bit IFMA base product. It prefers the 14-bit tail
+prime 12289 (about 163.6 bits in total) and falls back to the 30-bit tail
+prime 1073707009 only when the 14-bit tail is insufficient.
 
 | Representation | D | log basis 3 | 4 | 5 | 6 | 7 | 8 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -84,6 +92,11 @@ rows that exceed the roughly 150-bit IFMA base product.
 | Q128/3xu64-IFMA52 | 256 | 4,095 | 2,047 | 1,023 | 511 | 255 | 127 |
 | Q128/3xu64-IFMA52 | 512 | 2,047 | 1,023 | 511 | 255 | 127 | 63 |
 | Q128/3xu64-IFMA52 | 1024 | 1,023 | 511 | 255 | 127 | 63 | 31 |
+| Q128/3xu64+1xi16-IFMA52 | 64 | 201,342,975 | 100,671,487 | 50,335,743 | 25,167,871 | 12,583,935 | 6,291,967 |
+| Q128/3xu64+1xi16-IFMA52 | 128 | 100,671,487 | 50,335,743 | 25,167,871 | 12,583,935 | 6,291,967 | 3,145,983 |
+| Q128/3xu64+1xi16-IFMA52 | 256 | 50,335,743 | 25,167,871 | 12,583,935 | 6,291,967 | 3,145,983 | 1,572,991 |
+| Q128/3xu64+1xi16-IFMA52 | 512 | 25,167,871 | 12,583,935 | 6,291,967 | 3,145,983 | 1,572,991 | 786,495 |
+| Q128/3xu64+1xi16-IFMA52 | 1024 | 12,583,935 | 6,291,967 | 3,145,983 | 1,572,991 | 786,495 | 393,247 |
 | Q128/3xu64+1xi32-IFMA52 | 64 | 17,591,615,614,720 | 8,795,807,807,360 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 |
 | Q128/3xu64+1xi32-IFMA52 | 128 | 8,795,807,807,360 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 |
 | Q128/3xu64+1xi32-IFMA52 | 256 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 | 137,434,496,990 |
@@ -101,8 +114,8 @@ For balanced digits with log basis 1 through 8:
 - Scalar, AVX2, and NEON backends use the portable six-prime chunked i8
   accumulation.
 - An AVX-512IFMA backend uses one exact accumulation for a q128 row when the
-  three-prime IFMA product is too small but the product with the 30-bit
-  tail prime 1073707009 fits.
+  three-prime IFMA product is too small but the product with a tail fits.
+  The tail is 12289 when that suffices and 1073707009 otherwise.
 - All other rows stay chunked. Each chunk reconstructs before the next chunk,
   so the complete row does not need the tail prime.
 - The block-parallel kernel still exposes independent blocks to Rayon when the

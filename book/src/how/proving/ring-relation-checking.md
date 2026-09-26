@@ -246,10 +246,20 @@ All $D$ weights for one multiplier take $O(D)$ field operations. The
 recurrence uses no division, so it also works when $\alpha^D+1=0$.
 
 Here soundness concerns the **reduced residual**
-$\operatorname{red}_D(AW)-Y$. A false ring equation gives a nonzero
-polynomial of degree less than $D$. The committed witness fixes this residual
-before $\alpha$. Random evaluation checks that polynomial, rather than the
-unreduced product with its quotient term removed.
+$Z(X)=\operatorname{red}_D(AW)-Y$. Fix the witness, public multiplier, and
+target before sampling $\alpha$. A false ring equation gives a nonzero $Z$
+of degree at most $D-1$. For an ideal uniform challenge $\alpha\in E$,
+
+$$
+\Pr_\alpha[Z(\alpha)=0]
+\le \frac{\deg Z}{|E|}
+\le \frac{D-1}{|E|}.
+$$
+
+This follows because a nonzero polynomial has at most its degree many roots.
+Random evaluation checks the reduced residual, rather than the unreduced
+product with its quotient term removed. The full relation also needs the
+[row-batching bound](#algebraic-error-after-row-batching) below.
 
 ## From one equation to the full relation
 
@@ -306,6 +316,12 @@ $$
 \sum_xw(x)K_i(x)=y_i(\alpha).
 $$
 
+To construct $K_i$, use the physical address of each stored digit from
+`WitnessLayout`. Add that digit's public weight, including its gadget
+recomposition factor, at the corresponding address. If several terms use the
+same digit, add their weights at that address. The witness stores the digit
+once; each use contributes to its coefficient in the row.
+
 In quotient-lift mode, $w$ includes the quotient digits and $K_i$ includes
 their negative modulus factors. In reduced mode, $K_i$ includes the signed
 wraps and $w$ has no quotient coordinates.
@@ -345,6 +361,43 @@ is already a field-valued claim. It needs no ring-switch quotient in either
 mode. This is distinct from using residue kernels to check the physical ring
 rows without quotients. In particular, $\mathbf D\hat{\mathbf e}=\mathbf v_D$
 is still a physical ring relation.
+
+### Algebraic error after row batching
+
+Row batching adds one more way for a false relation to pass: nonzero row
+errors can cancel at the sampled row point. We bound that event separately
+from the ring evaluation.
+
+For reduced evaluation, let
+$Z_i(X)=\operatorname{red}_{d_i}(P_i)-y_i$ and
+$d_{\max}=\max_i d_i$. Condition on all witness values, public row data,
+and layout being fixed before $\alpha$. If any ring row is false, choose
+one nonzero $Z_i$. The probability that every $Z_i(\alpha)$ vanishes is at
+most $(d_{\max}-1)/|E|$, since that event requires the chosen row to vanish.
+
+Now fix $\alpha$ and the resulting row residuals before sampling $\tau_1$.
+Let $m$ be the number of coordinates of $\tau_1$. Pad the physical-row
+residual table with zeros to its $2^m$ row addresses. If the table is nonzero,
+its multilinear extension
+
+$$
+B_\alpha(t)=\sum_i\operatorname{eq}(t,i)Z_i(\alpha)
+$$
+
+is nonzero and has total degree at most $m$. For a fresh uniform
+$\tau_1\in E^m$, it vanishes with probability at most $m/|E|$.
+Thus, for independent uniform $\alpha$ and $\tau_1$, a false collection
+of ring rows passes these two algebraic checks with probability at most
+
+$$
+\min\left\{1,\frac{d_{\max}-1+m}{|E|}\right\}.
+$$
+
+This bound covers only reduced ring evaluation and physical-row batching.
+It assumes the witness is already fixed. Commitment binding and extraction,
+the later sumchecks, and Fiat-Shamir challenge generation with
+[transcript grinding](../transcript.md) require their own security arguments.
+The formula is not a soundness bound for the complete non-interactive proof.
 
 ## What enters the next witness
 
@@ -455,12 +508,14 @@ outer commitment payload.
 - [`ring_relation_mode.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/ring_relation_mode.rs)
   defines both modes and the allowed transition. `FoldSchedule::validate_structure`
   enforces the complete schedule restrictions.
-- [`ring_switch/coeffs.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/coeffs.rs)
-  constructs the mode-selected witness. Reduced evaluation branches before
-  quotient construction. `WitnessLayout` owns the actual ranges.
-- [`ring_switch/finalize.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/finalize.rs)
-  samples $\alpha$ after the caller binds the outgoing witness. It prepares
-  factored or dense relation weights for Stage 2.
+- [`witness_build/finalize.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/finalize.rs)
+  constructs the mode-selected witness inside the CPU backend. Reduced
+  evaluation branches before quotient construction. `WitnessLayout` owns
+  the actual ranges.
+- [`ring_switch.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch.rs)
+  samples $\alpha$ after the caller binds the outgoing witness. The CPU
+  backend's [`relation_weights/stage2.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/relation_weights/stage2.rs)
+  then selects factored or dense relation weights for Stage 2.
 - [`ring/residue.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-algebra/src/ring/residue.rs)
   implements the recurrence. Its tests compare the result with explicit signed
   multiplication and ring products, including points where $\alpha^D+1=0$.
@@ -468,7 +523,7 @@ outer commitment payload.
   selects the verifier calculation from the authenticated mode. Reduced mode
   uses the complete coefficient functional and rejects deferred setup.
 
-The [prover ring-switch tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/tests.rs)
+The [CPU relation tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/relation_tests.rs)
 check that raw and compressed reduced witnesses avoid quotient construction.
 The [schedule tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/schedule_tests/relation_mode.rs)
 check the transition, opening-method, and setup-prefix restrictions.

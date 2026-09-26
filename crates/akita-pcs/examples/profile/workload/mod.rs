@@ -17,6 +17,6 @@ use profile_data::{
     opening_from_poly, random_claim_point,
 };
 use proof_size::{
-    assert_observed_proof_size, planned_payload_bytes, report_proof_size_against_planner,
+    assert_observed_proof_size, proof_size_budgets, report_proof_size_against_planner,
 };
 pub(crate) use single_group::{run_dense_for, run_onehot};

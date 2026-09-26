@@ -30,7 +30,6 @@ pub fn draw_group_fold_challenges<F, E, D>(
     params: &crate::GroupOpenPhaseParams,
     group_index: usize,
     num_claims: usize,
-    grind_nonce: u32,
 ) -> Result<GroupFoldChallenges, AkitaError>
 where
     F: Field,
@@ -54,7 +53,6 @@ where
                 params.num_live_blocks(),
                 num_claims,
                 &config,
-                grind_nonce,
                 rejection,
             )
             .map(OpeningFamily::EvaluationTrace)
@@ -90,7 +88,6 @@ where
                 params.num_live_blocks(),
                 num_claims,
                 &config,
-                grind_nonce,
                 None,
             )?;
             Ok(OpeningFamily::SubringCoefficientPacking(

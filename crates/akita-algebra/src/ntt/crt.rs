@@ -293,34 +293,6 @@ impl<const L: usize> LimbQ<L> {
     pub const fn zero() -> Self {
         Self { limbs: [0; L] }
     }
-
-    /// Construct directly from limbs.
-    #[inline]
-    pub const fn from_limbs(limbs: [u16; L]) -> Self {
-        Self { limbs }
-    }
-
-    /// Conditional subtraction: if `self >= modulus`, return `self - modulus` (branchless).
-    #[inline]
-    pub fn csub_mod(self, modulus: Self) -> Self {
-        let mut diff = [0u16; L];
-        let mut borrow = 0i32;
-        for (i, df) in diff.iter_mut().enumerate() {
-            let d = self.limbs[i] as i32 - modulus.limbs[i] as i32 + borrow;
-            borrow = d >> 31;
-            if i + 1 < L {
-                *df = (d - borrow * RADIX) as u16;
-            } else {
-                *df = d as u16;
-            }
-        }
-        let mask = borrow as u16;
-        let mut result = [0u16; L];
-        for (i, r) in result.iter_mut().enumerate() {
-            *r = (self.limbs[i] & mask) | (diff[i] & !mask);
-        }
-        Self { limbs: result }
-    }
 }
 
 impl<const L: usize> From<u128> for LimbQ<L> {

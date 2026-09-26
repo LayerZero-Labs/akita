@@ -1,7 +1,5 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
-use std::array::from_fn;
-
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
@@ -34,7 +32,11 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     /// CRT primes with Montgomery constants.
     pub primes: [NttPrime<W>; K],
     /// Per-prime twiddle tables for forward/inverse NTT.
-    pub twiddles: [NttTwiddles<W, D>; K],
+    ///
+    /// Boxed because the tables dominate the parameter set (about 200 KB at
+    /// `K = 6`, `D = 1024`); inline, every by-value holder of the parameters
+    /// would carry them.
+    pub twiddles: Box<[NttTwiddles<W, D>; K]>,
     /// Garner reconstruction constants for CRT lift-back.
     pub garner: GarnerData<K>,
     /// Host arithmetic kernels selected when this parameter set was prepared.
@@ -120,7 +122,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
     pub fn new(primes: [NttPrime<W>; K]) -> Self {
-        let twiddles = from_fn(|k| NttTwiddles::compute(primes[k]));
+        // Collect on the heap: a `[NttTwiddles; K]` value would take hundreds
+        // of kilobytes of stack before boxing.
+        let twiddles = primes
+            .iter()
+            .map(|&prime| NttTwiddles::compute(prime))
+            .collect::<Box<[_]>>()
+            .try_into()
+            .expect("one twiddle table per prime");
         let garner = GarnerData::compute(&primes);
         Self {
             primes,

@@ -181,9 +181,10 @@ fn prepare_materializes_exactly_the_requested_layout() {
     .expect("tail negacyclic");
     assert!(!q128_exact.has_cyclic());
     assert_eq!(q128_exact.has_exactness_tail(), ifma52_cache_enabled::<D>());
+    // The 14-bit IFMA52 tail covers this shape.
     let bytes_per_ring = if ifma52_cache_enabled::<D>() {
         IFMA52_PRIMES.len() * size_of::<u64>()
-            + usize::from(q128_exact.has_exactness_tail()) * size_of::<i32>()
+            + usize::from(q128_exact.has_exactness_tail()) * size_of::<i16>()
     } else {
         Q128_NUM_PRIMES * size_of::<i32>()
     };
@@ -495,9 +496,10 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     if ifma52_cache_enabled::<D>() {
         assert!(cache.uses_ifma52());
         assert!(cache.has_exactness_tail());
+        // At most 155 bits here, within base plus the 14-bit tail.
         assert_eq!(
             cache.cache_bytes(),
-            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i32>())
+            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i16>())
         );
     }
     let rhs = (0..COLS)

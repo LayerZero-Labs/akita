@@ -8,6 +8,27 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
+/// One modeled proof byte has the same weight as this many units of protocol work.
+pub(crate) const WORK_ELEMENTS_PER_OBJECTIVE_BYTE: u128 = 1 << 18;
+
+/// Charge the direct verifier for both scanning field elements and processing
+/// each common-base setup ring. Offloaded edges do not incur this work.
+pub(crate) fn direct_setup_scan_work_elements(
+    natural_field_len: usize,
+    base_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    let rings = akita_error::checked::div_ceil(natural_field_len, base_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan ring count overflow".into()))?;
+    natural_field_len
+        .checked_mul(2)
+        .and_then(|fields| {
+            rings
+                .checked_mul(64)
+                .and_then(|overhead| fields.checked_add(overhead))
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan work overflow".into()))
+}
+
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::sis::{
@@ -367,45 +388,56 @@ impl CandidateFoldChain {
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: NativeProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PackedProofCost {
+pub(crate) struct NativeProofCost {
     payload_bytes: usize,
+    native_nonce_bytes: usize,
     nonce_bits: usize,
     expanded_query_count: u64,
+    work_elements: u128,
 }
 
-impl PackedProofCost {
+impl NativeProofCost {
     pub(crate) fn new(
         payload_bytes: usize,
-        nonce_bits: usize,
+        native_nonce_bytes: usize,
         expanded_query_count: u64,
+        work_elements: u128,
     ) -> Result<Self, AkitaError> {
         let cost = Self {
             payload_bytes,
-            nonce_bits,
+            native_nonce_bytes,
+            nonce_bits: 0,
             expanded_query_count,
+            work_elements,
         };
-        cost.checked_proof_bytes()
-            .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+        cost.validate_objective()?;
         Ok(cost)
     }
 
     pub(crate) fn proof_bytes(self) -> usize {
         self.checked_proof_bytes()
-            .expect("validated packed proof cost")
+            .expect("validated native proof cost")
+    }
+
+    pub(crate) fn exact_score(self) -> u128 {
+        self.checked_exact_score()
+            .expect("validated additive proof-and-work cost")
     }
 
     pub(crate) fn checked_prepend(
         self,
         payload_bytes: usize,
+        native_nonce_bytes: usize,
         nonce_bits: usize,
         expanded_query_count: u64,
+        work_elements: usize,
     ) -> Result<Self, AkitaError> {
         let payload_bytes = self
             .payload_bytes
@@ -414,16 +446,33 @@ impl PackedProofCost {
         let nonce_bits = self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
         })?;
+        let native_nonce_bytes = self
+            .native_nonce_bytes
+            .checked_add(native_nonce_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("native nonce byte length overflow".into()))?;
         let expanded_query_count = self
             .expanded_query_count
             .checked_add(expanded_query_count)
             .ok_or_else(|| AkitaError::InvalidSetup("candidate query count overflow".into()))?;
-        Self::new(payload_bytes, nonce_bits, expanded_query_count)
+        let work_elements = self
+            .work_elements
+            .checked_add(work_elements as u128)
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate work overflow".into()))?;
+        let cost = Self {
+            payload_bytes,
+            native_nonce_bytes,
+            nonce_bits,
+            expanded_query_count,
+            work_elements,
+        };
+        cost.validate_objective()?;
+        Ok(cost)
     }
 
-    pub(crate) const fn grinding_cost(self) -> TranscriptGrindingCost {
+    pub(crate) fn grinding_cost(self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.nonce_bits,
+            native_nonce_max_bytes: self.native_nonce_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
@@ -436,53 +485,28 @@ impl PackedProofCost {
         self.expanded_query_count < akita_types::TRANSCRIPT_GRINDING_QUERY_LIMIT
     }
 
-    pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right || (left == right && left_jump >= right_jump)
+    pub(crate) fn never_worse(self, other: Self) -> bool {
+        (self.exact_score(), self.proof_bytes()) <= (other.exact_score(), other.proof_bytes())
     }
 
-    pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
-        let Some((left, left_jump)) = self.parent_alignment_order() else {
-            return false;
-        };
-        let Some((right, right_jump)) = other.parent_alignment_order() else {
-            return false;
-        };
-        left < right
-            && (left.checked_add(1).is_some_and(|next| next < right) || left_jump >= right_jump)
+    pub(crate) fn strictly_better(self, other: Self) -> bool {
+        (self.exact_score(), self.proof_bytes()) < (other.exact_score(), other.proof_bytes())
     }
 
-    /// Proof bytes at parent remainder zero and the first remainder at which
-    /// this suffix gains another nonce byte. These two values completely
-    /// describe all eight parent alignments, avoiding an eight-way checked
-    /// division in every frontier comparison.
-    fn parent_alignment_order(self) -> Option<(usize, usize)> {
-        // The old exhaustive comparison rejected either operand when any of
-        // its eight alignments overflowed. Preserve that behavior.
-        self.checked_proof_bytes_with_parent_remainder(7)?;
-        let proof_bytes = self.checked_proof_bytes()?;
-        let remainder = self.nonce_bits % 8;
-        let jump = match remainder {
-            0 => 1,
-            1 => 8,
-            _ => 9 - remainder,
-        };
-        Some((proof_bytes, jump))
+    fn validate_objective(self) -> Result<(), AkitaError> {
+        self.checked_exact_score()
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate objective overflow".into()))?;
+        Ok(())
+    }
+
+    fn checked_exact_score(self) -> Option<u128> {
+        (self.checked_proof_bytes()? as u128)
+            .checked_mul(WORK_ELEMENTS_PER_OBJECTIVE_BYTE)?
+            .checked_add(self.work_elements)
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
-        self.checked_proof_bytes_with_parent_remainder(0)
-    }
-
-    fn checked_proof_bytes_with_parent_remainder(self, parent_remainder: usize) -> Option<usize> {
-        let nonce_bytes =
-            akita_error::checked::div_ceil(self.nonce_bits.checked_add(parent_remainder)?, 8)?;
-        self.payload_bytes.checked_add(nonce_bytes)
+        self.payload_bytes.checked_add(self.native_nonce_bytes)
     }
 }
 
@@ -505,7 +529,7 @@ impl SetupPrefixCapacity {
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
     pub(crate) first_direct_output_witness_len: usize,
-    pub(crate) cost: PackedProofCost,
+    pub(crate) cost: NativeProofCost,
     pub(crate) setup_field_elements: usize,
 }
 
@@ -595,7 +619,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5
         || candidates.len() <= 1
     {
         return Ok(candidates);
@@ -604,13 +628,13 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut retained = Vec::new();
     for params in candidates {
         let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
                 padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
             }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
-            crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => unreachable!(),
+            crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => unreachable!(),
         };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {

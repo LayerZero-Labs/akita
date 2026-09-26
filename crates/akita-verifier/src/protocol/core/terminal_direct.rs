@@ -160,12 +160,8 @@ where
         F,
         params.d_a(),
         |D_A| {
-            let e_rings = witness.e_fields.as_ring_slice::<D_A>().map_err(|error| {
-                AkitaError::InvalidInput(format!("terminal e layout failed: {error:?}"))
-            })?;
-            let t_rings = witness.t_fields.as_ring_slice::<D_A>().map_err(|error| {
-                AkitaError::InvalidInput(format!("terminal t layout failed: {error:?}"))
-            })?;
+            let e_rings = witness.e_fields.as_ring_slice::<D_A>()?;
+            let t_rings = witness.t_fields.as_ring_slice::<D_A>()?;
             let e = e_rings;
             let t = t_rings;
             let z_values = {
@@ -179,10 +175,7 @@ where
                 decode_terminal_z_golomb_payload(
                     witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
                     group_layout,
-                )
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!("terminal z decode failed: {error:?}"))
-                })?
+                )?
             };
             if params.response_l2_sq_cap().is_some_and(|cap| {
                 akita_types::sis::checked_centered_l2_sq(&z_values).is_none_or(|norm| norm > cap)
@@ -223,21 +216,14 @@ where
                 .checked_mul(params.inner.matrix.output_rank())
                 .ok_or(AkitaError::InvalidProof)?;
             if e.len() != params.blocks.live_blocks || t.len() != expected_t_len {
-                return Err(AkitaError::InvalidInput(format!(
-                    "terminal raw segment ring count mismatch: e={}, expected_e={}, t={}, expected_t={expected_t_len}",
-                    e.len(),
-                    params.blocks.live_blocks,
-                    t.len(),
-                )));
+                return Err(AkitaError::InvalidProof);
             }
             let n_a = params.inner.matrix.output_rank();
             let n_a_cols = params.inner.matrix.input_width();
             let num_positions = params.blocks.positions_per_block;
             let num_digits_inner = params.inner.digits.num_digits;
             let log_basis_inner = params.inner.digits.log_basis;
-            multiplier.ensure_ring_dim::<D_A>().map_err(|error| {
-                AkitaError::InvalidInput(format!("terminal multiplier layout failed: {error:?}"))
-            })?;
+            multiplier.ensure_ring_dim::<D_A>()?;
             let (consistency, a_rows) = cfg_join!(
                 || {
                     let _span = tracing::info_span!(
@@ -299,18 +285,10 @@ where
                     )
                 }
             );
-            let (folded, reduced) = consistency.map_err(|error| {
-                AkitaError::InvalidInput(format!(
-                    "terminal consistency computation failed: {error:?}"
-                ))
-            })?;
-            a_rows.map_err(|error| {
-                AkitaError::InvalidInput(format!("terminal A-row check failed: {error:?}"))
-            })?;
+            let (folded, reduced) = consistency?;
+            a_rows?;
             if folded != reduced {
-                return Err(AkitaError::InvalidInput(
-                    "terminal consistency equation failed".into(),
-                ));
+                return Err(AkitaError::InvalidProof);
             }
             Ok::<(), AkitaError>(())
         }

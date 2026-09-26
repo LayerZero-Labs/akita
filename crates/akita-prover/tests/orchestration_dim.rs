@@ -4,9 +4,8 @@
 
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_types::{
-    validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
-    CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    RingRole,
+    validate_schedule_ring_dims, AkitaScheduleLookupKey, CommittedGroupBatchProfile,
+    GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 #[test]
@@ -44,19 +43,6 @@ fn batched_selection_preserves_typed_schedule_topology() {
         actual.schedule().terminal.input_witness_len,
         expected.schedule().terminal.input_witness_len
     );
-}
-
-#[test]
-fn role_dispatch_rejects_wrong_inner_dimension() {
-    let catalog = akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>()
-        .expect("workspace schedule catalog");
-    let schedule = catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(16),
-        ))
-        .expect("runtime schedule");
-    let dims = schedule.schedule().root.params.role_dims();
-    assert!(validate_role_dispatch::<128>(dims, RingRole::Inner).is_err());
 }
 
 #[test]

@@ -354,9 +354,9 @@ The main code path is:
    `CommittedGroupParams`.
 4. `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs` performs the
    coefficient decomposition and rebuilding operation.
-5. `crates/akita-prover/src/kernels/linear/decompose.rs` uses the packed `i8`
+5. `crates/akita-cpu-backend/src/kernels/linear/decompose.rs` uses the packed `i8`
    kernel. Wider inner decompositions use
-   `crates/akita-prover/src/compute/cpu/exact_i16.rs`.
+   `crates/akita-cpu-backend/src/arithmetic/exact_i16.rs`.
 6. `crates/akita-types/src/sis/committed_source.rs` checks the accepted source
    range and source class.
 
@@ -384,7 +384,7 @@ verifier use the same values.
 | Every committed digit is in the balanced set | [The balanced digit set](#the-general-decomposition-rule) | `proof/stage1.rs` defines the range polynomial and `akita-verifier/src/stages/stage1.rs` verifies its sumcheck proof |
 | Different protocol values can use different bases and depths | [Where Akita uses decomposition](#where-akita-uses-decomposition) | `decomposition_digits.rs` separates root sources, recursive sources, setup prefixes, openings, and folded responses |
 | Prover and verifier use the same choice | [The public schedule](#where-akita-uses-decomposition) | The resolved schedule stores each role specific basis and depth in `CommittedGroupParams` |
-| A committed source satisfies the assumptions used to size it | [Source width and source shape](#source-width-and-source-shape-are-separate) | `committed_source.rs` defines the contract and `akita-prover/src/commitment/api.rs` enforces its numeric and structural parts |
+| A committed source satisfies the assumptions used to size it | [Source width and source shape](#source-width-and-source-shape-are-separate) | `committed_source.rs` defines the contract and `akita-cpu-backend/src/backend/commitment/api.rs` enforces its numeric and structural parts |
 | Compact extraction and field conversion preserve the same digits | [How digits are stored](#how-digits-are-stored) | `signed_digit.rs` selects `i8` or `i16`, `decomposition.rs` extracts the digits, and `crt_ntt_repr/lut.rs` prepares `i8` digits for multiplication |
 | SIMD extraction agrees with scalar extraction | [The fast path and fallback](#how-digits-are-stored) | `decomposition/aarch64.rs` and `decomposition/x86.rs` implement the fast paths, while the centering boundary tests compare their public dispatch with the scalar definition |
 

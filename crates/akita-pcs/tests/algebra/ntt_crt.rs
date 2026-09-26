@@ -1,5 +1,4 @@
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-use akita_algebra::poly::Poly;
 use akita_algebra::tables::{
     q128_primes, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
     Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
@@ -9,7 +8,7 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, NttKernelPlan,
 };
-use jolt_field::{Fp128, Fp32, Fp64, Prime128Offset275, Ring, Zero};
+use jolt_field::{Fp128, Fp64, Prime128Offset275, Ring, Zero};
 
 #[test]
 fn limbq_from_to_u128_round_trip() {
@@ -138,30 +137,13 @@ fn centered_lut_understated_bound_falls_back_exactly() {
         }
     });
 
-    let with_lut = CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&coeffs, &params, &lut);
-    let direct = CyclotomicCrtNtt::<i32, Q32_NUM_PRIMES, D>::from_centered_i32_pair_with_params(
-        &coeffs, &params,
-    );
+    let with_lut = CyclotomicCrtNtt::from_centered_i32_with_lut(&coeffs, &params, &lut);
+    let (direct, _) =
+        CyclotomicCrtNtt::<i32, Q32_NUM_PRIMES, D>::from_centered_i32_pair_with_params(
+            &coeffs, &params,
+        );
 
     assert_eq!(with_lut, direct);
-}
-
-#[test]
-fn poly_add_sub_neg() {
-    type F = Fp32<251>;
-    let a = Poly::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
-    let b = Poly::<F, 3>([F::from_u64(10), F::from_u64(20), F::from_u64(30)]);
-
-    let sum = a + b;
-    assert_eq!(sum.0[0], F::from_u64(11));
-    assert_eq!(sum.0[1], F::from_u64(22));
-    assert_eq!(sum.0[2], F::from_u64(33));
-
-    let diff = b - a;
-    assert_eq!(diff.0[0], F::from_u64(9));
-
-    let neg_a = -a;
-    assert_eq!(a + neg_a, Poly::zero());
 }
 
 #[test]
@@ -498,33 +480,6 @@ fn reduced_q64_ntt_round_trips_across_supported_ring_dims() {
 }
 
 #[test]
-fn cyclotomic_ntt_reduced_ops_are_stable() {
-    type F = Fp64<{ Q32_MODULUS }>;
-    type R = CyclotomicRing<F, 64>;
-    type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
-
-    let params = CrtNttParamSet::new(Q32_PRIMES);
-
-    let a = R::from_coefficients(std::array::from_fn(|i| {
-        F::from_u64(((i as u64 * 3) + 1) % Q32_MODULUS)
-    }));
-    let b = R::from_coefficients(std::array::from_fn(|i| {
-        F::from_u64(((i as u64 * 11) + 7) % Q32_MODULUS)
-    }));
-
-    let ntt_a = N::from_ring(&a, &params);
-    let ntt_b = N::from_ring(&b, &params);
-
-    let sum = ntt_a.add_reduced(&ntt_b, &params);
-    let back = sum.sub_reduced(&ntt_b, &params);
-    assert_eq!(back, ntt_a);
-
-    let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&params), &params);
-    let zero_ring = zero_ntt.to_ring(&params);
-    assert_eq!(zero_ring, R::zero());
-}
-
-#[test]
 fn parameter_set_records_detected_host_plan() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
@@ -559,7 +514,8 @@ fn crt_ntt_mul_matches_schoolbook_q32() {
 
     let ntt_a = N::from_ring(&a, &params);
     let ntt_b = N::from_ring(&b, &params);
-    let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &params);
+    let mut ntt_prod = N::zero();
+    ntt_prod.add_assign_pointwise_mul(&ntt_a, &ntt_b, &params);
     let ntt_result: R = ntt_prod.to_ring(&params);
 
     assert_eq!(schoolbook, ntt_result);
@@ -666,44 +622,38 @@ fn crt_ntt_mul_matches_schoolbook_q128() {
 
     let ntt_a = N::from_ring(&a, &params);
     let ntt_b = N::from_ring(&b, &params);
-    let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &params);
+    let mut ntt_prod = N::zero();
+    ntt_prod.add_assign_pointwise_mul(&ntt_a, &ntt_b, &params);
     let ntt_result: R = ntt_prod.to_ring(&params);
 
     assert_eq!(schoolbook, ntt_result);
 }
 
 #[test]
-fn crt_add_assign_pointwise_mul_matches_scalar_q128m275() {
+fn crt_add_assign_pointwise_mul_matches_schoolbook_q128m275() {
     type F = Prime128Offset275;
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
 
     let params = CrtNttParamSet::new(q128_primes());
-    let acc0 = N::from_ring(
-        &R::from_coefficients(std::array::from_fn(|i| {
-            F::from_i64(((i as i64 * 5 + 1) % 31) - 15)
-        })),
-        &params,
-    );
-    let lhs = N::from_ring(
-        &R::from_coefficients(std::array::from_fn(|i| {
-            F::from_i64(((i as i64 * 7 + 3) % 37) - 18)
-        })),
-        &params,
-    );
-    let rhs = N::from_ring(
-        &R::from_coefficients(std::array::from_fn(|i| {
-            F::from_i64(((i as i64 * 11 + 9) % 41) - 20)
-        })),
+    let acc0 = R::from_coefficients(std::array::from_fn(|i| {
+        F::from_i64(((i as i64 * 5 + 1) % 31) - 15)
+    }));
+    let lhs = R::from_coefficients(std::array::from_fn(|i| {
+        F::from_i64(((i as i64 * 7 + 3) % 37) - 18)
+    }));
+    let rhs = R::from_coefficients(std::array::from_fn(|i| {
+        F::from_i64(((i as i64 * 11 + 9) % 41) - 20)
+    }));
+
+    let mut got = N::from_ring(&acc0, &params);
+    got.add_assign_pointwise_mul(
+        &N::from_ring(&lhs, &params),
+        &N::from_ring(&rhs, &params),
         &params,
     );
 
-    let mut got = acc0.clone();
-    got.add_assign_pointwise_mul(&lhs, &rhs, &params);
-
-    let expected = acc0.add_reduced(&lhs.pointwise_mul(&rhs, &params), &params);
-
-    assert_eq!(got, expected);
+    assert_eq!(got.to_ring::<F>(&params), acc0 + lhs * rhs);
 }
 
 #[test]
@@ -741,7 +691,8 @@ fn crt_ntt_mul_matches_schoolbook_q64() {
 
     let ntt_a = N::from_ring(&a, &params);
     let ntt_b = N::from_ring(&b, &params);
-    let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &params);
+    let mut ntt_prod = N::zero();
+    ntt_prod.add_assign_pointwise_mul(&ntt_a, &ntt_b, &params);
     let ntt_result: R = ntt_prod.to_ring(&params);
 
     assert_eq!(schoolbook, ntt_result);

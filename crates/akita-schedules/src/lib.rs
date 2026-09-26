@@ -19,9 +19,9 @@ pub use artifact::{
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{
-    default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,
-    PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy,
-    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId,
+    expanded_schedule_native_proof_bound, expanded_schedule_native_proof_estimate_bytes,
+    validate_policy, PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
     SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 

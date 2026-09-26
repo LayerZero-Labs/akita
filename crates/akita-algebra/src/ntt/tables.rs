@@ -4,16 +4,7 @@
 //! Q64: `logq = 64` with three `i32` NTT-friendly primes.
 //! Q128: `logq = 128` with five `i32` NTT-friendly primes.
 
-use super::crt::GarnerData;
 use super::prime::NttPrime;
-
-/// Polynomial degree for the base ring `Z_q[X]/(X^d + 1)`.
-pub const RING_DEGREE: usize = 64;
-/// Maximum ring degree covered by the CRT parameter sets.
-pub const MAX_CRT_RING_DEGREE: usize = 2048;
-
-/// Minimum `d_a` for sparse fold ring challenges (see [`CHALLENGE_MIN_RING_D`]).
-pub const CHALLENGE_MIN_RING_D: usize = 64;
 
 /// Maximum ring degree for Q128 CRT+NTT profile (challenge-supported paths).
 pub const Q128_MAX_RING_D: usize = 1024;
@@ -76,11 +67,6 @@ pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
     },
 ];
 
-/// Garner CRT reconstruction constants for Q32 measured `2xi32` profile.
-pub fn q32_garner() -> GarnerData<Q32_NUM_PRIMES> {
-    GarnerData::compute(&Q32_PRIMES)
-}
-
 /// Raw 30-bit primes for Q128.
 pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = I32_RAW_PRIMES;
 
@@ -107,20 +93,9 @@ pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
     },
 ];
 
-/// Garner CRT reconstruction constants for Q64 reduced profile.
-pub fn q64_garner() -> GarnerData<Q64_NUM_PRIMES> {
-    GarnerData::compute(&Q64_PRIMES)
-}
-
 /// CRT primes and per-prime Montgomery constants for `logq = 128`.
 pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
-    std::array::from_fn(|k| NttPrime::compute(Q128_RAW_PRIMES[k]))
-}
-
-/// Garner CRT reconstruction constants for Q128.
-pub fn q128_garner() -> GarnerData<Q128_NUM_PRIMES> {
-    let primes = q128_primes();
-    GarnerData::compute(&primes)
+    Q128_RAW_PRIMES.map(NttPrime::new)
 }
 
 /// Validate CRT+NTT `ring_d` against a profile-specific maximum.
@@ -146,6 +121,8 @@ pub fn validate_profile_crt_ring_degree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ntt::crt::GarnerData;
+    use crate::ntt::prime::is_prime;
 
     #[test]
     fn six_product_i32_lazy_reduction_fits_signed_wide() {
@@ -179,20 +156,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    fn is_prime(n: i64) -> bool {
-        if n <= 1 {
-            return false;
-        }
-        let mut divisor = 2;
-        while divisor * divisor <= n {
-            if n % divisor == 0 {
-                return false;
-            }
-            divisor += 1;
-        }
-        true
     }
 
     fn largest_eligible_i32_primes(count: usize, root_order: i64) -> Vec<i32> {
@@ -301,10 +264,10 @@ mod tests {
 
     #[test]
     fn garner_data_is_consistent() {
-        assert_garner_profile("Q32", &Q32_PRIMES, q32_garner());
-        assert_garner_profile("Q64", &Q64_PRIMES, q64_garner());
+        assert_garner_profile("Q32", &Q32_PRIMES, GarnerData::compute(&Q32_PRIMES));
+        assert_garner_profile("Q64", &Q64_PRIMES, GarnerData::compute(&Q64_PRIMES));
         let q128_primes = q128_primes();
-        assert_garner_profile("Q128", &q128_primes, q128_garner());
+        assert_garner_profile("Q128", &q128_primes, GarnerData::compute(&q128_primes));
     }
 
     #[test]

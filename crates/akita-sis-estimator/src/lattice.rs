@@ -5,7 +5,7 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::{
     config::{EstimateConfig, OptimizerConfig, SearchMode, ShapeModel},
-    cost::{CostValue, EstimateTag, LatticeCost, LogCost},
+    cost::{CostValue, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     math::{log2_erf_from_log2_arg, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
@@ -82,12 +82,7 @@ pub fn cost_infinity_fixed(
             })?;
     let uses_small_box = infinity_uses_small_box(params, effective_dimension)?;
     if effective_dimension < u64::from(beta) {
-        return Ok(proven_above_target_cost(
-            params,
-            beta,
-            zeta,
-            effective_dimension,
-        ));
+        return Ok(proven_above_target_cost(beta, zeta, effective_dimension));
     }
 
     let identity_vectors = effective_dimension as i128 - params.n as i128;
@@ -145,12 +140,12 @@ pub fn cost_infinity_fixed(
     };
     let log_probability = (log_trial_prob + log2_positive(short.count)).min(0.0);
     if !log_probability.is_finite() {
-        return Ok(infinite_cost(params, beta, zeta, effective_dimension));
+        return Ok(infinite_cost(beta, zeta, effective_dimension));
     }
 
     let repetitions_log2 = log2_amplify(config.success_probability.get(), log_probability);
     if !repetitions_log2.is_finite() {
-        return Ok(infinite_cost(params, beta, zeta, effective_dimension));
+        return Ok(infinite_cost(beta, zeta, effective_dimension));
     }
 
     let pre_repeat_sieve = pre_repeat_sieve_log2(short.cost_red_log2, bkz_log2);
@@ -173,11 +168,6 @@ pub fn cost_infinity_fixed(
         d: effective_dimension,
         prob: probability_from_log2(log_probability),
         repetitions: Some(log2_to_cost_value(repetitions_log2)),
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     })
 }
 
@@ -449,12 +439,7 @@ fn probability_from_log2(log_probability: f64) -> Option<crate::numeric::Probabi
     }
 }
 
-fn infinite_cost(
-    params: &SisParameters,
-    beta: u32,
-    zeta: u64,
-    effective_dimension: u64,
-) -> LatticeCost {
+fn infinite_cost(beta: u32, zeta: u64, effective_dimension: u64) -> LatticeCost {
     LatticeCost {
         rop: CostValue::Infinity,
         red: Some(CostValue::Infinity),
@@ -466,20 +451,10 @@ fn infinite_cost(
         d: effective_dimension,
         prob: None,
         repetitions: None,
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     }
 }
 
-fn proven_above_target_cost(
-    params: &SisParameters,
-    beta: u32,
-    zeta: u64,
-    effective_dimension: u64,
-) -> LatticeCost {
+fn proven_above_target_cost(beta: u32, zeta: u64, effective_dimension: u64) -> LatticeCost {
     LatticeCost {
         rop: CostValue::ProvenAboveTarget(LogCost::new(f64::INFINITY)),
         red: None,
@@ -491,11 +466,6 @@ fn proven_above_target_cost(
         d: effective_dimension,
         prob: None,
         repetitions: None,
-        tag: params
-            .tag
-            .as_ref()
-            .map(|value| EstimateTag::new(value.clone()))
-            .unwrap_or_default(),
     }
 }
 

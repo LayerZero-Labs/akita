@@ -206,6 +206,22 @@ The F/H compression maps use their separate relation evaluator with the same
 reduced semantics. This calculation does not remove the work of reading the
 active public setup coefficients.
 
+The window above is the contiguous case. More generally, let
+$\operatorname{addr}(j)$ be the actual physical witness address of coefficient
+$j$ in one native digit polynomial. Use
+
+$$
+e_j=\operatorname{eq}(r_2,\operatorname{addr}(j)).
+$$
+
+`WitnessLayout` determines these addresses, including group, chunk,
+subcolumn, and digit placement. The earlier formula has
+$\operatorname{addr}(j)=o+j$. Apply the same contraction to each digit term
+with its public gadget and row factors. When multiple terms reference the
+same witness coordinate, their public weights add at that address; a later
+contribution must not replace an earlier one. The [row construction](../proving/ring-relation-checking.md#batch-the-rows-and-hand-them-to-stage-2)
+uses the same address rule.
+
 ### Structured witness terms
 
 The structured term covers the non-setup coefficients of the consistency, A,
@@ -257,7 +273,7 @@ group offsets follow checked relation-group prefix sums.
 does not maintain a parallel setup-column layout.
 
 The active
-[`role-native-projected-digit-layout`](../../../../specs/role-native-projected-digit-layout.md)
+[`role-native-projected-digit-layout`](https://github.com/LayerZero-Labs/akita/blob/main/specs/role-native-projected-digit-layout.md)
 spec defines the E and T verifier cutover. Its target physical order is:
 
 ```text
@@ -333,8 +349,7 @@ materialized relation table.
 - Relation address geometry:
   `crates/akita-types/src/proof/relation_address.rs`.
 - Residue and terminal coefficient functionals:
-  `crates/akita-algebra/src/ring/residue.rs` and
-  `crates/akita-types/src/proof/coefficient_functional.rs`.
+  `crates/akita-algebra/src/ring/residue.rs`.
 - Verifier preparation:
   `crates/akita-verifier/src/protocol/ring_switch.rs`.
 - Final point evaluation:

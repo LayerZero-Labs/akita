@@ -1,12 +1,13 @@
 # Akita Planner
 
 The `akita-planner` crate computes the parameters of each fold level in the
-Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
-direct schedules minimize first-direct padded setup capacity, then proof bytes,
-total setup, and root output-witness length. Recursive schedules first minimize
-the power-of-two capacity covering total setup, then first-direct capacity,
-proof bytes, and first-direct output-witness length. Numeric ties go directly
-to the canonical descriptor.
+Akita PCS. Within their setup-priority buckets, schedules minimize an exact
+additive score: `2^18 × modeled proof bytes + sum of fold output-witness
+elements + sum of direct setup-scan work`. Each direct scan costs twice its
+natural field-element length plus 64 units per common-base ring; offloaded
+folds have no direct-scan charge. Proof bytes, setup, witness length, and the
+canonical descriptor break remaining ties. This keeps proof accounting exact
+while pricing the repeated setup work that the verifier actually performs.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -27,11 +28,13 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-uniform direct:  (proof bytes, total setup, root output witness, descriptor)
-adaptive direct: (first-direct padded capacity, proof bytes,
+uniform direct:  (proof-and-work score, proof bytes, total setup,
+                  root output witness, descriptor)
+adaptive direct: (first-direct padded capacity, proof-and-work score, proof bytes,
                   total setup, root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
-                  proof bytes, first-direct output witness, descriptor)
+                  proof-and-work score, proof bytes, first-direct output witness,
+                  descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
@@ -40,7 +43,8 @@ schedule, it is the first edge after the setup-prefix chain.
 First-direct capacity is a verifier-cost proxy, not a complete runtime model.
 Its power-of-two bucket permits proof-size improvements within a factor-two
 setup-scan bound and avoids letting a later, unusually large suffix matrix
-control the leading direct objective. The
+control the leading direct objective. The additive scan term prices direct
+work at every fold within that bucket. The
 [planner rationale](../../specs/setup-offloading-planner.md#why-adaptive-direct-planning-starts-with-first-direct-capacity)
 defines the related setup quantities and records the limitations of this design
 choice.
@@ -48,7 +52,7 @@ choice.
 Recursive setup planning uses a different leading metric because offloading can
 move setup cost into a committed prefix. It first fixes the power-of-two
 capacity covering every setup object, then minimizes the remaining direct scan,
-proof bytes, and first-direct output witness. The
+proof-and-work score, proof bytes, and first-direct output witness. The
 [recursive-objective rationale](../../specs/setup-offloading-planner.md#why-recursive-planning-starts-with-padded-total-setup-capacity)
 explains why exact setup inside the winning bucket is not another tie-break.
 
@@ -131,9 +135,9 @@ Conceptually, a candidate level answers three questions:
   the first direct output-witness length and total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
-Adaptive direct planning retains the first-direct-first V2 objective. Recursive
+Adaptive direct planning retains the first-direct-first objective. Recursive
 setup planning compares total setup at next-power-of-two capacity, then
-minimizes first-direct capacity and proof bytes within the winning bucket
+minimizes first-direct capacity and proof-and-work score within the winning bucket
 before comparing first-direct output-witness length.
 
 ## Root Level Search
@@ -199,14 +203,14 @@ recursion. Runtime verification never invokes this search.
 
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
-- `level_proof_bytes` for a fold level.
+- `native_nonterminal_level_layout` for a fold level's fixed native messages.
 - `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
-- the canonical grinding plan for the one proof-level packed nonce stream.
+- the canonical grinding plan for additive per-message native nonce maxima.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
 
-`level_proof_bytes` is also schedule-shaped: it prices an outer commitment on
+`native_nonterminal_level_layout` is also schedule-shaped: it prices an outer commitment on
 ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
 stream byte count is rounded once across the complete plan. Terminal proof

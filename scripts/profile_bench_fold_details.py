@@ -746,32 +746,38 @@ def render_grinding_plan_details(
     displayed_runs = aggregate_grinding_runs(current_runs)
     displayed_baseline_runs = aggregate_grinding_runs(baseline_runs)
     baseline_by_key = {grinding_run_key(run): run for run in displayed_baseline_runs}
-    current_wire_bytes = int(grinding_plan["nonce_stream_bytes"])
+    current_packed_estimate = int(grinding_plan["packed_nonce_estimate_bytes"])
+    current_native_max = int(grinding_plan["native_nonce_max_bytes"])
     if baseline_grinding_plan is not None:
-        baseline_wire_bytes = int(baseline_grinding_plan["nonce_stream_bytes"])
+        baseline_packed_estimate = int(baseline_grinding_plan["packed_nonce_estimate_bytes"])
+        baseline_native_max_value = baseline_grinding_plan.get("native_nonce_max_bytes")
+        baseline_native_max: int | None = (
+            int(baseline_native_max_value)
+            if baseline_native_max_value is not None
+            else None
+        )
         baseline_total_bits: int | None = int(baseline_grinding_plan["total_nonce_bits"])
-        baseline_padding_bits: int | None = int(baseline_grinding_plan["padding_bits"])
     else:
+        baseline_native_max = None
         legacy_storage = legacy_grinding_storage(baseline_proof_levels)
         if legacy_storage is None:
             baseline_total_bits = None
-            baseline_wire_bytes = None
-            baseline_padding_bits = None
+            baseline_packed_estimate = None
         else:
-            baseline_total_bits, baseline_wire_bytes, baseline_padding_bits = legacy_storage
+            baseline_total_bits, baseline_packed_estimate, _ = legacy_storage
 
     print()
     print("#### Transcript grinding bits")
     print()
-    print("| Storage | Meaningful bits | Wire bytes | Unused wire bits | Plan queries |")
+    print("| Planner model | Meaningful bits | Native maximum bytes | Legacy packed bytes | Plan queries |")
     print("| --- | ---: | ---: | ---: | ---: |")
     print(
-        "| Proof-global packed nonce stream | "
+        "| Additive per-message LEB128 maxima | "
         + grinding_int_choice(grinding_plan["total_nonce_bits"], baseline_total_bits)
         + " | "
-        + grinding_int_choice(current_wire_bytes, baseline_wire_bytes)
+        + grinding_int_choice(current_native_max, baseline_native_max)
         + " | "
-        + grinding_int_choice(grinding_plan["padding_bits"], baseline_padding_bits)
+        + grinding_int_choice(current_packed_estimate, baseline_packed_estimate)
         + " | "
         + grinding_int_choice(
             grinding_plan["expanded_query_count"],
@@ -786,8 +792,9 @@ def render_grinding_plan_details(
     print()
     print(
         "The public plan prices challenges against a nominal capacity of "
-        f"{int(grinding_plan['nominal_capacity_bits']):,} bits. The merge-base storage "
-        "value uses its legacy per-fold nonce fields when it did not emit a native plan."
+        f"{int(grinding_plan['nominal_capacity_bits']):,} bits. Schedule selection uses "
+        "the native maximum; the aggregate packed value is retained only as a legacy "
+        "comparison, and realized LEB128 bytes are reported separately."
     )
     print()
     print("| Fold | Component | Query | Loss factor | Required zero bits | Stored bits/query | Count | Packed bits |")
@@ -865,8 +872,8 @@ def render_grinding_plan_details(
         print()
     print(
         "Consecutive queries with identical parameters are grouped, and sumcheck rounds are "
-        "shown as ranges. Counts and packed bit totals remain exact. The proof rounds the "
-        "stream to bytes once, not per row or fold. Required zero bits are per proof of work "
+        "shown as ranges. Counts and packed bit totals remain exact, but the native proof "
+        "encodes each present nonce independently. Required zero bits are per proof of work "
         "query. The 12 bit fold response is bounded search, not proof of work. For a legacy "
         "merge base, unused bits measure each 12 bit response stored in a 32 bit field."
     )
@@ -901,9 +908,12 @@ def render_fold_details(
     print()
     print("#### Fold by fold")
     print()
-    headers = ["Fold", "Step", "Fold parameters", "Input and output", "Proof bytes"]
+    show_proof_bytes = bool(proof)
+    headers = ["Fold", "Step", "Fold parameters", "Input and output"]
+    if show_proof_bytes:
+        headers.append("Proof bytes")
     print("| " + " | ".join(headers) + " |")
-    print("| --- | --- | --- | --- | --- |")
+    print("| " + " | ".join("---" for _ in headers) + " |")
 
     for level_index in level_indices:
         schedule = planned.get(level_index)
@@ -976,27 +986,38 @@ def render_fold_details(
                 f"{detail_block(f'Output to L{level_index + 1}', [exact_choice(next_w, baseline_next_w)])}"
             )
 
-        proof_bytes = "n/a"
-        if proof_level is not None:
-            proof_bytes = proof_cost_summary(
-                proof_level,
-                baseline_proof_level,
-                schedule,
-                baseline_schedule,
-            )
-        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
+        row = [f"L{level_index}", step, schedule_choice, work]
+        if show_proof_bytes:
+            proof_bytes = "—"
+            if proof_level is not None:
+                proof_bytes = proof_cost_summary(
+                    proof_level,
+                    baseline_proof_level,
+                    schedule,
+                    baseline_schedule,
+                )
+            row.append(proof_bytes)
         print("| " + " | ".join(row) + " |")
 
     print()
-    print(
+    explanation = (
         "Each row shows the matrices and challenge used at that fold. Output to the "
         "next level becomes the input shown on the next row. Each group has z, e, and "
         "t segments. Quotient-lift rows also have one shared r segment; reduced-evaluation rows "
-        "have no r segment. The terminal fold uses only A and "
-        "sends the clear z, e, and t response shown in the terminal response section. "
-        "Proof groups with zero bytes are omitted. The terminal response bytes are not "
-        "part of the terminal fold byte total."
+        "have no r segment. The terminal fold uses only A and sends the clear z, e, and t "
+        "response."
     )
+    if show_proof_bytes:
+        explanation += (
+            " Proof groups with zero bytes are omitted. The terminal response bytes are not "
+            "part of the terminal fold byte total."
+        )
+    else:
+        explanation += (
+            " Native Spongefish proofs are one positional byte stream, so legacy structured "
+            "per-fold serialization totals are not reported."
+        )
+    print(explanation)
     render_grinding_plan_details(
         grinding_plan,
         baseline_grinding_plan,

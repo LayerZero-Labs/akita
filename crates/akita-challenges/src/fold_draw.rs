@@ -3,18 +3,17 @@
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
-use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
-use akita_transcript::{Transcript, TranscriptChallengePreview, FOLD_CHALLENGE_SEED_LEN};
-use jolt_field::{CanonicalEncoding, Field};
-use std::marker::PhantomData;
+use akita_transcript::FOLD_CHALLENGE_SEED_LEN;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
+/// Label suffix of the sparse-challenge Fiat–Shamir absorb buffer for one draw
+/// batch. It is embedded in the public fold payload.
+const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
 const SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN: &[u8] =
     b"akita/subring-coefficient-packing-fold-challenge/v1";
 
 /// Algebraic domain of one fold-challenge draw.
 ///
-/// The evaluation-trace variant preserves the historical transcript encoding.
 /// Coefficient packing adds an explicit method domain and challenge-subring
 /// dimension before the seed is squeezed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +42,7 @@ pub fn fold_challenge_sample_label(
         .map_err(|_| AkitaError::InvalidSetup("num_live_blocks exceeds u64".to_string()))?;
     let num_claims = u64::try_from(num_claims)
         .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
-    let base_label = akita_transcript::labels::CHALLENGE_WITNESS_FOLD;
+    let base_label = CHALLENGE_WITNESS_FOLD;
     let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 24);
     label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
     label.extend_from_slice(&group_index.to_le_bytes());
@@ -54,32 +53,13 @@ pub fn fold_challenge_sample_label(
 }
 
 pub trait FoldDraw {
-    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8])
-        -> [u8; FOLD_CHALLENGE_SEED_LEN];
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError>;
 
     #[cfg(feature = "logging-transcript")]
     fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
-
-    fn draw_folding_challenges(
-        &mut self,
-        ring_d: usize,
-        group_index: usize,
-        num_live_blocks: usize,
-        num_claims: usize,
-        cfg: &SparseChallengeConfig,
-        grind_nonce: u32,
-    ) -> Result<Challenges, AkitaError> {
-        self.draw_folding_challenges_with_rejection(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            ring_d,
-            group_index,
-            num_live_blocks,
-            num_claims,
-            cfg,
-            grind_nonce,
-            None,
-        )
-    }
 
     #[allow(clippy::too_many_arguments)]
     fn draw_folding_challenges_with_rejection(
@@ -90,7 +70,6 @@ pub trait FoldDraw {
         num_live_blocks: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
-        grind_nonce: u32,
         rejection: Option<OperatorNormRejection>,
     ) -> Result<Challenges, AkitaError> {
         if let FoldChallengeDrawDomain::SubringCoefficientPacking {
@@ -132,12 +111,11 @@ pub trait FoldDraw {
         })?;
         let sample_label = fold_challenge_sample_label(group_index, num_live_blocks, num_claims)?;
         let domain_sep = cfg.domain_separator_bytes();
-        let mut absorb_buf = Vec::with_capacity(sample_label.len() + 8 + 8 + domain_sep.len() + 4);
+        let mut absorb_buf = Vec::with_capacity(sample_label.len() + 8 + 8 + domain_sep.len());
         absorb_buf.extend_from_slice(&sample_label);
         absorb_buf.extend_from_slice(&(total as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&domain_sep);
-        absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
         if matches!(
             domain,
             FoldChallengeDrawDomain::SubringCoefficientPacking { .. }
@@ -147,7 +125,7 @@ pub trait FoldDraw {
         if let Some(rejection) = rejection {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
-        let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
+        let seed = self.absorb_and_squeeze(&absorb_buf)?;
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
@@ -157,77 +135,125 @@ pub trait FoldDraw {
     }
 }
 
-pub struct PreviewFoldDraw<'a> {
-    preview: &'a dyn TranscriptChallengePreview,
-    absorbs: Vec<Vec<u8>>,
+fn native_fold_record(
+    level: u32,
+    group: u32,
+    payload_len: usize,
+) -> akita_transcript::ProtocolContextRecord {
+    let encoded_bytes = payload_len as u64;
+    akita_transcript::ProtocolContextRecord::new(
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_FOLD_CHALLENGE,
+            level,
+            group,
+            ..akita_transcript::ProtocolSiteId::default()
+        }
+        .to_bytes(),
+        akita_transcript::ProtocolMessageKind::Challenge as u32,
+        encoded_bytes,
+        encoded_bytes,
+        FOLD_CHALLENGE_SEED_LEN as u64,
+    )
 }
 
-impl<'a> PreviewFoldDraw<'a> {
-    pub fn new(preview: &'a dyn TranscriptChallengePreview) -> Self {
+/// One group-local fold-root draw against a candidate native public state.
+pub struct NativePreviewFoldDraw<'a> {
+    preview: &'a mut akita_transcript::NativeFoldPreview,
+}
+
+impl<'a> NativePreviewFoldDraw<'a> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+    #[must_use]
+    pub const fn new(preview: &'a mut akita_transcript::NativeFoldPreview) -> Self {
+        Self { preview }
+    }
+}
+
+impl FoldDraw for NativePreviewFoldDraw<'_> {
+    fn absorb_and_squeeze(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Ok(self.preview.fold_root(payload))
+    }
+}
+
+/// One group-local fold-root draw against the live native prover state.
+pub struct NativeProverFoldDraw<'a> {
+    state: &'a mut akita_transcript::NativeProverState,
+    level: u32,
+    group: u32,
+}
+
+impl<'a> NativeProverFoldDraw<'a> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+    #[must_use]
+    pub const fn new(
+        state: &'a mut akita_transcript::NativeProverState,
+        level: u32,
+        group: u32,
+    ) -> Self {
         Self {
-            preview,
-            absorbs: Vec::new(),
+            state,
+            level,
+            group,
         }
     }
 }
 
-impl FoldDraw for PreviewFoldDraw<'_> {
+impl FoldDraw for NativeProverFoldDraw<'_> {
     fn absorb_and_squeeze(
         &mut self,
-        _label: &[u8],
         payload: &[u8],
-    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        self.absorbs.push(payload.to_vec());
-        let absorbs = self.absorbs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        self.preview.preview_challenge_block(&absorbs)
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        Ok(akita_transcript::native_prover_fold_root(
+            self.state,
+            native_fold_record(self.level, self.group, payload.len()),
+            payload,
+        ))
     }
 }
 
-pub struct LiveFoldDraw<'a, F, T> {
-    transcript: &'a mut T,
-    _field: PhantomData<F>,
+/// One group-local fold-root draw against the live native verifier state.
+pub struct NativeVerifierFoldDraw<'a, 'proof> {
+    state: &'a mut akita_transcript::NativeVerifierState<'proof>,
+    level: u32,
+    group: u32,
 }
 
-impl<'a, F, T> LiveFoldDraw<'a, F, T> {
-    pub fn new(transcript: &'a mut T) -> Self {
+impl<'a, 'proof> NativeVerifierFoldDraw<'a, 'proof> {
+    /// Bind this short-lived draw adapter to one schedule-derived fold group.
+    #[must_use]
+    pub const fn new(
+        state: &'a mut akita_transcript::NativeVerifierState<'proof>,
+        level: u32,
+        group: u32,
+    ) -> Self {
         Self {
-            transcript,
-            _field: PhantomData::<F>,
+            state,
+            level,
+            group,
         }
     }
 }
 
-impl<F, T> FoldDraw for LiveFoldDraw<'_, F, T>
-where
-    F: Field + CanonicalEncoding,
-    T: Transcript<F>,
-{
+impl FoldDraw for NativeVerifierFoldDraw<'_, '_> {
     fn absorb_and_squeeze(
         &mut self,
-        label: &[u8],
         payload: &[u8],
-    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
-        self.transcript.append_bytes(label, payload);
-        self.transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE)
-    }
-
-    #[cfg(feature = "logging-transcript")]
-    fn record_challenge_range(&mut self, group_index: usize, coordinate_count: usize) {
-        self.transcript
-            .record_fold_challenge_range(group_index, coordinate_count);
+    ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
+        akita_transcript::native_verifier_fold_root(
+            self.state,
+            native_fold_record(self.level, self.group, payload.len()),
+            payload,
+        )
+        .map_err(|_| AkitaError::InvalidProof)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
-    use akita_transcript::AkitaTranscript;
-    use jolt_field::{Fp64, Ring};
-    use shake::digest::{ExtendableOutput, Update, XofReader};
-    use shake::Shake256;
-
-    type TestField = Fp64<4294967197>;
 
     #[derive(Default)]
     struct CapturingDraw {
@@ -237,47 +263,15 @@ mod tests {
     impl FoldDraw for CapturingDraw {
         fn absorb_and_squeeze(
             &mut self,
-            _label: &[u8],
             payload: &[u8],
-        ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
+        ) -> Result<[u8; FOLD_CHALLENGE_SEED_LEN], AkitaError> {
             self.payloads.push(payload.to_vec());
-            [7; FOLD_CHALLENGE_SEED_LEN]
+            Ok([7; FOLD_CHALLENGE_SEED_LEN])
         }
-    }
-
-    fn challenge_fingerprint(challenges: &Challenges) -> [u8; 32] {
-        let mut xof = Shake256::default();
-        xof.update(b"akita/indexed-fold-challenge-test-vector/v1");
-        for challenge in challenges.as_slice() {
-            xof.update(&(challenge.positions.len() as u64).to_le_bytes());
-            for &position in challenge.positions.iter() {
-                xof.update(&position.to_le_bytes());
-            }
-            xof.update(&(challenge.coeffs.len() as u64).to_le_bytes());
-            for &coefficient in challenge.coeffs.iter() {
-                xof.update(&coefficient.to_le_bytes());
-            }
-        }
-        let mut fingerprint = [0u8; 32];
-        xof.finalize_xof().read(&mut fingerprint);
-        fingerprint
-    }
-
-    fn draw_live(
-        domain: FoldChallengeDrawDomain,
-        ring_d: usize,
-        cfg: &SparseChallengeConfig,
-        rejection: Option<OperatorNormRejection>,
-    ) -> Challenges {
-        let mut transcript = AkitaTranscript::<TestField>::new(DOMAIN_AKITA_PROTOCOL);
-        transcript.append_field(b"indexed-fold-test-seed", &TestField::from_u64(0x417));
-        LiveFoldDraw::<TestField, _>::new(&mut transcript)
-            .draw_folding_challenges_with_rejection(domain, ring_d, 2, 3, 2, cfg, 5, rejection)
-            .unwrap()
     }
 
     #[test]
-    fn evaluation_trace_draw_preserves_legacy_payload() {
+    fn evaluation_trace_draw_uses_nonce_free_group_payload() {
         let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
         let mut draw = CapturingDraw::default();
         draw.draw_folding_challenges_with_rejection(
@@ -287,7 +281,6 @@ mod tests {
             3,
             4,
             &config,
-            5,
             None,
         )
         .unwrap();
@@ -296,7 +289,6 @@ mod tests {
         expected.extend_from_slice(&12u64.to_le_bytes());
         expected.extend_from_slice(&64u64.to_le_bytes());
         expected.extend_from_slice(&config.domain_separator_bytes());
-        expected.extend_from_slice(&5u32.to_le_bytes());
         assert_eq!(draw.payloads, vec![expected]);
     }
 
@@ -314,7 +306,6 @@ mod tests {
                 2,
                 1,
                 &config_64,
-                0,
                 None,
             )
             .unwrap();
@@ -332,7 +323,6 @@ mod tests {
                 2,
                 1,
                 &config_128,
-                0,
                 None,
             )
             .unwrap();
@@ -347,7 +337,6 @@ mod tests {
                 2,
                 1,
                 &config_128,
-                0,
                 None,
             )
             .is_err());
@@ -361,109 +350,9 @@ mod tests {
                 2,
                 1,
                 &config_64,
-                0,
                 None,
             )
             .unwrap();
         assert_ne!(draw_64.payloads, evaluation_trace.payloads);
-    }
-
-    #[test]
-    fn preview_and_live_indexed_draws_match_across_groups() {
-        let cfg = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        let mut transcript = AkitaTranscript::<TestField>::new(DOMAIN_AKITA_PROTOCOL);
-        transcript.append_field(b"indexed-fold-test-seed", &TestField::from_u64(0x417));
-        let (preview_first, preview_second) = {
-            let mut preview = PreviewFoldDraw::new(&transcript);
-            let first = preview
-                .draw_folding_challenges(64, 0, 3, 2, &cfg, 7)
-                .unwrap();
-            let second = preview
-                .draw_folding_challenges(64, 1, 2, 2, &cfg, 7)
-                .unwrap();
-            (first, second)
-        };
-        let mut live = LiveFoldDraw::<TestField, _>::new(&mut transcript);
-        let live_first = live.draw_folding_challenges(64, 0, 3, 2, &cfg, 7).unwrap();
-        let live_second = live.draw_folding_challenges(64, 1, 2, 2, &cfg, 7).unwrap();
-        assert_eq!(preview_first, live_first);
-        assert_eq!(preview_second, live_second);
-    }
-
-    #[test]
-    fn indexed_fold_challenge_golden_vectors() {
-        let evaluation_cfg = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        let evaluation = draw_live(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            &evaluation_cfg,
-            None,
-        );
-        let packing = draw_live(
-            FoldChallengeDrawDomain::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
-            },
-            64,
-            &evaluation_cfg,
-            None,
-        );
-        let rejected_d64 = draw_live(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            64,
-            &crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
-            Some(OperatorNormRejection::D64_SELECTIVE_L2),
-        );
-        let rejected_d128 = draw_live(
-            FoldChallengeDrawDomain::EvaluationTrace,
-            128,
-            &crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
-            Some(OperatorNormRejection::D128_SELECTIVE_L2),
-        );
-
-        let fingerprints = [
-            challenge_fingerprint(&evaluation),
-            challenge_fingerprint(&packing),
-            challenge_fingerprint(&rejected_d64),
-            challenge_fingerprint(&rejected_d128),
-        ];
-        #[cfg(feature = "transcript-blake2b")]
-        let expected = [
-            [
-                225, 68, 222, 77, 115, 62, 167, 225, 108, 115, 143, 222, 246, 232, 154, 117, 54,
-                149, 6, 181, 16, 86, 107, 181, 8, 132, 152, 50, 215, 177, 72, 148,
-            ],
-            [
-                79, 224, 242, 67, 178, 245, 55, 135, 65, 197, 201, 217, 138, 252, 160, 116, 6, 208,
-                97, 54, 48, 103, 113, 124, 92, 111, 34, 166, 132, 56, 241, 157,
-            ],
-            [
-                211, 56, 140, 154, 235, 102, 212, 222, 171, 51, 243, 146, 217, 134, 16, 136, 179,
-                148, 119, 92, 243, 228, 174, 3, 210, 173, 246, 7, 37, 194, 53, 62,
-            ],
-            [
-                58, 50, 193, 231, 187, 62, 62, 138, 58, 0, 63, 68, 192, 83, 34, 15, 190, 215, 248,
-                28, 11, 250, 234, 69, 227, 254, 209, 7, 129, 128, 179, 116,
-            ],
-        ];
-        #[cfg(feature = "transcript-keccak")]
-        let expected = [
-            [
-                12, 35, 8, 128, 37, 25, 196, 151, 138, 141, 61, 179, 150, 159, 56, 220, 177, 190,
-                231, 32, 210, 98, 197, 105, 249, 40, 67, 75, 63, 20, 65, 126,
-            ],
-            [
-                76, 222, 54, 199, 84, 130, 152, 62, 173, 18, 255, 189, 122, 49, 90, 186, 235, 104,
-                32, 211, 191, 104, 242, 130, 4, 210, 231, 87, 234, 31, 137, 61,
-            ],
-            [
-                67, 24, 217, 195, 195, 169, 174, 25, 213, 64, 1, 194, 246, 248, 171, 154, 180, 254,
-                50, 133, 110, 73, 142, 85, 50, 124, 227, 48, 239, 34, 229, 69,
-            ],
-            [
-                123, 154, 74, 122, 147, 201, 134, 195, 107, 152, 133, 165, 56, 209, 151, 38, 63,
-                73, 100, 182, 132, 196, 230, 34, 37, 216, 110, 63, 100, 185, 43, 174,
-            ],
-        ];
-        assert_eq!(fingerprints, expected);
     }
 }

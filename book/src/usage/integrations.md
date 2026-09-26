@@ -25,7 +25,7 @@ The adapter joins these two views.
 | Which field holds those values | Select the matching Akita configuration | `CommitmentConfig` |
 | Which claims belong together | Group polynomials by arity and opening point | `OpeningClaims` |
 | Which public statement is proved | Preserve commitments, points, values, and group order | `GroupBatchStatement` |
-| Which protocol session owns the proof | Choose a stable application label | `AkitaTranscript` |
+| Which protocol session owns the proof | Choose stable versioned session bytes | `&[u8]` session |
 | What crosses the prover boundary | Define a versioned public bundle | Setup, schedule selection, claims, and proof |
 
 This is the main design rule: keep the host meaning outside Akita, but make the
@@ -83,15 +83,14 @@ securely identifies, everything the verifier needs:
 - the exact generated schedule selection;
 - the ordered commitments;
 - the ordered opening points and claimed values;
-- the expected proof shape;
-- the proof bytes;
-- the transcript domain used by this host protocol.
+- the native proof bytes;
+- the session bytes used by this host protocol.
 
 This bundle is more than a transport format. It is the complete public claim.
 The verifier should not infer missing group order, try several configurations,
 or choose a schedule after receiving the proof.
 
-Use a transcript label owned by the host, such as
+Use session bytes owned by the host, such as
 `my-system/trace-openings/v1`. A versioned label separates this proof from every
 other Akita use and gives the host a clean protocol upgrade boundary.
 

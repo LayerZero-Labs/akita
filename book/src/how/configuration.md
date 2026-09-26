@@ -48,7 +48,9 @@ the committed profiles, which the validated catalog retains for lookup. Resolvin
 a key, profile, or selection borrows the catalog's row.
 
 `SetupRequirements::from_catalog` computes the matrix capacity and recursive
-prefix slots together. Setup construction reuses those requirements when loading,
+prefix slots together, and records the capacity bound it was computed at.
+`SetupRequirements::union` combines requirements from several catalogs at the
+same bound. Setup construction reuses those requirements when loading,
 repairing, or generating a setup. Independently supported precommitted groups still
 contribute to matrix capacity when their larger grouped schedule exceeds the
 requested bounds.
@@ -100,7 +102,7 @@ an error rather than panicking.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner overview, search model, and artifact generation.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
-- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
+- `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`native_nonterminal_level_layout`, planned witness sizing).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-planner/src/emit/`, and
   `crates/akita-schedules/src/artifact.rs`.

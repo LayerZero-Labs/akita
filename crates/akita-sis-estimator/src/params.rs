@@ -124,8 +124,6 @@ pub struct SisParameters {
     pub length_bound: Bound,
     /// Norm used to interpret `length_bound`.
     pub norm: SisNorm,
-    /// Optional caller tag propagated to estimator output.
-    pub tag: Option<String>,
 }
 
 impl SisParameters {
@@ -147,41 +145,6 @@ impl SisParameters {
             m,
             length_bound,
             norm,
-            tag: None,
-        };
-        params.validate()?;
-        Ok(params)
-    }
-
-    /// Return a copy with a caller-visible tag.
-    #[must_use]
-    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
-        self.tag = Some(tag.into());
-        self
-    }
-
-    /// Return a copy with a different column count.
-    #[must_use]
-    pub const fn with_m(mut self, m: Option<u64>) -> Self {
-        self.m = m;
-        self
-    }
-
-    /// Return a validated copy with selected fields replaced.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the updated parameters are malformed.
-    pub fn updated(&self, update: SisParameterUpdate) -> Result<Self> {
-        let params = Self {
-            n: update.n.unwrap_or(self.n),
-            q: update.q.unwrap_or_else(|| self.q.clone()),
-            m: update.m.unwrap_or(self.m),
-            length_bound: update
-                .length_bound
-                .unwrap_or_else(|| self.length_bound.clone()),
-            norm: update.norm.unwrap_or(self.norm),
-            tag: update.tag.unwrap_or_else(|| self.tag.clone()),
         };
         params.validate()?;
         Ok(params)
@@ -214,23 +177,6 @@ impl SisParameters {
         }
         self.length_bound.validate()
     }
-}
-
-/// Field replacements for [`SisParameters::updated`].
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SisParameterUpdate {
-    /// Replacement `n`.
-    pub n: Option<u32>,
-    /// Replacement `q`.
-    pub q: Option<BigUint>,
-    /// Replacement `m`; `Some(None)` clears `m`.
-    pub m: Option<Option<u64>>,
-    /// Replacement length bound.
-    pub length_bound: Option<Bound>,
-    /// Replacement norm.
-    pub norm: Option<SisNorm>,
-    /// Replacement tag; `Some(None)` clears the tag.
-    pub tag: Option<Option<String>>,
 }
 
 /// Representative modulus for Akita q32 tables: `2^32 - 99`.
@@ -319,38 +265,6 @@ mod tests {
     }
 
     #[test]
-    fn updated_replaces_selected_fields_and_validates_result() {
-        let params = SisParameters::try_new(
-            32,
-            akita_q32(),
-            Some(64),
-            Bound::from_u64(15),
-            SisNorm::Infinity,
-        )
-        .unwrap()
-        .with_tag("base");
-        let updated = params
-            .updated(SisParameterUpdate {
-                m: Some(None),
-                length_bound: Some(Bound::from_u64(255)),
-                tag: Some(Some("updated".to_string())),
-                ..SisParameterUpdate::default()
-            })
-            .unwrap();
-        assert_eq!(updated.n, 32);
-        assert_eq!(updated.m, None);
-        assert_eq!(updated.tag.as_deref(), Some("updated"));
-        assert_eq!(updated.length_bound, Bound::from_u64(255));
-
-        assert!(params
-            .updated(SisParameterUpdate {
-                n: Some(0),
-                ..SisParameterUpdate::default()
-            })
-            .is_err());
-    }
-
-    #[test]
     fn representative_moduli_match_golden_families() {
         assert_eq!(akita_q32(), BigUint::from(4_294_967_197u64));
         assert_eq!(akita_q64(), BigUint::from(u64::MAX) - BigUint::from(58u32));
@@ -369,11 +283,9 @@ mod tests {
             Bound::from_u64(15),
             SisNorm::Infinity,
         )
-        .unwrap()
-        .with_tag("smoke");
+        .unwrap();
         let debug = format!("{params:?}");
         assert!(debug.contains("SisParameters"));
         assert!(debug.contains("Infinity"));
-        assert!(debug.contains("smoke"));
     }
 }

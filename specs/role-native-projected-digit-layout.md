@@ -164,7 +164,7 @@ empty-factor traversal.
 
 ## Persistent commitment hints
 
-`AkitaCommitmentHint<F>` contains one A-native `RingVec<F>` per polynomial in
+`PortableCommitmentHandle<F>` contains one A-native `RingVec<F>` per polynomial in
 claim order and one shared A dimension.
 
 For polynomial `h`, its row stores
@@ -485,7 +485,7 @@ The implementation **MUST** evolve the existing authorities:
 - `RelationRhsLayout::row_ring_dims()` owns quotient row dimensions and order;
 - `RelationAddressGeometry` owns the common block and complete flat domain;
 - the existing projected-decomposition kernel owns split-before-decompose; and
-- `AkitaCommitmentHint` owns persistent A-native hint rows.
+- `PortableCommitmentHandle` owns persistent A-native hint rows.
 
 Code **MUST NOT** introduce a second compact layout type, a mixed-only witness
 type, a uniform wrapper, a `_for_level` forwarding helper, or duplicated length

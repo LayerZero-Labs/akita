@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 
 use crate::proof::DigitBlocks;
-use crate::{WitnessLayout, WitnessUnitLayout};
+use crate::WitnessUnitLayout;
 
 /// Destination for canonical witness coefficient emission.
 pub trait WitnessCoefficientSink {
@@ -149,86 +149,6 @@ pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
                     }
                 }
             }
-        }
-    }
-    Ok(())
-}
-
-/// Emit one ownership unit's replicated Z planes at canonical addresses.
-pub fn emit_witness_z_planes<const D_SOURCE: usize>(
-    out: &mut impl WitnessCoefficientSink,
-    unit: &WitnessUnitLayout,
-    num_positions_per_block: usize,
-    depth_commit: usize,
-    depth_fold: usize,
-    all_planes: &[[i8; D_SOURCE]],
-) -> Result<(), AkitaError> {
-    let expected = num_positions_per_block
-        .checked_mul(depth_commit)
-        .and_then(|n| n.checked_mul(depth_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z source length overflow".into()))?;
-    if all_planes.len() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: all_planes.len(),
-        });
-    }
-    for position in 0..num_positions_per_block {
-        for commit_digit in 0..depth_commit {
-            for fold_digit in 0..depth_fold {
-                let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
-                out.write_coefficients(
-                    unit.z_coefficient_index(
-                        D_SOURCE,
-                        num_positions_per_block,
-                        depth_commit,
-                        depth_fold,
-                        position,
-                        commit_digit,
-                        fold_digit,
-                        0,
-                    )?,
-                    &all_planes[source],
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Emit the shared R planes at canonical witness addresses.
-pub fn emit_witness_r_planes<const D: usize>(
-    out: &mut impl WitnessCoefficientSink,
-    layout: &WitnessLayout,
-    quotient_depth: usize,
-    planes: &[[i8; D]],
-) -> Result<(), AkitaError> {
-    if layout.r_rows().iter().any(|row| {
-        row.geometry().polynomial_modulus_dimension() != D
-            || row.geometry().coordinate_plane_count() != 1
-    }) || Some(quotient_depth) != layout.quotient_depth()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "witness R source shape is malformed".into(),
-        ));
-    }
-    let expected = layout
-        .r_rows()
-        .len()
-        .checked_mul(quotient_depth)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness R source shape overflow".into()))?;
-    if planes.len() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: planes.len(),
-        });
-    }
-    for row in 0..layout.r_rows().len() {
-        for digit in 0..quotient_depth {
-            out.write_coefficients(
-                layout.r_coefficient_index(row, digit, 0, 0)?,
-                &planes[row * quotient_depth + digit],
-            )?;
         }
     }
     Ok(())

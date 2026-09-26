@@ -181,42 +181,6 @@ pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
     Ok(())
 }
 
-/// Validate that a const-generic ring dimension is supported for dispatch.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] when `D` is zero or not a power of two.
-#[inline]
-pub fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
-    if D == 0 || !D.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "ring dimension must be a non-zero power of two".to_string(),
-        ));
-    }
-    Ok(D.trailing_zeros() as usize)
-}
-
-/// Validate that schedule level params match the dispatched role dimension.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] on dimension mismatch.
-#[inline]
-pub fn validate_role_dispatch<const D: usize>(
-    dims: CommitmentRingDims,
-    role: RingRole,
-) -> Result<usize, AkitaError> {
-    let ring_bits = validate_ring_dispatch::<D>()?;
-    if dims.dim_for(role) != D {
-        return Err(AkitaError::InvalidSetup(format!(
-            "role {:?} ring dimension {} does not match dispatch D={D}",
-            role,
-            dims.dim_for(role)
-        )));
-    }
-    Ok(ring_bits)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, CommittedSourceContract, HonestFoldPolicy, HonestFoldSizingQuery,
@@ -396,7 +396,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     let opening_batch = key.opening_layout()?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
-    let num_ring_elems = 1usize.checked_shl(reduced_vars as u32).ok_or_else(|| {
+    let num_ring_elems = checked::pow2(reduced_vars).ok_or_else(|| {
         AkitaError::InvalidSetup("root reduced-variable domain is too large".into())
     })?;
     let delta_commit = candidate_ctx
@@ -515,10 +515,10 @@ fn root_final_group_level_params_candidate(
         .num_digits_inner(ctx.policy.decomposition, log_basis_inner)?;
     let num_digits_outer = num_digits_open(level_decomp);
     let num_digits_open = num_digits_outer;
-    let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
+    let Some(num_live_blocks) = checked::pow2(block_index_bits) else {
         return Ok(None);
     };
-    let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
+    let Some(num_positions_per_block) = checked::pow2(position_index_bits) else {
         return Ok(None);
     };
     let Some(num_live_ring_elements_per_claim) =
@@ -856,18 +856,16 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let setup_field_budget = if matches!(
         active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         active_policy.setup_field_budget
     } else {
         None
     };
-    let root_input_witness_len = 1usize
-        .checked_shl(key.final_group.num_vars() as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
-        })?;
+    let root_input_witness_len = checked::pow2(key.final_group.num_vars()).ok_or_else(|| {
+        AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
+    })?;
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
         diagnostics,
@@ -915,13 +913,13 @@ pub(crate) fn find_schedule_in_relation_order(
     }
     let suffix = suffix?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => {
+        crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
@@ -946,8 +944,8 @@ pub(crate) fn find_schedule_in_relation_order(
     };
     let first_direct_setup_field_len = if matches!(
         active_policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         Some(
             best.first_direct_setup_field_len

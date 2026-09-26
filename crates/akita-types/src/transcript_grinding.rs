@@ -3,17 +3,11 @@
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
-use akita_serialization::{AkitaSerialize, SerializationError};
-use akita_transcript::{
-    grinding_predicate_accepts, sample_ext_challenge, search_grinding_nonce, Transcript,
-    TranscriptChallengePreview,
-};
+use akita_transcript::native_nonce_max_bytes;
 pub use akita_transcript::{
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
     MAX_GRINDING_BITS,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
-use std::num::NonZeroU8;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
@@ -22,7 +16,7 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
 pub const FOLD_RESPONSE_ATTEMPTS: u32 = 1 << FOLD_RESPONSE_NONCE_BITS;
 /// Transcript-grinding binding encoding revision.
-pub const GRINDING_ENCODING_VERSION: u16 = 1;
+pub const GRINDING_ENCODING_VERSION: u16 = 2;
 /// Query catalog and loss-policy revision.
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 2;
 /// Indexed fold-coordinate oracle revision.
@@ -63,7 +57,7 @@ pub enum GrindingQueryKind {
 }
 
 /// Sumcheck family used in a fixed-width site payload.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SumcheckProtocol {
     ExtensionOpeningReduction,
     Stage1,
@@ -73,13 +67,28 @@ pub enum SumcheckProtocol {
 }
 
 impl SumcheckProtocol {
-    const fn tag(self) -> u32 {
+    /// Canonical protocol discriminator stored in native sumcheck site identities.
+    #[must_use]
+    pub const fn tag(self) -> u32 {
         match self {
             Self::ExtensionOpeningReduction => 0,
             Self::Stage1 => 1,
             Self::PhysicalL2 => 2,
             Self::Stage2 => 3,
             Self::Stage3 => 4,
+        }
+    }
+
+    /// Decode a canonical native sumcheck protocol discriminator.
+    #[must_use]
+    pub const fn from_tag(tag: u32) -> Option<Self> {
+        match tag {
+            0 => Some(Self::ExtensionOpeningReduction),
+            1 => Some(Self::Stage1),
+            2 => Some(Self::PhysicalL2),
+            3 => Some(Self::Stage2),
+            4 => Some(Self::Stage3),
+            _ => None,
         }
     }
 }
@@ -140,6 +149,86 @@ pub enum GrindingSite {
 }
 
 impl GrindingSite {
+    fn native_site_id(self, detail: u32) -> akita_transcript::ProtocolSiteId {
+        let mut site = akita_transcript::ProtocolSiteId {
+            detail,
+            ..akita_transcript::ProtocolSiteId::default()
+        };
+        match self {
+            Self::EvaluationBatch { level } => {
+                site.family = 100;
+                site.level = level;
+            }
+            Self::ExtensionOpeningPoint { level } => {
+                site.family = 101;
+                site.level = level;
+            }
+            Self::ExtensionOpeningClaimBatch { level } => {
+                site.family = 102;
+                site.level = level;
+            }
+            Self::SumcheckRound {
+                protocol,
+                level,
+                stage,
+                round,
+            } => {
+                site.family = 103;
+                site.invocation = protocol.tag();
+                site.level = level;
+                site.stage = stage;
+                site.round = round;
+            }
+            Self::FoldResponse { level } => {
+                site.family = 104;
+                site.level = level;
+            }
+            Self::FoldChallengeGroup { level, group } => {
+                site.family = 105;
+                site.level = level;
+                site.group = group;
+            }
+            Self::RingSwitchAlpha { level } => {
+                site.family = 106;
+                site.level = level;
+            }
+            Self::Tau0Point { level } => {
+                site.family = 107;
+                site.level = level;
+            }
+            Self::Tau1Point { level } => {
+                site.family = 108;
+                site.level = level;
+            }
+            Self::Stage1InterstageBatch { level, stage } => {
+                site.family = 109;
+                site.level = level;
+                site.stage = stage;
+            }
+            Self::L2SubclaimBatch { level } => {
+                site.family = 110;
+                site.level = level;
+            }
+            Self::L2NormMerge { level } => {
+                site.family = 111;
+                site.level = level;
+            }
+            Self::L2VirtualBatch { level } => {
+                site.family = 112;
+                site.level = level;
+            }
+            Self::CompressionBinary { level } => {
+                site.family = 113;
+                site.level = level;
+            }
+            Self::Stage2Batch { level } => {
+                site.family = 114;
+                site.level = level;
+            }
+        }
+        site
+    }
+
     /// Security role determined by this logical site.
     #[must_use]
     pub const fn kind(self) -> GrindingQueryKind {
@@ -170,38 +259,6 @@ impl GrindingSite {
             | Self::CompressionBinary { level }
             | Self::Stage2Batch { level } => level,
         }
-    }
-
-    /// Canonical transcript label for a proof-of-work query.
-    #[must_use]
-    pub const fn proof_of_work_label(self) -> Option<&'static [u8]> {
-        use akita_transcript::labels;
-
-        match self {
-            Self::EvaluationBatch { .. } => Some(labels::CHALLENGE_EVAL_BATCH),
-            Self::ExtensionOpeningPoint { .. } | Self::Stage2Batch { .. } => {
-                Some(labels::CHALLENGE_SUMCHECK_BATCH)
-            }
-            Self::ExtensionOpeningClaimBatch { .. } => Some(labels::CHALLENGE_EOR_CLAIM_BATCH),
-            Self::SumcheckRound { .. } => Some(labels::CHALLENGE_SUMCHECK_ROUND),
-            Self::RingSwitchAlpha { .. } => Some(labels::CHALLENGE_RING_SWITCH),
-            Self::Tau0Point { .. } => Some(labels::CHALLENGE_TAU0),
-            Self::Tau1Point { .. } => Some(labels::CHALLENGE_TAU1),
-            Self::Stage1InterstageBatch { .. } => Some(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH),
-            Self::L2SubclaimBatch { .. } => Some(labels::CHALLENGE_L2_NORM_BATCH),
-            Self::L2NormMerge { .. } => Some(labels::CHALLENGE_L2_NORM_MERGE),
-            Self::L2VirtualBatch { .. } => Some(labels::CHALLENGE_L2_VIRTUAL_BATCH),
-            Self::CompressionBinary { .. } => Some(labels::CHALLENGE_COMPRESSION_BINARY),
-            Self::FoldResponse { .. } | Self::FoldChallengeGroup { .. } => None,
-        }
-    }
-
-    /// Fixed-width canonical encoding used by plan digests and audit events.
-    #[must_use]
-    pub fn canonical_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_canonical_bytes(&mut bytes);
-        bytes
     }
 
     fn validate(self) -> Result<(), AkitaError> {
@@ -482,14 +539,17 @@ pub struct GrindingPlan {
     runs: Vec<GrindingRun>,
     nominal_capacity_bits: u32,
     total_nonce_bits: usize,
+    native_nonce_max_bytes: usize,
     expanded_query_count: u64,
 }
 
 /// Aggregate transcript-grinding cost used while pricing planner candidates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TranscriptGrindingCost {
-    /// Total packed nonce width before byte alignment.
+    /// Semantic nonce widths used for range checks and security accounting.
     pub total_nonce_bits: usize,
+    /// Maximum canonical native bytes emitted by the independently encoded nonces.
+    pub native_nonce_max_bytes: usize,
     /// Number of logical transcript queries after expanding compact runs.
     pub expanded_query_count: u64,
 }
@@ -502,6 +562,7 @@ pub(crate) struct GrindingPlanAccumulator {
     nominal_capacity_bits: u32,
     run_count: u32,
     total_nonce_bits: usize,
+    native_nonce_max_bytes: usize,
     expanded_query_count: u64,
 }
 
@@ -516,6 +577,7 @@ impl GrindingPlanAccumulator {
             nominal_capacity_bits,
             run_count: 0,
             total_nonce_bits: 0,
+            native_nonce_max_bytes: 0,
             expanded_query_count: 0,
         })
     }
@@ -549,6 +611,22 @@ impl GrindingPlanAccumulator {
             .total_nonce_bits
             .checked_add(repeated_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("grinding plan bit count overflow".into()))?;
+        if run.nonce_bits != 0 {
+            let run_bytes = native_nonce_max_bytes(run.nonce_bits)
+                .checked_mul(multiplicity)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+                })?;
+            let repeated_bytes = run_bytes.checked_mul(repetitions as usize).ok_or_else(|| {
+                AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+            })?;
+            self.native_nonce_max_bytes = self
+                .native_nonce_max_bytes
+                .checked_add(repeated_bytes)
+                .ok_or_else(|| {
+                AkitaError::InvalidSetup("native grinding nonce byte count overflow".into())
+            })?;
+        }
         self.expanded_query_count = self
             .expanded_query_count
             .checked_add(repeated_queries)
@@ -559,43 +637,18 @@ impl GrindingPlanAccumulator {
     pub(crate) const fn cost(&self) -> TranscriptGrindingCost {
         TranscriptGrindingCost {
             total_nonce_bits: self.total_nonce_bits,
+            native_nonce_max_bytes: self.native_nonce_max_bytes,
             expanded_query_count: self.expanded_query_count,
         }
     }
 }
 
-#[path = "transcript_grinding/replay.rs"]
-mod replay;
-pub use replay::{
-    ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptGrinding, TranscriptNonceReader,
-    TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,
-    VerifierTranscriptGrinding,
+#[path = "transcript_grinding/native_replay.rs"]
+mod native_replay;
+pub use native_replay::{
+    NativeGrindingSumcheckProver, NativeGrindingSumcheckVerifier, NativeProofAcceptance,
+    NativeProverGrinding, NativeVerifierGrinding,
 };
-
-/// Apply the scheduled work and draw one sumcheck challenge.
-pub fn sample_grinded_sumcheck_challenge<F, E, T>(
-    transcript: &mut T,
-    protocol: SumcheckProtocol,
-    level: u32,
-    stage: u32,
-    round: u32,
-) -> Result<E, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F>,
-    T: TranscriptGrinding<F>,
-{
-    transcript.grind_query(GrindingSite::SumcheckRound {
-        protocol,
-        level,
-        stage,
-        round,
-    })?;
-    Ok(sample_ext_challenge(
-        transcript,
-        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
-    ))
-}
 
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.
@@ -604,6 +657,7 @@ impl GrindingPlan {
         for &run in &runs {
             accumulator.push(run)?;
         }
+        let native_nonce_max_bytes = accumulator.native_nonce_max_bytes;
         let cost = accumulator.cost();
         if cost.expanded_query_count >= TRANSCRIPT_GRINDING_QUERY_LIMIT {
             return Err(AkitaError::InvalidSetup(
@@ -614,6 +668,7 @@ impl GrindingPlan {
             runs,
             nominal_capacity_bits,
             total_nonce_bits: cost.total_nonce_bits,
+            native_nonce_max_bytes,
             expanded_query_count: cost.expanded_query_count,
         })
     }
@@ -633,6 +688,12 @@ impl GrindingPlan {
     #[must_use]
     pub const fn total_nonce_bits(&self) -> usize {
         self.total_nonce_bits
+    }
+
+    /// Maximum bytes emitted by native inline proof-of-work and fold-response nonces.
+    #[must_use]
+    pub const fn native_nonce_max_bytes(&self) -> usize {
+        self.native_nonce_max_bytes
     }
 
     #[must_use]

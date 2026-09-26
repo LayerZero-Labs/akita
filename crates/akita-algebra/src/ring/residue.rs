@@ -192,29 +192,6 @@ where
     ResidueKernelPoint::new(alpha, coefficients.len())?.kernel(coefficients)
 }
 
-/// Evaluate every reduced shift of a sparse public multiplier at `alpha`.
-///
-/// This is the sparse-input counterpart of [`residue_kernel`]. It preserves
-/// the same signed-wrap recurrence while storing only the supplied nonzero
-/// `(position, coefficient)` pairs, avoiding a dimension-sized temporary input
-/// vector. The returned kernel remains dense because every reduced shift is
-/// consumed by the relation-weight compiler.
-///
-/// # Errors
-///
-/// Returns an error unless `dimension` is a nonzero power of two and every
-/// supplied position is unique, in range, and paired with a nonzero weight.
-pub fn sparse_residue_kernel<E>(
-    dimension: usize,
-    terms: impl IntoIterator<Item = (usize, E)>,
-    alpha: E,
-) -> Result<Vec<E>, AkitaError>
-where
-    E: Field,
-{
-    ResidueKernelPoint::new(alpha, dimension)?.sparse_kernel(terms)
-}
-
 /// Prepare terminal weights for one exact physical equality window.
 ///
 /// `equality_weights[j]` must be the checked value `eq(point, start + j)` for
@@ -241,7 +218,8 @@ where
 mod tests {
     use super::*;
     use crate::offset_eq::OffsetEqWindow;
-    use crate::ring::{eval_ring_at_pows, scalar_powers, CyclotomicRing};
+    use crate::ring::eval::eval_ring_at_pows;
+    use crate::ring::{scalar_powers, CyclotomicRing};
     use jolt_field::{
         Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
         Zero,
@@ -380,6 +358,53 @@ mod tests {
     }
 
     #[test]
+    fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
+        use crate::offset_eq::eq_eval_at_index;
+        use crate::ring::eval_flat_ring_at_pows_fast;
+        use jolt_field::{Fp32, FpExt2, NegOneNr};
+        type B = Fp32<251>;
+        type X = FpExt2<B, NegOneNr>;
+
+        let extension = |lo, hi| X::from_base_slice(&[B::from_u64(lo), B::from_u64(hi)]);
+        let point = [
+            extension(3, 5),
+            extension(7, 11),
+            extension(13, 17),
+            extension(19, 23),
+        ];
+        let alpha = extension(29, 31);
+        let multiplier = (0..8)
+            .map(|index| B::from_u64(37 + index as u64))
+            .collect::<Vec<_>>();
+        let mut equality = vec![X::zero(); 8];
+        OffsetEqWindow::new(&point)
+            .unwrap()
+            .fill_interval(5, &mut equality)
+            .unwrap();
+        let functional = terminal_residue_kernel(&equality, alpha).unwrap();
+        let powers = scalar_powers(alpha, 8);
+        let expected = (0..8).fold(X::zero(), |evaluation, witness_coefficient| {
+            let residue = multiplier.iter().enumerate().fold(
+                X::zero(),
+                |sum, (multiplier_coefficient, &coefficient)| {
+                    let exponent = multiplier_coefficient + witness_coefficient;
+                    let product = powers[exponent % 8].mul_base(coefficient);
+                    if exponent < 8 {
+                        sum + product
+                    } else {
+                        sum - product
+                    }
+                },
+            );
+            evaluation + eq_eval_at_index(&point, 5 + witness_coefficient) * residue
+        });
+        assert_eq!(
+            eval_flat_ring_at_pows_fast(&multiplier, &functional),
+            expected
+        );
+    }
+
+    #[test]
     fn modulus_roots_do_not_require_division() {
         type F = Prime128OffsetA7F7;
         let alpha = crate::fft::primitive_nth_root::<F>(4);
@@ -417,7 +442,10 @@ mod tests {
         }
 
         assert_eq!(
-            sparse_residue_kernel(64, terms, alpha).unwrap(),
+            ResidueKernelPoint::new(alpha, 64)
+                .unwrap()
+                .sparse_kernel(terms)
+                .unwrap(),
             residue_kernel::<F, F>(&dense, alpha).unwrap()
         );
     }
@@ -447,9 +475,12 @@ mod tests {
     fn sparse_recurrence_rejects_malformed_terms() {
         type F = Prime128OffsetA7F7;
         let alpha = F::from_u64(7);
-        assert!(sparse_residue_kernel(3, [], alpha).is_err());
-        assert!(sparse_residue_kernel(4, [(4, F::one())], alpha).is_err());
-        assert!(sparse_residue_kernel(4, [(1, F::one()), (1, -F::one())], alpha).is_err());
-        assert!(sparse_residue_kernel(4, [(1, F::zero())], alpha).is_err());
+        assert!(ResidueKernelPoint::new(alpha, 3).is_err());
+        let point = ResidueKernelPoint::new(alpha, 4).unwrap();
+        assert!(point.sparse_kernel([(4, F::one())]).is_err());
+        assert!(point
+            .sparse_kernel([(1, F::one()), (1, -F::one())])
+            .is_err());
+        assert!(point.sparse_kernel([(1, F::zero())]).is_err());
     }
 }

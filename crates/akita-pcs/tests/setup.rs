@@ -22,11 +22,10 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::DensePoly;
-use akita_prover::OneHotPoly;
-use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
+use akita_cpu_backend::CpuBackend;
+use akita_cpu_backend::DensePoly;
+use akita_cpu_backend::OneHotPoly;
+use akita_types::{BasisMode, SetupMatrixCapacity};
 use common::{
     dense_field_evals, init_rayon_pool, load_workspace_scheme, opening_from_poly_for_layout,
     prove_input, random_point, run_on_large_stack, verify_input, F,
@@ -47,13 +46,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 const POLY_NV: usize = 16;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
-
-fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
-    assert!(
-        proof.num_fold_levels() >= 2,
-        "{label} should exercise a folded proof path"
-    );
-}
 
 /// Run `f` on a large-stack worker thread and re-raise its panic payload
 /// unchanged, so that `#[should_panic(expected = "...")]` can match the
@@ -133,13 +125,7 @@ where
     );
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -181,48 +167,43 @@ where
         .expect_err("one-field-short verifier setup must reject");
     }
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
+    let session = b"setup-tests/dense";
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("prove");
-    assert_folded_proof("single dense setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     scheme
         .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -275,13 +256,7 @@ where
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -310,48 +285,43 @@ where
         verifier_capacity.num_field_elements
     );
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
-    let poly_refs: [&OneHotPoly<F, usize>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    let session = b"setup-tests/onehot";
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("prove");
-    assert_folded_proof("single onehot setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     scheme
         .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -363,20 +333,16 @@ where
         .expect("verify");
 
     assert!(
-        proof.num_fold_levels() >= 2,
-        "folded-only protocol requires at least two folds"
+        !proof.is_empty(),
+        "native proof must contain protocol messages"
     );
     let mut tampered = proof.clone();
-    let witness = tampered.terminal.terminal_response_mut();
-    let mut t_coeffs = witness.t_fields.coeffs().to_vec();
-    t_coeffs[0] += F::one();
-    witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    *tampered.last_mut().expect("nonempty proof") ^= 1;
     scheme
         .batched_verify(
             &tampered,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -385,18 +351,16 @@ where
             ),
             BasisMode::Lagrange,
         )
-        .expect_err("tampering predecessor-bound terminal t must be rejected");
+        .expect_err("tampering the terminal response must be rejected");
 
     let mut wrong_binding = proof.clone();
-    wrong_binding.root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterPayload(
-        akita_types::RingVec::from_coeffs(Vec::new()),
-    );
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    let binding_probe = wrong_binding.len() / 2;
+    wrong_binding[binding_probe] ^= 1;
     scheme
         .batched_verify(
             &wrong_binding,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -458,55 +422,44 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
+    let session = b"setup-tests/batched-dense";
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("batched prove");
-    assert_folded_proof("batched dense setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     scheme
         .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],
@@ -572,55 +525,44 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            &polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
+    let session = b"setup-tests/batched-onehot";
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
-            prove_input::<Cfg, _>(
+            prove_input::<Cfg>(
                 &pt[..],
-                &poly_refs[..],
+                &openings,
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
                 scheme.schedules(),
             ),
             &stack,
-            &mut prover_transcript,
+            session,
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-    assert_folded_proof("batched onehot setup-capacity round trip", &proof);
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     scheme
         .batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            session,
             verify_input::<Cfg>(
                 &pt[..],
                 opening_groups[0],

@@ -1,11 +1,7 @@
 use akita_config::CommitmentConfig;
-use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootProvePoly};
-use akita_prover::CpuBackend;
-use akita_prover::{OneHotIndex, OneHotPoly};
-use akita_types::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    BasisMode, CommittedGroupParams,
-};
+use akita_cpu_backend::evaluate_root_polynomial;
+use akita_cpu_backend::{OneHotIndex, OneHotPoly};
+use akita_types::{lagrange_weights, BasisMode, CommittedGroupParams};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -124,51 +120,22 @@ where
     opening
 }
 
-pub(super) fn opening_from_poly<'a, FF, const D: usize, P>(
-    poly: &'a P,
+pub(super) fn opening_from_poly<FF, const D: usize, P>(
+    poly: &P,
     point: &[FF],
     layout: &CommittedGroupParams,
     basis: BasisMode,
 ) -> FF
 where
     FF: CanonicalEncoding + Field,
-    P: RootProvePoly<FF, D>,
-    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
+    P: akita_cpu_backend::RootPolynomialEvaluator<FF, D>,
 {
-    let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.position_index_bits() + layout.block_index_bits();
-    assert!(
-        point.len() <= target_num_vars,
-        "opening point length {} exceeds target root arity {}",
-        point.len(),
-        target_num_vars
-    );
-    let mut padded_point = point.to_vec();
-    padded_point.resize(target_num_vars, FF::zero());
-
-    let inner_point = &padded_point[..alpha_bits];
-    let reduced_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
+    evaluate_root_polynomial::<FF, P, D>(
+        poly,
+        point,
         layout.blocks().positions_per_block,
         layout.blocks().live_blocks,
         basis,
     )
-    .expect("opening point shape should match layout");
-
-    let opening = OpeningFoldKernel::<P::OpeningView<'a>, FF, D>::evaluate_and_fold(
-        &CpuBackend::DEFAULT,
-        None,
-        poly.opening_view().expect("opening view"),
-        OpeningFoldPlan::Base {
-            live_block_weights: &ring_opening_point.live_block_weights,
-            position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.blocks().positions_per_block,
-        },
-    )
-    .expect("evaluate_and_fold");
-    let folded_ring = opening.eval;
-    let packed_inner = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
-        .expect("inner opening point should match ring dimension");
-    (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
+    .expect("root polynomial opening")
 }

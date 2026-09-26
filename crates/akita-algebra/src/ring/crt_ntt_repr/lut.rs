@@ -43,69 +43,99 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
+/// Division-free map from a centered integer to its Montgomery form modulo one
+/// CRT prime, for either limb width.
+///
+/// Every product is reduced by one signed 32-bit Montgomery step
+/// `redc(t) = t * 2^-32 mod p`, which maps `|t| < 2^31 p` into `(-p, p)`.
+/// With the centered constants `scale[j] = 2^(32 j) * R * 2^32 mod p`, where
+/// `R = 2^W::R_LOG`, `redc(x * scale[j])` is the Montgomery form of
+/// `x * 2^(32 j)`.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct CenteredPrimeReducer<W: PrimeWidth> {
+pub(super) struct CenteredMontReducer<W: PrimeWidth> {
     p: i64,
+    /// `p^-1 mod 2^32`.
+    pinv: i32,
+    scale: [i64; 4],
     _width: PhantomData<W>,
 }
 
-impl<W: PrimeWidth> CenteredPrimeReducer<W> {
+impl<W: PrimeWidth> CenteredMontReducer<W> {
     #[inline(always)]
     pub(super) fn new(prime: NttPrime<W>) -> Self {
         let p = prime.p.to_i64();
+        debug_assert!(p > 1 && p % 2 == 1 && p < 1 << (W::R_LOG - 1));
+        // An odd `p` is its own inverse mod 8; each Newton step doubles the
+        // correct low bits, so four steps reach 48 >= 32.
+        let p32 = p as u32;
+        let mut pinv = p32;
+        for _ in 0..4 {
+            pinv = pinv.wrapping_mul(2u32.wrapping_sub(p32.wrapping_mul(pinv)));
+        }
+        let two_32 = (1i64 << 32) % p;
+        let mut power = ((1u128 << (W::R_LOG + 32)) % p as u128) as i64;
+        let scale = from_fn(|_| {
+            let centered = if power > p / 2 { power - p } else { power };
+            power = power * two_32 % p;
+            centered
+        });
         Self {
             p,
+            pinv: pinv as i32,
+            scale,
             _width: PhantomData,
         }
     }
 
     #[inline(always)]
-    pub(super) fn reduce_i64(self, value: i64) -> W {
-        let mut r = value.rem_euclid(self.p);
-        if r > self.p / 2 {
-            r -= self.p;
+    fn redc(self, t: i64) -> i64 {
+        let m = (t as i32).wrapping_mul(self.pinv);
+        (t - i64::from(m) * self.p) >> 32
+    }
+
+    /// Montgomery form of `value`, in `(-p, p)`.
+    #[inline(always)]
+    pub(super) fn reduce_i32(self, value: i32) -> MontCoeff<W> {
+        // |value * scale[0]| <= 2^31 (p - 1) / 2.
+        MontCoeff::from_raw(W::from_i64(self.redc(i64::from(value) * self.scale[0])))
+    }
+
+    /// Montgomery form, in `(-p, p)`, of the value with the given
+    /// [`balanced_limbs`].
+    #[inline(always)]
+    pub(super) fn reduce_limbs(self, limbs: [i64; 4]) -> MontCoeff<W> {
+        // Each pair sum is at most 2 * 2^31 * (p - 1) / 2 in magnitude, so
+        // both reductions land in (-p, p) and their sum in (-2p, 2p).
+        let low = self.redc(limbs[0] * self.scale[0] + limbs[1] * self.scale[1]);
+        let high = self.redc(limbs[2] * self.scale[2] + limbs[3] * self.scale[3]);
+        let mut sum = low + high;
+        if sum >= self.p {
+            sum -= self.p;
+        } else if sum <= -self.p {
+            sum += self.p;
         }
-        W::from_i64(r)
+        MontCoeff::from_raw(W::from_i64(sum))
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct CenteredPrimeWideReducer<W: PrimeWidth> {
-    narrow: CenteredPrimeReducer<W>,
-    p_u64: u64,
-    r64: i64,
-}
-
-impl<W: PrimeWidth> CenteredPrimeWideReducer<W> {
-    #[inline(always)]
-    pub(super) fn new(prime: NttPrime<W>) -> Self {
-        let narrow = CenteredPrimeReducer::new(prime);
-        let p_u64 = narrow.p as u64;
-        let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
-        Self { narrow, p_u64, r64 }
-    }
-
-    #[inline(always)]
-    pub(super) fn reduce_i128(self, value: i128) -> W {
-        // Split the signed value into a low 64-bit limb and a sign-extended high
-        // word, then reduce `hi * 2^64 + lo` modulo the small CRT prime.
-        let lo = (value as u64 % self.p_u64) as i64;
-        let hi = ((value >> 64) as i64).rem_euclid(self.narrow.p);
-        let r = (lo + hi * self.r64) % self.narrow.p;
-        self.narrow.reduce_i64(r)
-    }
-}
-
-#[cfg(test)]
+/// Split `value` into balanced 32-bit limbs with
+/// `value = sum_j limbs[j] * 2^(32 j)`.
+///
+/// The low three limbs lie in `[-2^31, 2^31)` and the top limb in
+/// `[-2^31, 2^31]` for every `|value| <= 2^127`, which covers any centered
+/// residue of a modulus up to `2^128`.
 #[inline(always)]
-pub(super) fn centered_prime_residue_i64<W: PrimeWidth>(prime: NttPrime<W>, value: i64) -> W {
-    CenteredPrimeReducer::new(prime).reduce_i64(value)
-}
-
-#[cfg(test)]
-#[inline(always)]
-pub(super) fn centered_prime_residue_i128<W: PrimeWidth>(prime: NttPrime<W>, value: i128) -> W {
-    CenteredPrimeWideReducer::new(prime).reduce_i128(value)
+pub(super) fn balanced_limbs(value: i128) -> [i64; 4] {
+    let mut rest = value;
+    let mut limbs = [0i64; 4];
+    for limb in &mut limbs[..3] {
+        let low = rest as i32;
+        *limb = i64::from(low);
+        // Equals (rest - low) >> 32 without overflowing near 2^127.
+        rest = (rest >> 32) + i128::from(low < 0);
+    }
+    limbs[3] = rest as i64;
+    limbs
 }
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
@@ -209,38 +239,30 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     ) {
         self.debug_assert_active_digits(digits);
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i32>() {
+        if crate::ntt::butterfly::use_x86_transform_ntt::<D>(params.kernel_plan()) {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
             // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
-            // identifies W as i32. MontCoeff is transparent, while NttPrime
-            // and NttTwiddles have stable C layouts. Both arrays contain D
+            // identifies W. MontCoeff is transparent, while NttPrime and
+            // NttTwiddles have stable C layouts. Both arrays contain D >= 64
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
-                avx::forward_ntt_i8_i32(
-                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
-                    digits,
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
-                );
-            }
-            return;
-        }
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i16>() {
-            let prime = params.primes[k];
-            let tw = &params.twiddles[k];
-            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
-            // identifies W as i16. MontCoeff is transparent, while NttPrime
-            // and NttTwiddles have stable C layouts. Both arrays contain D
-            // elements, do not overlap, and the prepared plan proves AVX2.
-            unsafe {
-                avx::forward_ntt_i8_i16(
-                    &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
-                    digits,
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
-                );
+                if size_of::<W>() == size_of::<i16>() {
+                    avx::forward_ntt_i8_i16(
+                        &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
+                        digits,
+                        *(&prime as *const _ as *const NttPrime<i16>),
+                        &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    );
+                } else {
+                    avx::forward_ntt_i8_i32(
+                        &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
+                        digits,
+                        *(&prime as *const _ as *const NttPrime<i32>),
+                        &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                        params.kernel_plan().uses_avx512_transform(),
+                    );
+                }
             }
             return;
         }
@@ -279,10 +301,9 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>, max_abs: i32) -> Self {
         let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
-            let prime = params.primes[k];
-            let reducer = CenteredPrimeReducer::new(prime);
+            let reducer = CenteredMontReducer::new(params.primes[k]);
             (-max_abs..=max_abs)
-                .map(|v| prime.from_canonical(reducer.reduce_i64(i64::from(v))))
+                .map(|v| reducer.reduce_i32(v))
                 .collect()
         });
         Self {

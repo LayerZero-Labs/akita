@@ -112,32 +112,15 @@ fn wide_shift_accumulate_matches_narrow_fp64() {
 }
 
 #[test]
-fn wide_shift_sub_matches_narrow_fp64() {
-    let mut rng = StdRng::seed_from_u64(0x5678);
-    let src = CyclotomicRing::<F64, D>::random(&mut rng);
-    let initial = CyclotomicRing::<F64, D>::random(&mut rng);
-
-    for k in 0..D {
-        let mut narrow = initial;
-        src.shift_sub_into(&mut narrow, k);
-
-        let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
-        let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
-        wide_src.shift_sub_into(&mut wide_dst, k);
-        let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
-
-        assert_eq!(narrow, wide_reduced, "shift_sub k={k}");
-    }
-}
-
-#[test]
 fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0xabcd);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let positions = vec![0, 5, 17, 42, 63];
 
     let mut narrow = CyclotomicRing::<F64, D>::zero();
-    src.mul_by_monomial_sum_into(&mut narrow, &positions);
+    for &k in &positions {
+        narrow += src.negacyclic_shift(k);
+    }
 
     let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
     let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::zero();
@@ -177,10 +160,6 @@ fn wide_many_accumulations_fp128() {
         src.shift_accumulate_into(&mut narrow, k % D);
         wide_src.shift_accumulate_into(&mut wide_dst, k % D);
     }
-    for k in 0..30 {
-        src.shift_sub_into(&mut narrow, k % D);
-        wide_src.shift_sub_into(&mut wide_dst, k % D);
-    }
 
     let wide_reduced: CyclotomicRing<F128, D> = wide_dst.reduce();
     assert_eq!(narrow, wide_reduced);
@@ -215,6 +194,19 @@ fn center_for_decomposition_hits_fp128_overflow_boundaries() {
     }
 }
 
+fn decompose_i8(ring: &CyclotomicRing<F128, D>, levels: usize, log_basis: u32) -> Vec<[i8; D]> {
+    let q = (-F128::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
+    let mut digits = vec![[0i8; D]; levels];
+    ring.balanced_decompose_pow2_i8_into_with_params(
+        &mut digits,
+        &BalancedDecomposePow2Params::new(levels, log_basis, q),
+    );
+    digits
+}
+
 #[test]
 fn asymmetric_centering_boundary_roundtrip_fp128() {
     let q = (-F128::one())
@@ -240,45 +232,12 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             F128::from_u128_reduced(boundary_values[i % boundary_values.len()])
         }));
 
-        let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];
-        ring.balanced_decompose_pow2_into(&mut digits, log_basis);
-        let recomposed = CyclotomicRing::gadget_recompose_pow2(&digits, log_basis);
-        assert_eq!(
-            ring, recomposed,
-            "field roundtrip failed for log_basis={log_basis}, levels={levels}"
-        );
-
-        let mut i8_digits = vec![[0i8; D]; levels];
-        ring.balanced_decompose_pow2_i8_into(&mut i8_digits, log_basis);
+        let i8_digits = decompose_i8(&ring, levels, log_basis);
         let recomposed_i8 = CyclotomicRing::gadget_recompose_pow2_i8(&i8_digits, log_basis);
         assert_eq!(
             ring, recomposed_i8,
             "i8 roundtrip failed for log_basis={log_basis}, levels={levels}"
         );
-    }
-}
-
-#[test]
-fn flat_coefficient_decomposition_matches_ring_digit_layout() {
-    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| match index % 6 {
-        0 => F128::zero(),
-        1 => F128::one(),
-        2 => -F128::one(),
-        3 => F128::from_u64((index * 17) as u64),
-        4 => F128::from_i64(-((index * 19) as i64)),
-        _ => F128::from_u128_reduced(u128::MAX - index as u128),
-    }));
-
-    for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
-        let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
-        let mut flat_digits = vec![0i8; D * levels];
-        let q = (-F128::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
-        balanced_decompose_coefficients_pow2_i8_into(&ring.coeffs, &mut flat_digits, &params);
-        assert_eq!(flat_digits, ring_digits.as_flattened());
     }
 }
 
@@ -419,7 +378,8 @@ fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
     }));
 
     for log_basis in [10, 11] {
-        let digits = ring.balanced_decompose_pow2_i16(12, log_basis);
+        let mut digits = vec![[0i16; D]; 12];
+        ring.balanced_decompose_pow2_i16_into(&mut digits, log_basis);
         let bound = 1i16 << (log_basis - 1);
         assert!(digits
             .iter()
@@ -447,7 +407,7 @@ fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
         _ => F128::from_i64(127),
     }));
     for log_basis in [7, 8] {
-        let digits = ring.balanced_decompose_pow2_i8(16, log_basis);
+        let digits = decompose_i8(&ring, 16, log_basis);
         let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(&digits, log_basis);
         assert_eq!(recomposed, ring);
     }

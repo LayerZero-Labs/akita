@@ -1,6 +1,4 @@
-use akita_types::{
-    GrindingPlan, GrindingQueryKind, GrindingSite, SumcheckProtocol, TranscriptNonceStream,
-};
+use akita_types::{GrindingPlan, GrindingQueryKind, GrindingSite, SumcheckProtocol};
 
 struct SiteReport {
     component: &'static str,
@@ -11,20 +9,17 @@ struct SiteReport {
     group: Option<u32>,
 }
 
-pub(super) fn emit_grinding_plan_report(
-    label: &str,
-    plan: &GrindingPlan,
-    stream: &TranscriptNonceStream,
-) {
-    assert_eq!(stream.bit_len(), plan.total_nonce_bits());
-    let nonce_stream_bytes = stream.as_bytes().len();
-    let padding_bits = nonce_stream_bytes * 8 - plan.total_nonce_bits();
+pub(super) fn emit_grinding_plan_report(label: &str, plan: &GrindingPlan) {
+    let total_nonce_bits = plan.total_nonce_bits();
+    let packed_nonce_estimate_bytes = total_nonce_bits.div_ceil(8);
+    let padding_bits = packed_nonce_estimate_bytes * 8 - total_nonce_bits;
     tracing::info!(
         label,
         nominal_capacity_bits = plan.nominal_capacity_bits(),
-        total_nonce_bits = plan.total_nonce_bits(),
-        nonce_stream_bytes,
+        total_nonce_bits,
+        packed_nonce_estimate_bytes,
         padding_bits,
+        native_nonce_max_bytes = plan.native_nonce_max_bytes(),
         run_count = plan.runs().len(),
         expanded_query_count = plan.expanded_query_count(),
         "grinding plan summary"

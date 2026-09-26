@@ -3,9 +3,9 @@
 #![allow(missing_docs)]
 
 use akita_types::{
-    validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
-    CommittedGroupParams, FoldParams, FoldSchedule, RingRole, RingView, SisModulusProfileId,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalFoldParams, TerminalResponseShape,
+    validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, CommittedGroupParams,
+    FoldParams, FoldSchedule, RingView, SisModulusProfileId, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalFoldParams, TerminalResponseShape,
 };
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_field::Zero;
@@ -28,19 +28,6 @@ fn role_dims_reject_b_larger_than_a() {
         opening: 32,
     };
     validate_role_dims(dims).expect_err("B and D dimensions must divide the A-native source");
-}
-
-#[test]
-fn per_role_dispatch_rejects_wrong_stack_d() {
-    let dims = CommitmentRingDims {
-        inner: 128,
-        outer: 64,
-        opening: 32,
-    };
-    validate_role_dispatch::<64>(dims, RingRole::Inner).expect_err("A role requires 128");
-    validate_role_dispatch::<128>(dims, RingRole::Inner).expect("A role");
-    validate_role_dispatch::<64>(dims, RingRole::Outer).expect("B role");
-    validate_role_dispatch::<32>(dims, RingRole::Opening).expect("D role");
 }
 
 fn params(ring_dimension: usize) -> CommittedGroupParams {

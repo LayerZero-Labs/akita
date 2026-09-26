@@ -33,6 +33,17 @@ dead_patterns=(
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 removed_api_patterns=(
+  'CommitmentExecutionSchedule'
+  'CommitmentRoundStep'
+  'InnerOuterRouteKind'
+  'CpuProverConsumer'
+  'ProverConsumerFactory'
+  'PreparedProverGroup'
+  'ErasedPreparedProverGroup'
+  'UniformProverStack'
+  'LevelProveStacks'
+  'TieredProveStacks'
+  'ProverComputeStack'
   'CpuBackend::with_resource_limits'
   'commit_scratch_bytes_per_worker'
   'DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER'
@@ -142,6 +153,16 @@ removed_api_patterns=(
   'TerminalWitnessPlan'
   'MultilinearPolynomial\b'
   'multilinear_polynomial'
+  'BatchDecomposeFoldOutcome'
+  'DirectScanState'
+  'direct_scan_state'
+  'materialize_direct_scan'
+  'refresh_segments'
+  'evaluate_setup_index_weight_mle'
+  'prepare_setup_index_tensors'
+  'ReducedCoefficientFunctional'
+  'CompactFactorInputs'
+  'prepare_coefficient_packing_batch_groups'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
