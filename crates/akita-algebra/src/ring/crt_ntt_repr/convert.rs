@@ -240,7 +240,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
                 }
                 continue;
             }
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
             if self.kernel_plan.uses_neon()
                 && size_of::<W>() == size_of::<i32>()
                 && canonical.len() % 4 == 0

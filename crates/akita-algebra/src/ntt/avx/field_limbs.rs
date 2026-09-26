@@ -118,11 +118,13 @@ pub(crate) unsafe fn field_residues_i32<const L: usize, const K: usize, const D:
             let p = _mm256_set1_epi32(scales.p);
             let pinv = _mm256_set1_epi32(scales.pinv);
             let redc = |acc: __m256i| {
-                _mm256_sub_epi64(acc, _mm256_mul_epi32(_mm256_mul_epu32(acc, pinv), p))
+                // SAFETY: AVX2 is required by this function, and each signed
+                // accumulator satisfies the shared reducer's input bound.
+                unsafe { super::montgomery::mont_reduce_i32_products_avx2(acc, p, pinv) }
             };
             let reduced = _mm256_blend_epi32::<0b1010_1010>(
-                _mm256_srli_epi64::<32>(redc(acc_even)),
-                redc(acc_odd),
+                redc(acc_even),
+                _mm256_slli_epi64::<32>(redc(acc_odd)),
             );
             // SAFETY: `start + block + 8 <= D`, and MontCoeff<i32> is
             // transparent.

@@ -11,6 +11,7 @@
 
 use std::array::from_fn;
 
+use super::montgomery::{inverse_i32, reduce_i32};
 use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 
 /// Bits per signed field limb.
@@ -33,11 +34,6 @@ pub(crate) struct FieldLimbScales {
 impl FieldLimbScales {
     pub(crate) fn new<W: PrimeWidth>(prime: NttPrime<W>) -> Self {
         let p = prime.p.to_i64();
-        // Newton's iteration doubles the correct low bits of p^{-1} each step.
-        let mut pinv = 1u32;
-        for _ in 0..5 {
-            pinv = pinv.wrapping_mul(2u32.wrapping_sub((p as u32).wrapping_mul(pinv)));
-        }
         let scales = from_fn(|j| {
             let exponent = LIMB_BITS * j as u32 + W::R_LOG + 32;
             let residue = (0..exponent).fold(1i64, |x, _| 2 * x % p);
@@ -49,7 +45,7 @@ impl FieldLimbScales {
         });
         Self {
             p: p as i32,
-            pinv: pinv as i32,
+            pinv: inverse_i32(p as i32),
             scales,
         }
     }
@@ -62,8 +58,7 @@ impl FieldLimbScales {
             .zip(&self.scales)
             .map(|(&limb, &scale)| i64::from(limb) * i64::from(scale))
             .sum::<i64>();
-        let m = (t as i32).wrapping_mul(self.pinv);
-        ((t - i64::from(m) * i64::from(self.p)) >> 32) as i32
+        reduce_i32(t, self.p, self.pinv)
     }
 }
 

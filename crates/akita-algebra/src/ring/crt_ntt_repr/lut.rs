@@ -6,6 +6,7 @@ use std::mem::size_of;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx;
 use crate::ntt::butterfly::forward_ntt;
+use crate::ntt::montgomery::{inverse_i32, reduce_i32};
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
@@ -65,13 +66,6 @@ impl<W: PrimeWidth> CenteredMontReducer<W> {
     pub(super) fn new(prime: NttPrime<W>) -> Self {
         let p = prime.p.to_i64();
         debug_assert!(p > 1 && p % 2 == 1 && p < 1 << (W::R_LOG - 1));
-        // An odd `p` is its own inverse mod 8; each Newton step doubles the
-        // correct low bits, so four steps reach 48 >= 32.
-        let p32 = p as u32;
-        let mut pinv = p32;
-        for _ in 0..4 {
-            pinv = pinv.wrapping_mul(2u32.wrapping_sub(p32.wrapping_mul(pinv)));
-        }
         let two_32 = (1i64 << 32) % p;
         let mut power = ((1u128 << (W::R_LOG + 32)) % p as u128) as i64;
         let scale = from_fn(|_| {
@@ -81,7 +75,7 @@ impl<W: PrimeWidth> CenteredMontReducer<W> {
         });
         Self {
             p,
-            pinv: pinv as i32,
+            pinv: inverse_i32(p as i32),
             scale,
             _width: PhantomData,
         }
@@ -89,8 +83,7 @@ impl<W: PrimeWidth> CenteredMontReducer<W> {
 
     #[inline(always)]
     fn redc(self, t: i64) -> i64 {
-        let m = (t as i32).wrapping_mul(self.pinv);
-        (t - i64::from(m) * self.p) >> 32
+        i64::from(reduce_i32(t, self.p as i32, self.pinv))
     }
 
     /// Montgomery form of `value`, in `(-p, p)`.
