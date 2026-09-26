@@ -1,6 +1,6 @@
 //! Layout-only opening geometry shared by planning, sizing, and claims.
 
-use crate::descriptor_bytes::{blake2b_256, push_usize, DescriptorDigest};
+use crate::descriptor_bytes::{digest_descriptor_bytes, push_usize, DescriptorDigest};
 use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
@@ -215,7 +215,7 @@ impl OpeningClaimsLayout {
             push_usize(&mut bytes, group.num_vars());
             push_usize(&mut bytes, group.num_polynomials());
         }
-        blake2b_256(&bytes)
+        digest_descriptor_bytes(&bytes)
     }
 
     /// Sum batched public opening claims under per-slot gamma coefficients.

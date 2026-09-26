@@ -6,7 +6,7 @@ use akita_serialization::{SerializationError, Valid};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::field_bytes;
 use crate::tail_golomb_rice_low_bits::{
-    cap_rice_low_bits, tail_z_planner_bits_per_coord, wire_rice_low_bits,
+    rice_low_bits_for_cap, tail_z_planner_bits_per_coord, wire_rice_low_bits,
 };
 use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::{CommittedGroupParams, TerminalFoldParams};
@@ -227,7 +227,7 @@ impl TerminalResponseShape {
 }
 
 pub(crate) fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
-    let low_bits_cap = cap_rice_low_bits(cap);
+    let low_bits_cap = rice_low_bits_for_cap(cap);
     let bits_per_coord = tail_z_planner_bits_per_coord(low_bits_cap);
     z_coords.saturating_mul(bits_per_coord).div_ceil(8)
 }

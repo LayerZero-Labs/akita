@@ -7,16 +7,10 @@
 /// `floor(log2(cap))` on CI profile cells.
 const OFFLINE_RICE_LOW_BITS_DELTA: u32 = 2;
 
-/// Cap-derived Rice low-bit width: `floor(log2(cap))` for worst-case `|n| ≤ cap`.
-#[must_use]
-pub fn cap_rice_low_bits(cap: u128) -> u32 {
-    rice_low_bits_for_cap(cap)
-}
-
 /// Select the Rice low-bit width emitted into a terminal response shape.
 #[must_use]
 pub fn wire_rice_low_bits(cap: u128) -> u32 {
-    cap_rice_low_bits(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA)
+    rice_low_bits_for_cap(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA)
 }
 
 /// Rice low-bit width from a per-coordinate magnitude scale (e.g. fold `‖z‖_inf` cap).
@@ -87,7 +81,7 @@ mod tests {
         for cap in [504u128, 1008, 1568, 2016] {
             assert_eq!(
                 wire_rice_low_bits(cap),
-                cap_rice_low_bits(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA),
+                rice_low_bits_for_cap(cap).saturating_sub(OFFLINE_RICE_LOW_BITS_DELTA),
                 "cap={cap}"
             );
         }

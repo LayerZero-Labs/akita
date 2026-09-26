@@ -208,7 +208,7 @@ pub use subring_coefficient_packing::{
     coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
     CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
 };
-pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
+pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use trace_weight::{
     ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
     EvaluationTraceGroupParameters, EvaluationTraceInputs,

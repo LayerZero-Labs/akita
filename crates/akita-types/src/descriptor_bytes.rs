@@ -30,19 +30,15 @@ pub(crate) fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
     }
 }
 
-pub(crate) fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
-    type Blake2b256 = Blake2b<U32>;
-    let digest = Blake2b256::digest(bytes);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
-}
-
 /// Hash canonical descriptor bytes with Akita's Blake2b-256 primitive.
 ///
 /// Domain separation and version bytes are owned by the caller's canonical
 /// descriptor. This shared primitive prevents catalog and transcript identity
 /// code from implementing divergent hash truncation rules.
 pub fn digest_descriptor_bytes(bytes: &[u8]) -> DescriptorDigest {
-    blake2b_256(bytes)
+    type Blake2b256 = Blake2b<U32>;
+    let digest = Blake2b256::digest(bytes);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
 }

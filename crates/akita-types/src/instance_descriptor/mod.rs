@@ -18,7 +18,8 @@ mod transcript_grinding_binding;
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
 use crate::descriptor_bytes::{
-    blake2b_256, sis_modulus_profile_tag, DescriptorDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,
+    digest_descriptor_bytes, sis_modulus_profile_tag, DescriptorDigest,
+    AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
@@ -266,14 +267,14 @@ pub fn digest_serializable<S: AkitaSerialize>(
 ) -> Result<DescriptorDigest, SerializationError> {
     let mut bytes = Vec::with_capacity(value.uncompressed_size());
     value.serialize_uncompressed(&mut bytes)?;
-    Ok(blake2b_256(&bytes))
+    Ok(digest_descriptor_bytes(&bytes))
 }
 
 /// Digest the final effective runtime verifier schedule.
 pub fn digest_effective_schedule(schedule: &FoldSchedule) -> DescriptorDigest {
     let mut bytes = Vec::new();
     schedule.append_descriptor_bytes(&mut bytes);
-    blake2b_256(&bytes)
+    digest_descriptor_bytes(&bytes)
 }
 
 impl Valid for AkitaInstanceDescriptor {
