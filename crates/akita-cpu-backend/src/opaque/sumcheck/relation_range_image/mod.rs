@@ -92,6 +92,7 @@ use std::mem;
 use std::time::Instant;
 
 use crate::opaque::relation_weights::RelationWeightFactorization;
+use crate::opaque::sumcheck::add_assign_all;
 use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 
 enum WitnessState<E: Field> {
@@ -219,12 +220,8 @@ impl<E: Unreduced> ProductSum<E> {
 }
 
 fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
-    for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
-        *left_term += right_term;
-    }
-    for (left_term, right_term) in left.1.iter_mut().zip(right.1) {
-        *left_term += right_term;
-    }
+    add_assign_all(&mut left.0, &right.0);
+    add_assign_all(&mut left.1, &right.1);
 }
 
 #[inline]

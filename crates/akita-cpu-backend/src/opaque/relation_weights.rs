@@ -707,9 +707,10 @@ where
             let physical_start = compilation
                 .witness_layout
                 .r_coefficient_index(row, digit, 0, 0)?;
-            weights.push_native_ring(
+            weights.push(
                 physical_start,
                 row_dim,
+                0,
                 -(eq_weight * row_denom * *gadget),
                 RelationWeightContribution::Constraint,
             )?;

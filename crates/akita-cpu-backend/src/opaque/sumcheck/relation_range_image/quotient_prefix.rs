@@ -25,6 +25,7 @@ use super::wide_mass::WideMass;
 use super::*;
 use crate::opaque::sumcheck::relation_range_image::evaluation_trace::PreparedLaneWeights;
 use crate::opaque::sumcheck::two_round_prefix::Stage2PrefixCache;
+use crate::opaque::sumcheck::{add_assign_all, parallel_tasks, sum_partials};
 use akita_algebra::eq_poly::EqPolynomial;
 
 /// Maximum number of coefficient rounds served from the compact witness.
@@ -112,12 +113,6 @@ struct ScanTotals<E: Field> {
     even_histogram: Vec<E>,
     odd_histogram: Vec<E>,
     delta_histogram: Vec<E>,
-}
-
-fn add_assign_all<E: Field>(left: &mut [E], right: &[E]) {
-    for (left, right) in left.iter_mut().zip(right) {
-        *left += *right;
-    }
 }
 
 impl<E: Field> ScanTotals<E> {
@@ -446,7 +441,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         };
 
         let task_lanes = live_lane_count
-            .div_ceil(target_tasks())
+            .div_ceil(parallel_tasks(TASKS_PER_THREAD))
             .max(MIN_SCAN_TASK_LANES);
         let mut classes = vec![0u16; live_lane_count * quads_per_lane];
         let scan = |(task, task_classes): (usize, &mut [u16])| match digit_bits {
@@ -695,7 +690,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         let (eq_low, eq_high) = split_eq.remaining_eq_tables();
         let pair_count = self.classes.len() / (2 * G);
         let task_pairs = pair_count
-            .div_ceil(target_tasks())
+            .div_ceil(parallel_tasks(TASKS_PER_THREAD))
             .max(MIN_LOOKUP_TASK_PAIRS);
         let run = |task: usize, out: Option<&mut [E]>| {
             let start = task * task_pairs;
@@ -718,27 +713,12 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
                 .map(|task| run(task, None))
                 .collect(),
         };
-        parts.into_iter().fold([E::zero(); 3], |mut sum, part| {
-            for (sum, part) in sum.iter_mut().zip(part) {
-                *sum += part;
-            }
-            sum
-        })
+        sum_partials(E::zero(), parts)
     }
 }
 
-/// Parallel task count: a few tasks per worker for load balance.
-#[inline]
-fn target_tasks() -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        4 * rayon::current_num_threads()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        1
-    }
-}
+/// A few tasks per worker for load balance.
+const TASKS_PER_THREAD: usize = 4;
 
 impl<E: Field + Ring + Unreduced + Fold> CompactQuotientPrefix<E> {
     /// Bind the relation masses and record `r`.

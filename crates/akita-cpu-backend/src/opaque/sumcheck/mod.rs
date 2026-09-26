@@ -12,7 +12,43 @@ pub(crate) mod two_round_prefix;
 
 // --- Shared helpers ------------------------------------------------------
 
+use std::ops::AddAssign;
+
 use jolt_field::Field;
+
+/// Parallel task count: `per_thread` tasks for each Rayon worker, or one task
+/// without `parallel`.
+#[inline]
+pub(crate) fn parallel_tasks(per_thread: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        per_thread * rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = per_thread;
+        1
+    }
+}
+
+/// Add `right` into `left` element-wise.
+#[inline]
+pub(crate) fn add_assign_all<T: Copy + AddAssign>(left: &mut [T], right: &[T]) {
+    for (left, &right) in left.iter_mut().zip(right) {
+        *left += right;
+    }
+}
+
+/// Element-wise sum of per-task partial arrays.
+pub(crate) fn sum_partials<T: Copy + AddAssign, const N: usize>(
+    zero: T,
+    partials: impl IntoIterator<Item = [T; N]>,
+) -> [T; N] {
+    partials.into_iter().fold([zero; N], |mut total, partial| {
+        add_assign_all(&mut total, &partial);
+        total
+    })
+}
 
 /// Pairs per parallel work item when a sum-check round has a single outer row.
 ///

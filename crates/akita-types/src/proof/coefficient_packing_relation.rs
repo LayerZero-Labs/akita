@@ -475,21 +475,7 @@ where
     .into_iter()
     .map(E::lift_base)
     .collect::<Vec<_>>();
-    let challenge_count = group_layout
-        .num_polynomials()
-        .checked_mul(group_params.num_live_blocks())
-        .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".into()))?;
-    let mut challenge_alpha_values = Vec::new();
-    challenge_alpha_values
-        .try_reserve_exact(challenge_count)
-        .map_err(|_| AkitaError::InvalidInput("challenge evaluation allocation failed".into()))?;
-    challenge_alpha_values.resize(challenge_count, E::zero());
-    cfg_iter_mut!(challenge_alpha_values)
-        .enumerate()
-        .try_for_each(|(challenge_index, value)| {
-            *value = canonical_challenges.eval_at_pows::<F, E>(challenge_index, &alpha_powers)?;
-            Ok::<_, AkitaError>(())
-        })?;
+    let challenge_alpha_values = canonical_challenges.evals_at_pows::<F, E>(&alpha_powers)?;
 
     let quotient_gadget = gadget_row_scalars::<F>(
         r_decomp_levels::<F>(inputs.level_params.open().digits.log_basis),

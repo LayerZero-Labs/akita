@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::mem;
 use std::ops::Range;
 
+use crate::opaque::sumcheck::sum_partials;
 use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 
 /// Weights per parallel task; a smaller support stays on one thread.
@@ -58,18 +59,6 @@ fn parent_pairs<E: Field>(
         }
         Some((parent, linear, binary))
     })
-}
-
-/// Sum of per-task coefficient partials.
-fn sum_partials<E: Field, const N: usize>(partials: Vec<[E; N]>) -> [E; N] {
-    partials
-        .into_iter()
-        .fold([E::zero(); N], |mut total, partial| {
-            for (total, partial) in total.iter_mut().zip(partial) {
-                *total += partial;
-            }
-            total
-        })
 }
 
 /// Sparse Stage-2 addend over the canonical witness table.
@@ -271,7 +260,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 coefficients
             })
             .collect::<Vec<_>>();
-        let mut coefficients = sum_partials(partials).to_vec();
+        let mut coefficients = sum_partials(E::zero(), partials).to_vec();
         trim_trailing_zeros(&mut coefficients);
         UnivariatePoly::new(coefficients)
     }
@@ -352,7 +341,7 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
                 })
             })
             .collect::<Vec<_>>();
-        let mut coefficients = sum_partials(partials).to_vec();
+        let mut coefficients = sum_partials(E::zero(), partials).to_vec();
         trim_trailing_zeros(&mut coefficients);
         UnivariatePoly::new(coefficients)
     }

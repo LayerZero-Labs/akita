@@ -313,17 +313,6 @@ fn reduce_small_coeff_accum<E: Field + Unreduced>(pos: E::SmallProduct, neg: E::
 /// [`RangePolynomialPrecomputation::round_poly_from_sums`] scales them.
 type TaylorSums<E> = [<E as Unreduced>::Product; MAX_DIRECT_RANGE_COEFFICIENTS];
 
-/// Sum the accumulators of a round's tiles or chunks.
-fn sum_tile_sums<E: Unreduced>(tile_accumulators: Vec<TaylorSums<E>>) -> TaylorSums<E> {
-    let mut accumulated = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-    for tile_accumulator in tile_accumulators {
-        for (total, term) in accumulated.iter_mut().zip(tile_accumulator) {
-            *total += term;
-        }
-    }
-    accumulated
-}
-
 /// Add `weight` times the nonconstant Taylor terms of `Q(left + X * delta)`,
 /// each divided by its integer factor from
 /// [`RangePolynomialPrecomputation::taylor_factors`], to `sums`.

@@ -229,19 +229,6 @@ impl<E: Field> RelationLaneWeights<E> {
         Ok(())
     }
 
-    pub(super) fn push_native_ring(
-        &mut self,
-        physical_start: usize,
-        role_ring_dimension: usize,
-        scalar: E,
-        contribution: RelationWeightContribution,
-    ) -> Result<(), AkitaError> {
-        if role_ring_dimension == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        self.push(physical_start, role_ring_dimension, 0, scalar, contribution)
-    }
-
     /// Split the weights into the shared low alpha factor and the lanes.
     pub(crate) fn into_factorization(self) -> Result<RelationWeightFactorization<E>, AkitaError> {
         if self.setup_is_deferred {

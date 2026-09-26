@@ -1,5 +1,5 @@
 use super::*;
-use crate::opaque::sumcheck::single_row_tile_pairs;
+use crate::opaque::sumcheck::{single_row_tile_pairs, sum_partials};
 use jolt_poly::OmittedConstantPoly;
 
 /// Accumulate the weighted sums of pairs `tile` of a flat live-prefix table.
@@ -65,7 +65,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
         let num_coeffs_q = self.polynomial_precomputation.num_coefficients();
-        let tile_accumulators = cfg_into_iter!(0..live_pairs.div_ceil(tile_pairs))
+        let tile_accumulators: Vec<_> = cfg_into_iter!(0..live_pairs.div_ceil(tile_pairs))
             .map(|tile| {
                 let tile_start = tile * tile_pairs;
                 let tile_end = (tile_start + tile_pairs).min(live_pairs);
@@ -79,7 +79,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 )
             })
             .collect();
-        sum_tile_sums::<E>(tile_accumulators)
+        sum_partials(E::Product::zero(), tile_accumulators)
     }
 
     /// Fold the current flat live-prefix table into a table of `next_live`
@@ -104,7 +104,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let precomputation = &self.polynomial_precomputation;
         let num_coeffs_q = precomputation.num_coefficients();
         let mut out = vec![E::zero(); next_live];
-        let tile_accumulators = cfg_chunks_mut!(out, 2 * tile_pairs)
+        let tile_accumulators: Vec<_> = cfg_chunks_mut!(out, 2 * tile_pairs)
             .enumerate()
             .map(|(tile, tile_out)| {
                 let tile_start = tile * tile_pairs;
@@ -135,8 +135,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .collect();
         (
             out,
-            precomputation
-                .round_poly_from_sums(&sum_tile_sums::<E>(tile_accumulators), LinearSum::Taylor),
+            precomputation.round_poly_from_sums(
+                &sum_partials(E::Product::zero(), tile_accumulators),
+                LinearSum::Taylor,
+            ),
         )
     }
 

@@ -19,6 +19,7 @@
 //! folded values are zero, so their weight is not accumulated.
 
 use super::*;
+use crate::opaque::sumcheck::{parallel_tasks, sum_partials};
 
 /// Rounds served from the compact table before it is materialized.
 pub(super) const OCTET_PREFIX_ROUNDS: usize = 4;
@@ -152,7 +153,9 @@ fn octet_pair_class_weights<E: Field>(
     let first_mask = e_first.len() - 1;
     let first_bits = e_first.len().trailing_zeros();
     let tiles = live_pairs.div_ceil(HISTOGRAM_TILE_PAIRS);
-    let tiles_per_task = tiles.div_ceil(histogram_tasks()).max(1);
+    let tiles_per_task = tiles
+        .div_ceil(parallel_tasks(HISTOGRAM_TASKS_PER_THREAD))
+        .max(1);
     let mut tables: Vec<Vec<[E; 2]>> = cfg_into_iter!(0..tiles.div_ceil(tiles_per_task))
         .map(|task| {
             let mut weights = vec![[E::zero(); 2]; num_classes];
@@ -194,19 +197,9 @@ fn octet_pair_class_weights<E: Field>(
     tables.swap_remove(0)
 }
 
-/// Class-table tasks: enough for load balance across uneven cores, few enough
-/// that zeroing and merging the tables stays small beside the scan.
-#[inline]
-fn histogram_tasks() -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        2 * rayon::current_num_threads()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        1
-    }
-}
+/// Class-table tasks per worker: enough for load balance across uneven cores,
+/// few enough that zeroing and merging the tables stays small beside the scan.
+const HISTOGRAM_TASKS_PER_THREAD: usize = 2;
 
 /// Quad-class weights for rounds 0 and 1.
 ///
@@ -439,29 +432,32 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let quad_mask = quad_values.len() - 1;
         let quad_bits = quad_values.len().trailing_zeros();
         let precomputation = &self.polynomial_precomputation;
-        let chunk_accumulators = cfg_chunks!(prefix.octet_class_weights, ROUND2_CLASS_CHUNK)
-            .enumerate()
-            .map(|(chunk, weights)| {
-                let mut accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                for (offset, &weight) in weights.iter().enumerate() {
-                    if weight.is_zero() {
-                        continue;
+        let chunk_accumulators: Vec<_> =
+            cfg_chunks!(prefix.octet_class_weights, ROUND2_CLASS_CHUNK)
+                .enumerate()
+                .map(|(chunk, weights)| {
+                    let mut accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    for (offset, &weight) in weights.iter().enumerate() {
+                        if weight.is_zero() {
+                            continue;
+                        }
+                        let class = chunk * ROUND2_CLASS_CHUNK + offset;
+                        let left = quad_values[class & quad_mask];
+                        accumulate_entry_terms(
+                            &mut accumulator,
+                            precomputation,
+                            left,
+                            quad_values[class >> quad_bits] - left,
+                            weight,
+                        );
                     }
-                    let class = chunk * ROUND2_CLASS_CHUNK + offset;
-                    let left = quad_values[class & quad_mask];
-                    accumulate_entry_terms(
-                        &mut accumulator,
-                        precomputation,
-                        left,
-                        quad_values[class >> quad_bits] - left,
-                        weight,
-                    );
-                }
-                accumulator
-            })
-            .collect();
-        precomputation
-            .round_poly_from_sums(&sum_tile_sums::<E>(chunk_accumulators), LinearSum::Taylor)
+                    accumulator
+                })
+                .collect();
+        precomputation.round_poly_from_sums(
+            &sum_partials(E::Product::zero(), chunk_accumulators),
+            LinearSum::Taylor,
+        )
     }
 
     /// Bind an octet-prefix round. The round-3 challenge materializes the
