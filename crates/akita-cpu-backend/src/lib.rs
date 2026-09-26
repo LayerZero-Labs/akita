@@ -66,9 +66,7 @@ pub mod benchmark_support {
         decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
         mat_vec_mul_ntt_i8_dense_single_row,
     };
-    pub use crate::sources::poly_helpers::{
-        balanced_ring_decompose_fold_partitioned, DecomposeParams,
-    };
+    pub use crate::sources::poly_helpers::balanced_ring_decompose_fold_partitioned;
 }
 
 /// Prover-side output of the inner Ajtai commit step.

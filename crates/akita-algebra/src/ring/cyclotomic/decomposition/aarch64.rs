@@ -1,75 +1,163 @@
 use std::arch::aarch64::*;
 
 use super::BalancedDecomposePow2Params;
+use crate::CanonicalEncoding;
 
-#[inline(always)]
-unsafe fn store_i8_digits_neon(digits: int32x4_t, dst: *mut i8) {
-    let words = vmovn_s32(digits);
-    let bytes = vmovn_s16(vcombine_s16(words, vdup_n_s16(0)));
-    vst1_lane_u32(dst.cast(), vreinterpret_u32_s8(bytes), 0);
+/// Broadcast constants of the fp32 add-bias decomposition.
+struct U32BiasConstants {
+    threshold: uint32x4_t,
+    /// 32-bit halves of `H` and of `H - q mod 2^64`.
+    nonnegative_low: uint32x4_t,
+    nonnegative_high: uint32x4_t,
+    negative_low: uint32x4_t,
+    negative_high: uint32x4_t,
+    mask: uint8x16_t,
+    half_b: uint8x16_t,
 }
 
-/// NEON balanced decomposition of canonical fp32 representatives.
+/// Low and high 32-bit words of `x + H mod 2^64` for four canonical residues.
+#[inline(always)]
+unsafe fn biased_words_neon(values: uint32x4_t, constants: &U32BiasConstants) -> [uint32x4_t; 2] {
+    let negative = vcgtq_u32(values, constants.threshold);
+    let low = vaddq_u32(
+        values,
+        vbslq_u32(negative, constants.negative_low, constants.nonnegative_low),
+    );
+    // All ones where the low word wrapped.
+    let carry = vcltq_u32(low, values);
+    let high = vsubq_u32(
+        vbslq_u32(
+            negative,
+            constants.negative_high,
+            constants.nonnegative_high,
+        ),
+        carry,
+    );
+    [low, high]
+}
+
+/// Decompose `N` groups of four coefficients starting at `base`, reading
+/// `WORDS` 32-bit words of `x + H`.
 ///
-/// The first quotient handles negative centered representatives through their
-/// unsigned magnitude. This is required by full-width asymmetric centering,
-/// whose smallest representative can be slightly below `i32::MIN`. After one
-/// digit, every quotient fits an i32 lane and uses signed arithmetic shifts.
+/// Every digit plane is a shift of the biased words, so the planes carry no
+/// dependency on each other. Groups of four vectors narrow into one 16-byte
+/// store per plane.
+#[inline(always)]
+unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
+    canonical: &[u32],
+    out: &mut [i8],
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
+    base: usize,
+    constants: &U32BiasConstants,
+) {
+    let width = canonical.len();
+    let zero = vdupq_n_u32(0);
+    let mut words = [[zero; 2]; N];
+    for (group, word) in words.iter_mut().enumerate() {
+        *word = biased_words_neon(
+            vld1q_u32(canonical.as_ptr().add(base + 4 * group)),
+            constants,
+        );
+    }
+    let mut fields = [zero; N];
+    for level in 0..params.levels {
+        let bit = level as u32 * params.log_basis;
+        // USHL shifts right for negative counts, so `high_shift` also serves
+        // fields above bit 32.
+        let low_shift = vdupq_n_s32(-(bit as i32));
+        let high_shift = vdupq_n_s32(32 - bit as i32);
+        for (field, &[low, high]) in fields.iter_mut().zip(&words) {
+            *field = if WORDS == 1 || bit + params.log_basis <= 32 {
+                vshlq_u32(low, low_shift)
+            } else if bit >= 32 {
+                vshlq_u32(high, high_shift)
+            } else {
+                vorrq_u32(vshlq_u32(low, low_shift), vshlq_u32(high, high_shift))
+            };
+        }
+        let plane = out.as_mut_ptr().add(level * width + base);
+        let mut group = 0;
+        while group + 4 <= N {
+            let halves = [
+                vuzp1q_u16(
+                    vreinterpretq_u16_u32(fields[group]),
+                    vreinterpretq_u16_u32(fields[group + 1]),
+                ),
+                vuzp1q_u16(
+                    vreinterpretq_u16_u32(fields[group + 2]),
+                    vreinterpretq_u16_u32(fields[group + 3]),
+                ),
+            ];
+            let bytes = vuzp1q_u8(
+                vreinterpretq_u8_u16(halves[0]),
+                vreinterpretq_u8_u16(halves[1]),
+            );
+            let digits = vsubq_u8(vandq_u8(bytes, constants.mask), constants.half_b);
+            vst1q_u8(plane.add(4 * group).cast(), digits);
+            group += 4;
+        }
+        while group < N {
+            let halves = vmovn_u32(fields[group]);
+            let bytes = vmovn_u16(vcombine_u16(halves, vdup_n_u16(0)));
+            let digits = vsub_u8(
+                vand_u8(bytes, vget_low_u8(constants.mask)),
+                vget_low_u8(constants.half_b),
+            );
+            vst1_lane_u32(plane.add(4 * group).cast(), vreinterpret_u32_u8(digits), 0);
+            group += 1;
+        }
+    }
+}
+
+/// NEON add-bias decomposition of canonical fp32 representatives.
+///
+/// Requires `levels * log_basis <= 64`, so the digits read only the low
+/// 64 bits of `x + H`.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
 ) {
     debug_assert!(canonical.len().is_multiple_of(4));
     debug_assert_eq!(out.len(), canonical.len() * params.levels);
-    debug_assert!(params.levels > 0);
     debug_assert!(params.log_basis <= 8);
+    debug_assert!(params.digit_bits() <= 64);
     debug_assert!(params.q <= u32::MAX.into());
 
+    let [nonnegative, negative] = [params.bias_nonnegative[0], params.bias_negative[0]];
+    let constants = U32BiasConstants {
+        threshold: vdupq_n_u32(params.threshold as u32),
+        nonnegative_low: vdupq_n_u32(nonnegative as u32),
+        nonnegative_high: vdupq_n_u32((nonnegative >> 32) as u32),
+        negative_low: vdupq_n_u32(negative as u32),
+        negative_high: vdupq_n_u32((negative >> 32) as u32),
+        mask: vdupq_n_u8(((1u32 << params.log_basis) - 1) as u8),
+        half_b: vdupq_n_u8((1u32 << (params.log_basis - 1)) as u8),
+    };
+    // Digits inside the low word skip the high word entirely.
+    if params.digit_bits() <= 32 {
+        balanced_decompose_u32_blocks_neon::<1>(canonical, out, params, &constants);
+    } else {
+        balanced_decompose_u32_blocks_neon::<2>(canonical, out, params, &constants);
+    }
+}
+
+#[inline(always)]
+unsafe fn balanced_decompose_u32_blocks_neon<const WORDS: usize>(
+    canonical: &[u32],
+    out: &mut [i8],
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
+    constants: &U32BiasConstants,
+) {
     let width = canonical.len();
-    let q = params.q as u32;
-    let threshold = params.threshold as u32;
-    let b = 1u32 << params.log_basis;
-    let half_b = b >> 1;
-    let mask = b - 1;
-
-    let q_v = vdupq_n_u32(q);
-    let threshold_v = vdupq_n_u32(threshold);
-    let b_v = vdupq_n_u32(b);
-    let half_b_minus_one_v = vdupq_n_u32(half_b - 1);
-    let mask_v = vdupq_n_u32(mask);
-    let shift_v = vdupq_n_s32(-(params.log_basis as i32));
-    let zero = vdupq_n_s32(0);
-
     let mut base = 0usize;
+    while base + 16 <= width {
+        balanced_decompose_u32_block_neon::<4, WORDS>(canonical, out, params, base, constants);
+        base += 16;
+    }
     while base < width {
-        let values = vld1q_u32(canonical.as_ptr().add(base));
-        let negative = vcgtq_u32(values, threshold_v);
-        let centered_low = vsubq_u32(values, vandq_u32(q_v, negative));
-        let raw_digit = vandq_u32(centered_low, mask_v);
-        let high_digit = vcgtq_u32(raw_digit, half_b_minus_one_v);
-        let digit = vreinterpretq_s32_u32(vsubq_u32(raw_digit, vandq_u32(b_v, high_digit)));
-
-        store_i8_digits_neon(digit, out.as_mut_ptr().add(base));
-
-        let positive_numerator = vsubq_u32(values, vreinterpretq_u32_s32(digit));
-        let positive_quotient = vreinterpretq_s32_u32(vshlq_u32(positive_numerator, shift_v));
-        let negative_magnitude = vaddq_u32(vsubq_u32(q_v, values), vreinterpretq_u32_s32(digit));
-        let negative_quotient = vsubq_s32(
-            zero,
-            vreinterpretq_s32_u32(vshlq_u32(negative_magnitude, shift_v)),
-        );
-        let mut quotient = vbslq_s32(negative, negative_quotient, positive_quotient);
-
-        for level in 1..params.levels {
-            let raw_digit = vandq_u32(vreinterpretq_u32_s32(quotient), mask_v);
-            let high_digit = vcgtq_u32(raw_digit, half_b_minus_one_v);
-            let digit = vreinterpretq_s32_u32(vsubq_u32(raw_digit, vandq_u32(b_v, high_digit)));
-            quotient = vshlq_s32(vsubq_s32(quotient, digit), shift_v);
-            store_i8_digits_neon(digit, out.as_mut_ptr().add(level * width + base));
-        }
-
+        balanced_decompose_u32_block_neon::<1, WORDS>(canonical, out, params, base, constants);
         base += 4;
     }
 }

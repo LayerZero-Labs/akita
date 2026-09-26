@@ -162,7 +162,7 @@ fn bench_fp32_decomposition_dimension<const D: usize, const LOG_BASIS: u32>(c: &
         )
     });
     let levels = 32usize.div_ceil(LOG_BASIS as usize);
-    let params = BalancedDecomposePow2Params::new(levels, LOG_BASIS, (1u128 << 32) - 99);
+    let params = BalancedDecomposePow2Params::new(levels, LOG_BASIS);
     let mut digits = vec![0i8; D * levels];
     let name = format!("fp32_balanced_decompose_l{LOG_BASIS}_d{D}");
     c.bench_function(&name, |b| {

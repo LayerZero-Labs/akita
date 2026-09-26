@@ -16,7 +16,7 @@ use crate::kernels::linear::try_centered_i8;
 #[cfg(target_arch = "aarch64")]
 use crate::kernels::neon_decompose_fold as decompose_fold_neon;
 use crate::opaque::DecomposeFoldWitness;
-use akita_algebra::ring::cyclotomic::try_balanced_decompose_coefficients_pow2_i8_u64_into;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -50,54 +50,12 @@ fn use_simd_decompose_fold() -> bool {
     }
 }
 
-pub struct DecomposeParams {
-    pub threshold: u128,
-    pub q: u128,
-    pub mask: i128,
-    pub half_b: i128,
-    pub b_val: i128,
-    pub log_basis: u32,
-    pub overflow_possible: bool,
-}
-
-/// Decompose all D coefficients of a ring element into balanced base-b digits,
-/// storing results in digit-major order for subsequent SIMD scatter.
-///
-/// Uses K=3 interleaved carry chains to saturate ALU throughput (3x ILP gain
-/// over processing one coefficient at a time on out-of-order cores).
-///
-/// `digit_buf` is `[num_digits][D]` in i8, OVERWRITTEN (not accumulated).
-#[inline(never)]
-pub(crate) fn decompose_ring_interleaved<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    digit_buf: &mut [[i8; D]],
-    num_digits: usize,
-    p: &DecomposeParams,
-) {
-    if try_balanced_decompose_coefficients_pow2_i8_u64_into(
-        &ring.coeffs,
-        digit_buf[..num_digits].as_flattened_mut(),
-        num_digits,
-        p.log_basis,
-        p.q,
-        p.threshold,
-    ) {
-        return;
-    }
-    if p.overflow_possible {
-        decompose_ring_interleaved_overflow(ring, digit_buf, num_digits, p);
-    } else {
-        decompose_ring_interleaved_fast(ring, digit_buf, num_digits, p);
-    }
-}
-
 pub(crate) fn balanced_ring_decompose_fold_chunked<F, const D: usize>(
     rings: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     chunk_ranges: &[std::ops::Range<usize>],
     num_positions_per_block: usize,
-    num_digits: usize,
-    params: &DecomposeParams,
+    params: &BalancedDecomposePow2Params<F>,
 ) -> Vec<DecomposeFoldWitness>
 where
     F: Field + CanonicalEncoding,
@@ -111,210 +69,11 @@ where
                 &rings[ring_start.min(rings.len())..ring_end],
                 &challenges[range.clone()],
                 num_positions_per_block,
-                num_digits,
                 params,
             );
             DecomposeFoldWitness::from_centered_rows(coefficients)
         })
         .collect()
-}
-
-/// Signed-i16 counterpart of [`decompose_ring_interleaved`] for bases above 8.
-#[inline(never)]
-pub(crate) fn decompose_ring_interleaved_i16<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    digit_buf: &mut [[i16; D]],
-    num_digits: usize,
-    p: &DecomposeParams,
-) {
-    let bulk_end = D - (D % 3);
-    for base in (0..bulk_end).step_by(3) {
-        let canonical = [
-            ring.coeffs[base]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            ring.coeffs[base + 1]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            ring.coeffs[base + 2]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-        ];
-        let (mut carries, first_digits) = if p.overflow_possible {
-            let (c0, d0) = peel_first_balanced_digit_i32(canonical[0], p);
-            let (c1, d1) = peel_first_balanced_digit_i32(canonical[1], p);
-            let (c2, d2) = peel_first_balanced_digit_i32(canonical[2], p);
-            ([c0, c1, c2], Some([d0, d1, d2]))
-        } else {
-            (canonical.map(|coefficient| to_signed(coefficient, p)), None)
-        };
-        for (digit_index, plane) in digit_buf.iter_mut().take(num_digits).enumerate() {
-            let digits = if digit_index == 0 {
-                first_digits.unwrap_or_else(|| {
-                    carries
-                        .each_mut()
-                        .map(|carry| extract_balanced_digit(carry, p))
-                })
-            } else {
-                carries
-                    .each_mut()
-                    .map(|carry| extract_balanced_digit(carry, p))
-            };
-            plane[base] = digits[0] as i16;
-            plane[base + 1] = digits[1] as i16;
-            plane[base + 2] = digits[2] as i16;
-        }
-    }
-    for idx in bulk_end..D {
-        let canonical = ring.coeffs[idx]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let (mut carry, first_digit) = if p.overflow_possible {
-            let (carry, digit) = peel_first_balanced_digit_i32(canonical, p);
-            (carry, Some(digit))
-        } else {
-            (to_signed(canonical, p), None)
-        };
-        for (digit_index, plane) in digit_buf.iter_mut().take(num_digits).enumerate() {
-            plane[idx] = if digit_index == 0 {
-                first_digit.unwrap_or_else(|| extract_balanced_digit(&mut carry, p))
-            } else {
-                extract_balanced_digit(&mut carry, p)
-            } as i16;
-        }
-    }
-}
-
-fn decompose_ring_interleaved_fast<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    digit_buf: &mut [[i8; D]],
-    num_digits: usize,
-    p: &DecomposeParams,
-) {
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let mut c0 = to_signed(
-            ring.coeffs[base]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        let mut c1 = to_signed(
-            ring.coeffs[base + 1]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        let mut c2 = to_signed(
-            ring.coeffs[base + 2]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-
-        for plane in digit_buf.iter_mut().take(num_digits) {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            plane[base] = d0 as i8;
-            plane[base + 1] = d1 as i8;
-            plane[base + 2] = d2 as i8;
-        }
-    }
-
-    for idx in bulk_end..D {
-        let mut c = to_signed(
-            ring.coeffs[idx]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        for plane in digit_buf.iter_mut().take(num_digits) {
-            plane[idx] = extract_balanced_digit(&mut c, p) as i8;
-        }
-    }
-}
-
-fn decompose_ring_interleaved_overflow<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    digit_buf: &mut [[i8; D]],
-    num_digits: usize,
-    p: &DecomposeParams,
-) {
-    let (first_plane, remaining) = digit_buf
-        .split_first_mut()
-        .expect("decompose_ring_interleaved_overflow requires at least one plane");
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let canonical0 = ring.coeffs[base]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let canonical1 = ring.coeffs[base + 1]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let canonical2 = ring.coeffs[base + 2]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-
-        let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
-        let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
-        let (mut c2, d2) = peel_first_balanced_digit_i32(canonical2, p);
-
-        first_plane[base] = d0 as i8;
-        first_plane[base + 1] = d1 as i8;
-        first_plane[base + 2] = d2 as i8;
-
-        for plane in remaining.iter_mut().take(num_digits - 1) {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            plane[base] = d0 as i8;
-            plane[base + 1] = d1 as i8;
-            plane[base + 2] = d2 as i8;
-        }
-    }
-
-    for idx in bulk_end..D {
-        let canonical = ring.coeffs[idx]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
-        first_plane[idx] = d0 as i8;
-        for plane in remaining.iter_mut().take(num_digits - 1) {
-            plane[idx] = extract_balanced_digit(&mut c, p) as i8;
-        }
-    }
-}
-
-#[inline(never)]
-pub(crate) fn decompose_ring_single_digit<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    digit_plane: &mut [i8; D],
-    p: &DecomposeParams,
-) {
-    for (dst, coeff) in digit_plane.iter_mut().zip(ring.coeffs.iter()) {
-        let centered = to_signed(
-            coeff
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        debug_assert!(
-            centered >= -(1i128 << (p.log_basis - 1)) && centered < (1i128 << (p.log_basis - 1))
-        );
-        *dst = centered as i8;
-    }
-}
-
-#[inline(always)]
-pub(crate) fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
-    if canonical > p.threshold {
-        -((p.q - canonical) as i128)
-    } else {
-        canonical as i128
-    }
 }
 
 pub(crate) fn try_small_i8_cache_from_ring_coeffs<F: Field + CanonicalEncoding, const D: usize>(
@@ -336,59 +95,6 @@ pub(crate) fn try_small_i8_cache_from_ring_coeffs<F: Field + CanonicalEncoding, 
     }
 
     Some(out)
-}
-
-#[inline(always)]
-pub(crate) fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
-    debug_assert!(p.log_basis < 31);
-    if p.log_basis == 2 {
-        let d = (*c as i32) & 3;
-        let balanced = if d >= 2 { d - 4 } else { d };
-        *c = (*c - i128::from(balanced)) >> 2;
-        return balanced;
-    }
-
-    let d = (*c as i32) & (p.mask as i32);
-    let balanced = if d >= p.half_b as i32 {
-        d - p.b_val as i32
-    } else {
-        d
-    };
-    *c = (*c - i128::from(balanced)) >> p.log_basis;
-    balanced
-}
-
-#[inline(always)]
-pub(crate) fn peel_first_balanced_digit_i32(canonical: u128, p: &DecomposeParams) -> (i128, i32) {
-    if canonical <= p.threshold {
-        let mut c = canonical as i128;
-        let d = extract_balanced_digit(&mut c, p);
-        return (c, d);
-    }
-
-    let diff = p.q - canonical;
-    if diff <= i128::MAX as u128 {
-        let mut c = -(diff as i128);
-        let d = extract_balanced_digit(&mut c, p);
-        return (c, d);
-    }
-
-    let mask = p.mask as u128;
-    let half_b = p.half_b as u128;
-    let b_val = p.b_val as u128;
-    let r = canonical.wrapping_sub(p.q) & mask;
-    let balanced = if r >= half_b {
-        r as i32 - b_val as i32
-    } else {
-        r as i32
-    };
-    let diff_adj = if balanced >= 0 {
-        diff + balanced as u128
-    } else {
-        diff - ((-balanced) as u128)
-    };
-    debug_assert!(diff_adj & mask == 0);
-    (-((diff_adj >> p.log_basis) as i128), balanced)
 }
 
 /// Scalar sparse-multiply-accumulate: accumulate `challenge * digit_plane`

@@ -28,11 +28,7 @@ fn decompose_opening_rows<F: Field + CanonicalEncoding, const D: usize>(
     depth_open: usize,
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError> {
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(depth_open, log_basis, q);
+    let params = BalancedDecomposePow2Params::new(depth_open, log_basis);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     if role_subcolumns == 0 || !total_rows.is_multiple_of(role_subcolumns) {
         return Err(AkitaError::InvalidSetup(
