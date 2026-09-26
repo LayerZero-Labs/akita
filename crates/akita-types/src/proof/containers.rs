@@ -17,64 +17,6 @@ pub struct RingVec<F> {
     ring_dim: usize,
 }
 
-/// D-free serializer for a flat coefficient buffer without a length header.
-///
-/// Serializes each field element in order using `serialize_with_mode`. This is
-/// the canonical protocol encoding for ring-shaped data: the caller supplies
-/// `ring_dim` at the call site rather than baking it into a const generic. The
-/// S2 byte-identity test (`flat_absorption_byte_identical_to_typed`) proves this
-/// matches the bytes the deleted typed `RingSliceSerializer` produced.
-///
-/// Used by [`append_flat_coefficients`] and [`RingVec::append_flat_to_transcript`].
-pub struct FlatCoeffSerializer<'a, F: Field>(pub &'a [F]);
-
-impl<F: Field + AkitaSerialize> AkitaSerialize for FlatCoeffSerializer<'_, F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        for coeff in self.0 {
-            coeff.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.0.iter().map(|c| c.serialized_size(compress)).sum()
-    }
-}
-
-/// Absorb a flat coefficient buffer into `transcript` using the canonical
-/// flat-coefficient encoding (the S4 protocol transcript encoding for
-/// ring-shaped commitments).
-///
-/// The buffer must contain `n_rings * ring_dim` coefficients in coefficient-major
-/// order (ring element 0 first, coefficients 0..ring_dim−1 within each element).
-/// This function derives the total absorption length from `ring_dim` at runtime,
-/// not from a const generic `D`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
-/// `coeffs.len()` is not a multiple of `ring_dim`.
-pub fn append_flat_coefficients<F, T>(
-    label: &[u8],
-    coeffs: &[F],
-    ring_dim: usize,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: Field + AkitaSerialize + CanonicalEncoding,
-    T: Transcript<F>,
-{
-    if ring_dim == 0 || !coeffs.len().is_multiple_of(ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
-    transcript.append_serde(label, &FlatCoeffSerializer(coeffs));
-    Ok(())
-}
-
 impl<F: Field> RingVec<F> {
     /// Wrap a single ring element.
     pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
@@ -92,14 +34,6 @@ impl<F: Field> RingVec<F> {
         }
         Self {
             coeffs,
-            ring_dim: D,
-        }
-    }
-
-    /// Consume typed coefficient rows without copying their elements.
-    pub fn from_coefficient_rows<const D: usize>(coeffs: Vec<[F; D]>) -> Self {
-        Self {
-            coeffs: coeffs.into_flattened(),
             ring_dim: D,
         }
     }
@@ -125,11 +59,6 @@ impl<F: Field> RingVec<F> {
             ));
         }
         Ok(Self { coeffs, ring_dim })
-    }
-
-    /// Wrap a `RingCommitment`.
-    pub fn from_commitment<const D: usize>(c: &RingCommitment<F, D>) -> Self {
-        Self::from_ring_elems(&c.u)
     }
 
     /// Ring dimension (number of field-element coefficients per ring element),
@@ -183,37 +112,6 @@ impl<F: Field> RingVec<F> {
         }
     }
 
-    /// Reconstruct a single ring element.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `D != ring_dim` (when ring_dim is known) or
-    /// `coeffs.len() != D`.
-    pub fn to_single<const D: usize>(&self) -> CyclotomicRing<F, D> {
-        if self.ring_dim > 0 {
-            assert_eq!(D, self.ring_dim, "D mismatch in to_single");
-        }
-        assert_eq!(
-            self.coeffs.len(),
-            D,
-            "expected exactly one ring element of dimension {D}"
-        );
-        CyclotomicRing::from_slice(&self.coeffs)
-    }
-
-    /// Reconstruct a single ring element, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension or
-    /// element count does not match `D`.
-    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        if D == 0 || (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(CyclotomicRing::from_slice(&self.coeffs))
-    }
-
     /// Reconstruct a vector of ring elements.
     ///
     /// # Panics
@@ -233,26 +131,6 @@ impl<F: Field> RingVec<F> {
             .chunks_exact(D)
             .map(CyclotomicRing::from_slice)
             .collect()
-    }
-
-    /// Reconstruct a vector of ring elements, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension does
-    /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
-    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        if D == 0
-            || (self.ring_dim > 0 && self.ring_dim != D)
-            || !self.coeffs.len().is_multiple_of(D)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(self
-            .coeffs
-            .chunks_exact(D)
-            .map(CyclotomicRing::from_slice)
-            .collect())
     }
 
     /// Hot-path borrow after construction or schedule dispatch has fixed `D`.
@@ -319,33 +197,6 @@ impl<F: Field> RingVec<F> {
             [ring] => Ok(ring),
             _ => Err(AkitaError::InvalidProof),
         }
-    }
-
-    /// Absorb the stored coefficients into `transcript` using the D-free flat
-    /// encoding (the canonical S4 transcript encoding for ring-shaped data).
-    ///
-    /// `ring_dim` is the schedule-derived ring dimension.  When `self.ring_dim`
-    /// is non-zero the supplied value must match it (mismatches are detected and
-    /// returned as `InvalidProof` rather than panicked).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0`, if
-    /// `coeffs.len()` is not a multiple of `ring_dim`, or (when stored
-    /// `ring_dim > 0`) if the stored and supplied `ring_dim` disagree.
-    pub fn append_flat_to_transcript<T: Transcript<F>>(
-        &self,
-        label: &[u8],
-        ring_dim: usize,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: AkitaSerialize + CanonicalEncoding,
-    {
-        if self.ring_dim > 0 && self.ring_dim != ring_dim {
-            return Err(AkitaError::InvalidProof);
-        }
-        append_flat_coefficients(label, &self.coeffs, ring_dim, transcript)
     }
 }
 
@@ -458,29 +309,6 @@ impl<'a, F> RingView<'a, F> {
     pub fn coeffs(&self) -> &[F] {
         self.coeffs
     }
-
-    /// Absorb this view's coefficients into `transcript` using the D-free flat
-    /// encoding, byte-identical to the typed
-    /// [`Commitment::append_to_transcript`] path.
-    ///
-    /// The `ring_dim` stored in this view is used directly; no external dimension
-    /// is needed since `RingView` always carries a valid, non-zero `ring_dim`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if flat absorption fails (should not
-    /// occur when [`RingView::new`] invariants hold).
-    pub fn append_flat_to_transcript<T>(
-        &self,
-        label: &[u8],
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: Field + AkitaSerialize + CanonicalEncoding,
-        T: Transcript<F>,
-    {
-        append_flat_coefficients(label, self.coeffs, self.ring_dim, transcript)
-    }
 }
 
 impl<F: Field> RingVec<F> {
@@ -490,21 +318,9 @@ impl<F: Field> RingVec<F> {
     ///
     /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` (compact mode)
     /// or if `coeffs.len()` is not a multiple of `ring_dim`. Compact-mode
-    /// vectors must use [`view_as`](Self::view_as) instead.
+    /// vectors must build a [`RingView`] with an explicit ring dimension.
     pub fn view(&self) -> Result<RingView<'_, F>, AkitaError> {
         RingView::new(&self.coeffs, self.ring_dim)
-    }
-
-    /// Borrow this `RingVec` as a [`RingView`] under an externally supplied
-    /// `ring_dim` (e.g. from the schedule). Use this for compact-mode vectors
-    /// where `ring_dim` was not stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
-    /// `coeffs.len()` is not a multiple of `ring_dim`.
-    pub fn view_as(&self, ring_dim: usize) -> Result<RingView<'_, F>, AkitaError> {
-        RingView::new(&self.coeffs, ring_dim)
     }
 }
 
@@ -604,39 +420,6 @@ impl DigitBlocks {
         })
     }
 
-    /// Flatten a block-owned plane representation into canonical storage at the
-    /// given per-plane stride.
-    ///
-    /// Every plane must have exactly `digit_stride` digits.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any plane width differs from `digit_stride`.
-    pub fn from_blocks(blocks: Vec<Vec<Vec<i8>>>, digit_stride: usize) -> Result<Self, AkitaError> {
-        let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
-        let total_planes = total_planes(&block_sizes)?;
-        let total_digits = total_planes
-            .checked_mul(digit_stride)
-            .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
-        let mut digits = Vec::with_capacity(total_digits);
-        for block in blocks {
-            for plane in block {
-                if plane.len() != digit_stride {
-                    return Err(AkitaError::InvalidSize {
-                        expected: digit_stride,
-                        actual: plane.len(),
-                    });
-                }
-                digits.extend_from_slice(&plane);
-            }
-        }
-        Ok(Self {
-            digits,
-            block_sizes,
-            digit_stride,
-        })
-    }
-
     /// Number of signed digits per plane (the former ring dimension `D`).
     pub fn digit_stride(&self) -> usize {
         self.digit_stride
@@ -672,31 +455,12 @@ impl DigitBlocks {
         &self.digits
     }
 
-    /// Mutable flat digit stream in plane-major block order.
-    pub fn digits_mut(&mut self) -> &mut [i8] {
-        &mut self.digits
-    }
-
     /// Borrow the digit slice for plane index `plane`
     /// (`digit_stride` digits), or `None` if out of range.
     pub fn plane(&self, plane: usize) -> Option<&[i8]> {
         let start = plane.checked_mul(self.digit_stride)?;
         let end = start.checked_add(self.digit_stride)?;
         self.digits.get(start..end)
-    }
-
-    /// Split the flat digit stream into disjoint mutable per-block slices
-    /// (each `block_size * digit_stride` digits long).
-    pub fn split_blocks_mut(&mut self) -> Vec<&mut [i8]> {
-        let stride = self.digit_stride;
-        let mut blocks = Vec::with_capacity(self.block_sizes.len());
-        let mut tail = self.digits.as_mut_slice();
-        for &block_size in &self.block_sizes {
-            let (head, rest) = tail.split_at_mut(block_size * stride);
-            blocks.push(head);
-            tail = rest;
-        }
-        blocks
     }
 
     /// Iterate over blocks as flat digit slices into the digit stream.
@@ -712,56 +476,6 @@ impl DigitBlocks {
     /// Iterate over logical blocks.
     pub fn iter(&self) -> DigitBlockIter<'_> {
         self.iter_blocks()
-    }
-
-    /// Append the flat digit stream to `dst`.
-    pub fn extend_digits(&self, dst: &mut Vec<i8>) {
-        dst.extend_from_slice(&self.digits);
-    }
-
-    /// Truncate every block to at most `max_planes_per_block` digit planes.
-    pub fn truncate_each_block(&mut self, max_planes_per_block: usize) {
-        if self
-            .block_sizes
-            .iter()
-            .all(|&size| size <= max_planes_per_block)
-        {
-            return;
-        }
-        let stride = self.digit_stride;
-        let total_planes: usize = self
-            .block_sizes
-            .iter()
-            .map(|&size| size.min(max_planes_per_block))
-            .sum();
-        let mut new_digits = Vec::with_capacity(total_planes * stride);
-        let mut offset_planes = 0usize;
-        for size in &mut self.block_sizes {
-            let keep = (*size).min(max_planes_per_block);
-            let start = offset_planes * stride;
-            new_digits.extend_from_slice(&self.digits[start..start + keep * stride]);
-            offset_planes += *size;
-            *size = keep;
-        }
-        self.digits = new_digits;
-    }
-
-    /// Consume the storage and rebuild owned blocks of planes (each plane a
-    /// `Vec<i8>` of length `digit_stride`).
-    pub fn into_blocks(self) -> Vec<Vec<Vec<i8>>> {
-        let stride = self.digit_stride;
-        let mut blocks = Vec::with_capacity(self.block_sizes.len());
-        let mut offset_planes = 0usize;
-        for size in self.block_sizes {
-            let mut block = Vec::with_capacity(size);
-            for plane in 0..size {
-                let start = (offset_planes + plane) * stride;
-                block.push(self.digits[start..start + stride].to_vec());
-            }
-            blocks.push(block);
-            offset_planes += size;
-        }
-        blocks
     }
 
     /// Consume into the flat digits, block sizes, and per-plane stride.
@@ -847,22 +561,6 @@ impl DigitBlocks {
             ));
         }
         Ok(blocks)
-    }
-
-    /// Construct from typed `[i8; D]` planes and explicit block sizes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the block sizes do not sum to the plane count.
-    pub fn from_typed_planes<const D: usize>(
-        flat_planes: Vec<[i8; D]>,
-        block_sizes: Vec<usize>,
-    ) -> Result<Self, AkitaError> {
-        let mut digits = Vec::with_capacity(flat_planes.len() * D);
-        for plane in &flat_planes {
-            digits.extend_from_slice(plane);
-        }
-        Self::new(digits, block_sizes, D)
     }
 }
 

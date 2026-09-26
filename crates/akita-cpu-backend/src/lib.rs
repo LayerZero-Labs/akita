@@ -66,6 +66,7 @@ pub mod benchmark_support {
         decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
         mat_vec_mul_ntt_i8_dense_single_row,
     };
+    #[cfg(feature = "labinius-trinomial")]
     pub use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
     pub use crate::sources::poly_helpers::{
         balanced_ring_decompose_fold_partitioned, DecomposeParams,
@@ -94,9 +95,6 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
     RingVec::from_coeffs_with_ring_dim(coefficients, D)
         .expect("typed inner commitment rows have valid ring storage")
 }
-
-#[cfg(test)]
-mod stage1_roundtrip_tests;
 
 #[cfg(test)]
 mod tests;

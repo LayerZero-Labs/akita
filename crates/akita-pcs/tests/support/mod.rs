@@ -286,7 +286,7 @@ where
             max_num_vars,
             max_num_batched_polys,
         )
-        .map(|requirements| requirements.matrix_capacity)?;
+        .map(|requirements| requirements.matrix_capacity())?;
         Ok(SetupMatrixCapacity {
             num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
                 AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())

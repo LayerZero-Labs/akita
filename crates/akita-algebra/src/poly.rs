@@ -1,110 +1,12 @@
-//! Polynomial containers and evaluation utilities.
+//! Multilinear polynomial evaluation utilities.
 
 #[cfg(feature = "parallel")]
 use super::eq_poly::EqPolynomial;
 use crate::Field;
 use akita_error::AkitaError;
-use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
-};
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::Fold;
-use std::io::{Read, Write};
-use std::ops::{Add, Neg, Sub};
-
-/// A degree-<D polynomial over `F`, stored as coefficients `[a0, a1, ..., a_{D-1}]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Poly<F: Field, const D: usize>(pub [F; D]);
-
-impl<F: Field, const D: usize> Poly<F, D> {
-    /// Construct the zero polynomial.
-    pub fn zero() -> Self {
-        Self([F::zero(); D])
-    }
-}
-
-impl<F: Field, const D: usize> Add for Poly<F, D> {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut out = self.0;
-        for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst += *src;
-        }
-        Self(out)
-    }
-}
-
-impl<F: Field, const D: usize> Sub for Poly<F, D> {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut out = self.0;
-        for (dst, src) in out.iter_mut().zip(rhs.0.iter()) {
-            *dst -= *src;
-        }
-        Self(out)
-    }
-}
-
-impl<F: Field, const D: usize> Neg for Poly<F, D> {
-    type Output = Self;
-    fn neg(self) -> Self::Output {
-        let mut out = self.0;
-        for coeff in &mut out {
-            *coeff = -*coeff;
-        }
-        Self(out)
-    }
-}
-
-impl<F: Field + Valid, const D: usize> Valid for Poly<F, D> {
-    fn check(&self) -> Result<(), SerializationError> {
-        for x in self.0.iter() {
-            x.check()?;
-        }
-        Ok(())
-    }
-}
-
-impl<F: Field + AkitaSerialize, const D: usize> AkitaSerialize for Poly<F, D> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        for x in self.0.iter() {
-            x.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.0.iter().map(|x| x.serialized_size(compress)).sum()
-    }
-}
-
-impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
-    for Poly<F, D>
-{
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let mut arr = [F::zero(); D];
-        for coeff in &mut arr {
-            *coeff = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        }
-        let out = Self(arr);
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
 
 /// Evaluate a multilinear polynomial (given by boolean-hypercube evaluations in
 /// little-endian bit order) at an arbitrary point via iterated folding.

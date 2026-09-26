@@ -50,30 +50,6 @@ impl CostValue {
     }
 }
 
-/// Caller-visible tag copied from input parameters into output.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EstimateTag(Option<String>);
-
-impl EstimateTag {
-    /// Create an empty tag.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self(None)
-    }
-
-    /// Create a non-empty tag.
-    #[must_use]
-    pub fn new(tag: impl Into<String>) -> Self {
-        Self(Some(tag.into()))
-    }
-
-    /// Return the tag string, if present.
-    #[must_use]
-    pub fn as_deref(&self) -> Option<&str> {
-        self.0.as_deref()
-    }
-}
-
 /// Lattice-estimator style cost output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LatticeCost {
@@ -97,8 +73,6 @@ pub struct LatticeCost {
     pub prob: Option<Probability>,
     /// Repetition count in log space.
     pub repetitions: Option<CostValue>,
-    /// Caller-visible tag.
-    pub tag: EstimateTag,
 }
 
 #[cfg(test)]
@@ -113,12 +87,5 @@ mod tests {
             None
         );
         assert_eq!(CostValue::Infinity.log2(), None);
-    }
-
-    #[test]
-    fn estimate_tag_debug_is_serialization_free() {
-        let tag = EstimateTag::new("akita_infinity_golden");
-        assert_eq!(tag.as_deref(), Some("akita_infinity_golden"));
-        assert!(format!("{tag:?}").contains("akita_infinity_golden"));
     }
 }

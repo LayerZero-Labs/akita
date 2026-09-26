@@ -40,26 +40,18 @@ The verifier receives these public values:
 - The approved external schedule artifact or its validated catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
-- An expected proof shape.
-- Compressed proof bytes.
+- Native Spongefish argument bytes.
 - The application transcript domain and basis mode.
 
 The host should place them in one versioned public artifact or authenticate the
 setup separately. The [proof artifacts guide](./proof-artifacts.md) explains the
 bundle.
 
-## Decode with the expected shape
+## Keep proof bytes opaque
 
-```rust
-let proof = AkitaBatchedProof::<F, E>::deserialize_compressed(
-    &mut std::io::Cursor::new(&proof_bytes),
-    &expected_shape,
-)?;
-```
-
-The expected shape must come from the selected row in the host's approved
-catalog. It gives the decoder concrete bounds before it allocates nested proof
-objects.
+Do not decode the proof into a host-side Rust object. Pass the native argument
+bytes to verification; the approved schedule supplies all message counts and
+allocation bounds.
 
 Commitments and verifier setup use their own canonical decoders and validation
 rules. Decode every public object before constructing the statement.
@@ -88,18 +80,14 @@ group is last, and every earlier group is a precommitted group.
 
 ## Verify directly
 
-Create a verifier side transcript with the application session label, then call
-the top level verifier entry point.
+Pass the application session label to the top-level verifier entry point.
 
 ```rust
-let mut transcript =
-    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-
-akita_verifier::batched_verify::<Config, _>(
-    &proof,
+akita_verifier::batched_verify::<Config>(
+    &proof_bytes,
     &verifier_setup,
     &catalog,
-    &mut transcript,
+    TRANSCRIPT_DOMAIN,
     statement,
     BasisMode::Lagrange,
 )?;

@@ -253,9 +253,11 @@ where
 ```
 
 This is one logical handle family. Its implementation may route commitment,
-opening, tensor, and ring-switch work internally. A single reusable `CpuBackend`
-owns configuration and private resources; generic proving does not compose
-physical routes. Cross-owner reuse requires an explicit validated import.
+opening, tensor, and ring-switch work internally. A single reusable `CpuBackend<F, E>`
+owns the prepared setup and private resources and receives each operation's
+schedule catalog as an argument
+([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)); generic
+proving does not compose physical routes. Cross-owner reuse requires an explicit validated import.
 
 ## Proof-scoped ownership
 
@@ -791,7 +793,7 @@ where
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_stage2_challenge(
         &self,
@@ -866,7 +868,7 @@ where
         session_handle: &mut Self::WitnessEorSessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_eor_challenge(
         &self,
@@ -1049,7 +1051,7 @@ struct GpuStage2SessionState<E> {
     witness_buffer: DeviceBufferLease<PackedWord>,
     folded_state: DeviceBuffer<E>,
     relation_weights: DeviceBuffer<E>,
-    pending_round_polynomial: Option<UniPoly<E>>,
+    pending_round_polynomial: Option<UnivariatePoly<E>>,
     ready_event: GpuEvent,
 }
 ```
@@ -1144,10 +1146,15 @@ let build_start = consumer.begin_recursive_witness(
     group_commitments,
 )?;
 
-build_start.opening_payload().append_flat_to_transcript(
-    ABSORB_OPENING_PAYLOAD,
-    build_start.opening_payload_ring_dimension(),
-    transcript,
+send_native_field_group(
+    grinding.state_mut(),
+    ProtocolSiteId {
+        family: SITE_FAMILY_OPENING_PAYLOAD,
+        level,
+        detail: build_start.opening_payload_ring_dimension() as u32,
+        ..ProtocolSiteId::default()
+    },
+    build_start.opening_payload().coeffs(),
 )?;
 
 let gamma = prepare_gamma(transcript, &opening_batch)?;

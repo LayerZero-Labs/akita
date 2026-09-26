@@ -296,7 +296,7 @@ fn commitment_params_for_slice_count(
 #[allow(clippy::type_complexity)]
 fn commit_fixture_with_profile(
     polys: &[DensePoly<F>],
-    ctx: &OperationCtx<'_, F, CpuBackend>,
+    ctx: &OperationCtx<'_, F, CpuBackend<F, F>>,
     profile: GroupCommitPhaseParams,
 ) -> Result<(Commitment<F>, PortableCommitmentHandle<F>), AkitaError> {
     let execution_plan = CommitmentExecutionPlan::for_root(&profile)?;
@@ -329,10 +329,10 @@ fn every_slice_count_executes_through_the_composite_commitment_pipeline() {
         },
     )
     .expect("deterministic setup");
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .expect("prepared setup");
-    let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+    let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref())
         .expect("commit context");
     let evals = (0..1usize << NUM_VARS)
@@ -422,10 +422,10 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         },
     )
     .unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .unwrap();
-    let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+    let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let ctx = OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
     let evaluations = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((index * 17 + 9) as u64))
@@ -458,15 +458,19 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .chunks_exact(D)
         .take(canonical.blocks().positions_per_block)
     {
-        source_digits.extend(
-            akita_algebra::CyclotomicRing::<F, D>::from_coefficients(
-                coefficients.try_into().unwrap(),
-            )
-            .balanced_decompose_pow2_i8(
-                canonical.inner().digits.num_digits,
-                canonical.inner().digits.log_basis,
-            ),
-        );
+        let digits = canonical.inner().digits;
+        let q = (-<F as jolt_field::One>::one()).to_u128_checked().unwrap() + 1;
+        let mut planes = vec![[0i8; D]; digits.num_digits];
+        akita_algebra::CyclotomicRing::<F, D>::from_coefficients(coefficients.try_into().unwrap())
+            .balanced_decompose_pow2_i8_into_with_params(
+                &mut planes,
+                &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
+                    digits.num_digits,
+                    digits.log_basis,
+                    q,
+                ),
+            );
+        source_digits.extend(planes);
     }
     let rows = raw.1.inner_rows()[0].as_ring_slice::<D>().unwrap();
     assert_eq!(
@@ -499,7 +503,6 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
 
 #[test]
 fn imported_root_outer_image_matches_full_cpu_commitment() {
-    type ImportedCfg = akita_config::proof_optimized::fp32::Dense;
     type ImportedF = akita_config::proof_optimized::fp32::Field;
     const NUM_VARS: usize = 10;
     let setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
@@ -510,7 +513,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::<ImportedCfg>::for_test_setup(setup.expanded.clone()).unwrap();
+    let backend = CpuBackend::<ImportedF, ImportedF>::new(setup.expanded.clone()).unwrap();
     let prepared = backend.prepared().unwrap();
     let executor = CommitmentExecutor::cpu(
         &backend,
@@ -603,8 +606,7 @@ fn imported_root_outer_image_matches_full_cpu_commitment() {
             SetupMatrixCapacity::minimum(),
         )
         .unwrap();
-        let small_backend =
-            CpuBackend::<ImportedCfg>::for_test_setup(small_setup.expanded).unwrap();
+        let small_backend = CpuBackend::<ImportedF, ImportedF>::new(small_setup.expanded).unwrap();
         assert!(small_backend
             .compress_root_outer_image(profile, outer_image)
             .is_err());

@@ -5,12 +5,12 @@
 //! witness and factor tables.
 
 use akita_algebra::poly::fold_evals_in_place;
-use akita_algebra::uni_poly::UniPoly;
+
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
-    extension_opening_reduction_claim, num_rounds_from_table_len, reduction_table_len,
-    validate_reduction_tables, EXTENSION_OPENING_REDUCTION_DEGREE,
+    num_rounds_from_table_len, reduction_table_len, validate_reduction_tables,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use jolt_field::{Field, Zero};
 use jolt_field::{Fold, Unreduced};

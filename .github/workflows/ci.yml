@@ -50,6 +50,8 @@ jobs:
         run: scripts/test-rust-file-lines.sh
       - name: Enforce Rust file line cap (zero exceptions)
         run: scripts/check-rust-file-lines.sh --no-baseline
+      - name: Enforce native proof-input guardrails
+        run: scripts/check-native-proof-guardrails.sh
 
   clippy:
     name: Clippy
@@ -73,6 +75,25 @@ jobs:
           scripts/check-crate-deps.sh akita-config
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
+
+  labinius-trinomial:
+    name: LaBinius trinomial arithmetic and relation bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: clippy
+      - name: Test trinomial arithmetic
+        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-trinomial
+      - name: Clippy trinomial arithmetic and benchmarks
+        run: cargo clippy -p akita-algebra --lib --benches --no-default-features --features labinius-trinomial -- -D warnings
+      - name: Test trinomial relation geometry
+        run: cargo test -p akita-types --lib --no-default-features --features labinius-trinomial,transcript-blake2b
+      - name: Test trinomial quotient kernel
+        run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-blake2b -- kernels::trinomial_relation
+      - name: Clippy trinomial bridge and benchmarks
+        run: cargo clippy -p akita-types -p akita-cpu-backend --lib --benches --no-default-features --features labinius-trinomial,transcript-blake2b -- -D warnings
 
   machete:
     name: Unused dependencies
@@ -208,6 +229,9 @@ jobs:
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- heterogeneous::bounded_
           cargo test --release -p akita-config --test bounded_dense_source
+      - name: Combined-family setup at exact capacities
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-blake2b -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
@@ -228,17 +252,25 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
-      # The structural challenge audit only runs under `logging-transcript`, so
-      # the protocol suites must also be exercised with it enabled. Without this
-      # step the audit is only ever checked against the two hardening targets at
-      # a single opening shape.
-      - name: Run protocol suites under the challenge audit
+      - name: Run native Spongefish stream and mutation suites
+        run: |
+          cargo test --release -p akita-transcript \
+            --no-default-features \
+            --features logging-transcript,${{ matrix.backend }} \
+            native --lib
+          cargo test --release -p akita-pcs \
+            --no-default-features \
+            --features parallel,logging-transcript,${{ matrix.backend }} \
+            native_spongefish_roundtrip_and_statement_binding --lib
+          cargo test --release -p akita-pcs \
+            --no-default-features \
+            --features parallel,logging-transcript,${{ matrix.backend }} \
+            selective_l2_proof_rejects_transcript_mutations --lib
+      - name: Run protocol suites with native transcript tracing
         run: >-
           cargo test --release -p akita-pcs
           --test protocol_soundness
           --test fold_linf
-          --test transcript
-          --test label_schedule
           --no-default-features
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
@@ -248,10 +280,10 @@ jobs:
           cargo test --release -p akita-types
           --features logging-transcript
 
-  # The backend lib-test target builds a separate release test graph. Keep it
-  # isolated so Keccak runner variance cannot exhaust the transcript job budget.
-  test-cpu-stage1-transcript-roundtrips:
-    name: CPU Stage 1 transcript roundtrips (${{ matrix.backend }})
+  # Exercise the native proof stream through the opaque CPU backend under both
+  # transcript hashes, including a small-field Stage 1 route.
+  test-native-transcript-roundtrips:
+    name: Native transcript roundtrips (${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -260,11 +292,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
-      - name: Audit CPU Stage 1 roundtrips
+      - name: Audit native proof roundtrips
         run: >-
-          cargo test --release -p akita-cpu-backend --lib stage1_roundtrip_tests
+          cargo test --release -p akita-pcs --test native_port_smoke
           --no-default-features
-          --features parallel,logging-transcript,${{ matrix.backend }}
+          --features parallel,${{ matrix.backend }}
           --
           --test-threads=1
 

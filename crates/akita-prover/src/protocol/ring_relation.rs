@@ -6,7 +6,6 @@ use crate::ProverOpeningData;
 #[cfg(test)]
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_types::dispatch_for_field;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
@@ -45,7 +44,6 @@ pub(in crate::protocol) struct PreparedRingRelationOutput<
     WitnessHandle,
 > {
     pub(in crate::protocol) relation: PreparedRingRelation<F, E, WitnessHandle>,
-    pub(in crate::protocol) opening_payload: RingVec<F>,
     pub(in crate::protocol) trace_claim: crate::protocol::prove::PreparedEvaluationTraceClaim<E>,
     pub(in crate::protocol) row_coefficients: Vec<E>,
 }
@@ -136,7 +134,7 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::prepare")]
     #[inline(never)]
-    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, T, B>(
+    pub(in crate::protocol) fn prepare<'claims, 'source, F, PointF, B>(
         opening_ctx: &OperationCtx<'_, F, B>,
         prepared_group_openings: Vec<PreparedGroupOpening<PointF, B::PreparedOpeningHandle>>,
         commitment_material: Vec<B::CommitmentMaterialHandle>,
@@ -147,7 +145,7 @@ impl RingRelationProver {
             F,
         >,
         lp: CommittedGroupParams,
-        transcript: &mut T,
+        grinding: &mut akita_types::NativeProverGrinding<'_>,
         level: u32,
         reduction: &Option<crate::protocol::prove::ExtensionOpeningReduction<PointF>>,
         scalar_openings: &[PointF],
@@ -166,7 +164,6 @@ impl RingRelationProver {
         PointF: akita_types::FpExtEncoding<F>
             + jolt_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
-        T: akita_types::ProverTranscriptGrinding<F>,
         B: crate::backend::ProverBackend<F, PointF>,
     {
         let consumer = opening_ctx.backend();
@@ -255,11 +252,18 @@ impl RingRelationProver {
         {
             return Err(AkitaError::InvalidProof);
         }
-        opening_payload.append_flat_to_transcript(
-            ABSORB_OPENING_PAYLOAD,
-            opening_payload_ring_dimension,
-            transcript,
-        )?;
+        akita_transcript::send_native_field_group(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_OPENING_PAYLOAD,
+                level,
+                detail: u32::try_from(opening_payload_ring_dimension)
+                    .map_err(|_| AkitaError::InvalidSetup("ring dimension exceeds u32".into()))?,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            opening_payload.coeffs(),
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
         drop(opening_rows_span);
 
         // Native public claim batching is intentionally delayed until every
@@ -267,11 +271,11 @@ impl RingRelationProver {
         // Extension EOR supplies its already-bound coefficients because its
         // shared reduced point and final relation depend on that earlier batch.
         let (trace_claim, row_coefficients) =
-            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF, T>(
+            crate::protocol::prove::prepare_evaluation_trace_claim::<F, PointF>(
                 reduction,
                 scalar_openings,
                 trace_opening_batch,
-                transcript,
+                grinding,
                 level,
             )
             .map_err(|err| {
@@ -331,9 +335,9 @@ impl RingRelationProver {
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
         let grind_outputs =
-            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B, T>(
+            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, B>(
                 opening_ctx,
-                transcript,
+                grinding,
                 level,
                 &lp,
                 &opening_batch,
@@ -466,7 +470,6 @@ impl RingRelationProver {
                 witness_handle,
                 groups: prepared_relation_groups,
             },
-            opening_payload,
             trace_claim,
             row_coefficients,
         })

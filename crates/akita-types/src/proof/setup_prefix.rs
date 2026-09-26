@@ -12,7 +12,7 @@ use crate::{
     GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout,
     OuterCommitMatrixParams, PolynomialGroupLayout,
 };
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -64,12 +64,6 @@ impl PartialEq for SetupPrefixSlotId {
 impl Eq for SetupPrefixSlotId {}
 
 impl SetupPrefixSlotId {
-    /// Ring dimension used to commit the setup-prefix coefficient vector.
-    #[must_use]
-    pub fn d_setup(&self) -> usize {
-        self.commitment_profile.inner.matrix.ring_dimension()
-    }
-
     /// Full power-of-two flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
         n_prefix_from_commitment_profile(&self.commitment_profile).map_err(|err| {
@@ -93,13 +87,11 @@ fn committed_group_profile_descriptor_bytes(params: &GroupCommitPhaseParams) -> 
 fn n_prefix_from_commitment_profile(
     params: &GroupCommitPhaseParams,
 ) -> Result<usize, SerializationError> {
-    1usize
-        .checked_shl(params.group.num_vars() as u32)
-        .ok_or_else(|| {
-            SerializationError::InvalidData(
-                "setup prefix slot commitment domain overflows usize".to_string(),
-            )
-        })
+    checked::pow2(params.group.num_vars()).ok_or_else(|| {
+        SerializationError::InvalidData(
+            "setup prefix slot commitment domain overflows usize".to_string(),
+        )
+    })
 }
 
 /// Validate that a setup prefix uses the smallest power-of-two commitment

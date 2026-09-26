@@ -155,7 +155,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
     let digit_lut = DigitMontLut::new_with_digit_bound(&params, 64);
     let lhs_ntt = CyclotomicCrtNtt::from_ring(&lhs, &params);
     let rhs_ntt = CyclotomicCrtNtt::from_i8_with_lut(&rhs_digits, &params, &digit_lut);
-    let product_ntt = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
+    let mut product_ntt = CyclotomicCrtNtt::zero();
+    product_ntt.add_assign_pointwise_mul(&lhs_ntt, &rhs_ntt, &params);
     assert_eq!(product_ntt.to_ring::<F>(&params), lhs * rhs);
     let label = format!("crt_{field}_negacyclic/D={D}");
     let mut group = criterion.benchmark_group("ntt_comparison");
@@ -172,7 +173,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
                     black_box(&params),
                     black_box(&digit_lut),
                 );
-                let product = lhs_ntt.pointwise_mul(black_box(&rhs_ntt), black_box(&params));
+                let mut product = CyclotomicCrtNtt::zero();
+                product.add_assign_pointwise_mul(&lhs_ntt, black_box(&rhs_ntt), black_box(&params));
                 black_box(product.to_ring::<F>(black_box(&params)))
             })
         },
@@ -187,7 +189,8 @@ fn bench_crt<F, const K: usize, const D: usize>(
                     black_box(&params),
                     black_box(&digit_lut),
                 );
-                let product = lhs_ntt.pointwise_mul(black_box(&rhs_ntt), black_box(&params));
+                let mut product = CyclotomicCrtNtt::zero();
+                product.add_assign_pointwise_mul(&lhs_ntt, black_box(&rhs_ntt), black_box(&params));
                 black_box(product.to_ring::<F>(black_box(&params)))
             })
         },
@@ -213,7 +216,13 @@ fn bench_crt<F, const K: usize, const D: usize>(
     group.bench_with_input(
         BenchmarkId::new("pretransformed_pointwise_mul", &label),
         &label,
-        |bench, _| bench.iter(|| black_box(lhs_ntt.pointwise_mul(black_box(&rhs_ntt), &params))),
+        |bench, _| {
+            bench.iter(|| {
+                let mut product = CyclotomicCrtNtt::zero();
+                product.add_assign_pointwise_mul(&lhs_ntt, black_box(&rhs_ntt), &params);
+                black_box(product)
+            })
+        },
     );
     group.bench_with_input(
         BenchmarkId::new("pretransformed_mac", &label),

@@ -52,7 +52,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
         .clone();
     let capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NV, 1)
         .unwrap()
-        .matrix_capacity;
+        .matrix_capacity();
     let setup =
         akita_cpu_backend::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
     let total = setup.expanded.shared_matrix().num_field_elements() / D;

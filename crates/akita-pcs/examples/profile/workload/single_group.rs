@@ -1,12 +1,12 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
     degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,
-    opening_from_poly, planned_payload_bytes, profile_setup_contribution_mode, prover_claims,
+    opening_from_poly, profile_setup_contribution_mode, proof_size_budgets, prover_claims,
     random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
@@ -15,7 +15,6 @@ use akita_cpu_backend::RootPolyShape;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, SourceHandle};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout,
@@ -35,8 +34,8 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     scheme: &AkitaCommitmentScheme<Cfg>,
     setup: &AkitaProverSetup<Cfg::Field>,
-    backend: &CpuBackend<Cfg>,
-    source: &SourceHandle<FF, Cfg::ExtField, Cfg>,
+    backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+    source: &SourceHandle<FF, Cfg::ExtField>,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     group_layout: PolynomialGroupLayout,
@@ -89,6 +88,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             private_handle: hint,
         } = backend
             .commit(
+                scheme.schedules(),
                 source,
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -105,7 +105,6 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .expect("select generated schedule row")
             .selection();
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = scheme
             .batched_prove(
                 setup,
@@ -118,7 +117,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                     hint,
                 ),
                 backend,
-                &mut prover_transcript,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -126,7 +125,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         (commitments, proof)
     };
 
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let runtime_schedule = if plan.is_none() {
@@ -148,12 +147,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     });
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(effective_schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, effective_schedule, &grinding_plan);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -165,10 +159,9 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(plan, group_layout),
+                proof_size_budgets::<Cfg>(plan, group_layout),
                 "planned",
                 setup_contribution_mode,
-                plan,
             );
         }
         emit_runtime_schedule_summary(
@@ -179,22 +172,16 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            plan,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, plan, Cfg::decomposition().field_bits());
     } else {
         let schedule = effective_schedule;
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(schedule, group_layout),
+                proof_size_budgets::<Cfg>(schedule, group_layout),
                 "runtime schedule",
                 setup_contribution_mode,
-                schedule,
             );
         }
         emit_runtime_schedule_summary(
@@ -205,12 +192,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
-        emit_proof_tail_report::<FF, Cfg::ExtField>(
-            label,
-            &proof,
-            schedule,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_native_proof_tail_report(label, schedule, Cfg::decomposition().field_bits());
     }
 
     let t_verifier_setup = Instant::now();
@@ -246,11 +228,10 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             claims,
             BasisMode::Lagrange,
         )
@@ -359,7 +340,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     if let Some(schedule) = plan {
         backend
             .prewarm(schedule)
@@ -449,7 +430,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup = scheme.setup_prover(nv, 1).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
     if let Some(schedule) = plan {
         backend
             .prewarm(schedule)

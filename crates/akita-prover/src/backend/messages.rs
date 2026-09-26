@@ -163,7 +163,7 @@ impl<FoldHandle> RecursiveWitnessFoldInput<FoldHandle> {
 /// Public commitment and replacement private handles after commitment.
 pub enum NextWitnessBindingMessage<F: Field> {
     OuterPayload(akita_types::RingVec<F>),
-    TerminalInnerState(TerminalTFieldsMessage),
+    TerminalInnerState(TerminalTFieldsMessage<F>),
 }
 
 /// Replacement handles and the message scheduled at the commitment transition.
@@ -239,19 +239,16 @@ impl<RelationHandle> PreparedRelationHandle<RelationHandle> {
 }
 
 /// Canonical scheduled terminal commitment message.
-pub struct TerminalTFieldsMessage {
-    bytes: Vec<u8>,
+pub struct TerminalTFieldsMessage<F: Field> {
+    fields: akita_types::RingVec<F>,
 }
-impl TerminalTFieldsMessage {
-    pub fn from_row<F>(row: &akita_types::RingVec<F>) -> Result<Self, akita_error::AkitaError>
-    where
-        F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
-    {
-        Ok(Self {
-            bytes: akita_types::raw_field_segment_bytes(row)?,
-        })
+impl<F: Field> TerminalTFieldsMessage<F> {
+    pub fn from_row(row: &akita_types::RingVec<F>) -> Self {
+        Self {
+            fields: row.clone(),
+        }
     }
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+    pub fn fields(&self) -> &[F] {
+        self.fields.coeffs()
     }
 }

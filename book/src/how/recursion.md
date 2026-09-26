@@ -1,4 +1,4 @@
-# Recursion and proof shape
+# Recursion and proof streams
 
 A fold turns an opening of a committed source into an opening of a new digit
 witness. Akita repeats this reduction until the remaining response is small
@@ -222,10 +222,10 @@ explains how they use the predecessor's binding.
 
 ## Proof anatomy and schedule ownership
 
-`AkitaBatchedProof` stores one packed nonce stream, one root
-`FoldLevelProof`, zero or more recursive `FoldLevelProof` records, and one
-`TerminalLevelProof`. Each nonterminal record contains its opening payload,
-Stage 1 and Stage 2 data, and optional Stage 3 data. Extension-opening
+The proof is one native Spongefish argument stream. The validated schedule
+fixes the messages for one root fold, zero or more recursive folds, and one
+terminal fold. Each nonterminal level emits its opening payload, Stage 1 and
+Stage 2 data, and optional Stage 3 data in protocol order. Extension-opening
 reduction appears only where the field and opening method require it.
 
 The next-witness binding has two variants. `OuterPayload` carries a
@@ -234,8 +234,8 @@ selects the final A-only handoff and carries no duplicate commitment payload.
 
 The selected schedule fixes level count, group geometry, decomposition,
 payload modes, and terminal response shape. The verifier validates this
-shape before replay. It does not run the offline planner or try a different
-mode when a proof fails.
+message counts and byte bounds before replay. It does not run the offline
+planner or try a different mode when a proof fails.
 
 The offline planner runs one root search. Root contraction can change candidate
 order, but it is not a feasibility rule or part of the final objective.

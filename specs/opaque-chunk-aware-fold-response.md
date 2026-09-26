@@ -583,7 +583,7 @@ pub trait WitnessExtensionOpeningKernel<H, F, E>: ComputeBackendSetup<F> {
         session: &mut Self::Session,
         round: usize,
         previous_local_claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_witness_eor_challenge(
         &self,
@@ -761,7 +761,7 @@ policy, Rice parameter, and maximum byte budget. Canonical decoding rejects
 trailing data and noncanonical padding. Any decoded temporary is discarded
 inside the adapter and is never returned to protocol orchestration.
 
-`build_terminal_response` is narrowed or supplemented to accept only
+`build_terminal_response_from_payload` is narrowed to accept only
 `CanonicalTerminalZPayload` plus the protocol-owned E and T fields. It validates
 the exact E/T field lengths and requires `payload.len() <= z_payload_bytes`;
 the terminal Z payload is variable length and is not padded to the scheduled

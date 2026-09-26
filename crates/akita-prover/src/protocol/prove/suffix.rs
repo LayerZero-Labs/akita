@@ -17,11 +17,11 @@ pub struct SuffixProverState<F: Field, E: Field, MaterialHandle, WitnessHandle> 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_suffix<Cfg, T, B>(
+pub(super) fn prove_suffix<Cfg, B>(
     expanded: &akita_types::AkitaSetupDescriptor,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
     backend: &B,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     mut current_state: SuffixProverState<
         Cfg::Field,
         Cfg::ExtField,
@@ -30,7 +30,7 @@ pub(super) fn prove_suffix<Cfg, T, B>(
     >,
     schedule: &FoldSchedule,
     session: &B::ProofSessionHandle,
-) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
+) -> Result<RecursiveSuffixOutcome, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
@@ -43,10 +43,8 @@ where
         + MulBaseUnreduced<Cfg::Field>
         + AkitaSerialize
         + 'static,
-    T: akita_types::ProverTranscriptGrinding<Cfg::Field>,
     B: ProverBackend<Cfg::Field, Cfg::ExtField>,
 {
-    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let level = index + 1;
         if current_state.witness_handle.manifest().logical_len() != step.input_witness_len {
@@ -64,10 +62,10 @@ where
                 )
             },
         );
-        let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, B>(
+        let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B>(
             backend,
             prefix_slots,
-            transcript,
+            grinding,
             current_state,
             level,
             &step.params,
@@ -75,12 +73,12 @@ where
             step.output_witness_len,
             next_params.inner_ring_dimension(),
         )?;
-        let output = prove_fold::<Cfg::Field, Cfg::ExtField, T, B>(
+        let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
             expanded,
             prefix_slots,
             backend,
             session,
-            transcript,
+            grinding,
             level,
             &step.params,
             next_params,
@@ -88,37 +86,34 @@ where
             next_binding,
             prepared,
         )?;
-        recursive_folds.push(output.level_proof);
         current_state = output.next_state;
     }
     if current_state.witness_handle.manifest().logical_len() != schedule.terminal.input_witness_len
     {
         return Err(AkitaError::InvalidProof);
     }
-    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, B>(
+    prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, B>(
         backend,
-        transcript,
+        grinding,
         schedule.recursive_folds.len() + 1,
         current_state,
         &schedule.terminal,
         session,
     )?;
     Ok(RecursiveSuffixOutcome {
-        recursive_folds,
-        terminal,
         num_levels: schedule.num_fold_levels(),
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_terminal_suffix<F, E, T, B>(
+fn prove_terminal_suffix<F, E, B>(
     backend: &B,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: usize,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     scheduled: &TerminalFoldParams,
     session: &B::ProofSessionHandle,
-) -> Result<TerminalLevelProof<F, E>, AkitaError>
+) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
@@ -130,7 +125,6 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize
         + 'static,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: ProverBackend<F, E>,
 {
     let SuffixProverState {
@@ -164,17 +158,27 @@ where
         backend,
         &commitment_material,
     )?;
-    transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, terminal_message.as_bytes());
+    let fold_level = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    akita_transcript::public_native_fields_prover(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_TERMINAL,
+            level: fold_level,
+            stage: 2,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        terminal_message.fields(),
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
     let t_state = crate::backend::TerminalCommitmentMaterialKernel::consume_terminal_row(
         backend,
         commitment_material,
     )?;
 
-    let fold_level = u32::try_from(level)
-        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
     let consumer = backend;
     let context = backend.proof_context(session, fold_level)?;
-    let (terminal_response, extension_opening_reduction) = {
+    let terminal_response = {
         let witness_source = &witness_handle;
         let logical_source = &witness_handle;
         let params = &scheduled;
@@ -194,13 +198,13 @@ where
                 point: &sumcheck_challenges,
                 ring_dimension: params.d_a(),
             }];
-            let proved = prove_extension_opening_reduction::<F, E, T, B>(
+            let proved = prove_extension_opening_reduction::<F, E, B>(
                 backend,
                 session,
                 &context,
                 &opening_batch,
                 &eor_inputs,
-                transcript,
+                grinding,
                 fold_level,
                 &[opening],
             )?;
@@ -215,6 +219,17 @@ where
         } else {
             (sumcheck_challenges, None)
         };
+        akita_transcript::public_native_extensions_prover::<F, E>(
+            grinding.state_mut(),
+            akita_transcript::ProtocolSiteId {
+                family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                level: fold_level,
+                stage: 5,
+                ..akita_transcript::ProtocolSiteId::default()
+            },
+            &protocol_point,
+        )
+        .map_err(|_| AkitaError::InvalidProof)?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -236,9 +251,6 @@ where
                         witness_source,
                         &opening_plan,
                     )?;
-                for coordinate in &protocol_point {
-                    append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
-                }
                 let (scalar_openings, opening_handle) = prepared.into_parts();
                 if scalar_openings.len() != 1 {
                     return Err(AkitaError::InvalidProof);
@@ -249,15 +261,24 @@ where
                         opening_handle,
                     )?;
                 if reduction.is_none() {
-                    append_claim_values_to_transcript::<F, E, T>(&scalar_openings, transcript);
+                    akita_transcript::public_native_extensions_prover::<F, E>(
+                        grinding.state_mut(),
+                        akita_transcript::ProtocolSiteId {
+                            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+                            level: fold_level,
+                            stage: 4,
+                            ..akita_transcript::ProtocolSiteId::default()
+                        },
+                        &scalar_openings,
+                    )
+                    .map_err(|_| AkitaError::InvalidProof)?;
                 }
-                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E, T>(
+                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E>(
                     &reduction,
                     &scalar_openings,
                     &opening_batch,
-                    transcript,
-                    u32::try_from(level)
-                        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+                    grinding,
+                    fold_level,
                 )?
                 .0;
                 // The EOR proof binds the carried extension-field opening to its
@@ -275,22 +296,27 @@ where
                     .into_iter()
                     .next()
                     .ok_or(AkitaError::InvalidProof)?;
-                transcript.absorb_and_record_bytes(
-                    ABSORB_TERMINAL_E_HAT,
-                    &akita_types::raw_field_segment_bytes(&e_folded)?,
-                );
+                akita_transcript::send_native_field_group(
+                    grinding.state_mut(),
+                    akita_transcript::ProtocolSiteId {
+                        family: akita_transcript::SITE_FAMILY_TERMINAL,
+                        level: fold_level,
+                        stage: 1,
+                        ..akita_transcript::ProtocolSiteId::default()
+                    },
+                    e_folded.coeffs(),
+                )
+                .map_err(|_| AkitaError::InvalidProof)?;
                 let output = crate::protocol::fold_grind::sample_terminal_fold_response::<
                     F,
                     E,
                     B::WitnessHandle,
                     _,
-                    T,
                     D,
                 >(
                     consumer,
-                    transcript,
-                    u32::try_from(level)
-                        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+                    grinding,
+                    fold_level,
                     params,
                     &scheduled.fold_challenge_config,
                     witness_source,
@@ -303,26 +329,45 @@ where
                     t_state.clone(),
                     output.encoded_payload,
                 )?;
-                Ok::<_, AkitaError>((
-                    terminal_response,
-                    reduction.as_ref().map(|value| value.proof.clone()),
-                ))
+                Ok::<_, AkitaError>(terminal_response)
             }
         )?
     };
     crate::backend::OpaqueResourceReleaseKernel::release_witness_handle(consumer, witness_handle)?;
-    let transcript_parts = terminal_response.terminal_transcript_parts()?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &transcript_parts.response);
-    Ok(TerminalLevelProof {
-        extension_opening_reduction,
-        terminal_response,
-    })
+    let group = scheduled
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
+    let z_payload = terminal_response
+        .z_payloads
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
+    tracing::info!(
+        native_terminal_z_bytes = z_payload.len(),
+        native_terminal_e_field_elements = terminal_response.e_fields.coeff_len(),
+        native_terminal_t_field_elements = terminal_response.t_fields.coeff_len(),
+        "native terminal response bytes"
+    );
+    akita_transcript::send_native_bounded_bytes(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_TERMINAL,
+            level: fold_level,
+            round: 3,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        z_payload,
+        group.z_payload_bytes,
+    )
+    .map_err(|_| AkitaError::InvalidProof)
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_suffix<F, E, T, B>(
+fn prepare_suffix<F, E, B>(
     backend: &B,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     level: usize,
     level_params: &CommittedGroupParams,
@@ -341,7 +386,6 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize
         + 'static,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: ProverBackend<F, E>,
 {
     let SuffixProverState {
@@ -425,21 +469,29 @@ where
         )?);
     }
     materials.push(witness_material);
-    claims
-        .opening_claims()
-        .group_commitment(witness_index)?
-        .rows()
-        .append_flat_to_transcript(
-            ABSORB_COMMITMENT,
-            geometry.transcript_ring_dimension(),
-            transcript,
-        )?;
-    let prepared = prepare_fold::<F, E, T, B>(
+    akita_transcript::public_native_fields_prover(
+        grinding.state_mut(),
+        akita_transcript::ProtocolSiteId {
+            family: akita_transcript::SITE_FAMILY_FOLD_BINDING,
+            level: fold_level,
+            stage: 3,
+            detail: u32::try_from(geometry.transcript_ring_dimension())
+                .map_err(|_| AkitaError::InvalidProof)?,
+            ..akita_transcript::ProtocolSiteId::default()
+        },
+        claims
+            .opening_claims()
+            .group_commitment(witness_index)?
+            .rows()
+            .coeffs(),
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
+    let prepared = prepare_fold::<F, E, B>(
         backend,
         claims,
         materials,
         true,
-        transcript,
+        grinding,
         fold_level,
         level_params,
         BasisMode::Lagrange,
@@ -458,7 +510,7 @@ where
 mod tests {
     use super::*;
     use crate::protocol::prove::fold_kernels::prepare_evaluation_trace_claim;
-    use akita_transcript::AkitaTranscript;
+    use akita_transcript::new_native_prover;
     use jolt_field::{Fp32, One, Zero};
 
     type TestF = Fp32<251>;
@@ -480,26 +532,19 @@ mod tests {
     fn non_zk_eor_mismatch_is_rejected() {
         let openings = [TestF::zero()];
         let reduction = Some(ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: Vec::new(),
-                sumcheck: akita_sumcheck::SumcheckProof {
-                    round_polys: Vec::new(),
-                },
-                final_claims: vec![TestF::one()],
-            },
+            final_claims: vec![TestF::one()],
             final_factors: vec![TestF::one()],
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
-        let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
+        let native = new_native_prover(b"test/suffix-shared-trace-target", b"test").unwrap();
         let plan = evaluation_batch_plan();
-        let mut transcript =
-            akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
+        let mut grinding = akita_types::NativeProverGrinding::new(native, &plan);
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,
             &opening_batch,
-            &mut transcript,
+            &mut grinding,
             0,
         ) {
             Ok(_) => panic!("non-zk EOR mismatch should reject"),
@@ -518,27 +563,19 @@ mod tests {
         // This error vector cancels under the possible early batch (1, 1).
         // The independent application batch must still reject it.
         let reduction = Some(ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: Vec::new(),
-                sumcheck: akita_sumcheck::SumcheckProof {
-                    round_polys: Vec::new(),
-                },
-                final_claims: vec![TestF::one(), -TestF::one()],
-            },
+            final_claims: vec![TestF::one(), -TestF::one()],
             final_factors: vec![TestF::one()],
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
-        let mut transcript =
-            AkitaTranscript::<TestF>::new(b"test/suffix-independent-late-eor-batch");
+        let native = new_native_prover(b"test/suffix-independent-late-eor-batch", b"test").unwrap();
         let plan = evaluation_batch_plan();
-        let mut transcript =
-            akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
-        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
+        let mut grinding = akita_types::NativeProverGrinding::new(native, &plan);
+        let result = prepare_evaluation_trace_claim::<TestF, TestF>(
             &reduction,
             &openings,
             &opening_batch,
-            &mut transcript,
+            &mut grinding,
             0,
         );
 
