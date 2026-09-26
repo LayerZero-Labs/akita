@@ -324,13 +324,14 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
     }
 }
 
+/// Extension seam: reusable transform scratch for extensions tracked in #45.
+///
 /// Pre-allocated ping-pong buffers for an iterative mixed-radix FFT.
 ///
-/// `buf_a` is updated in place across all stages and holds the result
-/// on return. `buf_b` is a scratch slot callers can pre-fill (see
-/// `execute_from_b`); reused across the inverse and forward passes
-/// inside `rs_extend_batch`.
-pub(crate) struct FftWorkspace<F> {
+/// Create this through [`SmoothDomain::workspace`] and reuse it for forward
+/// and inverse transforms of the same length. Buffers remain private so that
+/// callers cannot invalidate the workspace's shape.
+pub struct FftWorkspace<F> {
     n: usize,
     buf_a: Vec<F>,
     buf_b: Vec<F>,
@@ -590,6 +591,11 @@ pub struct SmoothDomain<F> {
 }
 
 impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
+    /// Allocate reusable scratch for this domain's transforms.
+    pub fn workspace(&self) -> FftWorkspace<F> {
+        FftWorkspace::new(self.n)
+    }
+
     /// Build a domain of size `n` from a primitive `n`-th root of
     /// unity. Precomputes the digit-reversal permutation and per-stage
     /// tables for both forward and inverse transforms.
@@ -643,28 +649,22 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
         result
     }
 
-    /// Allocation-free forward transform for crate-internal composite plans.
-    #[cfg(feature = "labinius-trinomial")]
-    pub(crate) fn forward_into(
-        &self,
-        input: &[F],
-        output: &mut [F],
-        workspace: &mut FftWorkspace<F>,
-    ) {
+    /// Forward transform into caller-owned output using reusable scratch.
+    ///
+    /// # Panics
+    /// If either slice or the workspace has a length different from this domain.
+    pub fn forward_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
         assert_eq!(workspace.n, self.n);
         output.copy_from_slice(workspace.execute(input, &self.fwd_stages, &self.digit_rev));
     }
 
-    /// Allocation-free inverse transform for crate-internal composite plans.
-    #[cfg(feature = "labinius-trinomial")]
-    pub(crate) fn inverse_into(
-        &self,
-        input: &[F],
-        output: &mut [F],
-        workspace: &mut FftWorkspace<F>,
-    ) {
+    /// Inverse transform into caller-owned output using reusable scratch.
+    ///
+    /// # Panics
+    /// If either slice or the workspace has a length different from this domain.
+    pub fn inverse_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
         assert_eq!(workspace.n, self.n);
@@ -1030,6 +1030,26 @@ mod prime_a7f7_tests {
     #[test]
     fn small_fft_matches_naive_dft() {
         assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729]);
+    }
+
+    #[test]
+    fn reusable_workspace_matches_allocating_transforms() {
+        for n in [2, 3, 6, 9, 18, 27, 54, 162, 243] {
+            let domain = SmoothDomain::new(primitive_nth_root::<F>(n), n);
+            let input = (0..n)
+                .map(|i| F::from_u128_checked((i * i + 1) as u128).unwrap())
+                .collect::<Vec<_>>();
+            let mut workspace = domain.workspace();
+            let mut output = vec![F::from_u128_checked(0).unwrap(); n];
+            domain.forward_into(&input, &mut output, &mut workspace);
+            assert_eq!(output, domain.forward(&input));
+            let transformed = output.clone();
+            domain.inverse_into(&transformed, &mut output, &mut workspace);
+            assert_eq!(output, domain.inverse(&transformed));
+            assert_eq!(output, input);
+            domain.forward_into(&input, &mut output, &mut workspace);
+            assert_eq!(output, transformed);
+        }
     }
 
     #[test]
