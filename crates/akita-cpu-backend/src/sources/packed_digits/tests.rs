@@ -95,33 +95,48 @@ fn vector_load_padding_is_zero_initialized() {
 }
 
 #[test]
-fn streaming_writer_round_trips_ranges_gaps_and_multiple_batches() {
-    const STAGING_LIMIT: usize = DIGITS_PER_BLOCK * 2;
-    let len = STAGING_LIMIT + 137;
-    let first = (0..STAGING_LIMIT - 19)
-        .map(|index| (index % 16) as i8 - 8)
-        .collect::<Vec<_>>();
-    let second = (0..73)
-        .map(|index| (index % 8) as i8 - 4)
-        .collect::<Vec<_>>();
-    let second_start = STAGING_LIMIT + 11;
-    let mut expected = vec![0i8; len];
-    expected[..first.len()].copy_from_slice(&first);
-    expected[second_start..second_start + second.len()].copy_from_slice(&second);
+fn streaming_writer_round_trips_split_blocks_gaps_and_bulk_writes() {
+    let mut rng = StdRng::seed_from_u64(0x5eed_b10c);
+    for bit_width in 1..=8 {
+        // Writes that start and end inside blocks, share a split block, skip
+        // whole zero blocks, and cross the `1 << 16` parallel encode threshold.
+        let writes = [
+            (0, 5),
+            (5, 3),
+            (11, 50),
+            (61, 3),
+            (64, 64),
+            (200, 1),
+            (330, (1 << 16) + 77),
+        ];
+        let end = writes.last().map(|&(start, len)| start + len).unwrap();
+        for len in [end, end + 1, end + 64 * 3 + 5] {
+            let mut expected = vec![0i8; len];
+            let mut writer = PackedSignedDigitWriter::new(len, bit_width).unwrap();
+            for &(start, count) in &writes {
+                let digits = random_digits(&mut rng, count, bit_width);
+                expected[start..start + count].copy_from_slice(&digits);
+                writer.write_at(start, &digits).unwrap();
+                assert_eq!(writer.position(), start + count);
+            }
+            let packed = writer.finish().unwrap();
 
-    let mut writer =
-        PackedSignedDigitWriter::new_with_staging_limit(len, 5, STAGING_LIMIT).unwrap();
-    writer.write_at(0, &first).unwrap();
-    writer.write_at(second_start, &second).unwrap();
-    assert_eq!(writer.position(), second_start + second.len());
-    let packed = writer.finish().unwrap();
-
-    assert_eq!(packed.decode(), expected);
-    assert_eq!(packed.bounds().negative_abs_max(), 8);
-    assert_eq!(packed.bounds().positive_max(), 7);
-    assert!(packed.storage[packed.encoded_len..]
-        .iter()
-        .all(|&byte| byte == 0));
+            assert_eq!(
+                packed.decode(),
+                expected,
+                "bit width {bit_width}, len {len}"
+            );
+            assert_eq!(packed.bounds(), signed_digit_bounds(&expected));
+            let mut oracle = vec![0u8; packed.encoded_len];
+            for (index, &digit) in expected.iter().enumerate() {
+                scalar::encode_at(&mut oracle, index, bit_width, digit);
+            }
+            assert_eq!(packed.encoded_bytes(), oracle);
+            assert!(packed.storage[packed.encoded_len..]
+                .iter()
+                .all(|&byte| byte == 0));
+        }
+    }
 }
 
 #[test]

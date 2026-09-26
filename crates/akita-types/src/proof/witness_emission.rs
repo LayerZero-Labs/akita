@@ -64,26 +64,26 @@ pub fn emit_witness_e_planes<const D_ROLE: usize>(
             "witness E source width disagrees with resolved geometry".into(),
         ));
     }
+    let planes_per_block = role_subcolumns
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness E source stride overflow".into()))?;
+    if unit.num_live_blocks() == 0 {
+        return Ok(());
+    }
     for claim in 0..num_claims {
-        for global_block in unit.global_block_range() {
-            let semantic = claim * source_num_live_blocks + global_block;
-            for role_subcolumn in 0..role_subcolumns {
-                for digit in 0..depth_open {
-                    let source = (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
-                    let destination = unit.e_coefficient_index(
-                        D_ROLE,
-                        num_claims,
-                        depth_open,
-                        claim,
-                        global_block,
-                        role_subcolumn,
-                        digit,
-                        0,
-                    )?;
-                    out.write_coefficients(destination, &flat[source])?;
-                }
-            }
-        }
+        let source =
+            unit_claim_planes(unit, claim, source_num_live_blocks, planes_per_block, flat)?;
+        let destination = unit.e_coefficient_index(
+            D_ROLE,
+            num_claims,
+            depth_open,
+            claim,
+            unit.global_block_start(),
+            0,
+            0,
+            0,
+        )?;
+        out.write_coefficients(destination, source.as_flattened())?;
     }
     Ok(())
 }
@@ -123,33 +123,56 @@ pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
         .checked_mul(role_subcolumns)
         .and_then(|n| n.checked_mul(depth_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
+    if unit.num_live_blocks() == 0 {
+        return Ok(());
+    }
     for claim in 0..num_claims {
-        for global_block in unit.global_block_range() {
-            for a_row in 0..n_a {
-                for role_subcolumn in 0..role_subcolumns {
-                    for digit in 0..depth_outer {
-                        let source = (claim * source_num_live_blocks + global_block)
-                            * planes_per_block
-                            + (a_row * role_subcolumns + role_subcolumn) * depth_outer
-                            + digit;
-                        let destination = unit.t_coefficient_index(
-                            D_A,
-                            D_ROLE,
-                            num_claims,
-                            n_a,
-                            depth_outer,
-                            claim,
-                            global_block,
-                            a_row,
-                            role_subcolumn,
-                            digit,
-                            0,
-                        )?;
-                        out.write_coefficients(destination, &flat[source])?;
-                    }
-                }
-            }
-        }
+        let source =
+            unit_claim_planes(unit, claim, source_num_live_blocks, planes_per_block, flat)?;
+        let destination = unit.t_coefficient_index(
+            D_A,
+            D_ROLE,
+            num_claims,
+            n_a,
+            depth_outer,
+            claim,
+            unit.global_block_start(),
+            0,
+            0,
+            0,
+            0,
+        )?;
+        out.write_coefficients(destination, source.as_flattened())?;
     }
     Ok(())
+}
+
+/// The source planes of `claim` for the blocks `unit` owns.
+///
+/// Inside a claim, source and unit planes share the order (block, row,
+/// subcolumn, digit), and a unit owns consecutive blocks, so these planes fill
+/// one contiguous run of the unit's range from the claim's first owned plane.
+fn unit_claim_planes<'a, const D: usize>(
+    unit: &WitnessUnitLayout,
+    claim: usize,
+    source_num_live_blocks: usize,
+    planes_per_block: usize,
+    flat: &'a [[i8; D]],
+) -> Result<&'a [[i8; D]], AkitaError> {
+    let blocks = unit.global_block_range();
+    if blocks.end > source_num_live_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: source_num_live_blocks,
+            actual: blocks.end,
+        });
+    }
+    let start = claim
+        .checked_mul(source_num_live_blocks)
+        .and_then(|block| block.checked_add(blocks.start))
+        .and_then(|block| block.checked_mul(planes_per_block));
+    let count = blocks.len().checked_mul(planes_per_block);
+    start
+        .zip(count)
+        .and_then(|(start, count)| flat.get(start..start.checked_add(count)?))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness source planes exceed the source".into()))
 }

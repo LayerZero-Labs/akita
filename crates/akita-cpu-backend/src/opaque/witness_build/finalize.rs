@@ -747,27 +747,24 @@ pub(crate) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     out: &mut [[i8; D]],
     log_basis: u32,
 ) {
-    let levels = out.len();
     assert!(
         log_basis > 0 && log_basis <= 8,
         "log_basis must be in 1..=8 for i8 output"
     );
-    assert!(
-        (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
-        "levels * log_basis must be <= 128 + log_basis"
-    );
 
-    let half_b = 1i128 << (log_basis - 1);
+    // An `i32` input stays within `i64` at every step: each carry is at most
+    // the previous one in magnitude.
+    let half_b = 1i64 << (log_basis - 1);
     let b = half_b << 1;
     let mask = b - 1;
 
-    for coeff_idx in 0..D {
-        let mut c = centered[coeff_idx] as i128;
-        for plane in out.iter_mut() {
-            let d = c & mask;
+    let mut carry = centered.map(i64::from);
+    for plane in out.iter_mut() {
+        for (digit, c) in plane.iter_mut().zip(&mut carry) {
+            let d = *c & mask;
             let balanced = if d >= half_b { d - b } else { d };
-            c = (c - balanced) >> log_basis;
-            plane[coeff_idx] = balanced as i8;
+            *c = (*c - balanced) >> log_basis;
+            *digit = balanced as i8;
         }
     }
 }
