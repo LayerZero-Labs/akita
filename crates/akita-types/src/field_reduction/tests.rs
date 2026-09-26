@@ -57,6 +57,17 @@ fn trace_open_row_matches_explicit_subgroup_trace() {
     assert_trace_open_row_matches_subgroup_oracle::<FpExt8<AkitaF32>, 64, 8>();
 }
 
+/// `ring_bits = 2^32 + 6` must be rejected, not narrowed to 6: the narrowed
+/// shift would return a full-looking 64-entry row for an impossible arity.
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn trace_open_row_rejects_ring_bits_that_truncate_to_a_valid_shift() {
+    const D: usize = 64;
+    let ring = CyclotomicRing::<AkitaF32, D>::one();
+    let result = trace_open_ring_row::<AkitaF32, AkitaF32, D>(&ring, &ring, (1usize << 32) + 6);
+    assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+}
+
 fn ring_subfield_basis<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {

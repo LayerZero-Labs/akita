@@ -3,7 +3,7 @@
 use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
 use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use std::collections::BTreeMap;
 
 /// Evaluate tensor-native paired Boolean-basis families.
@@ -178,10 +178,10 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
             if end > challenges.len() {
                 return Ok(None);
             }
-            let low = 1usize.checked_shl(start as u32).ok_or_else(|| {
+            let low = checked::pow2(start).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor bit mask overflow".into())
             })?;
-            let high = 1usize.checked_shl(end as u32).ok_or_else(|| {
+            let high = checked::pow2(end).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor bit mask overflow".into())
             })?;
             let mask = high - low;
@@ -191,11 +191,9 @@ fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONO
             *occupied |= mask;
         }
     }
-    let left_domain = 1usize
-        .checked_shl(left_challenges.len() as u32)
+    let left_domain = checked::pow2(left_challenges.len())
         .ok_or_else(|| AkitaError::InvalidInput("paired tensor left domain overflow".into()))?;
-    let right_domain = 1usize
-        .checked_shl(right_challenges.len() as u32)
+    let right_domain = checked::pow2(right_challenges.len())
         .ok_or_else(|| AkitaError::InvalidInput("paired tensor right domain overflow".into()))?;
     if family.left_offset >= left_domain
         || family.right_offset >= right_domain
@@ -340,7 +338,7 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
             return Err(AkitaError::InvalidProof);
         }
         for coordinate_bit in 0..axis_len.trailing_zeros() as usize {
-            let coordinate = 1usize.checked_shl(coordinate_bit as u32).ok_or_else(|| {
+            let coordinate = checked::pow2(coordinate_bit).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor coordinate bit overflow".into())
             })?;
             let left = left_stride.checked_mul(coordinate).ok_or_else(|| {

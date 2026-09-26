@@ -14,7 +14,7 @@ use akita_algebra::ring::{
     eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
 };
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;
 
@@ -1142,8 +1142,7 @@ pub fn relation_row_weight<E: Field>(relation_row: usize, tau1: &[E]) -> Result<
             actual: num_vars,
         });
     }
-    let domain_size = 1usize
-        .checked_shl(num_vars as u32)
+    let domain_size = checked::pow2(num_vars)
         .ok_or_else(|| AkitaError::InvalidSetup("tau1 row-index domain overflow".to_string()))?;
     if relation_row >= domain_size {
         return Err(AkitaError::InvalidSize {
