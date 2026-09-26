@@ -30,6 +30,7 @@ shake = "0.1.0"
 tracing = "0.1"
 
 [features]
+labinius-sis = []
 default = ["transcript-blake2b"]
 test-support = []
 transcript-blake2b = [

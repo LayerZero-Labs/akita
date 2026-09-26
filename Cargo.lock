@@ -44,8 +44,10 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-transcript",
+ "criterion",
  "jolt-field",
  "keccak 0.1.6",
+ "num-bigint 0.5.1",
  "serde",
  "shake",
  "smallvec",
@@ -202,6 +204,7 @@ dependencies = [
 name = "akita-sis-estimator"
 version = "0.1.0"
 dependencies = [
+ "akita-challenges",
  "akita-types",
  "criterion",
  "libm",
