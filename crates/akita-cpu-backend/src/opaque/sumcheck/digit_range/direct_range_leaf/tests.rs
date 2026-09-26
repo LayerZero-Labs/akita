@@ -100,29 +100,31 @@ fn fold_compact_range_image_to_materialized_reference(compact_range_image: &[i16
 }
 
 #[test]
-fn stage1_compact_fold_lookup_matches_direct_formula() {
-    let basis = 8usize;
+fn stage1_materialized_fold_matches_direct_formula() {
     let r = F::from_u64(41);
 
     let range_image_prefix = vec![2, 6, 12, 2, 6, 12, 2, 6, 12, 2];
-    let fold_lut = LowBasisRangeCheckProver::<F>::build_range_image_fold_lut(basis, r);
+    let materialized: Vec<F> = range_image_prefix
+        .iter()
+        .map(|&value| F::from_i64(i64::from(value)))
+        .collect();
+    let folded: Vec<F> = materialized
+        .chunks(5)
+        .flat_map(|row| LowBasisRangeCheckProver::<F>::fold_live_prefix(row, r))
+        .collect();
     assert_eq!(
-        LowBasisRangeCheckProver::<F>::fold_compact_range_image_prefix_x(
-            &range_image_prefix,
-            5,
-            2,
-            &fold_lut
-        ),
+        folded,
         fold_compact_range_image_prefix_x_reference(&range_image_prefix, 5, 2, r)
     );
 
     let dense_range_image = vec![2, 6, 12, 2, 6, 12];
-    let dense_lut = LowBasisRangeCheckProver::<F>::build_range_image_fold_lut(basis, r);
+    let mut materialized: Vec<F> = dense_range_image
+        .iter()
+        .map(|&value| F::from_i64(i64::from(value)))
+        .collect();
+    fold_evals_in_place(&mut materialized, r);
     assert_eq!(
-        LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_materialized(
-            &dense_range_image,
-            &dense_lut
-        ),
+        materialized,
         fold_compact_range_image_to_materialized_reference(&dense_range_image, r)
     );
 }
@@ -153,10 +155,15 @@ fn stage1_round0_matches_dense_reference() {
         .unwrap();
         let stage1_poly = prover.compute_round_eq_factored(0);
         let compact_range_image = build_compact_range_image(&compact_digit_witness);
-        let reference = compute_range_round_polynomial_from_compact_image(
+        let reference = compute_range_round_polynomial_from_range_image(
             &prover.split_eq,
-            &compact_range_image,
             &prover.polynomial_precomputation,
+            |j| {
+                (
+                    F::from_i64(i64::from(compact_range_image[2 * j])),
+                    F::from_i64(i64::from(compact_range_image[2 * j + 1])),
+                )
+            },
         );
 
         assert_eq!(
@@ -380,6 +387,11 @@ fn assert_rounds_match_dense_reference(
         "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
     );
 
+    assert_eq!(
+        matches!(prover.range_image, LowBasisRangeImageStorage::Compact(_)),
+        num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS,
+        "{shape} initial storage"
+    );
     for round in 0..num_vars {
         let poly = prover.compute_round_eq_factored(round);
         let expected =
@@ -405,7 +417,11 @@ fn assert_rounds_match_dense_reference(
 
 #[test]
 fn stage1_rounds_match_dense_reference() {
-    const SHAPES: [(usize, usize, usize); 19] = [
+    const SHAPES: [(usize, usize, usize); 23] = [
+        (1, 0, 1),
+        (3, 0, 5),
+        (2, 0, 3),
+        (1, 2, 1),
         (3, 2, 5),
         (3, 2, 6),
         (3, 2, 8),

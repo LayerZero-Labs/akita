@@ -25,69 +25,30 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         if use_octet_prefix {
             return self.compute_octet_prefix_round();
         }
-        match &self.range_image {
-            LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                if use_prefix_x_round {
-                    self.compute_round_compact_prefix_x(compact_range_image)
-                } else if use_sparse_x_y_round {
-                    self.compute_round_compact_sparse_x_y(compact_range_image)
-                } else {
-                    compute_range_round_polynomial_from_compact_image(
-                        &self.split_eq,
-                        compact_range_image,
-                        &self.polynomial_precomputation,
-                    )
+        let LowBasisRangeImageStorage::Materialized(range_image) = &self.range_image else {
+            unreachable!("compact storage belongs to the octet prefix");
+        };
+        if use_prefix_x_round || use_sparse_x_y_round {
+            let range_image = range_image.as_slice();
+            let precomputation = &self.polynomial_precomputation;
+            let sums = self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
+                move |pair, weight, sums| {
+                    let left = range_image[2 * pair];
+                    let right = range_image
+                        .get(2 * pair + 1)
+                        .copied()
+                        .unwrap_or_else(E::zero);
+                    accumulate_entry_terms(sums, precomputation, left, right - left, weight);
                 }
-            }
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                if use_prefix_x_round || use_sparse_x_y_round {
-                    let range_image = range_image.as_slice();
-                    let precomputation = &self.polynomial_precomputation;
-                    let sums =
-                        self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
-                            move |pair, weight, sums| {
-                                let left = range_image[2 * pair];
-                                let right = range_image
-                                    .get(2 * pair + 1)
-                                    .copied()
-                                    .unwrap_or_else(E::zero);
-                                accumulate_entry_terms(
-                                    sums,
-                                    precomputation,
-                                    left,
-                                    right - left,
-                                    weight,
-                                );
-                            }
-                        });
-                    precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
-                } else {
-                    compute_range_round_polynomial_from_range_image(
-                        &self.split_eq,
-                        &self.polynomial_precomputation,
-                        |j| (range_image[2 * j], range_image[2 * j + 1]),
-                    )
-                }
-            }
+            });
+            precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
+        } else {
+            compute_range_round_polynomial_from_range_image(
+                &self.split_eq,
+                &self.polynomial_precomputation,
+                |j| (range_image[2 * j], range_image[2 * j + 1]),
+            )
         }
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "LowBasisRangeCheckProver::fold_compact_range_image_to_materialized"
-    )]
-    pub(super) fn fold_compact_range_image_to_materialized<S: CompactRangeImageSource + ?Sized>(
-        compact_range_image: &S,
-        fold_lut: &CompactPairFoldLut<E>,
-    ) -> Vec<E> {
-        cfg_into_iter!(0..compact_range_image.len() / 2)
-            .map(|j| {
-                fold_lut.fold(
-                    compact_range_image.range_image_value(2 * j),
-                    compact_range_image.range_image_value(2 * j + 1),
-                )
-            })
-            .collect()
     }
 }
 
@@ -151,63 +112,30 @@ impl<E: Field + Ring + Unreduced + Fold> LowBasisRangeCheckProver<E> {
         let use_prefix_x_round = self.use_prefix_x_round();
         let use_live_prefix = use_prefix_x_round || self.use_sparse_x_y_round();
         let fuse_next_live_prefix = use_live_prefix && self.next_round_uses_live_prefix();
-        let y_len = match &self.range_image {
-            LowBasisRangeImageStorage::Compact(digit_witness) => {
-                digit_witness.len() / self.live_x_cols
-            }
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                range_image.len() / self.live_x_cols
-            }
+        let LowBasisRangeImageStorage::Materialized(range_image) = &mut self.range_image else {
+            unreachable!("compact storage belongs to the octet prefix");
         };
-
-        self.range_image = match std::mem::replace(
-            &mut self.range_image,
-            LowBasisRangeImageStorage::Materialized(Vec::new()),
-        ) {
-            LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                let fold_lut = Self::build_range_image_fold_lut(self.basis, r);
-                let range_image = if use_prefix_x_round {
-                    Self::fold_compact_range_image_prefix_x(
-                        &compact_range_image,
-                        self.live_x_cols,
-                        y_len,
-                        &fold_lut,
-                    )
+        let mut range_image = std::mem::take(range_image);
+        self.range_image = {
+            if use_live_prefix {
+                if fuse_next_live_prefix {
+                    let range_image = range_image.as_slice();
+                    let (next_range_image, round_poly) = self.fuse_live_prefix_and_compute_round(
+                        range_image.len().div_ceil(2),
+                        |_| {
+                            move |entry| {
+                                fold_prefix_pair_with_zero_padding(range_image, 2 * entry, r)
+                            }
+                        },
+                    );
+                    self.cached_round_poly = Some(round_poly);
+                    LowBasisRangeImageStorage::Materialized(next_range_image)
                 } else {
-                    Self::fold_compact_range_image_to_materialized(&compact_range_image, &fold_lut)
-                };
-                LowBasisRangeImageStorage::Materialized(range_image)
-            }
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                if use_live_prefix {
-                    if fuse_next_live_prefix {
-                        let range_image = range_image.as_slice();
-                        let (next_range_image, round_poly) = self
-                            .fuse_live_prefix_and_compute_round(
-                                range_image.len().div_ceil(2),
-                                |_| {
-                                    move |entry| {
-                                        fold_prefix_pair_with_zero_padding(
-                                            range_image,
-                                            2 * entry,
-                                            r,
-                                        )
-                                    }
-                                },
-                            );
-                        self.cached_round_poly = Some(round_poly);
-                        LowBasisRangeImageStorage::Materialized(next_range_image)
-                    } else {
-                        LowBasisRangeImageStorage::Materialized(Self::fold_live_prefix(
-                            &range_image,
-                            r,
-                        ))
-                    }
-                } else {
-                    let mut range_image = range_image;
-                    fold_evals_in_place(&mut range_image, r);
-                    LowBasisRangeImageStorage::Materialized(range_image)
+                    LowBasisRangeImageStorage::Materialized(Self::fold_live_prefix(&range_image, r))
                 }
+            } else {
+                fold_evals_in_place(&mut range_image, r);
+                LowBasisRangeImageStorage::Materialized(range_image)
             }
         };
     }

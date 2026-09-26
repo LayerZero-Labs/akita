@@ -64,15 +64,33 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 actual: tau0.len(),
             });
         }
+        let prefix_tau = (num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS).then(|| tau0.to_vec());
+        let range_image = if prefix_tau.is_some() {
+            LowBasisRangeImageStorage::Compact(digit_witness)
+        } else {
+            // Ring bits are low: retain only the flat live prefix, just as
+            // octet-prefix materialization does. The omitted tail is zero.
+            LowBasisRangeImageStorage::Materialized(
+                (0..digit_witness.len())
+                    .map(|index| {
+                        E::from_i64(i64::from(range_image_from_digit(
+                            digit_witness
+                                .get(index)
+                                .expect("validated live digit index"),
+                        )))
+                    })
+                    .collect(),
+            )
+        };
         Ok(Self {
-            range_image: LowBasisRangeImageStorage::Compact(digit_witness),
+            range_image,
             split_eq: GruenSplitEq::new(tau0)?,
             polynomial_precomputation: RangePolynomialPrecomputation::new(basis),
             live_x_cols,
             col_bits,
             num_vars,
             basis,
-            prefix_tau: (num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS).then(|| tau0.to_vec()),
+            prefix_tau,
             initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
@@ -143,14 +161,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     }
 
     #[inline]
-    pub(super) fn valid_range_image_values(basis: usize) -> Vec<i16> {
-        let half = (basis / 2) as i16;
-        (0..half).map(|k| k * (k + 1)).collect()
-    }
-
-    #[inline]
-    pub(super) fn build_range_image_fold_lut(basis: usize, r: E) -> CompactPairFoldLut<E> {
-        let valid_range_images = Self::valid_range_image_values(basis);
-        CompactPairFoldLut::from_allowed_values(&valid_range_images, r)
+    pub(super) fn use_sparse_x_y_round(&self) -> bool {
+        !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
     }
 }
