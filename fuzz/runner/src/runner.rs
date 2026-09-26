@@ -72,6 +72,11 @@ pub struct LaneState {
     /// Seconds the last fuzzing job spent re-executing the corpus before
     /// mutating (libFuzzer `INITED`).
     pub init_seconds: u64,
+    /// Corpus size after the last compaction (0 if never compacted).
+    pub compacted_corpus_files: u64,
+    pub compactions: u64,
+    /// Unix time before which no compaction is attempted.
+    pub next_compaction_at: u64,
     pub baseline: Option<Value>,
     pub harness: BTreeMap<String, BTreeMap<String, f64>>,
 }
@@ -89,6 +94,8 @@ enum Purpose {
     Fuzz,
     Baseline,
     Replay,
+    /// libFuzzer `-merge=1` corpus minimization for one target.
+    Merge,
 }
 
 impl Purpose {
@@ -97,6 +104,7 @@ impl Purpose {
             Purpose::Fuzz => "fuzz",
             Purpose::Baseline => "baseline",
             Purpose::Replay => "replay",
+            Purpose::Merge => "merge",
         }
     }
 }
@@ -119,6 +127,8 @@ struct Job {
     exited_at: Option<Instant>,
     inited_after: Option<u64>,
     watchdog_stopped: bool,
+    /// Corpus file names a merge job started from.
+    merge_snapshot: Vec<String>,
 }
 
 enum Message {
@@ -158,6 +168,18 @@ fn which(name: &str) -> Option<PathBuf> {
             .map(|dir| dir.join(name))
             .find(|path| path.is_file())
     })
+}
+
+fn corpus_names(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn symbolizer(dist: &Path) -> Option<PathBuf> {
@@ -349,6 +371,11 @@ impl Runner {
         std::fs::create_dir_all(stats_file.parent().expect("parent"))?;
         let binary = self.dist.join("bin").join(libfuzzer::BINARY);
         let corpus = self.store.corpus.join(&lane.target);
+        let merge_snapshot = if purpose == Purpose::Merge {
+            corpus_names(&corpus)
+        } else {
+            Vec::new()
+        };
         let mut args = match purpose {
             Purpose::Fuzz => libfuzzer::fuzz_args(
                 &binary,
@@ -367,6 +394,25 @@ impl Runner {
                 std::fs::create_dir_all(&scratch)?;
                 let seeds = self.dist.join("seeds").join(&lane.target);
                 libfuzzer::fuzz_args(&binary, lane, &[&scratch, &seeds], &artifacts, 0, true, &[])
+            }
+            Purpose::Merge => {
+                let merged = artifacts.join("merged");
+                std::fs::create_dir_all(&merged)?;
+                let mut args = libfuzzer::base_args(
+                    &binary,
+                    libfuzzer::Limits {
+                        lane,
+                        timeout_s: lane.timeout_s,
+                    },
+                    &artifacts,
+                );
+                args.extend([
+                    "-merge=1".to_string(),
+                    format!("-max_len={}", lane.max_len),
+                    merged.display().to_string(),
+                    corpus.display().to_string(),
+                ]);
+                args
             }
             Purpose::Replay => {
                 let mut args = libfuzzer::base_args(
@@ -460,6 +506,15 @@ impl Runner {
             }
             Purpose::Baseline => 3600,
             Purpose::Replay => 600,
+            // A merge executes the whole corpus once.
+            Purpose::Merge => {
+                let init = self
+                    .state
+                    .lanes
+                    .get(&lane.name())
+                    .map_or(0, |state| state.init_seconds);
+                (6 * 3600u64).max(init.saturating_mul(3))
+            }
         };
         let deadline =
             Instant::now() + Duration::from_secs(budget_s + 2 * lane.timeout_s + STARTUP_GRACE_S);
@@ -486,6 +541,7 @@ impl Runner {
                 exited_at: None,
                 inited_after: None,
                 watchdog_stopped: false,
+                merge_snapshot,
             },
         );
         Ok(id)
@@ -608,6 +664,11 @@ impl Runner {
         });
         if job.purpose == Purpose::Replay {
             self.finish_replay(&job, code, &tail);
+            let _ = std::fs::remove_dir_all(&job.artifacts);
+            return;
+        }
+        if job.purpose == Purpose::Merge {
+            self.finish_merge(&job, code, elapsed);
             let _ = std::fs::remove_dir_all(&job.artifacts);
             return;
         }
@@ -780,6 +841,45 @@ impl Runner {
         }
     }
 
+    /// Keep the merge's minimal set: move snapshot inputs it dropped to
+    /// `corpus-archive/<target>/`. Inputs fuzz jobs added meanwhile stay.
+    fn finish_merge(&mut self, job: &Job, code: i32, elapsed: f64) {
+        let name = job.lane.name();
+        let target = job.lane.target.clone();
+        if code != 0 {
+            self.lane_state(&name).next_compaction_at = now() + 6 * 3600;
+            self.event(&format!(
+                "compaction of {target} failed (exit {code}); retrying in 6h"
+            ));
+            return;
+        }
+        let kept: std::collections::HashSet<String> = corpus_names(&job.artifacts.join("merged"))
+            .into_iter()
+            .collect();
+        let corpus = self.store.corpus.join(&target);
+        let archive = self.store.root.join("corpus-archive").join(&target);
+        let _ = std::fs::create_dir_all(&archive);
+        let mut archived = 0u64;
+        for file in &job.merge_snapshot {
+            if !kept.contains(file)
+                && std::fs::rename(corpus.join(file), archive.join(file)).is_ok()
+            {
+                archived += 1;
+            }
+        }
+        let remaining = count_files(&corpus);
+        let state = self.lane_state(&name);
+        state.compacted_corpus_files = remaining;
+        state.corpus_files = remaining;
+        state.compactions += 1;
+        state.next_compaction_at = now() + 3600;
+        self.event(&format!(
+            "compacted {target}: {} -> {} inputs in {elapsed:.0}s ({archived} moved to corpus-archive)",
+            job.merge_snapshot.len(),
+            job.merge_snapshot.len() as u64 - archived
+        ));
+    }
+
     fn finish_replay(&mut self, job: &Job, code: i32, tail: &[String]) {
         let Some(id) = job.finding_id.clone() else {
             return;
@@ -864,6 +964,51 @@ impl Runner {
         best.map(|(_, lane)| lane).filter(|lane| self.fits(lane))
     }
 
+    /// Start a corpus merge for any target whose corpus doubled since its
+    /// last compaction (and has at least 200 inputs), one merge per target.
+    fn schedule_compactions(&mut self) {
+        let time = now();
+        let merging: std::collections::HashSet<String> = self
+            .jobs
+            .values()
+            .filter(|job| job.purpose == Purpose::Merge)
+            .map(|job| job.lane.target.clone())
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        for lane in self.lanes.clone() {
+            if self.stopping || !seen.insert(lane.target.clone()) || merging.contains(&lane.target)
+            {
+                continue;
+            }
+            let state = self
+                .state
+                .lanes
+                .get(&lane.name())
+                .cloned()
+                .unwrap_or_default();
+            let awaiting_baseline = self.baseline_running.contains(&lane.name())
+                || self
+                    .baseline_pending
+                    .iter()
+                    .any(|pending| pending.target == lane.target);
+            let due = state.corpus_files >= 200
+                && state.corpus_files >= 2 * state.compacted_corpus_files
+                && state.next_compaction_at <= time;
+            if due && !awaiting_baseline && self.fits(&lane) {
+                match self.spawn(&lane, Purpose::Merge, &[]) {
+                    Ok(_) => self.event(&format!(
+                        "compacting {} ({} inputs)",
+                        lane.target, state.corpus_files
+                    )),
+                    Err(error) => self.event(&format!(
+                        "compaction of {} failed to start: {error}",
+                        lane.target
+                    )),
+                }
+            }
+        }
+    }
+
     fn schedule(&mut self) {
         while !self.stopping
             && self
@@ -895,6 +1040,7 @@ impl Runner {
                 Err(error) => self.event(&format!("replay of {id} failed to start: {error}")),
             }
         }
+        self.schedule_compactions();
         while !self.stopping {
             let Some(lane) = self.choose() else {
                 return;

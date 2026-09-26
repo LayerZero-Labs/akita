@@ -122,6 +122,19 @@ restarting on a large end-to-end corpus stays cheap. Every job ends after `--sli
 rotates lanes and bounds any slow growth inside a process. Workers of one
 target share a corpus directory (`-reload=1`).
 
+### Corpus compaction
+
+libFuzzer re-executes a lane's whole corpus every time a job starts, before
+it honors its time limit. End-to-end inputs cost seconds each, so a growing
+corpus would eventually leave no time for fuzzing. When a target's corpus has
+at least 200 inputs and has doubled since its last compaction, the runner
+runs libFuzzer's own minimization (`-merge=1`) as a separate job. The job
+keeps a minimal subset that preserves every coverage feature of a snapshot of
+the corpus. Snapshot inputs it drops are moved to `corpus-archive/<target>/`,
+never deleted, and inputs that running jobs add in the meantime are kept.
+Compactions are at least an hour apart per target, and a failed compaction is
+retried after six hours.
+
 ### Limits
 
 Per libFuzzer process, from the registry:
@@ -263,6 +276,7 @@ events.log      runner events (capped)
 corpus/<target>/        shared, resumable corpora (libFuzzer SHA-1 names)
 findings/<id>/          meta.json, sample-N.input, sample-N.txt, replay.txt
 quarantine/<target>/    corpus inputs removed because they crash
+corpus-archive/<target>/ inputs dropped by corpus compaction
 logs/<lane>/            per-job libFuzzer output (capped)
 exports/                archives written by `export`
 ```
