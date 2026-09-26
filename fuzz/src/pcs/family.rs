@@ -31,6 +31,9 @@ pub enum Check {
     /// Determinism: proving under other thread counts and concurrently
     /// yields identical bytes.
     Parallel,
+    /// Completeness under adversarially shaped witnesses and opening points
+    /// that concentrate recursive digit energy (see `crate::liveness`).
+    Liveness,
 }
 
 /// Targeted changes applied after the honest baseline verifies.
@@ -243,6 +246,59 @@ pub(super) struct Group<Cfg: PcsOps> {
     pub(super) evals: Vec<Cfg::ExtField>,
 }
 
+/// Shape one group toward the largest recursive digit energy the response
+/// model does not price at its worst case.
+///
+/// A dense witness `c · [bit t of i = 0]` makes every partial evaluation that
+/// sums over bit `t` equal `c · (1 - r_t)` in the Lagrange basis, whatever
+/// the other coordinates and the block split; solving `r_t` so the first
+/// polynomial evaluates to an extreme-digit value then puts that value in
+/// every such partial evaluation (the recursive witness's E digits). Other
+/// witnesses keep their tables and only get the solved coordinate.
+fn shape<Cfg: PcsOps>(
+    plan: &GroupPlan,
+    reader: &mut Reader<'_>,
+    tables: &mut Tables<Cfg::Field>,
+    point: &mut [Cfg::ExtField],
+    basis: BasisMode,
+) {
+    let mode = reader.u8();
+    if plan.num_vars == 0 || mode % 4 == 3 {
+        return;
+    }
+    let t = reader.choose(plan.num_vars);
+    let target: Cfg::ExtField = gen::extreme_ext::<Cfg::Field, Cfg::ExtField>(reader);
+    let scale = reader.u8();
+    if let (Tables::Dense(tables), true) = (&mut *tables, mode % 4 != 2) {
+        let domain = plan.source.domain;
+        let c = match scale % 3 {
+            0 => Cfg::Field::one(),
+            1 => gen::from_signed::<Cfg::Field>(false, domain.reach::<Cfg::Field>(false)),
+            _ => gen::from_signed::<Cfg::Field>(true, domain.reach::<Cfg::Field>(true)),
+        };
+        let c = domain.clamp(c);
+        for table in tables.iter_mut() {
+            for (index, value) in table.iter_mut().enumerate() {
+                *value = if (index >> t) & 1 == 0 {
+                    c
+                } else {
+                    Cfg::Field::zero()
+                };
+            }
+        }
+        stats::count("liveness_shaped_witness");
+    }
+    point[t] = Cfg::ExtField::zero();
+    let low = tables.evaluate::<Cfg::ExtField>(&*point, basis)[0];
+    point[t] = Cfg::ExtField::one();
+    let high = tables.evaluate::<Cfg::ExtField>(&*point, basis)[0];
+    point[t] = match (high - low).inverse() {
+        Some(inverse) => (target - low) * inverse,
+        None => target,
+    };
+    stats::count("liveness_shaped_point");
+}
+
 #[derive(Clone)]
 pub(super) enum Tables<F> {
     Dense(Vec<Vec<F>>),
@@ -405,7 +461,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         point: Vec<Cfg::ExtField>,
         basis: BasisMode,
         prior: &[Group<Cfg>],
+        shaped: bool,
     ) -> Group<Cfg> {
+        let mut point = point;
         let len = 1usize << plan.num_vars;
         // A balanced-digit schedule also admits one-hot sources; imported
         // groups transfer dense sources only.
@@ -414,7 +472,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             let chunk = akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
             (!imported && reader.u8().is_multiple_of(4) && len >= chunk).then_some(chunk)
         });
-        let tables = stats::time("generate", || match onehot_chunk {
+        let mut tables = stats::time("generate", || match onehot_chunk {
             Some(chunk) => Tables::OneHot {
                 chunk,
                 indices: (0..plan.num_polys)
@@ -427,6 +485,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     .collect(),
             ),
         });
+        if shaped {
+            shape::<Cfg>(plan, reader, &mut tables, &mut point, basis);
+        }
         let evals = stats::time("oracle", || tables.evaluate::<Cfg::ExtField>(&point, basis));
         let (commitment, handle) = self.commit(plan, &tables, prior);
         Group {
@@ -540,6 +601,15 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
     }
 
     pub(super) fn honest(&self, case_index: usize, reader: &mut Reader<'_>) -> Honest<Cfg> {
+        self.honest_with(case_index, reader, false)
+    }
+
+    pub(super) fn honest_with(
+        &self,
+        case_index: usize,
+        reader: &mut Reader<'_>,
+        shaped: bool,
+    ) -> Honest<Cfg> {
         let case = &self.cases()[case_index];
         let row = Cfg::schedules(&self.scheme)
             .rows()
@@ -565,7 +635,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             } else {
                 gen::point::<Cfg::Field, Cfg::ExtField>(reader, plan.num_vars)
             };
-            let group = self.build_group(plan, reader, point, basis, &groups);
+            let group = self.build_group(plan, reader, point, basis, &groups, shaped);
             groups.push(group);
         }
 
@@ -1091,11 +1161,15 @@ impl<Cfg: PcsOps> Family for FamilyImpl<Cfg> {
         // keep stable offsets and never starve when a large case exhausts input.
         let control: [u8; CONTROL_BYTES] = reader.bytes();
         let mut control = Reader::new(&control);
-        let honest = self.honest(case, reader);
+        let honest = self.honest_with(case, reader, check == Check::Liveness);
         match check {
             Check::Valid => self.check_valid(case, &honest, &mut control),
             Check::Reject => self.check_reject(&honest, &mut control),
             Check::Parallel => self.check_parallel(&honest, &mut control),
+            Check::Liveness => {
+                stats::count("liveness_shaped_proofs");
+                self.check_valid_baseline(&honest);
+            }
         }
     }
 

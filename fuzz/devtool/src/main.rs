@@ -6,6 +6,9 @@
 //! akita-fuzz-dev seeds OUT_DIR             deterministic seed corpora
 //! akita-fuzz-dev smoke TARGET [N] [SEED]   pseudo-random inputs, no libFuzzer
 //! akita-fuzz-dev replay TARGET FILE...     run inputs once
+//! akita-fuzz-dev sweep [LOG2_COST] [N] [SEED]
+//!                                          every catalog case under the
+//!                                          liveness target, with margins
 //! ```
 
 use akita_fuzz::input::SplitMix64;
@@ -59,6 +62,63 @@ pub fn replay(name: &str, inputs: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+/// Run every catalog case within `2^log2` coefficients through the
+/// `pcs_liveness` target: an all-zero input, an all-`0xff` input, and
+/// `inputs - 2` pseudo-random ones per case. Prints each case's fold-grind
+/// peaks and keeps going after a failure; exits nonzero if any case failed.
+pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
+    // The target reads its size limit from the environment; set it before
+    // the first registry load so both see the same case list.
+    std::env::set_var("AKITA_FUZZ_MAX_CASE_COEFFS", (1u64 << log2).to_string());
+    let registry = registry_for(Limits {
+        max_cost: 1 << log2,
+    });
+    let cases = registry.select(Selector::Any);
+    println!(
+        "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8}  status",
+        "case", "family", "shape", "inputs", "folds", "margin", "attempts"
+    );
+    let mut failed = 0usize;
+    for (index, (family, case)) in cases.iter().enumerate() {
+        let family = &registry.families()[*family];
+        let label = family.cases()[*case].label();
+        let _ = akita_fuzz::liveness::take_peak();
+        let started = Instant::now();
+        let mut failures = Vec::new();
+        for input in 0..inputs {
+            let mut bytes = (index as u16).to_le_bytes().to_vec();
+            bytes.extend(match input {
+                0 => vec![0u8; 4096],
+                1 => vec![0xffu8; 4096],
+                _ => random_bytes(seed ^ ((index as u64) << 20) ^ input as u64, 4096),
+            });
+            if std::panic::catch_unwind(|| targets::pcs::liveness(&bytes)).is_err() {
+                failures.push(input);
+            }
+        }
+        let peak = akita_fuzz::liveness::take_peak();
+        println!(
+            "{index:>4}  {:<34} {:<24} {inputs:>6} {:>6} {:>8.4} {:>8}  {} ({:.1}s)",
+            family.name(),
+            label,
+            peak.folds,
+            peak.max_margin,
+            peak.max_attempts,
+            if failures.is_empty() {
+                "ok".to_string()
+            } else {
+                format!("FAILED inputs {failures:?}")
+            },
+            started.elapsed().as_secs_f64()
+        );
+        failed += usize::from(!failures.is_empty());
+    }
+    if failed > 0 {
+        return Err(format!("{failed} of {} cases failed", cases.len()));
+    }
+    Ok(())
+}
+
 fn write(dir: &Path, name: &str, bytes: &[u8]) {
     std::fs::create_dir_all(dir).expect("create seed dir");
     std::fs::write(dir.join(name), bytes).expect("write seed");
@@ -87,13 +147,14 @@ pub fn seeds(out: &Path) {
     // End-to-end targets: one seed family per planned case, selected by its
     // leading u16. The case list depends on the process cost limit, so these
     // mirror each target's default limit.
-    let pcs: [(&str, Selector, u32); 6] = [
+    let pcs: [(&str, Selector, u32); 7] = [
         ("pcs_dense", Selector::DenseSingle, 18),
         ("pcs_onehot", Selector::OneHotSingle, 20),
         ("pcs_batch", Selector::Batch, 20),
         ("pcs_recursive", Selector::Recursive, 21),
         ("pcs_reject", Selector::AnyDirect, 17),
         ("pcs_parallel", Selector::AnyDirect, 17),
+        ("pcs_liveness", Selector::Any, 20),
     ];
     for (name, selector, log2) in pcs {
         let limits = Limits {
@@ -202,7 +263,12 @@ fn main() {
             ),
             None => Err("replay TARGET FILE...".to_string()),
         },
-        _ => Err("usage: akita-fuzz-dev list|cases|seeds|smoke|replay ...".to_string()),
+        Some("sweep") => sweep(
+            arg(1).and_then(|v| v.parse().ok()).unwrap_or(20),
+            arg(2).and_then(|v| v.parse().ok()).unwrap_or(8),
+            arg(3).and_then(|v| v.parse().ok()).unwrap_or(1),
+        ),
+        _ => Err("usage: akita-fuzz-dev list|cases|seeds|smoke|replay|sweep ...".to_string()),
     };
     if let Err(message) = result {
         eprintln!("akita-fuzz-dev: {message}");

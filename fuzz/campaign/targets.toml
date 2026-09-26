@@ -160,6 +160,15 @@ timeout_s = 300
 rss_limit_mb = 8192
 malloc_limit_mb = 8192
 
+[target.pcs_liveness]
+kind = "end_to_end"
+description = "Liveness: every catalog row under witnesses and opening points shaped to maximize recursive digit energy; fold-grind margins guide the search"
+weight = 1.5
+max_len = 16384
+timeout_s = 600
+rss_limit_mb = 8192
+malloc_limit_mb = 8192
+
 [target.verifier_boundary]
 kind = "boundary"
 description = "Verifier no-panic contract: arbitrary/spliced proof bytes and malformed statements"

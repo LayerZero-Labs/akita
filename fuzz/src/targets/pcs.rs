@@ -51,6 +51,10 @@ pub fn parallel(data: &[u8]) {
     run(data, Selector::AnyDirect, Check::Parallel, 17);
 }
 
+pub fn liveness(data: &[u8]) {
+    run(data, Selector::Any, Check::Liveness, 20);
+}
+
 /// Every planned and excluded case, for the coverage report.
 pub fn describe_cases(default_log2: u32) -> String {
     registry(limits(default_log2)).describe()

@@ -7,6 +7,7 @@
 pub mod env;
 pub mod gen;
 pub mod input;
+pub mod liveness;
 pub mod oracle;
 pub mod pcs;
 pub mod stats;

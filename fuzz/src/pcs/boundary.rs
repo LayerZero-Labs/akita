@@ -19,6 +19,9 @@ fn kind(error: &AkitaError) -> &'static str {
         AkitaError::InvalidProof => "InvalidProof",
         AkitaError::InvalidSize { .. } => "InvalidSize",
         AkitaError::InvalidPointDimension { .. } => "InvalidPointDimension",
+        // Never an expected rejection: the grind ran out for an admissible
+        // statement (liveness), not a validation failure.
+        error if crate::liveness::is_grind_exhaustion(error) => "GrindExhausted",
         AkitaError::InvalidInput(_) => "InvalidInput",
         AkitaError::UnsupportedSchedule(_) => "UnsupportedSchedule",
         AkitaError::InvalidSetup(_) => "InvalidSetup",

@@ -34,6 +34,7 @@ pub const ALL: &[(&str, Target)] = &[
     ("pcs_recursive", pcs::recursive),
     ("pcs_reject", pcs::reject),
     ("pcs_parallel", pcs::parallel),
+    ("pcs_liveness", pcs::liveness),
     ("verifier_boundary", boundary::verifier),
     ("prover_boundary", boundary::prover),
 ];

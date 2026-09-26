@@ -257,7 +257,9 @@ where
     ) -> Result<Proved, AkitaError> {
         let selection = opening.selection();
         let layout = opening.opening_layout().clone();
-        let proof = scheme.batched_prove(setup, opening, backend, session, basis)?;
+        let proof = crate::liveness::observe(std::any::type_name::<Self>(), || {
+            scheme.batched_prove(setup, opening, backend, session, basis)
+        })?;
         Ok(Proved {
             proof,
             selection,

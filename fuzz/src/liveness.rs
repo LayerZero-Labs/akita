@@ -1,0 +1,400 @@
+//! Completeness margins of the prover's fold-response grinds.
+//!
+//! Each fold previews Fiat–Shamir challenges for nonces `0, 1, …` until the
+//! folded response's energy fits the cap frozen in the schedule, and gives up
+//! with `fold grind exceeded … joint attempts` after `FOLD_RESPONSE_ATTEMPTS`
+//! (4096). The planner freezes `cap = (40/39) · 1.03 · modeled mean`, where
+//! the mean is `E‖c‖² · ‖s‖²` for the source `s`, so Markov's inequality gives
+//! every attempt acceptance probability at least 1/40, but only while the
+//! witness's true source energy stays within the modeled one plus its 3%
+//! envelope. Root sources are modeled at their worst case; recursive witnesses
+//! (Z, E, T, R, and compression digits) use distribution models, so a witness
+//! or opening point that concentrates those digits can void the guarantee.
+//!
+//! With `response-model-diagnostics` the prover reports every selected fold:
+//! its attempt count, observed response energy, cap, and (for recursive and
+//! terminal folds) the measured conditional mean. [`observe`] captures those
+//! reports around one proof and checks, for every fold:
+//!
+//! - the grind never ran out (any `fold grind exceeded` error panics here,
+//!   whatever the caller expected);
+//! - the accepted response fits its cap;
+//! - `40 · measured mean ≤ 39 · cap`: the planner's model covers this witness
+//!   (otherwise the completeness guarantee no longer applies to it, even if
+//!   this proof succeeded);
+//! - attempts stay below [`ATTEMPT_ALARM`], which a covered fold exceeds with
+//!   probability at most `(39/40)^1024 < 2^-37`.
+//!
+//! The margin `40 · mean / (39 · cap)` and the attempt count are also
+//! reported to the engine as coverage (one distinct function per bucket), so
+//! inputs that push a fold closer to its cap are kept and mutated further.
+
+use crate::stats;
+use akita_error::AkitaError;
+use std::cell::RefCell;
+use std::fmt;
+use std::sync::{Mutex, Once};
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id, Record};
+use tracing::{Event, Metadata, Subscriber};
+
+/// Target of the diagnostics-only reports (`response-model-diagnostics`).
+const MODEL_TARGET: &str = "akita_prover::protocol::fold_response_model";
+/// Target of the always-on "selected physical fold response" report.
+const GRIND_TARGET: &str = "akita_prover::protocol::fold_grind";
+/// Attempts beyond this are a finding: a fold the planner's model covers gets
+/// here with probability at most `(39/40)^1024 < 2^-37`.
+pub const ATTEMPT_ALARM: u64 = 1024;
+const MAX_SAMPLES: usize = 1 << 14;
+
+/// One prover report.
+#[derive(Clone, Debug, Default)]
+pub struct Sample {
+    /// A diagnostics report (`fold_response_model`), not the always-on one.
+    pub model: bool,
+    pub terminal: bool,
+    pub message: String,
+    pub attempts: Option<u64>,
+    pub response: Option<u128>,
+    pub cap: Option<u128>,
+    pub conditional_mean: Option<u128>,
+    /// Every numeric field, for reports.
+    pub fields: Vec<(&'static str, u128)>,
+}
+
+impl Sample {
+    /// `40 · mean / (39 · cap)`: 1.0 is the edge of the planner's guarantee.
+    pub fn margin(&self) -> Option<f64> {
+        let (mean, cap) = (self.conditional_mean?, self.cap?);
+        (cap > 0).then(|| mean as f64 * 40.0 / (cap as f64 * 39.0))
+    }
+}
+
+impl fmt::Display for Sample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)?;
+        for (name, value) in &self.fields {
+            write!(f, " {name}={value}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Largest values seen since the last [`take_peak`].
+#[derive(Clone, Debug, Default)]
+pub struct Peak {
+    pub folds: u64,
+    pub max_attempts: u64,
+    pub max_margin: f64,
+    pub worst: Option<Sample>,
+}
+
+thread_local! {
+    static CAPTURE: RefCell<Option<Vec<Sample>>> = const { RefCell::new(None) };
+}
+static PEAK: Mutex<Option<Peak>> = Mutex::new(None);
+
+pub fn take_peak() -> Peak {
+    PEAK.lock()
+        .ok()
+        .and_then(|mut peak| peak.take())
+        .unwrap_or_default()
+}
+
+struct Visitor<'a>(&'a mut Sample);
+
+impl Visitor<'_> {
+    fn number(&mut self, field: &Field, value: Option<u128>) {
+        let Some(value) = value else { return };
+        let sample = &mut *self.0;
+        match field.name() {
+            "attempts" => sample.attempts = u64::try_from(value).ok(),
+            "response_l2_sq" => sample.response = Some(value),
+            "response_l2_sq_cap" => sample.cap = Some(value),
+            "conditional_mean_l2_sq" => sample.conditional_mean = Some(value),
+            _ => {}
+        }
+        sample.fields.push((field.name(), value));
+    }
+}
+
+impl Visit for Visitor<'_> {
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.number(field, Some(u128::from(value)));
+    }
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.number(field, u128::try_from(value).ok());
+    }
+    fn record_u128(&mut self, field: &Field, value: u128) {
+        self.number(field, Some(value));
+    }
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        if field.name() == "terminal" {
+            self.0.terminal = value;
+        }
+    }
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        let text = format!("{value:?}");
+        if field.name() == "message" {
+            self.0.message = text;
+            return;
+        }
+        // Optional fields arrive as `Some(n)` / `None`.
+        let inner = text
+            .strip_prefix("Some(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or(&text);
+        self.number(field, inner.parse().ok());
+    }
+}
+
+struct Collector;
+
+fn wanted(metadata: &Metadata<'_>) -> bool {
+    // `tracing::enabled!` probes a hint callsite, not an event.
+    !metadata.is_span() && matches!(metadata.target(), MODEL_TARGET | GRIND_TARGET)
+}
+
+impl Subscriber for Collector {
+    fn register_callsite(
+        &self,
+        metadata: &'static Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        if wanted(metadata) {
+            tracing::subscriber::Interest::always()
+        } else {
+            tracing::subscriber::Interest::never()
+        }
+    }
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        wanted(metadata)
+    }
+    fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+        Some(tracing::level_filters::LevelFilter::INFO)
+    }
+    fn new_span(&self, _: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+    fn record(&self, _: &Id, _: &Record<'_>) {}
+    fn record_follows_from(&self, _: &Id, _: &Id) {}
+    fn enter(&self, _: &Id) {}
+    fn exit(&self, _: &Id) {}
+    fn event(&self, event: &Event<'_>) {
+        let mut sample = Sample {
+            model: event.metadata().target() == MODEL_TARGET,
+            ..Sample::default()
+        };
+        event.record(&mut Visitor(&mut sample));
+        let captured = CAPTURE.with(|capture| match capture.borrow_mut().as_mut() {
+            Some(samples) => {
+                if samples.len() < MAX_SAMPLES {
+                    samples.push(sample);
+                }
+                true
+            }
+            None => false,
+        });
+        if !captured {
+            // Emitted on a thread other than the proving one: not checked.
+            stats::count("liveness_uncaptured_reports");
+        }
+    }
+}
+
+fn install() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        if tracing::subscriber::set_global_default(Collector).is_err() {
+            stats::count("liveness_subscriber_unavailable");
+        }
+    });
+}
+
+pub fn is_grind_exhaustion(error: &AkitaError) -> bool {
+    matches!(error, AkitaError::InvalidInput(message) if message.contains("fold grind exceeded"))
+}
+
+/// Run one proof, capture its fold reports, and check their margins.
+pub fn observe<T>(
+    context: &str,
+    prove: impl FnOnce() -> Result<T, AkitaError>,
+) -> Result<T, AkitaError> {
+    install();
+    let previous = CAPTURE.with(|capture| capture.replace(Some(Vec::new())));
+    let result = prove();
+    let samples = CAPTURE
+        .with(|capture| std::mem::replace(&mut *capture.borrow_mut(), previous))
+        .unwrap_or_default();
+    match &result {
+        Err(error) if is_grind_exhaustion(error) => panic!(
+            "liveness: {context}: fold grind exhausted ({error:?}); last reports:\n{}",
+            tail(&samples)
+        ),
+        Ok(_) => check(context, &samples),
+        Err(_) => {}
+    }
+    result
+}
+
+fn tail(samples: &[Sample]) -> String {
+    let start = samples.len().saturating_sub(4);
+    samples[start..]
+        .iter()
+        .map(|sample| format!("  {sample}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn check(context: &str, samples: &[Sample]) {
+    let log = std::env::var_os("AKITA_FUZZ_LIVENESS_LOG").is_some();
+    let mut peak = Peak::default();
+    for (index, sample) in samples.iter().enumerate() {
+        if log {
+            eprintln!("liveness: {context}: {sample}");
+        }
+        // Witness-moment reports carry no fold outcome.
+        let Some(attempts) = sample.attempts else {
+            continue;
+        };
+        // The always-on report of a fold precedes its diagnostics report.
+        if !sample.model
+            && samples.get(index + 1).is_some_and(|next| {
+                next.model && next.attempts == sample.attempts && next.response == sample.response
+            })
+        {
+            continue;
+        }
+        peak.folds += 1;
+        stats::count("liveness_folds");
+        stats::count(ATTEMPT_COUNTERS[attempt_bucket(attempts)]);
+        guide::attempts(sample.terminal, attempt_bucket(attempts));
+        peak.max_attempts = peak.max_attempts.max(attempts);
+        if let (Some(response), Some(cap)) = (sample.response, sample.cap) {
+            assert!(
+                response <= cap,
+                "liveness: {context}: accepted fold response exceeds its cap: {sample}"
+            );
+        }
+        if let Some(margin) = sample.margin() {
+            stats::count(MARGIN_COUNTERS[margin_counter(margin)]);
+            guide::margin(sample.terminal, margin);
+            if margin > peak.max_margin {
+                peak.max_margin = margin;
+                peak.worst = Some(sample.clone());
+            }
+            let (mean, cap) = (sample.conditional_mean.unwrap(), sample.cap.unwrap());
+            let covered = match (mean.checked_mul(40), cap.checked_mul(39)) {
+                (Some(lhs), Some(rhs)) => lhs <= rhs,
+                _ => margin <= 1.0,
+            };
+            assert!(
+                covered,
+                "liveness: {context}: fold source energy exceeds the planner's response model \
+                 (margin {margin:.4} > 1; completeness guarantee void): {sample}\n\
+                 witness moments before this fold:\n{}",
+                moments_before(samples, index)
+            );
+        }
+        assert!(
+            attempts <= ATTEMPT_ALARM,
+            "liveness: {context}: fold grind needed {attempts} attempts (alarm {ATTEMPT_ALARM}, \
+             limit 4096): {sample}"
+        );
+    }
+    if let Ok(mut global) = PEAK.lock() {
+        let global = global.get_or_insert_with(Peak::default);
+        global.folds += peak.folds;
+        global.max_attempts = global.max_attempts.max(peak.max_attempts);
+        if peak.max_margin > global.max_margin {
+            global.max_margin = peak.max_margin;
+            global.worst = peak.worst;
+        }
+    }
+}
+
+fn moments_before(samples: &[Sample], index: usize) -> String {
+    samples[..index]
+        .iter()
+        .rev()
+        .find(|sample| sample.model && sample.attempts.is_none())
+        .map(|sample| format!("  {sample}"))
+        .unwrap_or_else(|| "  (none reported)".into())
+}
+
+fn attempt_bucket(attempts: u64) -> usize {
+    (64 - attempts.leading_zeros() as usize).min(ATTEMPT_COUNTERS.len() - 1)
+}
+
+const ATTEMPT_COUNTERS: [&str; 14] = [
+    "liveness_attempts_0",
+    "liveness_attempts_1",
+    "liveness_attempts_2-3",
+    "liveness_attempts_4-7",
+    "liveness_attempts_8-15",
+    "liveness_attempts_16-31",
+    "liveness_attempts_32-63",
+    "liveness_attempts_64-127",
+    "liveness_attempts_128-255",
+    "liveness_attempts_256-511",
+    "liveness_attempts_512-1023",
+    "liveness_attempts_1024-2047",
+    "liveness_attempts_2048-4095",
+    "liveness_attempts_4096",
+];
+
+fn margin_counter(margin: f64) -> usize {
+    MARGIN_EDGES
+        .iter()
+        .position(|&edge| margin < edge)
+        .unwrap_or(MARGIN_EDGES.len())
+}
+
+const MARGIN_EDGES: [f64; 7] = [0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0];
+const MARGIN_COUNTERS: [&str; 8] = [
+    "liveness_margin_lt_0.25",
+    "liveness_margin_lt_0.50",
+    "liveness_margin_lt_0.75",
+    "liveness_margin_lt_0.90",
+    "liveness_margin_lt_0.95",
+    "liveness_margin_lt_0.99",
+    "liveness_margin_lt_1.00",
+    "liveness_margin_ge_1.00",
+];
+
+/// Margin and attempt buckets as engine-visible coverage: each bucket calls a
+/// distinct function, so reaching a new bucket is a new edge.
+mod guide {
+    #[inline(never)]
+    fn reached<const N: usize>() {
+        std::hint::black_box(N);
+    }
+
+    macro_rules! marks {
+        ($($n:literal)*) => { [$(reached::<$n> as fn()),*] };
+    }
+
+    /// Margin in 1/64 steps over `[0.25, 1.25)` for non-terminal folds
+    /// (0..64) and terminal folds (64..128).
+    static MARGIN: [fn(); 128] = marks!(
+        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+        32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60
+        61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89
+        90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113
+        114 115 116 117 118 119 120 121 122 123 124 125 126 127
+    );
+    /// Attempt buckets (log2) for non-terminal (128..144) and terminal
+    /// (144..160) folds.
+    static ATTEMPTS: [fn(); 32] = marks!(
+        128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149
+        150 151 152 153 154 155 156 157 158 159
+    );
+
+    pub(super) fn margin(terminal: bool, margin: f64) {
+        let step = ((margin - 0.25) * 64.0).clamp(0.0, 63.0) as usize;
+        MARGIN[usize::from(terminal) * 64 + step]();
+    }
+
+    pub(super) fn attempts(terminal: bool, bucket: usize) {
+        ATTEMPTS[usize::from(terminal) * 16 + bucket.min(15)]();
+    }
+}

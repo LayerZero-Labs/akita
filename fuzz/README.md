@@ -246,6 +246,7 @@ binary this size.)
 | `akita-fuzz-dev cases [LOG2]` | Catalog rows planned or excluded at a cost limit |
 | `akita-fuzz-dev smoke TARGET [N] [SEED]` | N pseudo-random inputs, no libFuzzer |
 | `akita-fuzz-dev replay TARGET FILE...` | Run inputs once, no libFuzzer |
+| `akita-fuzz-dev sweep [LOG2] [N] [SEED]` | Every catalog case up to 2^LOG2 coefficients through `pcs_liveness` (all-zero, all-`0xff`, and N−2 random inputs each), printing each case's peak fold-grind margin and attempts; nonzero exit if any case fails. Set `AKITA_FUZZ_LIVENESS_LOG=1` on any command to print every fold report |
 | `akita-fuzz-dev seeds DIR` | Regenerate seed corpora |
 | `akita-fuzz-dev list` | Library target names |
 

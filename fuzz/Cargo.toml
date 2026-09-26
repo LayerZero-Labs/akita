@@ -32,7 +32,7 @@ akita-algebra = { path = "../crates/akita-algebra" }
 akita-config = { path = "../crates/akita-config", default-features = false, features = ["transcript-blake2b"] }
 akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = ["transcript-blake2b"] }
 akita-error = { path = "../crates/akita-error" }
-akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b"] }
+akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b", "response-model-diagnostics"] }
 akita-prover = { path = "../crates/akita-prover", default-features = false, features = ["transcript-blake2b"] }
 akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = ["transcript-blake2b"] }
 akita-serialization = { path = "../crates/akita-serialization" }
@@ -48,6 +48,7 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"
+tracing = "0.1"
 
 # cargo-fuzz builds with `--release`; keep assertions, overflow checks, and
 # line tables so findings carry actionable diagnostics.
@@ -115,6 +116,13 @@ bench = false
 [[bin]]
 name = "pcs_parallel"
 path = "fuzz_targets/pcs_parallel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pcs_liveness"
+path = "fuzz_targets/pcs_liveness.rs"
 test = false
 doc = false
 bench = false

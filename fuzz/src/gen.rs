@@ -320,3 +320,81 @@ pub fn onehot_indices(
     }
     indices
 }
+
+/// A field element whose balanced base-`2^log_basis` digits all sit at an
+/// extreme (`style` 0: `-2^(b-1)`, 1: `2^(b-1) - 1`, otherwise alternating),
+/// the largest digit energy a value of its magnitude carries. The response
+/// model prices decomposed field values (evaluations, commitments, residues)
+/// as uniform digits, about `4^b / 12` each rather than this `4^b / 4`.
+pub fn extreme_digits<F: Field + CanonicalEncoding>(log_basis: u32, style: u8) -> F {
+    let log_basis = log_basis.clamp(1, 64);
+    let bits = 128 - (modulus::<F>() - 1).leading_zeros();
+    // Stay below q/2 in magnitude so the centered representative is the sum.
+    let digits = bits.saturating_sub(2) / log_basis;
+    let base = F::from_u128_reduced(1u128 << log_basis);
+    let half = 1u128 << (log_basis - 1);
+    let (low, high) = (-F::from_u128_reduced(half), F::from_u128_reduced(half - 1));
+    let mut value = F::zero();
+    let mut weight = F::one();
+    for digit in 0..digits {
+        let extreme = match style % 3 {
+            0 => low,
+            1 => high,
+            _ if digit % 2 == 0 => low,
+            _ => high,
+        };
+        value += extreme * weight;
+        weight *= base;
+    }
+    value
+}
+
+/// Extension element with extreme-digit (or zero) base coordinates.
+pub fn extreme_ext<F, E>(reader: &mut Reader<'_>) -> E
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    // Production opening bases are small (3 to 5 in the shipped catalogs).
+    let log_basis = 2 + u32::from(reader.u8() % 7);
+    let style = reader.u8();
+    let zeros = reader.u8();
+    E::from_base_fn(|coordinate| {
+        if coordinate > 0 && (zeros >> (coordinate % 8)) & 1 == 1 {
+            F::zero()
+        } else {
+            extreme_digits::<F>(log_basis, style.wrapping_add(coordinate as u8))
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::CyclotomicRing;
+    use akita_config::proof_optimized::fp128;
+
+    /// Production's balanced decomposition of `extreme_digits` yields the
+    /// extreme digit in every plane the value spans.
+    #[test]
+    fn extreme_digits_decompose_to_extreme_planes() {
+        type F = fp128::Field;
+        for log_basis in 2..=8u32 {
+            let half = 1i16 << (log_basis - 1);
+            let spanned = (126 / log_basis) as usize;
+            let levels = 128usize.div_ceil(log_basis as usize);
+            for (style, expected) in [(0u8, -half), (1, half - 1)] {
+                let value = extreme_digits::<F>(log_basis, style);
+                let ring = CyclotomicRing::<F, 1>::from_coefficients([value]);
+                let mut planes = vec![[0i16; 1]; levels];
+                ring.balanced_decompose_pow2_i16_into(&mut planes, log_basis);
+                for (level, plane) in planes.iter().take(spanned).enumerate() {
+                    assert_eq!(
+                        plane[0], expected,
+                        "log_basis {log_basis} style {style} level {level}"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -93,6 +93,7 @@ dependencies = [
  "libfuzzer-sys",
  "num-bigint 0.4.8",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
