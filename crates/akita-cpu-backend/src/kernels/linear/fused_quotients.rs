@@ -250,6 +250,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> PairedRunScratch<W, K, D> {
 
 /// The same zero-skipping, prefetch/transform, then row-major dot schedule is
 /// used by both a one-shot tile and a capacity-limited CRT chunk.
+// Keep the hot-loop inputs explicit, as in the paired run helper below.
+#[allow(clippy::too_many_arguments)]
 fn accumulate_cyclic_i8_runs<
     F: Field + CanonicalEncoding,
     W: PrimeWidth,
