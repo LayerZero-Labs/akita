@@ -1,5 +1,9 @@
 # Trinomial ring arithmetic
 
+These APIs require the opt-in `labinius-trinomial` feature on `akita-algebra`.
+Enabling the feature only makes the arithmetic available; it does not select a
+new setup, commitment, or proof protocol.
+
 Akita's algebra crate provides arithmetic for two related quotient rings:
 
 \[
