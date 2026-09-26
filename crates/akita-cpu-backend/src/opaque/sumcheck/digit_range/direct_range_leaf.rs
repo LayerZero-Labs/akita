@@ -99,8 +99,21 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
 }
 
 enum LowBasisRangeImageStorage<E: Field> {
-    Compact(PackedSignedDigits),
+    OctetPrefix(OctetPrefix<E>),
     Materialized(Vec<E>),
+}
+
+struct OctetPrefix<E: Field> {
+    digits: PackedSignedDigits,
+    tau: Vec<E>,
+    state: Option<DirectRangePrefixState<E>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RoundKernel {
+    OctetPrefix,
+    LivePrefix,
+    Dense,
 }
 
 #[inline]
@@ -143,8 +156,6 @@ pub struct LowBasisRangeCheckProver<E: Field> {
     col_bits: usize,
     num_vars: usize,
     basis: usize,
-    prefix_tau: Option<Vec<E>>,
-    initial_round_prefix: Option<DirectRangePrefixState<E>>,
     cached_round_poly: Option<OmittedConstantPoly<E>>,
     rounds_completed: usize,
 }
@@ -154,6 +165,8 @@ mod octet_prefix;
 mod rounds;
 mod state;
 
+#[cfg(test)]
+mod kernel_tests;
 #[cfg(test)]
 mod reference_tests;
 #[cfg(test)]

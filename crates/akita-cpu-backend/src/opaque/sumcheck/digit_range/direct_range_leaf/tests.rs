@@ -388,7 +388,10 @@ fn assert_rounds_match_dense_reference(
     );
 
     assert_eq!(
-        matches!(prover.range_image, LowBasisRangeImageStorage::Compact(_)),
+        matches!(
+            prover.range_image,
+            LowBasisRangeImageStorage::OctetPrefix(_)
+        ),
         num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS,
         "{shape} initial storage"
     );
@@ -405,7 +408,10 @@ fn assert_rounds_match_dense_reference(
         reference_eq.bind(r);
         fold_evals_in_place(&mut reference, r);
         assert_eq!(
-            matches!(prover.range_image, LowBasisRangeImageStorage::Compact(_)),
+            matches!(
+                prover.range_image,
+                LowBasisRangeImageStorage::OctetPrefix(_)
+            ),
             num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS
                 && round + 1 < octet_prefix::OCTET_PREFIX_ROUNDS,
             "{shape} storage after round={round}"

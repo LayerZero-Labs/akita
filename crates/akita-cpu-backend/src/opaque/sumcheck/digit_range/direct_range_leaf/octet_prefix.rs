@@ -282,86 +282,67 @@ fn octet_range_difference<E: Field + Ring + Unreduced>(
     )
 }
 
-impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
-    #[inline]
-    pub(super) fn using_octet_prefix(&self) -> bool {
-        self.rounds_completed < OCTET_PREFIX_ROUNDS && self.prefix_tau.is_some()
-    }
-
-    fn compact_range_image(&self) -> &PackedSignedDigits {
-        match &self.range_image {
-            LowBasisRangeImageStorage::Compact(compact_range_image) => compact_range_image,
-            LowBasisRangeImageStorage::Materialized(_) => {
-                unreachable!("octet-prefix rounds read the compact table")
-            }
-        }
-    }
-
-    /// Build the octet-class weights and the round-0/1 cache before round 0
-    /// binds.
+impl<E: Field + Ring + Unreduced> OctetPrefix<E> {
+    /// Build the octet-class weights and the round-0/1 cache before round 0 binds.
     #[tracing::instrument(
         skip_all,
         name = "LowBasisRangeCheckProver::ensure_initial_round_prefix"
     )]
-    fn ensure_initial_round_prefix(&mut self) {
-        if self.initial_round_prefix.is_some() {
-            return;
-        }
-        debug_assert_eq!(self.rounds_completed, 0);
-        let tau0 = self
-            .prefix_tau
-            .as_deref()
-            .expect("octet prefix requested without its equality point");
-        let class_bits = class_bits(self.basis);
-        let (e_first, e_second) = self
-            .split_eq
-            .remaining_eq_tables_after(3)
-            .expect("octet prefix has at least four rounds");
-        let source = self.compact_range_image();
-        let octet_pair_class_weights = octet_pair_class_weights(
-            &OctetClassReader::new(source, class_bits),
-            source.len().div_ceil(16),
-            e_first,
-            e_second,
-        );
-        let tau3 = tau0[3];
-        let octet_class_weights: Vec<E> = octet_pair_class_weights
-            .iter()
-            .map(|&[even, odd]| even + tau3 * (odd - even))
-            .collect();
-        let quad_class_weights = quad_class_weights(&octet_class_weights, class_bits, tau0[2]);
-        let cache = build_stage1_prefix_cache(&quad_class_weights, tau0, self.basis)
-            .expect("octet prefix has at least two rounds");
-        self.initial_round_prefix = Some(DirectRangePrefixState {
-            cache,
-            octet_class_weights,
-            octet_pair_class_weights,
-            first_challenge: None,
-            quad_values: Vec::new(),
-            octet_terms: Vec::new(),
+    fn ensure_state(
+        &mut self,
+        split_eq: &GruenSplitEq<E>,
+        basis: usize,
+    ) -> (&PackedSignedDigits, &mut DirectRangePrefixState<E>) {
+        let digits = &self.digits;
+        let tau = &self.tau;
+        let state = self.state.get_or_insert_with(|| {
+            let class_bits = class_bits(basis);
+            let (e_first, e_second) = split_eq
+                .remaining_eq_tables_after(3)
+                .expect("octet prefix has at least four rounds");
+            let octet_pair_class_weights = octet_pair_class_weights(
+                &OctetClassReader::new(digits, class_bits),
+                digits.len().div_ceil(16),
+                e_first,
+                e_second,
+            );
+            let tau3 = tau[3];
+            let octet_class_weights: Vec<E> = octet_pair_class_weights
+                .iter()
+                .map(|&[even, odd]| even + tau3 * (odd - even))
+                .collect();
+            let quad_class_weights = quad_class_weights(&octet_class_weights, class_bits, tau[2]);
+            let cache = build_stage1_prefix_cache(&quad_class_weights, tau, basis)
+                .expect("octet prefix has at least two rounds");
+            DirectRangePrefixState {
+                cache,
+                octet_class_weights,
+                octet_pair_class_weights,
+                first_challenge: None,
+                quad_values: Vec::new(),
+                octet_terms: Vec::new(),
+            }
         });
+        (digits, state)
     }
+}
 
-    fn octet_prefix(&self) -> &DirectRangePrefixState<E> {
-        self.initial_round_prefix
-            .as_ref()
-            .expect("octet prefix is initialized before round 0 binds")
-    }
-
-    pub(super) fn compute_octet_prefix_round(&mut self) -> OmittedConstantPoly<E> {
-        self.ensure_initial_round_prefix();
-        let prefix = self.octet_prefix();
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
+    pub(super) fn compute_octet_prefix_round(
+        &self,
+        prefix: &mut OctetPrefix<E>,
+    ) -> OmittedConstantPoly<E> {
+        let (source, state) = prefix.ensure_state(&self.split_eq, self.basis);
         match self.rounds_completed {
-            0 => prefix.cache.reconstruct_round0_eq_poly(),
-            1 => prefix.cache.reconstruct_round1_eq_poly(
-                prefix
+            0 => state.cache.reconstruct_round0_eq_poly(),
+            1 => state.cache.reconstruct_round1_eq_poly(
+                state
                     .first_challenge
                     .expect("round 1 requires the round-0 challenge"),
             ),
-            2 => self.compute_octet_class_round(),
+            2 => self.compute_octet_class_round(state),
             3 => {
-                let source = self.compact_range_image();
-                let terms = prefix.octet_terms.as_slice();
+                let terms = state.octet_terms.as_slice();
                 let class_bits = class_bits(self.basis);
                 let precomputation = &self.range_poly;
                 let reader = OctetClassReader::new(source, class_bits);
@@ -380,7 +361,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 });
                 sums[0] = octet_range_difference(
                     terms,
-                    &prefix.octet_pair_class_weights,
+                    &state.octet_pair_class_weights,
                     &self.range_poly,
                 );
                 self.range_poly
@@ -393,8 +374,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Round 2: every octet is one pair, so sum each octet class's pair
     /// coefficients against its equality weight.
     #[tracing::instrument(skip_all, name = "LowBasisRangeCheckProver::compute_octet_class_round")]
-    fn compute_octet_class_round(&self) -> OmittedConstantPoly<E> {
-        let prefix = self.octet_prefix();
+    fn compute_octet_class_round(
+        &self,
+        prefix: &DirectRangePrefixState<E>,
+    ) -> OmittedConstantPoly<E> {
         let quad_values = prefix.quad_values.as_slice();
         let quad_mask = quad_values.len() - 1;
         let quad_bits = quad_values.len().trailing_zeros();
@@ -429,29 +412,29 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Bind an octet-prefix round. The round-3 challenge materializes the
     /// field table and, when another round follows, computes it in the same
     /// pass.
-    pub(super) fn ingest_octet_prefix_challenge(&mut self, r: E) {
-        self.ensure_initial_round_prefix();
+    pub(super) fn ingest_octet_prefix_challenge(
+        &mut self,
+        prefix: &mut OctetPrefix<E>,
+        r: E,
+    ) -> Option<Vec<E>> {
+        let (source, state) = prefix.ensure_state(&self.split_eq, self.basis);
         self.split_eq.bind(r);
         let class_bits = class_bits(self.basis);
         match self.rounds_completed {
             0 => {
-                let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                prefix.first_challenge = Some(r);
+                state.first_challenge = Some(r);
             }
             1 => {
-                let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                let r0 = prefix
+                let r0 = state
                     .first_challenge
                     .expect("round 1 requires the round-0 challenge");
-                prefix.quad_values = folded_quad_values(class_bits, r0, r);
+                state.quad_values = folded_quad_values(class_bits, r0, r);
             }
             2 => {
-                let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                prefix.octet_terms = octet_class_terms(&self.range_poly, &prefix.quad_values, r);
+                state.octet_terms = octet_class_terms(&self.range_poly, &state.quad_values, r);
             }
             3 => {
-                let source = self.compact_range_image();
-                let terms = self.octet_prefix().octet_terms.as_slice();
+                let terms = state.octet_terms.as_slice();
                 let next_live = source.len().div_ceil(8).div_ceil(2);
                 let reader = OctetClassReader::new(source, class_bits);
                 let folds_for_tile = |entries: Range<usize>| {
@@ -473,11 +456,11 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         None,
                     )
                 };
-                self.range_image = LowBasisRangeImageStorage::Materialized(range_image);
                 self.cached_round_poly = next_round_poly;
-                self.initial_round_prefix = None;
+                return Some(range_image);
             }
             _ => unreachable!("octet prefix covers rounds 0 through 3"),
         }
+        None
     }
 }

@@ -64,9 +64,12 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 actual: tau0.len(),
             });
         }
-        let prefix_tau = (num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS).then(|| tau0.to_vec());
-        let range_image = if prefix_tau.is_some() {
-            LowBasisRangeImageStorage::Compact(digit_witness)
+        let range_image = if num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS {
+            LowBasisRangeImageStorage::OctetPrefix(OctetPrefix {
+                digits: digit_witness,
+                tau: tau0.to_vec(),
+                state: None,
+            })
         } else {
             // Ring bits are low: retain only the flat live prefix, just as
             // octet-prefix materialization does. The omitted tail is zero.
@@ -90,8 +93,6 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             col_bits,
             num_vars,
             basis,
-            prefix_tau,
-            initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
         })
@@ -109,8 +110,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 assert_eq!(range_image.len(), 1, "range_image not fully folded");
                 range_image[0]
             }
-            LowBasisRangeImageStorage::Compact(_) => {
-                panic!("range_image remained compact after final fold")
+            LowBasisRangeImageStorage::OctetPrefix(_) => {
+                panic!("range_image stayed in the octet prefix after the final fold")
             }
         }
     }
@@ -125,43 +126,28 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         self.rounds_completed >= self.ring_bits()
     }
 
+    /// Select a current or future round using the geometry after preceding binds.
     #[inline]
-    pub(super) fn current_x_width(&self) -> usize {
-        debug_assert!(self.in_x_phase());
-        self.num_vars.saturating_sub(self.rounds_completed)
-    }
-
-    #[inline]
-    pub(super) fn current_x_len(&self) -> usize {
-        1usize << self.current_x_width()
-    }
-
-    #[inline]
-    pub(super) fn use_prefix_x_round(&self) -> bool {
-        self.in_x_phase() && self.live_x_cols < self.current_x_len()
-    }
-
-    /// Whether the round after the current one runs on a live-prefix table, as
-    /// either a sparse ring round or a live-prefix column round.
-    #[inline]
-    pub(super) fn next_round_uses_live_prefix(&self) -> bool {
-        let next_round = self.rounds_completed + 1;
-        if next_round >= self.num_vars {
-            return false;
+    pub(super) fn round_kernel(&self, round: usize) -> RoundKernel {
+        debug_assert!(round >= self.rounds_completed);
+        if round >= self.num_vars {
+            return RoundKernel::Dense;
         }
-        if next_round < self.ring_bits() {
-            return self.live_x_cols < (1usize << self.col_bits);
+        if round < octet_prefix::OCTET_PREFIX_ROUNDS
+            && matches!(self.range_image, LowBasisRangeImageStorage::OctetPrefix(_))
+        {
+            return RoundKernel::OctetPrefix;
         }
-        let next_live_x_cols = if self.in_x_phase() {
-            self.live_x_cols.div_ceil(2)
+        let bound_columns = round.saturating_sub(self.ring_bits());
+        let current_bound_columns = self.rounds_completed.saturating_sub(self.ring_bits());
+        let live_columns = self
+            .live_x_cols
+            .div_ceil(1usize << (bound_columns - current_bound_columns));
+        let column_capacity = 1usize << (self.col_bits - bound_columns);
+        if live_columns < column_capacity {
+            RoundKernel::LivePrefix
         } else {
-            self.live_x_cols
-        };
-        next_live_x_cols < (1usize << (self.num_vars - next_round))
-    }
-
-    #[inline]
-    pub(super) fn use_sparse_x_y_round(&self) -> bool {
-        !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
+            RoundKernel::Dense
+        }
     }
 }
