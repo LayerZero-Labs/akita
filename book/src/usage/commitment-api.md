@@ -6,19 +6,18 @@ these handles across independent and concurrent proofs.
 
 ## Commit one group
 
-Construct a backend with the setup and trusted catalog, then transfer the
-polynomials into its source storage:
+Construct a backend from the public setup, then transfer the polynomials into
+its source storage. Each commit names the trusted catalog that selects the
+group's profile:
 
 ```rust
-let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 let source = backend.import_source(polynomials)?;
 let CommitOutput {
     committed_group,
     private_handle,
 } = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
@@ -91,6 +90,7 @@ let prior = PrecommittedGroupProfiles::from_ordered_groups(
 )?;
 let final_source = backend.import_source(final_polynomials)?;
 let final_output = backend.commit(
+    scheme.schedules(),
     &final_source,
     GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
@@ -104,7 +104,7 @@ independent case uses its own constructor.
 ## Recursive grouped openings
 
 A `RecursiveCommitmentConfig<BaseConfig>` uses setup offloading for supported
-large verifier workloads. Construct the backend with the recursive catalog.
+large verifier workloads. Commit the final group under the recursive catalog.
 Earlier groups use the reviewed independent commitment profile from the base
 catalog, supplied through `GroupContext::explicit(&base_profile)`. The final
 group uses `GroupContext::scheduler_with_precommitted_groups(&prior)`.
@@ -119,6 +119,48 @@ Import dense and one hot polynomials as separate homogeneous source groups.
 Their commitments have the same opaque handle type, so their handles can be
 placed in one ordered opening batch. Concrete CPU source operations remain
 inside the backend, and one hot data retains its compact representation.
+
+The backend stores no catalog, so one backend commits every group. Pass each
+group's producer catalog to its own `commit`, then commit the final group and
+open the batch under the proving catalog:
+
+```rust
+let dense_output = backend.commit(
+    dense_scheme.schedules(),
+    &backend.import_source(dense_polynomials)?,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+let prior = PrecommittedGroupProfiles::from_profiles(vec![
+    dense_output.committed_group.profile.clone(),
+])?;
+let final_output = backend.commit(
+    onehot_scheme.schedules(),
+    &backend.import_source(onehot_polynomials)?,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+```
+
+The catalog passed to `commit` is the producer contract for that group: it
+fixes the commit profile and the source class and coefficient bound that
+admission enforces. The handle records that contract, and
+`CommitmentHandleMetadata::producer_contract` returns it. Opening data built
+with `SelectedProverOpeningData::from_committed_claims::<Cfg>` rejects a final
+group whose recorded contract differs from `Cfg::committed_source_contract()`,
+since the proving catalog plans its final group under that contract.
+
+Schedule rows carry no producer identity for precommitted groups, so opening
+does not check them. The application must commit each precommitted group under
+the configuration whose contract the proving catalog's row assumes for that
+group, and it can compare each handle's `producer_contract()` with the contract
+it planned. A mismatch cannot make a false claim verify, since the verifier
+enforces the row's frozen caps. The proof's completeness and grinding budget,
+however, no longer follow from the planner's model, so an honest proof can
+fail. Proof bytes do not bind the producer contract.
+
+The setup must cover every family that commits on the backend. When the
+proving catalog's rows already include each precommitted profile, its own
+setup suffices. Otherwise build the setup from combined requirements, as in
+[Share one setup across families](./setup-runtime.md#share-one-setup-across-families).
 
 A handle from another backend is rejected during admission. When transferring
 an existing commitment deliberately, use `backend.import_commitment(&handle)`.

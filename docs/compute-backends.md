@@ -8,18 +8,20 @@ dependency on the CPU crate.
 
 ## Application ownership
 
-Create one backend for a setup and trusted configuration. Share it explicitly
-through `Arc` when several callers need it:
+Create one backend for a public setup. The backend stores no trusted catalog:
+each commitment names the catalog that selects its profile, and each proof
+admission names the catalog that must contain its schedule. One backend
+therefore serves every configuration family with the same setup, field, and
+extension field. Share it explicitly through `Arc` when several callers need
+it:
 
 ```rust
 let scheme = AkitaCommitmentScheme::<Cfg>::from_schedule_artifact(&artifact_bytes)?;
 let setup = scheme.setup_prover(nv, num_polys)?;
-let backend = std::sync::Arc::new(CpuBackend::<Cfg>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 let source = backend.import_source(polys)?;
 let committed = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
@@ -65,8 +67,8 @@ resources.
 
 ## CPU resource controls
 
-`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup, trusted
-catalog, and maximum cached ring-switch elements. A zero limit streams
+`CpuBackend::with_ring_switch_cache_limit` accepts the expanded setup and the
+maximum cached ring-switch elements. A zero limit streams
 supported operations; `usize::MAX` retains all supported ring-switch
 operations. The CPU kernel sizes one-hot commitment scratch automatically from
 the commitment geometry; see the

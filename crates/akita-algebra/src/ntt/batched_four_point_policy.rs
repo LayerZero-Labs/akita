@@ -1,4 +1,4 @@
-//! Shared compile-time gate for vectorized four-point NTT stages.
+//! Compile-time gate for the NEON vectorized four-point NTT stages.
 //!
 //! The fused DIF tail and DIT head transpose four-coefficient transforms across
 //! `simd_lanes` independent lanes. One iteration therefore consumes

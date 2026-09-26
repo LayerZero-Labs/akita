@@ -563,7 +563,7 @@ matrix, now each repeated per machine:
 The shared SIS matrix (backing `A`, `B`, `D`) is regenerated from one public seed
 and is identical on every machine. The verifier scans it **once**, exactly as
 single-machine, and $\alpha$-evaluates each entry
-`r_eval(r,c) = eval_ring_at_pows(matrix[r][c], α)` **once**, because:
+`r_eval(r,c) = eval_ring_at_pows_fast(matrix[r][c], α)` **once**, because:
 
 - For `D · e_hat` and `B · t_hat`, the partition only *re-routes* which `e`/`t`
   column each scanned matrix column maps to. The set of matrix columns scanned —
@@ -620,7 +620,7 @@ exactly one witness column.
 acc = 0
 for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)        (UNCHANGED)
   for c in 0..n_cols:              # SIS columns scanned once          (UNCHANGED)
-    r_eval    = eval_ring_at_pows(matrix[r][c], alpha)   # the ONE O(D) alpha-eval — UNCHANGED count
+    r_eval    = eval_ring_at_pows_fast(matrix[r][c], alpha)  # the ONE O(D) alpha-eval — UNCHANGED count
     setup_index_weight = d_w[r] * W_col[c]                  # D·e   (partitioned, single-size)
                        + sum_g b_w[g][r] * T_col[g][c]      # B·t   (partitioned, single-size)
                        + a_w[r] * Z_comb[c]                 # A·G_fold·z_hat

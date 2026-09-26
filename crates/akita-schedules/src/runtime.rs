@@ -2,19 +2,18 @@
 
 use akita_error::AkitaError;
 use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
-    FoldSchedule, FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
+    ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams, FoldParams, FoldSchedule,
+    FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
-    MAX_I8_LOG_BASIS,
+    TerminalResponseShape, WitnessLayout, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
 
 /// Quantities materialized and checked by the current bounded planner cost model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlannerCostModelId {
-    /// Exact protocol payload plus setup-envelope accounting.
-    ExactPayloadAndSetupEnvelope,
+    /// Native message payload, additive nonce maxima, and setup-envelope accounting.
+    NativeNoncePayloadAndSetupEnvelopeV2,
 }
 
 /// Offline response-energy model used to admit selective L2 candidates.
@@ -49,14 +48,14 @@ impl PlannerCostModelId {
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => 1,
+            Self::NativeNoncePayloadAndSetupEnvelopeV2 => 2,
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::ExactPayloadAndSetupEnvelope => "ExactPayloadAndSetupEnvelope",
+            Self::NativeNoncePayloadAndSetupEnvelopeV2 => "NativeNoncePayloadAndSetupEnvelopeV2",
         }
     }
 }
@@ -64,14 +63,15 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into trusted catalog artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
-    MinEstimatedProofPayloadV2,
-    /// Pick first direct setup, proof bytes, total setup, root output witness,
-    /// then descriptor.
-    MinFirstDirectSetupThenPayloadV2,
-    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
-    /// bytes, first direct output witness, then descriptor.
-    MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3,
+    /// Pick exact additive proof-and-work cost, proof bytes, physical setup,
+    /// root output witness, then descriptor.
+    MinEstimatedExactProofAndWorkV5,
+    /// Pick first direct setup, exact additive cost, proof bytes, total setup,
+    /// root output witness, then descriptor.
+    MinFirstDirectSetupThenExactProofAndWorkV5,
+    /// Pick power-of-two setup-envelope capacity, first direct setup, exact
+    /// additive cost, proof bytes, first direct output witness, then descriptor.
+    MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
 }
 
 impl SelectionPolicyId {
@@ -81,36 +81,40 @@ impl SelectionPolicyId {
         ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
         if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         } else if matches!(
             ring_dimension_schedule_mode,
             RingDimensionScheduleMode::AdaptiveDimension { .. }
         ) {
-            Self::MinFirstDirectSetupThenPayloadV2
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5
         } else {
-            Self::MinEstimatedProofPayloadV2
+            Self::MinEstimatedExactProofAndWorkV5
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedProofPayloadV2 => 4,
-            Self::MinFirstDirectSetupThenPayloadV2 => 5,
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
+            Self::MinEstimatedExactProofAndWorkV5 => 13,
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => 14,
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
-            // belonged to the retired setup-envelope-first policy. Never reuse
-            // an objective tag: trusted catalog admission depends on it.
+            // belonged to the retired setup-envelope-first policy. Tags 4--6
+            // selected native proof bytes; tags 7--9 used rounded work cost,
+            // and tags 10--12 did not price direct verifier setup scans.
+            // Never reuse an objective tag: trusted catalog admission depends on it.
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
-            Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
-                "MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3"
+            Self::MinEstimatedExactProofAndWorkV5 => "MinEstimatedExactProofAndWorkV5",
+            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => {
+                "MinFirstDirectSetupThenExactProofAndWorkV5"
+            }
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
+                "MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6"
             }
         }
     }
@@ -198,29 +202,6 @@ pub enum RingDimensionScheduleMode {
 /// Number of leading fold levels covered by the audited adaptive search.
 pub const ADAPTIVE_SEARCH_LEVELS: usize = 2;
 
-impl RingDimensionScheduleMode {
-    #[must_use]
-    pub const fn uniform_dimensions(self) -> Option<CommitmentRingDims> {
-        match self {
-            Self::UniformDimension { ring_dimension } => {
-                Some(CommitmentRingDims::uniform(ring_dimension))
-            }
-            Self::AdaptiveDimension { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn potential_a_dimensions(self) -> &'static [usize] {
-        match self {
-            Self::UniformDimension { .. } => &[],
-            Self::AdaptiveDimension {
-                potential_a_dimensions,
-                ..
-            } => potential_a_dimensions,
-        }
-    }
-}
-
 /// Runtime schedule validation policy.
 ///
 /// The compatibility name stays `PlannerPolicy` during the migration because
@@ -254,9 +235,6 @@ pub struct PlannerPolicy {
     pub recursive_setup_planning: bool,
 }
 
-/// Preferred public name for runtime callers.
-pub type RuntimeSchedulePolicy = PlannerPolicy;
-
 impl PlannerPolicy {
     /// Number of physical witness chunks active at one fold level.
     pub const fn chunks_at_level(&self, fold_level: usize) -> usize {
@@ -272,12 +250,6 @@ impl PlannerPolicy {
     /// Whether this family opts into the typed suffix response model.
     pub fn selective_l2_response_model_enabled(&self) -> bool {
         self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
-    }
-
-    /// Whether a candidate fits the optional host setup budget.
-    pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
-        self.setup_field_budget
-            .is_none_or(|budget| num_field_elements <= budget)
     }
 
     /// Validate extension-field geometry and return the challenge-field width.
@@ -628,13 +600,14 @@ pub fn nonterminal_level_payload_bytes(
         successor.ring_dimension(),
         output_witness_len,
     )?;
-    let direct = akita_types::level_proof_bytes(
+    let direct = akita_types::native_nonterminal_level_layout(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
         relation_geometry,
         next_outer_payload,
-    )?;
+    )?
+    .encoded_len()?;
     let eor = if matches!(
         params.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
@@ -658,16 +631,18 @@ pub fn nonterminal_level_payload_bytes(
     })
 }
 
-/// Recompute the exact serialized proof payload for one expanded schedule.
-///
-/// This is the non-leaking reporting counterpart to artifact validation. It
-/// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact intermediate row or planner candidate is constructed.
-pub fn expanded_schedule_proof_payload_bytes(
+struct ExpandedScheduleProofComponents {
+    fixed_bytes: usize,
+    terminal_planner_bytes: usize,
+    terminal_max_bytes: usize,
+    native_nonce_max_bytes: usize,
+}
+
+fn expanded_schedule_proof_components(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
-) -> Result<usize, AkitaError> {
+) -> Result<ExpandedScheduleProofComponents, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
     key.validate(field_bits)?;
     schedule.validate_structure()?;
@@ -719,24 +694,64 @@ pub fn expanded_schedule_proof_payload_bytes(
         policy.claim_ext_degree,
         PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
-    let terminal_response = akita_types::terminal_response_planner_bytes(
+    let terminal_planner_bytes = akita_types::native_terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
-    );
+    )?;
+    let terminal_max_bytes = akita_types::native_terminal_response_max_bytes(
+        field_bits,
+        &schedule.terminal.response_shape,
+    )?;
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
         field_bits,
         policy.claim_ext_degree,
     )?;
-    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
-    total
+    let fixed_bytes = total
         .checked_add(terminal_eor)
-        .and_then(|value| value.checked_add(terminal_response))
-        .and_then(|value| value.checked_add(nonce_stream_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
+    Ok(ExpandedScheduleProofComponents {
+        fixed_bytes,
+        terminal_planner_bytes,
+        terminal_max_bytes,
+        native_nonce_max_bytes: grinding_plan.native_nonce_max_bytes(),
+    })
+}
+
+/// Recompute the native schedule-selection estimate for one expanded schedule.
+///
+/// The objective uses additive per-message canonical nonce maxima and the
+/// planner's terminal-response estimate. It is not a native parser bound.
+pub fn expanded_schedule_native_proof_estimate_bytes(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_planner_bytes)
+        .and_then(|value| value.checked_add(components.native_nonce_max_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
+}
+
+/// Conservative byte bound for the canonical native Spongefish proof stream.
+///
+/// Unlike the schedule-selection estimate, this uses every inline nonce's
+/// maximum canonical LEB128 width and the scheduled terminal response cap.
+pub fn expanded_schedule_native_proof_bound(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let components = expanded_schedule_proof_components(key, schedule, policy)?;
+    components
+        .fixed_bytes
+        .checked_add(components.terminal_max_bytes)
+        .and_then(|value| value.checked_add(components.native_nonce_max_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("native proof byte bound overflow".into()))
 }
 
 /// Materialize and validate the schedule shared by offline search and generated replay.
@@ -762,7 +777,7 @@ pub fn materialize_candidate_schedule(
         )
     })?;
     let mut estimate = FoldScheduleEstimate {
-        nonce_stream_bytes: 0,
+        native_nonce_max_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: recursive_folds
@@ -789,19 +804,20 @@ pub fn materialize_candidate_schedule(
         policy.claim_ext_degree,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits
+        || grinding_plan.native_nonce_max_bytes() != cached_grinding_cost.native_nonce_max_bytes
         || grinding_plan.expanded_query_count() != cached_grinding_cost.expanded_query_count
     {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached grinding cost ({} nonce bits, {} queries) disagrees with materialized plan ({} nonce bits, {} queries)",
+            "cached grinding cost ({} nonce bits, {} native bytes, {} queries) disagrees with materialized plan ({} nonce bits, {} native bytes, {} queries)",
             cached_grinding_cost.total_nonce_bits,
+            cached_grinding_cost.native_nonce_max_bytes,
             cached_grinding_cost.expanded_query_count,
             grinding_plan.total_nonce_bits(),
+            grinding_plan.native_nonce_max_bytes(),
             grinding_plan.expanded_query_count(),
         )));
     }
-    estimate.nonce_stream_bytes =
-        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
-            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    estimate.native_nonce_max_bytes = grinding_plan.native_nonce_max_bytes();
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(
@@ -809,9 +825,9 @@ pub fn materialize_candidate_schedule(
         )));
     }
     let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => Some(
+        SelectionPolicyId::MinEstimatedExactProofAndWorkV5 => None,
+        SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
         ),
     };
@@ -934,23 +950,19 @@ pub fn planned_next_witness_len(
     ))
 }
 
-/// Convenience policy used by config adapters.
-pub fn default_sis_security_policy() -> SisSecurityPolicyId {
-    DEFAULT_SIS_SECURITY_POLICY
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_types::DEFAULT_SIS_SECURITY_POLICY;
 
     const A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER: &[usize] = &[64, 512];
     const SUFFIX_DIMENSIONS: &[usize] = &[64];
 
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            cost_model: PlannerCostModelId::NativeNoncePayloadAndSetupEnvelopeV2,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -995,11 +1007,11 @@ mod tests {
         let adaptive = adaptive_policy().ring_dimension_schedule_mode;
         assert_eq!(
             SelectionPolicyId::for_policy(false, adaptive),
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
         );
         assert_eq!(
             SelectionPolicyId::for_policy(true, adaptive),
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
         );
     }
 

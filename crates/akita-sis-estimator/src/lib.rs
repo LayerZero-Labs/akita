@@ -33,12 +33,10 @@ pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
     SearchMode, ShapeModel, SisSecurityConstraint, SisSecurityPolicy,
 };
-pub use cost::{CostValue, EstimateTag, LatticeCost, LogCost};
+pub use cost::{CostValue, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};
-pub use numeric::{GoldenTrust, NumericBackend, NumericConfig, Probability};
-pub use params::{
-    akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameterUpdate, SisParameters,
-};
+pub use numeric::{NumericBackend, NumericConfig, Probability};
+pub use params::{akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameters};
 pub use schedule_security::{
     estimate_schedule_security, ScheduleSecurityEstimate, ScheduleSisBound,
     ScheduleSisInstanceEstimate, ScheduleSisRole,
@@ -114,24 +112,6 @@ pub fn cost_zeta(
     optimizer::cost_zeta_infinity(zeta, params, config)
 }
 
-/// Evaluate the Euclidean-norm SIS lattice cost.
-///
-/// # Errors
-///
-/// Returns validation errors for malformed inputs or unsupported reduction-cost
-/// configurations.
-pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
-    params.validate()?;
-    config.validate()?;
-    if params.norm != SisNorm::Euclidean {
-        return Err(EstimatorError::InvalidParameter {
-            field: "norm",
-            reason: "cost_euclidean requires SisNorm::Euclidean".to_string(),
-        });
-    }
-    euclidean::cost_euclidean(params, config)
-}
-
 fn validate_beta_zeta(beta: u32, zeta: u64) -> Result<()> {
     if beta < 2 {
         return Err(EstimatorError::InvalidParameter {
@@ -173,10 +153,6 @@ mod tests {
         let config = EstimateConfig::default();
         assert!(matches!(
             cost_infinity(64, &sample_params(SisNorm::Euclidean), 1, &config),
-            Err(EstimatorError::InvalidParameter { field: "norm", .. })
-        ));
-        assert!(matches!(
-            cost_euclidean(&sample_params(SisNorm::Infinity), &config),
             Err(EstimatorError::InvalidParameter { field: "norm", .. })
         ));
     }

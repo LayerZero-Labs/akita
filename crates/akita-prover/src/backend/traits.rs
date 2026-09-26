@@ -5,6 +5,7 @@ use super::{
 };
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::UnivariatePoly;
 
 /// Coherent opaque handles for a backend implementation.
 pub trait ProverHandleFamily<F, E>
@@ -190,7 +191,7 @@ where
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
 
     fn bind_stage2_challenge(
         &self,

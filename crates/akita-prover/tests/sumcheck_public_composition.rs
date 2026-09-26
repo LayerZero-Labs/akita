@@ -1,16 +1,15 @@
 #![allow(missing_docs)]
 
-use akita_sumcheck::{advance_eq_factored_claim, EqFactoredUniPoly};
+use akita_sumcheck::advance_eq_factored_claim;
 use jolt_field::{Prime128Offset275 as F, Ring};
+use jolt_poly::OmittedConstantPoly;
 
 #[test]
 fn normalized_claim_advance_is_public() {
     let claim = F::from_u64(17);
     let tau = F::from_u64(5);
     let challenge = F::from_u64(11);
-    let poly = EqFactoredUniPoly {
-        coeffs_except_constant_term: vec![F::from_u64(3), F::from_u64(7)],
-    };
+    let poly = OmittedConstantPoly::new(vec![F::from_u64(3), F::from_u64(7)]);
     let constant = claim - tau * F::from_u64(10);
 
     assert_eq!(

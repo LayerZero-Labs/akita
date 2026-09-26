@@ -64,6 +64,20 @@ PROFILES = [
         "ring_dims": [64, 128, 256, 512, 1024],
     },
     {
+        "name": "Q128/3xu64+1xi16-IFMA52",
+        "role": "AVX-512 i16-tail exact cache",
+        "q_label": "2^128 - 2^32 + 22537",
+        "q": 2**128 - 2**32 + 22537,
+        "primes": [
+            1125899906826241,
+            1125899906629633,
+            1125899905744897,
+            12289,
+        ],
+        "limb": "3xu64+1xi16",
+        "ring_dims": [64, 128, 256, 512, 1024],
+    },
+    {
         "name": "Q128/3xu64+1xi32-IFMA52",
         "role": "AVX-512 hybrid exact cache",
         "q_label": "2^128 - 2^32 + 22537",
@@ -216,15 +230,18 @@ def main() -> int:
     print()
     print("## Q128 Balanced-Digit Capacity")
     print()
-    print("The portable and hybrid AVX-512 exact products are both about 180 bits.")
-    print("The hybrid retains three hot IFMA limbs and adds one 30-bit tail only for")
-    print("rows that exceed the roughly 150-bit IFMA base product.")
+    print("The portable and i32-tail AVX-512 exact products are both about 180 bits.")
+    print("The hybrid retains three hot IFMA limbs and adds one tail only for rows that")
+    print("exceed the roughly 150-bit IFMA base product. It prefers the 14-bit tail")
+    print("prime 12289 (about 163.6 bits in total) and falls back to the 30-bit tail")
+    print("prime 1073707009 only when the 14-bit tail is insufficient.")
     print()
     print("| Representation | D | log basis 3 | 4 | 5 | 6 | 7 | 8 |")
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for profile_name in [
         "Q128/6xi32",
         "Q128/3xu64-IFMA52",
+        "Q128/3xu64+1xi16-IFMA52",
         "Q128/3xu64+1xi32-IFMA52",
     ]:
         profile = next(item for item in PROFILES if item["name"] == profile_name)
@@ -247,8 +264,8 @@ def main() -> int:
     print("- Scalar, AVX2, and NEON backends use the portable six-prime chunked i8")
     print("  accumulation.")
     print("- An AVX-512IFMA backend uses one exact accumulation for a q128 row when the")
-    print("  three-prime IFMA product is too small but the product with the 30-bit")
-    print("  tail prime 1073707009 fits.")
+    print("  three-prime IFMA product is too small but the product with a tail fits.")
+    print("  The tail is 12289 when that suffices and 1073707009 otherwise.")
     print("- All other rows stay chunked. Each chunk reconstructs before the next chunk,")
     print("  so the complete row does not need the tail prime.")
     print("- The block-parallel kernel still exposes independent blocks to Rayon when the")

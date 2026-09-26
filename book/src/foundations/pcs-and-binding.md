@@ -206,8 +206,9 @@ These are classical random-oracle extraction results. Applying them requires
 the specified special-soundness and efficiency premises; (6) alone is not a
 quantum-random-oracle bound or an end-to-end theorem for Akita.
 
-Each Akita fold uses a 12-bit response nonce from the packed proof-level
-stream. Changing the nonce changes the sparse-challenge oracle inputs. For
+Each Akita fold uses a bounded response nonce encoded inline as canonical
+unsigned LEB128. Changing those proof bytes changes the sparse-challenge oracle
+inputs. For
 a fixed prefix and a bad-challenge set of measure $\epsilon$, $q$
 independent trials succeed with probability
 
