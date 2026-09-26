@@ -160,7 +160,7 @@ where
                     OpeningFamily::EvaluationTrace(_) => Err(AkitaError::InvalidProof),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let (_, semantics) = akita_types::prepare_coefficient_packing_batch_semantics(
+            let semantics = akita_types::prepare_coefficient_packing_batch_semantics(
                 akita_types::CoefficientPackingBatchSemanticInputs {
                     level_params: lp,
                     opening_batch,

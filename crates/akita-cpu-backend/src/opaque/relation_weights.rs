@@ -24,11 +24,12 @@ use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
 use akita_types::RelationWeightContribution;
 use akita_types::{
-    gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
-    AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
+    coefficient_packing_relation_events, gadget_row_scalars, r_decomp_levels,
+    validate_coefficient_packing_batch_groups, AkitaExpandedSetup,
+    CoefficientPackingBatchSemanticInputs, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, OpeningFamily, OpeningMethod, PreparedSubringCoefficientPackingPoint,
+    RelationAddressGeometry, RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry,
+    RingRelationInstance, SetupProjectionGeometry,
 };
 use compiler::{
     compile_et_block_range, compile_z_position_range, EtWeightSink, RelationWeightCompilation,
@@ -354,15 +355,10 @@ impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, '_, E> {
 }
 
 /// The complete checked relation weights for one fold.
-pub(super) type RelationWeightBuild<E> = (
-    RelationLaneWeights<E>,
-    OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
-);
-
 #[tracing::instrument(skip_all, name = "build_relation_lane_weights")]
 pub(crate) fn build_relation_lane_weights<F, E>(
     inputs: RelationLaneWeightInputs<'_, F, E>,
-) -> Result<RelationWeightBuild<E>, AkitaError>
+) -> Result<RelationLaneWeights<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
@@ -437,29 +433,6 @@ where
     let setup_is_deferred = setup_matrix.is_none();
     let relation_coefficient_block_len = compilation.relation_coefficient_block_len;
     let physical_field_len = compilation.physical_field_len;
-    let live_witness_coeff_len = compilation.witness_layout.live_coeff_len();
-    let (coefficient_packing_events, opening_semantics) = match opening_points {
-        OpeningFamily::SubringCoefficientPacking(prepared_points) => {
-            let (events, batch) = prepare_coefficient_packing_batch_semantics(
-                CoefficientPackingBatchSemanticInputs {
-                    level_params: lp,
-                    opening_batch,
-                    relation_plan,
-                    relation: instance,
-                    prepared_points,
-                    alpha,
-                    tau1,
-                    claim_coefficients: gamma,
-                },
-            )?;
-            (events, OpeningFamily::SubringCoefficientPacking(batch))
-        }
-        OpeningFamily::EvaluationTrace(()) => (Vec::new(), OpeningFamily::EvaluationTrace(())),
-    };
-    let coefficient_packing_groups = match &opening_semantics {
-        OpeningFamily::EvaluationTrace(()) => &[][..],
-        OpeningFamily::SubringCoefficientPacking(batch) => batch.groups(),
-    };
     let mut weights = RelationLaneWeights::new(
         scalar_powers(
             alpha,
@@ -474,31 +447,42 @@ where
         setup_is_deferred,
     )?;
     let lane_alpha_powers = weights.lane_alpha_powers();
-    let mut packing_semantics_by_group = vec![None; opening_batch.num_groups()];
-    for semantics in coefficient_packing_groups {
-        let group_index = semantics.group_index();
-        let slot = packing_semantics_by_group
-            .get_mut(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        if slot.replace(semantics).is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation group appears more than once".into(),
-            ));
-        }
-        if semantics.stage2_terms().physical_field_len() != live_witness_coeff_len {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation live domain disagrees with the current ring switch".into(),
-            ));
-        }
-        if semantics.stage2_terms().relation_coefficient_block_len()
-            != relation_coefficient_block_len
-        {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation coefficient block disagrees with the current ring switch".into(),
-            ));
+    // The A ring dimension of every packing group. Only the groups' relation
+    // events enter these weights; their Stage 2 terms come from the ring
+    // switch, which validated the same relation plan.
+    let mut packing_a_ring_dims = vec![None; opening_batch.num_groups()];
+    if let OpeningFamily::SubringCoefficientPacking(prepared_points) = opening_points {
+        let groups = validate_coefficient_packing_batch_groups(
+            &CoefficientPackingBatchSemanticInputs {
+                level_params: lp,
+                opening_batch,
+                relation_plan,
+                relation: instance,
+                prepared_points,
+                alpha,
+                tau1,
+                claim_coefficients: gamma,
+            },
+            |group| {
+                Ok((
+                    group.group_index(),
+                    group.geometry().a_ring_dimension(),
+                    coefficient_packing_relation_events(&group)?,
+                ))
+            },
+        )?;
+        for (group_index, a_ring_dimension, events) in groups {
+            let slot = packing_a_ring_dims
+                .get_mut(group_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if slot.replace(a_ring_dimension).is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "packing relation group appears more than once".into(),
+                ));
+            }
+            weights.extend_events(events)?;
         }
     }
-    weights.extend_events(coefficient_packing_events)?;
     for group_plan in &compilation.plan.groups {
         let group_index = group_plan.group_index;
         let group_source = compilation.group_source(group_index)?;
@@ -507,7 +491,7 @@ where
             .as_ref()
             .map(|sources| sources.group(group_index))
             .transpose()?;
-        let packing_semantics = *packing_semantics_by_group
+        let packing_a_ring_dim = *packing_a_ring_dims
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
         let group_d_a = group_plan.roles.d_a;
@@ -517,10 +501,10 @@ where
         let group_alpha_pows_b = scalar_powers(alpha, group_d_b);
         let group_alpha_pows_d = scalar_powers(alpha, group_d_d);
         let opening_method = group_plan.opening_method;
-        match (opening_method, packing_semantics) {
+        match (opening_method, packing_a_ring_dim) {
             (OpeningMethod::EvaluationTrace, None) => {}
-            (OpeningMethod::SubringCoefficientPacking { .. }, Some(semantics))
-                if semantics.geometry().a_ring_dimension() == group_d_a => {}
+            (OpeningMethod::SubringCoefficientPacking { .. }, Some(a_ring_dim))
+                if a_ring_dim == group_d_a => {}
             _ => {
                 return Err(AkitaError::InvalidSetup(
                     "packing semantic groups do not match scheduled opening methods".into(),
@@ -731,7 +715,7 @@ where
             )?;
         }
     }
-    Ok((weights, opening_semantics))
+    Ok(weights)
 }
 
 #[cfg(test)]

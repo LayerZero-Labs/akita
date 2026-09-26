@@ -3,7 +3,8 @@ use super::*;
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
+    coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
+    r_decomp_levels, relation_rhs_coeff_len, validate_coefficient_packing_batch_groups,
     AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
     CoefficientPackingBatchSemantics, CoefficientPackingChallenges, CoefficientPackingStage2Source,
     CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
@@ -150,18 +151,23 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let tau1 = (0..relation_plan.relation_row_index_num_vars().unwrap())
         .map(|index| E::from_u64(13 + index as u64))
         .collect::<Vec<_>>();
-    let (relation_events, batch) =
-        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
-            level_params: &params,
-            opening_batch: &opening_batch,
-            relation_plan: &relation_plan,
-            relation: &relation,
-            prepared_points: &[(0, &prepared_point)],
-            alpha: E::from_u64(17),
-            tau1: &tau1,
-            claim_coefficients: &claim_coefficients,
-        })
-        .unwrap();
+    let prepared_points = [(0, &prepared_point)];
+    let inputs = || CoefficientPackingBatchSemanticInputs {
+        level_params: &params,
+        opening_batch: &opening_batch,
+        relation_plan: &relation_plan,
+        relation: &relation,
+        prepared_points: &prepared_points,
+        alpha: E::from_u64(17),
+        tau1: &tau1,
+        claim_coefficients: &claim_coefficients,
+    };
+    let relation_events = validate_coefficient_packing_batch_groups(&inputs(), |group| {
+        coefficient_packing_relation_events(&group)
+    })
+    .unwrap()
+    .concat();
+    let batch = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     Fixture {
         params,
         opening_batch,
@@ -285,7 +291,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
     let domain = fixture.relation_plan.digit_witness_domain();
     let opening_ring_dim = fixture.params.role_dims().d_d();
     let alpha = E::from_u64(17);
-    let (deferred, built_batch) = build_relation_lane_weights(RelationLaneWeightInputs {
+    let deferred = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::DeferredClaim,
         instance: &fixture.relation,
         alpha,
@@ -298,10 +304,6 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
-    assert_eq!(
-        built_batch,
-        OpeningFamily::SubringCoefficientPacking(fixture.batch.clone())
-    );
 
     // Without setup terms, the shared packing events are the only
     // contributions to their lanes, added once.
@@ -365,7 +367,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
                 .collect(),
         ),
     );
-    let (direct, _) = build_relation_lane_weights(RelationLaneWeightInputs {
+    let direct = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::Matrix(&setup),
         instance: &fixture.relation,
         alpha,

@@ -58,7 +58,7 @@ where
     };
     let ordinary = match parameters.ring_relation_mode {
         akita_types::RingRelationMode::QuotientLift => {
-            let (weights, _) = build_relation_lane_weights(RelationLaneWeightInputs {
+            let weights = build_relation_lane_weights(RelationLaneWeightInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
                 alpha: request.alpha,
