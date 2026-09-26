@@ -75,6 +75,7 @@ fn case<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, (min_basis, max_b
         Domain::Centered {
             negative: max_negative,
             positive: max_positive,
+            threshold: decompose_centering_threshold(levels, log_basis, q),
         }
     };
 

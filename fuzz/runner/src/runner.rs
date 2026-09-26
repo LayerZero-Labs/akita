@@ -67,6 +67,11 @@ pub struct LaneState {
     pub cov: u64,
     pub ft: u64,
     pub corpus_files: u64,
+    /// Largest RSS a finished job of this lane reported.
+    pub peak_rss_mb: u64,
+    /// Seconds the last fuzzing job spent re-executing the corpus before
+    /// mutating (libFuzzer `INITED`).
+    pub init_seconds: u64,
     pub baseline: Option<Value>,
     pub harness: BTreeMap<String, BTreeMap<String, f64>>,
 }
@@ -112,6 +117,7 @@ struct Job {
     terminated_at: Option<Instant>,
     output_closed: bool,
     exited_at: Option<Instant>,
+    inited_after: Option<u64>,
 }
 
 enum Message {
@@ -258,13 +264,33 @@ impl Runner {
         let _ = write_json(&self.store.live_path, &live);
     }
 
+    /// Fuzzing time per job: the configured slice, lengthened so re-executing
+    /// the corpus at startup (which grows with the corpus) stays under ~10%.
+    fn slice_for(&self, lane: &Lane) -> u64 {
+        let init = self
+            .state
+            .lanes
+            .get(&lane.name())
+            .map_or(0, |state| state.init_seconds);
+        self.options.slice_s.max(init.saturating_mul(10))
+    }
+
+    /// Memory a job of `lane` is expected to use, for admission against the
+    /// budget: 1.5x the lane's observed peak plus 512 MiB, never above its
+    /// per-worker limit (which the cgroup scope or libFuzzer still enforces).
+    /// Reserving every worker's full cap idled most CPUs whenever the budget
+    /// was smaller than `workers x cap`.
     fn reservation(&self, lane: &Lane) -> u64 {
-        lane.rss_limit_mb
-            + if self.budget.hard_memory {
-                self.options.hard_memory_headroom_mb
-            } else {
-                0
-            }
+        let cap = lane.rss_limit_mb;
+        match self
+            .state
+            .lanes
+            .get(&lane.name())
+            .map(|state| state.peak_rss_mb)
+        {
+            Some(peak) if peak > 0 => (peak * 3 / 2 + 512).min(cap),
+            _ => cap,
+        }
     }
 
     fn fits(&self, lane: &Lane) -> bool {
@@ -328,7 +354,7 @@ impl Runner {
                 lane,
                 &[&corpus],
                 &artifacts,
-                self.options.slice_s,
+                self.slice_for(lane),
                 false,
                 &self.options.extra_args,
             ),
@@ -425,7 +451,7 @@ impl Runner {
             let _ = sender.send(Message::Closed(id));
         });
         let budget_s = match purpose {
-            Purpose::Fuzz => self.options.slice_s + 600,
+            Purpose::Fuzz => self.slice_for(lane) + 600,
             Purpose::Baseline => 3600,
             Purpose::Replay => 600,
         };
@@ -452,6 +478,7 @@ impl Runner {
                 terminated_at: None,
                 output_closed: false,
                 exited_at: None,
+                inited_after: None,
             },
         );
         Ok(id)
@@ -460,6 +487,9 @@ impl Runner {
     fn consume(job: &mut Job, line: String) {
         job.log.line(&line);
         libfuzzer::parse_status(&line, &mut job.status);
+        if job.status.inited && job.inited_after.is_none() {
+            job.inited_after = Some(job.started.elapsed().as_secs());
+        }
         if let Some(path) = libfuzzer::artifact_path(&line) {
             job.artifact = Some(if path.is_absolute() {
                 path
@@ -581,6 +611,12 @@ impl Runner {
                 state.execs += job.status.execs;
             }
             state.cov = state.cov.max(job.status.cov);
+            state.peak_rss_mb = state.peak_rss_mb.max(job.status.rss_mb);
+            if job.purpose == Purpose::Fuzz {
+                if let Some(init) = job.inited_after {
+                    state.init_seconds = init;
+                }
+            }
             state.ft = state.ft.max(job.status.ft);
             // A baseline cut short by shutdown is neither passed nor failed;
             // it runs again on resume.
@@ -787,12 +823,12 @@ impl Runner {
                     .baseline_pending
                     .iter()
                     .any(|pending| pending.name() == name);
-            if awaiting_baseline || state.backoff_until > time || !self.fits(lane) {
+            if awaiting_baseline || state.backoff_until > time {
                 continue;
             }
             let projected = state.cpu_seconds
                 + (running.get(&lane.name()).copied().unwrap_or(0)
-                    * self.options.slice_s
+                    * self.slice_for(lane)
                     * lane.threads) as f64;
             let score = projected / lane.weight;
             if best
@@ -802,7 +838,10 @@ impl Runner {
                 best = Some((score, lane.clone()));
             }
         }
-        best.map(|(_, lane)| lane)
+        // Head-of-line: if the most under-served lane does not fit yet, wait
+        // for capacity rather than backfilling with lanes that need less, which
+        // starved heavy lanes indefinitely.
+        best.map(|(_, lane)| lane).filter(|lane| self.fits(lane))
     }
 
     fn schedule(&mut self) {

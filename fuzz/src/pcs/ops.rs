@@ -62,6 +62,15 @@ pub trait PcsOps: CommitmentConfig {
 
     fn encode_commitment(commitment: &CommittedGroup<Self::Field>) -> Vec<u8>;
 
+    /// Canonical transcript instance descriptor bytes for one proof.
+    fn instance_descriptor(
+        setup: &akita_types::AkitaSetupDescriptor,
+        layout: &OpeningClaimsLayout,
+        selection: OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+        basis: BasisMode,
+    ) -> Result<Vec<u8>, AkitaError>;
+
     fn setup(
         scheme: &AkitaCommitmentScheme<Self>,
         max_num_vars: usize,
@@ -154,6 +163,19 @@ where
 
     fn schedules(scheme: &AkitaCommitmentScheme<Self>) -> &TrustedScheduleCatalog<Self> {
         scheme.schedules()
+    }
+
+    fn instance_descriptor(
+        setup: &akita_types::AkitaSetupDescriptor,
+        layout: &OpeningClaimsLayout,
+        selection: OpeningScheduleSelection,
+        schedule: &FoldSchedule,
+        basis: BasisMode,
+    ) -> Result<Vec<u8>, AkitaError> {
+        akita_config::transcript_instance_descriptor::<Self::Field, Self>(
+            setup, layout, selection, schedule, basis,
+        )
+        .map(|(_, bytes)| bytes)
     }
 
     fn encode_commitment(commitment: &CommittedGroup<Self::Field>) -> Vec<u8> {

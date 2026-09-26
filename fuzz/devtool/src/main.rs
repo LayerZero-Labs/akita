@@ -119,10 +119,12 @@ pub fn seeds(out: &Path) {
         }
     }
 
-    // Boundary targets run with a 2^16 cost limit; seed the verifier with
-    // honest proofs and the deserializer with honest public objects.
-    let registry = registry_for(Limits { max_cost: 1 << 16 });
-    for (index, (family, case)) in registry.select(Selector::AnyDirect).iter().enumerate() {
+    // Boundary targets: seed the verifier with honest proofs (including
+    // recursive rows) and the deserializer with honest public objects, using
+    // the same case lists the targets select from.
+    let (selector, limits) = targets::boundary::VERIFIER_CASES;
+    let registry = registry_for(limits);
+    for (index, (family, case)) in registry.select(selector).iter().enumerate() {
         let family = &registry.families()[*family];
         let mut bytes = (index as u16).to_le_bytes().to_vec();
         bytes.extend([0u8, 1u8]);
@@ -139,6 +141,9 @@ pub fn seeds(out: &Path) {
                 encoded,
             );
         }
+    }
+    let (selector, limits) = targets::boundary::PROVER_CASES;
+    for index in 0..registry_for(limits).select(selector).len() {
         let mut prover = (index as u16).to_le_bytes().to_vec();
         prover.extend(random_bytes(0xb0da_0000 ^ index as u64, 2048));
         write(

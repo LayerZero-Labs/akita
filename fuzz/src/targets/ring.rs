@@ -290,7 +290,7 @@ fn ring_identities<F: Field + CanonicalEncoding, const D: usize>(reader: &mut Re
     let mut accumulated = CyclotomicRing::<F, D>::zero();
     a.mul_accumulate_into(&b, &mut accumulated);
     assert_eq!(accumulated, product, "mul_accumulate_into");
-    let sparse = ring::<F, D>(reader, Domain::symmetric(2));
+    let sparse = ring::<F, D>(reader, Domain::symmetric::<F>(2));
     let mut sparse_accumulated = CyclotomicRing::<F, D>::zero();
     a.mul_accumulate_sparse_rhs_into(&sparse, &mut sparse_accumulated);
     assert_eq!(

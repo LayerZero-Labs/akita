@@ -40,32 +40,40 @@ pub fn from_signed<F: Field + CanonicalEncoding>(negative: bool, magnitude: u128
 pub enum Domain {
     /// Every field element.
     Full,
-    /// Centered values in `[-negative, positive]`. Balanced digits reach one
-    /// further on the negative side, so the two bounds generally differ.
-    Centered { negative: u128, positive: u128 },
+    /// Values in `[-negative, positive]`, where canonical values above
+    /// `threshold` count as negative (production's decomposition centering;
+    /// `q/2` unless a schedule decomposes at exactly the field width). Balanced
+    /// digits reach one further on the negative side, so the bounds differ.
+    Centered {
+        negative: u128,
+        positive: u128,
+        threshold: u128,
+    },
 }
 
 impl Domain {
-    pub const fn symmetric(bound: u128) -> Self {
+    pub fn symmetric<F: Field + CanonicalEncoding>(bound: u128) -> Self {
         Domain::Centered {
             negative: bound,
             positive: bound,
+            threshold: modulus::<F>() / 2,
         }
     }
 
     /// Largest admissible magnitude on one side.
     pub fn reach<F: Field + CanonicalEncoding>(self, negative: bool) -> u128 {
-        let half = modulus::<F>() / 2;
+        let q = modulus::<F>();
         match self {
-            Domain::Full => half,
+            Domain::Full => q / 2,
             Domain::Centered {
                 negative: n,
                 positive: p,
+                threshold,
             } => {
                 if negative {
-                    n.min(half)
+                    n.min(q - threshold - 1)
                 } else {
-                    p.min(half)
+                    p.min(threshold)
                 }
             }
         }
@@ -74,14 +82,19 @@ impl Domain {
     pub fn clamp<F: Field + CanonicalEncoding>(self, value: F) -> F {
         match self {
             Domain::Full => value,
-            Domain::Centered { .. } => {
-                let c = centered(value);
-                let magnitude = c.unsigned_abs();
-                let reach = self.reach::<F>(c < 0);
+            Domain::Centered { threshold, .. } => {
+                let q = modulus::<F>();
+                let canonical = value.to_u128_checked().expect("Akita fields fit in u128");
+                let (negative, magnitude) = if canonical > threshold {
+                    (true, q - canonical)
+                } else {
+                    (false, canonical)
+                };
+                let reach = self.reach::<F>(negative);
                 if magnitude <= reach {
                     value
                 } else {
-                    from_signed::<F>(c < 0, magnitude % (reach + 1))
+                    from_signed::<F>(negative, magnitude % (reach + 1))
                 }
             }
         }
@@ -256,6 +269,7 @@ pub fn table<F: Field + CanonicalEncoding>(
             Domain::Centered {
                 negative: 128,
                 positive: 127,
+                threshold: modulus::<F>() / 2,
             }
             .clamp(value)
         };

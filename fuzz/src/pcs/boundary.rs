@@ -50,18 +50,33 @@ fn fixture_bytes(seed: u64) -> Vec<u8> {
     bytes
 }
 
-/// A value just past one side of `domain`, never back inside the other.
+/// A value production classifies as outside `domain`: past one side's reach
+/// but still on that side of the centering threshold.
 fn out_of_domain<F: Field + CanonicalEncoding>(
     domain: Domain,
     reader: &mut Reader<'_>,
 ) -> Option<F> {
-    let half = gen::modulus::<F>() / 2;
-    let negative = reader.bool();
-    let reach = domain.reach::<F>(negative);
-    if reach >= half {
+    let Domain::Centered { threshold, .. } = domain else {
         return None;
-    }
-    let span = half - reach;
+    };
+    let q = gen::modulus::<F>();
+    // Largest magnitude still on each side of the threshold.
+    let side_limit = |negative: bool| {
+        if negative {
+            q - threshold - 1
+        } else {
+            threshold
+        }
+    };
+    let open = |negative: bool| side_limit(negative) > domain.reach::<F>(negative);
+    let negative = match (open(true), open(false)) {
+        (false, false) => return None,
+        (true, false) => true,
+        (false, true) => false,
+        (true, true) => reader.bool(),
+    };
+    let reach = domain.reach::<F>(negative);
+    let span = side_limit(negative) - reach;
     let magnitude = match reader.u8() % 3 {
         0 => reach + 1,
         _ => reach + 1 + reader.u128() % span,
@@ -100,6 +115,22 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         }
         out.push(encode(9, &fixture.proved.selection));
         let descriptor = self.prepared().setup.expanded.descriptor();
+        let schedule = Cfg::schedules(&self.scheme)
+            .resolve_selection(fixture.proved.selection)
+            .expect("fixture selection resolves")
+            .schedule();
+        let mut instance = vec![8u8];
+        instance.extend(
+            Cfg::instance_descriptor(
+                descriptor,
+                &fixture.proved.layout,
+                fixture.proved.selection,
+                schedule,
+                fixture.basis,
+            )
+            .expect("honest instance descriptor"),
+        );
+        out.push(instance);
         out.push(encode(6, descriptor));
         out.push(encode(7, &descriptor.setup_seed));
         out
@@ -444,7 +475,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 }
                 let len = 1usize << plan.num_vars;
                 let domain = if reader.bool() {
-                    Domain::symmetric(1)
+                    Domain::symmetric::<Cfg::Field>(1)
                 } else {
                     Domain::Full
                 };

@@ -27,6 +27,8 @@ pub enum Selector {
     Recursive,
     /// Every direct case.
     AnyDirect,
+    /// Every case, including recursive setup offloading.
+    Any,
 }
 
 pub struct Registry {
@@ -139,5 +141,6 @@ fn matches(selector: Selector, family: &dyn Family, case: &Case) -> bool {
         Selector::Batch => !family.is_recursive() && !single,
         Selector::Recursive => family.is_recursive(),
         Selector::AnyDirect => !family.is_recursive(),
+        Selector::Any => true,
     }
 }

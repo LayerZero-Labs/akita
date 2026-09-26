@@ -106,11 +106,18 @@ as `ring_ntt@scalar`). The runner manages workers itself; libFuzzer's
 `-fork`/`-jobs` are never used, so the only concurrency settings are the
 number of workers and Akita's internal Rayon threads per worker
 (`AKITA_FUZZ_THREADS`, from the registry's `threads`; the harness sizes the
-global Rayon pool from it). A lane reserves `threads` CPU slots and its
-`rss_limit_mb` of memory; jobs start only while both budgets have room.
+global Rayon pool from it). A lane reserves `threads` CPU slots and an
+estimate of its memory: its registry `rss_limit_mb` until one of its jobs has
+finished, then 1.5 × the largest RSS its jobs reported plus 512 MiB (never
+more than the limit). Jobs start only while both budgets have room; each
+worker's own limit is still enforced by libFuzzer and, when available, its
+cgroup scope.
 
 Lanes are chosen by weighted deficit: the lane with the least CPU time per
-unit `weight` runs next. Every job ends after `--slice-minutes`, which
+unit `weight` runs next. If that lane does not fit yet, the runner waits for
+capacity instead of starting smaller lanes, so heavy lanes cannot starve. A job fuzzes for `--slice-minutes` or ten times
+the lane's last corpus re-execution time at startup, whichever is longer, so
+restarting on a large end-to-end corpus stays cheap. Every job ends after `--slice-minutes`, which
 rotates lanes and bounds any slow growth inside a process. Workers of one
 target share a corpus directory (`-reload=1`).
 

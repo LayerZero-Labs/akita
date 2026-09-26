@@ -130,17 +130,25 @@ pub fn source_for<Cfg: CommitmentConfig>(profile: &GroupCommitPhaseParams) -> So
     }
     let contract = Cfg::committed_source_contract().expect("shipped configs have valid contracts");
     let digits = profile.inner.digits;
-    let half = gen::modulus::<Cfg::Field>() / 2;
-    let domain = match contract.accepted_bounds(digits.log_basis, digits.num_digits) {
-        (negative, positive)
-            if negative.unwrap_or(half) >= half && positive.unwrap_or(half) >= half =>
-        {
-            Domain::Full
+    let q = gen::modulus::<Cfg::Field>();
+    // Production centers at this threshold and skips the bound check when the
+    // whole field fits (`ensure_sources_fit_accepted_interval` in
+    // akita-cpu-backend's commitment API).
+    let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
+        digits.num_digits,
+        digits.log_basis,
+        q,
+    );
+    let (negative, positive) = contract.accepted_bounds(digits.log_basis, digits.num_digits);
+    let (negative, positive) = (negative.unwrap_or(u128::MAX), positive.unwrap_or(u128::MAX));
+    let domain = if q - threshold - 1 <= negative && threshold <= positive {
+        Domain::Full
+    } else {
+        Domain::Centered {
+            negative,
+            positive,
+            threshold,
         }
-        (negative, positive) => Domain::Centered {
-            negative: negative.unwrap_or(half),
-            positive: positive.unwrap_or(half),
-        },
     };
     SourceSpec { domain, ..spec }
 }

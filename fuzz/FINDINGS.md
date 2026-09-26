@@ -155,6 +155,15 @@ is produced.
   `InvalidInput` before the schedule lookup. The probe now stays within
   capacity (expecting `UnsupportedSchedule`) and capacity overflow is a
   separate check.
+- **Full-width sources and the centering threshold.** An overnight run
+  reported that `fp64_dense` accepted a "bounded" coefficient past
+  `accepted_bounds`. Production is right: a schedule decomposing at exactly
+  the field width centers at `decompose_centering_threshold`, which folds
+  large values to their negative representative, so every field element is
+  admissible and the commitment skips the bound check. The harness modeled
+  the interval with `q/2` centering; it now uses production's threshold, so
+  such profiles get the full domain and out-of-range probes stay on their own
+  side of the threshold.
 - **`basis_weights_prefix(point, basis, 0)`** is deliberately rejected with
   `InvalidSize`; the target now checks both the zero and over-capacity
   boundaries.

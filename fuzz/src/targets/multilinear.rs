@@ -100,6 +100,8 @@ where
         scaled,
         "evals_serial"
     );
+    // Only compiled with Rayon; the sequential feature graph lacks it.
+    #[cfg(feature = "parallel")]
     assert_eq!(
         EqPolynomial::evals_parallel(&point, Some(scale)).expect("eq"),
         scaled,
