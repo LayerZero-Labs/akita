@@ -41,8 +41,8 @@ mod stage2;
 mod tests;
 
 pub(crate) use common::{
-    stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
-    stage2_b8_w_digit,
+    range_polynomial_eval, stage2_b4_lookup_index_from_digits, stage2_b4_w_digit,
+    stage2_b8_lookup_index_from_digits, stage2_b8_w_digit,
 };
 pub(crate) use stage1::{build_stage1_prefix_cache, Stage1PrefixCache};
 pub(crate) use stage2::{

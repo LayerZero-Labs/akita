@@ -615,9 +615,8 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: Field>(
     }
 }
 
-/// Reference oracle for the balanced-digit range polynomial
-/// `prod_{k < b/2} (x - k(k+1))` that the prefix lookup tables tabulate.
-#[cfg(test)]
+/// The balanced-digit range polynomial `prod_{k < b/2} (x - k(k+1))`, which
+/// the prefix lookup tables tabulate.
 pub(crate) fn range_polynomial_eval<E: Field + Ring>(range_image: E, b: usize) -> E {
     (0..b / 2).fold(E::one(), |value, k| {
         let k = k as i64;

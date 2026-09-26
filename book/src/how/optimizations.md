@@ -213,8 +213,11 @@ first round the prover scans the packed digits once and adds the third round's
 equality weight of each live octet to its octet class, a table of at most
 `2^16` entries. The quad-class marginals of that table give a bivariate prefix
 that reconstructs the first two sumcheck messages, and the third message is a
-sum over octet classes. The fourth message pairs adjacent octets and reads each
-octet's folded value from a per-class table. The prover materializes the range
+sum over octet classes. The fourth message pairs adjacent octets and reads, per
+octet class, the folded value, its range-polynomial value, and two Taylor terms
+of the range polynomial at that value. A pair then costs three multiplications
+and two squarings, and the linear coefficient is the difference of the two range
+values minus the higher Taylor terms. The prover materializes the range
 image only after the fourth challenge, at one sixteenth of its original length,
 and computes the fifth message in the same pass. A Euclidean fold instead uses
 the class-indexed leaf described below because the norm term shares its rounds.

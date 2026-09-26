@@ -2,58 +2,33 @@ use super::*;
 use crate::opaque::sumcheck::single_row_tile_pairs;
 use jolt_poly::OmittedConstantPoly;
 
-/// Accumulate the round coefficients of pairs `tile` of a flat live-prefix table.
+/// Per-pair sums of a live-prefix tile, as the reduction consumes them.
+type TileSums<E> = [<E as Unreduced>::Product; MAX_DIRECT_RANGE_COEFFICIENTS];
+
+/// Accumulate the per-pair sums of pairs `tile` of a flat live-prefix table.
 ///
-/// `pair` yields the left and right entries of one pair. Blocks follow the split-eq
-/// inner table, so each block pays one outer-weight multiplication per coefficient.
+/// `entry` writes the sums of one pair. Blocks follow the split-eq inner table,
+/// so each block pays one outer-weight multiplication per sum.
 #[inline]
 fn accumulate_live_prefix_tile<E: Field + Ring + Unreduced>(
-    polynomial_precomputation: &RangePolynomialPrecomputation,
+    num_coeffs_q: usize,
     e_first: &[E],
     e_second: &[E],
     block_size: usize,
     tile: Range<usize>,
-    mut pair: impl FnMut(usize) -> (E, E),
-) -> [E::Product; MAX_DIRECT_RANGE_COEFFICIENTS] {
-    let num_coeffs_q = polynomial_precomputation.num_coefficients();
+    mut entry: impl FnMut(usize, &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS]),
+) -> TileSums<E> {
     debug_assert!(num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
     let num_first = e_first.len();
     let first_bits = num_first.trailing_zeros();
     let mut tile_accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-    let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
     let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
     let mut block_start = tile.start;
     while block_start < tile.end {
         let block_end = (block_start + block_size).min(tile.end);
         let mut block_accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-        let complete_quartets = (block_end - block_start) / 4;
-
-        for quartet in 0..complete_quartets {
-            let pair_base = block_start + quartet * 4;
-            let pairs: [(E, E); 4] = std::array::from_fn(|slot| pair(pair_base + slot));
-            compute_entry_coefficients_x4(
-                &mut batch_out,
-                polynomial_precomputation,
-                pairs.map(|(left, _)| left),
-                pairs.map(|(left, right)| right - left),
-            );
-            for (slot, entry) in batch_out.iter().enumerate() {
-                accumulate_dense_entry_coeffs(
-                    &mut block_accumulator[..num_coeffs_q],
-                    &entry[..num_coeffs_q],
-                    e_first[(pair_base + slot) & (num_first - 1)],
-                );
-            }
-        }
-
-        for pair_index in block_start + complete_quartets * 4..block_end {
-            let (left, right) = pair(pair_index);
-            compute_entry_coefficients(
-                &mut entry_buf,
-                polynomial_precomputation,
-                left,
-                right - left,
-            );
+        for pair_index in block_start..block_end {
+            entry(pair_index, &mut entry_buf);
             accumulate_dense_entry_coeffs(
                 &mut block_accumulator[..num_coeffs_q],
                 &entry_buf[..num_coeffs_q],
@@ -77,7 +52,8 @@ fn accumulate_live_prefix_tile<E: Field + Ring + Unreduced>(
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn live_prefix_round_poly(
         &self,
-        tile_accumulators: Vec<[E::Product; MAX_DIRECT_RANGE_COEFFICIENTS]>,
+        tile_accumulators: Vec<TileSums<E>>,
+        linear: LinearSum,
     ) -> OmittedConstantPoly<E> {
         let mut accumulated = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
         for tile_accumulator in tile_accumulators {
@@ -85,14 +61,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 *total += term;
             }
         }
-        let num_coeffs_q = self.polynomial_precomputation.num_coefficients();
-        OmittedConstantPoly::new(
-            accumulated[..num_coeffs_q]
-                .iter()
-                .copied()
-                .map(E::reduce_product)
-                .collect(),
-        )
+        self.polynomial_precomputation
+            .round_poly_from_sums(&accumulated, linear)
     }
 
     /// Compute the current round over a flat live-prefix table with
@@ -100,33 +70,38 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     ///
     /// Sparse ring rounds and live-prefix column rounds share this layout: the live
     /// entries are a prefix of the flat table in binding order, and every later
-    /// entry is zero, which the range polynomial maps to zero. `pairs_for_tile`
-    /// receives a tile's pair range and returns the reader of its pairs.
+    /// entry is zero, which the range polynomial maps to zero. `entries_for_tile`
+    /// receives a tile's pair range and returns the writer of its per-pair sums,
+    /// whose first slot `linear` describes.
     #[tracing::instrument(skip_all, name = "LowBasisRangeCheckProver::compute_round_live_prefix")]
-    pub(super) fn compute_round_live_prefix<P: FnMut(usize) -> (E, E)>(
+    pub(super) fn compute_round_live_prefix<
+        W: FnMut(usize, &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS]),
+    >(
         &self,
         live_pairs: usize,
-        pairs_for_tile: impl Fn(Range<usize>) -> P + Sync,
+        linear: LinearSum,
+        entries_for_tile: impl Fn(Range<usize>) -> W + Sync,
     ) -> OmittedConstantPoly<E> {
         debug_assert!(self.rounds_completed < self.num_vars);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
+        let num_coeffs_q = self.polynomial_precomputation.num_coefficients();
         let tile_accumulators = cfg_into_iter!(0..live_pairs.div_ceil(tile_pairs))
             .map(|tile| {
                 let tile_start = tile * tile_pairs;
                 let tile_end = (tile_start + tile_pairs).min(live_pairs);
                 accumulate_live_prefix_tile(
-                    &self.polynomial_precomputation,
+                    num_coeffs_q,
                     e_first,
                     e_second,
                     block_size,
                     tile_start..tile_end,
-                    pairs_for_tile(tile_start..tile_end),
+                    entries_for_tile(tile_start..tile_end),
                 )
             })
             .collect();
-        self.live_prefix_round_poly(tile_accumulators)
+        self.live_prefix_round_poly(tile_accumulators, linear)
     }
 
     /// Fold the current flat live-prefix table into a table of `next_live`
@@ -148,6 +123,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
+        let precomputation = &self.polynomial_precomputation;
+        let num_coeffs_q = precomputation.num_coefficients();
         let mut out = vec![E::zero(); next_live];
         let tile_accumulators = cfg_chunks_mut!(out, 2 * tile_pairs)
             .enumerate()
@@ -157,12 +134,12 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 let entry_start = 2 * tile_start;
                 let mut fold = folds_for_tile(entry_start..entry_start + tile_out.len());
                 accumulate_live_prefix_tile(
-                    &self.polynomial_precomputation,
+                    num_coeffs_q,
                     e_first,
                     e_second,
                     block_size,
                     tile_start..tile_end,
-                    |pair| {
+                    |pair, sums| {
                         let local_left = 2 * (pair - tile_start);
                         let left = fold(entry_start + local_left);
                         tile_out[local_left] = left;
@@ -173,12 +150,15 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         } else {
                             E::zero()
                         };
-                        (left, right)
+                        compute_entry_coefficients(sums, precomputation, left, right - left);
                     },
                 )
             })
             .collect();
-        (out, self.live_prefix_round_poly(tile_accumulators))
+        (
+            out,
+            self.live_prefix_round_poly(tile_accumulators, LinearSum::Taylor),
+        )
     }
 
     #[inline]

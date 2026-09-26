@@ -41,7 +41,9 @@
 //! degree 4, so round polynomials have degree 5.
 
 use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
-use crate::opaque::sumcheck::two_round_prefix::{build_stage1_prefix_cache, Stage1PrefixCache};
+use crate::opaque::sumcheck::two_round_prefix::{
+    build_stage1_prefix_cache, range_polynomial_eval, Stage1PrefixCache,
+};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver};
@@ -76,6 +78,17 @@ fn polynomial_coefficients_from_integer_roots(roots: &[i128]) -> Vec<i128> {
         coeffs = next;
     }
     coeffs
+}
+
+/// What the first of a round's per-pair sums holds; every later sum is a
+/// Taylor term divided by its integer factor.
+#[derive(Clone, Copy)]
+enum LinearSum {
+    /// The linear Taylor term, divided by its factor like the others.
+    Taylor,
+    /// `Q(right) - Q(left)`, the sum of all nonconstant coefficients, which
+    /// table-driven rounds read without computing the linear term.
+    RangeDifference,
 }
 
 #[derive(Clone)]
@@ -204,6 +217,36 @@ impl RangePolynomialPrecomputation {
         self.degree_q
     }
 
+    /// Integer factor of each nonconstant Taylor coefficient of
+    /// `Q(left + X * delta)`, which the per-pair kernels leave out and
+    /// [`round_poly_from_sums`](Self::round_poly_from_sums) applies once.
+    fn taylor_factors(&self) -> &'static [u64] {
+        match self.degree_q {
+            2 => &[2, 1],
+            4 => &[4, 6, 4, 1],
+            _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
+        }
+    }
+
+    /// Reduce a round's accumulated per-pair sums into its nonconstant
+    /// coefficients.
+    fn round_poly_from_sums<E: Field + Ring + Unreduced>(
+        &self,
+        sums: &[E::Product; MAX_DIRECT_RANGE_COEFFICIENTS],
+        linear: LinearSum,
+    ) -> OmittedConstantPoly<E> {
+        let mut coefficients: Vec<E> = sums
+            .iter()
+            .zip(self.taylor_factors())
+            .map(|(&sum, &factor)| E::from_u64(factor) * E::reduce_product(sum))
+            .collect();
+        if let LinearSum::RangeDifference = linear {
+            let higher: E = coefficients[1..].iter().copied().sum();
+            coefficients[0] = E::reduce_product(sums[0]) - higher;
+        }
+        OmittedConstantPoly::new(coefficients)
+    }
+
     #[inline]
     fn pair_coeff_lut_start(
         &self,
@@ -281,65 +324,40 @@ fn accumulate_dense_entry_coeffs<E: Field + Unreduced>(
     }
 }
 
-/// Write the nonconstant coefficients of `Q(left + X * delta)`.
+/// Write the nonconstant Taylor terms of `Q(left + X * delta)`, each divided by
+/// its integer factor from [`RangePolynomialPrecomputation::taylor_factors`].
 ///
 /// With `b = left - 5`, the quartic range polynomial is
-/// `Q = b^4 - 42 b^2 - 64 b + 105`, so its Taylor coefficients at `left` need
-/// seven multiplications in total.
+/// `Q = b^4 - 42 b^2 - 64 b + 105`, so its terms at `left` are
+/// `4((b^2 - 21) b delta - 16 delta)`, `6(b^2 - 7) delta^2`, `4 b delta^3` and
+/// `delta^4`, which take seven multiplications.
 #[inline]
 fn compute_entry_coefficients<E: Field + Ring + Unreduced>(
-    out: &mut [E],
+    out: &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS],
     precomp: &RangePolynomialPrecomputation,
     left_range_image: E,
     range_image_delta: E,
 ) {
-    debug_assert!(out.len() >= precomp.num_coefficients());
-
     match precomp.degree_q {
         2 => {
-            let twice_left = left_range_image + left_range_image;
-            out[0] = range_image_delta * (twice_left - E::from_u64(2));
-            out[1] = range_image_delta * range_image_delta;
+            out[0] = range_image_delta * (left_range_image - E::one());
+            out[1] = range_image_delta.square();
         }
         4 => {
             let shifted = left_range_image - E::from_u64(5);
-            let shifted_squared = shifted * shifted;
+            let shifted_squared = shifted.square();
             let shifted_delta = shifted * range_image_delta;
-            let delta_squared = range_image_delta * range_image_delta;
+            let delta_squared = range_image_delta.square();
             let twice_delta = range_image_delta + range_image_delta;
             let four_times_delta = twice_delta + twice_delta;
             let eight_times_delta = four_times_delta + four_times_delta;
-            let sixteen_times_delta = eight_times_delta + eight_times_delta;
-            let first = (shifted_squared - E::from_u64(21)) * shifted_delta - sixteen_times_delta;
-            let twice_first = first + first;
-            let second_over_six = shifted_squared - E::from_u64(7);
-            let twice_second_over_six = second_over_six + second_over_six;
-            let third = shifted_delta * delta_squared;
-            let twice_third = third + third;
-            out[0] = twice_first + twice_first;
-            out[1] = (twice_second_over_six + twice_second_over_six + twice_second_over_six)
-                * delta_squared;
-            out[2] = twice_third + twice_third;
-            out[3] = delta_squared * delta_squared;
+            out[0] = (shifted_squared - E::from_u64(21)) * shifted_delta
+                - (eight_times_delta + eight_times_delta);
+            out[1] = (shifted_squared - E::from_u64(7)) * delta_squared;
+            out[2] = shifted_delta * delta_squared;
+            out[3] = delta_squared.square();
         }
         _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
-    }
-}
-
-#[inline]
-fn compute_entry_coefficients_x4<E: Field + Ring + Unreduced>(
-    out: &mut [[E; MAX_DIRECT_RANGE_COEFFICIENTS]; 4],
-    precomp: &RangePolynomialPrecomputation,
-    left_range_image: [E; 4],
-    range_image_delta: [E; 4],
-) {
-    for lane in 0..4 {
-        compute_entry_coefficients(
-            &mut out[lane],
-            precomp,
-            left_range_image[lane],
-            range_image_delta[lane],
-        );
     }
 }
 
@@ -350,85 +368,44 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
 ) -> OmittedConstantPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
-    let full_num_coeffs_q = polynomial_precomputation.num_coefficients();
-    let num_coeffs_q = full_num_coeffs_q;
+    let num_coeffs_q = polynomial_precomputation.num_coefficients();
 
-    let q_coeffs = cfg_fold_reduce!(
+    let sums = cfg_fold_reduce!(
         0..e_second.len(),
-        || vec![E::Product::zero(); num_coeffs_q],
+        || [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS],
         |mut outer_accum, j_high| {
-            debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
             let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-            let base_j = j_high * num_first;
-            let full_chunks = e_first.len() / 4;
-            let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
-
-            for chunk in 0..full_chunks {
-                let jl = chunk * 4;
-                let pairs = [
-                    range_image_pair(base_j + jl),
-                    range_image_pair(base_j + jl + 1),
-                    range_image_pair(base_j + jl + 2),
-                    range_image_pair(base_j + jl + 3),
-                ];
-                compute_entry_coefficients_x4(
-                    &mut batch_out,
-                    polynomial_precomputation,
-                    [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
-                    [
-                        pairs[0].1 - pairs[0].0,
-                        pairs[1].1 - pairs[1].0,
-                        pairs[2].1 - pairs[2].0,
-                        pairs[3].1 - pairs[3].0,
-                    ],
-                );
-                for (b_idx, bo) in batch_out.iter().enumerate() {
-                    let e_in = e_first[jl + b_idx];
-                    accumulate_dense_entry_coeffs(
-                        &mut inner_accum[..num_coeffs_q],
-                        &bo[..full_num_coeffs_q],
-                        e_in,
-                    );
-                }
-            }
-
-            let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-            for (tail_idx, &e_in) in e_first[full_chunks * 4..].iter().enumerate() {
-                let j = base_j + full_chunks * 4 + tail_idx;
-                let (left_range_image, right_range_image) = range_image_pair(j);
+            let mut entry = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            for (j_low, &e_in) in e_first.iter().enumerate() {
+                let (left_range_image, right_range_image) =
+                    range_image_pair(j_high * num_first + j_low);
                 compute_entry_coefficients(
-                    &mut entry_buf,
+                    &mut entry,
                     polynomial_precomputation,
                     left_range_image,
                     right_range_image - left_range_image,
                 );
                 accumulate_dense_entry_coeffs(
                     &mut inner_accum[..num_coeffs_q],
-                    &entry_buf[..full_num_coeffs_q],
+                    &entry[..num_coeffs_q],
                     e_in,
                 );
             }
 
             let e_out = e_second[j_high];
-            for k in 0..num_coeffs_q {
-                let inner_reduced = E::reduce_product(inner_accum[k]);
-                outer_accum[k] += e_out.mul_unreduced(inner_reduced);
+            for (outer, inner) in outer_accum.iter_mut().zip(inner_accum).take(num_coeffs_q) {
+                *outer += e_out.mul_unreduced(E::reduce_product(inner));
             }
             outer_accum
         },
-        |mut a, b_vec| {
-            for (ai, bi) in a.iter_mut().zip(b_vec.iter()) {
-                *ai += *bi;
+        |mut a, b| {
+            for (ai, bi) in a.iter_mut().zip(b) {
+                *ai += bi;
             }
             a
         }
-    )
-    .into_iter()
-    .map(E::reduce_product)
-    .collect::<Vec<_>>();
-
-    let _ = split_eq;
-    OmittedConstantPoly::new(q_coeffs)
+    );
+    polynomial_precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
 }
 
 fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unreduced>(
@@ -644,9 +621,10 @@ struct DirectRangePrefixState<E: Field> {
     /// octets of each octet class.
     octet_class_weights: Vec<E>,
     first_challenge: Option<E>,
-    /// The folded value of each quad class after round 1, then of each octet
-    /// class after round 2.
-    class_values: Vec<E>,
+    /// The folded value of each quad class after round 1.
+    quad_values: Vec<E>,
+    /// The round-3 terms of each octet class after round 2.
+    octet_terms: Vec<octet_prefix::OctetClassTerms<E>>,
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.

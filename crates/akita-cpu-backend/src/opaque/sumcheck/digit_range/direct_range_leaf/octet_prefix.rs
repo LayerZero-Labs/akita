@@ -6,9 +6,10 @@
 //! packed first entry lowest. So round 2 sums over at most `2^(8 class_bits)`
 //! classes, each weighted by the total round-2 equality weight of its live
 //! octets, and rounds 0 and 1 need only the quad-class marginals of those
-//! weights. Round 3 pairs adjacent octets and reads their folded values from a
-//! per-class table. Its challenge materializes the field table, fused with
-//! round 4.
+//! weights. Round 3 pairs adjacent octets and reads, per class, the folded value,
+//! its range polynomial value and the Taylor factors that depend on it alone, so
+//! each pair pays only for the powers of its difference. Its challenge
+//! materializes the field table, fused with round 4.
 //!
 //! Class-zero octets contribute nothing to any of these rounds, since all their
 //! folded values are zero, so their weight is not accumulated.
@@ -141,16 +142,64 @@ fn folded_quad_values<E: Field + Ring>(class_bits: usize, r0: E, r1: E) -> Vec<E
         .collect()
 }
 
-/// Folded value of every octet class after round 2.
-fn folded_octet_values<E: Field>(quad_values: &[E], r2: E) -> Vec<E> {
+/// Round-3 terms of one octet class.
+///
+/// With `value` the class's folded value after round 2 and
+/// `shifted = value - 5`, a pair with this class on the left and difference
+/// `delta` has quartic Taylor terms `(shifted^2 - 7) delta^2`,
+/// `shifted delta^3` and `delta^4`, before their integer factors. Quadratic
+/// checks use neither `shifted` nor `second`.
+#[derive(Clone, Copy)]
+pub(super) struct OctetClassTerms<E> {
+    value: E,
+    /// `Q(value)`.
+    range: E,
+    shifted: E,
+    /// `shifted^2 - 7`.
+    second: E,
+}
+
+/// Round-3 terms of every octet class after round 2.
+fn octet_class_terms<E: Field + Ring>(
+    quad_values: &[E],
+    r2: E,
+    basis: usize,
+) -> Vec<OctetClassTerms<E>> {
     let quad_mask = quad_values.len() - 1;
     let quad_bits = quad_values.len().trailing_zeros();
-    (0..quad_values.len() * quad_values.len())
+    cfg_into_iter!(0..quad_values.len() * quad_values.len())
         .map(|octet| {
             let left = quad_values[octet & quad_mask];
-            left + r2 * (quad_values[octet >> quad_bits] - left)
+            let value = left + r2 * (quad_values[octet >> quad_bits] - left);
+            let shifted = value - E::from_u64(5);
+            OctetClassTerms {
+                value,
+                range: range_polynomial_eval(value, basis),
+                shifted,
+                second: shifted.square() - E::from_u64(7),
+            }
         })
         .collect()
+}
+
+/// Round-3 sums of one octet pair in [`LinearSum::RangeDifference`] form.
+#[inline(always)]
+fn octet_pair_sums<E: Field + Ring>(
+    sums: &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS],
+    degree_q: usize,
+    left: &OctetClassTerms<E>,
+    right: &OctetClassTerms<E>,
+) {
+    let delta = right.value - left.value;
+    let delta_squared = delta.square();
+    sums[0] = right.range - left.range;
+    if degree_q == 2 {
+        sums[1] = delta_squared;
+    } else {
+        sums[1] = left.second * delta_squared;
+        sums[2] = left.shifted * (delta_squared * delta);
+        sums[3] = delta_squared.square();
+    }
 }
 
 impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
@@ -197,7 +246,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             cache,
             octet_class_weights,
             first_challenge: None,
-            class_values: Vec::new(),
+            quad_values: Vec::new(),
+            octet_terms: Vec::new(),
         });
     }
 
@@ -220,20 +270,27 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             2 => self.compute_octet_class_round(),
             3 => {
                 let source = self.compact_range_image();
-                let values = prefix.class_values.as_slice();
+                let terms = prefix.octet_terms.as_slice();
                 let class_bits = class_bits(self.basis);
+                let degree_q = self.polynomial_precomputation.num_coefficients();
                 let live_octets = source.len().div_ceil(8);
-                self.compute_round_live_prefix(live_octets.div_ceil(2), |pairs| {
-                    let start = pairs.start;
-                    let classes = octet_classes(source, 2 * start..2 * pairs.end, class_bits);
-                    move |pair| {
-                        let local = 2 * (pair - start);
-                        (
-                            values[usize::from(classes[local])],
-                            values[usize::from(classes[local + 1])],
-                        )
-                    }
-                })
+                self.compute_round_live_prefix(
+                    live_octets.div_ceil(2),
+                    LinearSum::RangeDifference,
+                    |pairs| {
+                        let start = pairs.start;
+                        let classes = octet_classes(source, 2 * start..2 * pairs.end, class_bits);
+                        move |pair, sums| {
+                            let local = 2 * (pair - start);
+                            octet_pair_sums(
+                                sums,
+                                degree_q,
+                                &terms[usize::from(classes[local])],
+                                &terms[usize::from(classes[local + 1])],
+                            );
+                        }
+                    },
+                )
             }
             _ => unreachable!("octet prefix covers rounds 0 through 3"),
         }
@@ -244,7 +301,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[tracing::instrument(skip_all, name = "LowBasisRangeCheckProver::compute_octet_class_round")]
     fn compute_octet_class_round(&self) -> OmittedConstantPoly<E> {
         let prefix = self.octet_prefix();
-        let quad_values = prefix.class_values.as_slice();
+        let quad_values = prefix.quad_values.as_slice();
         let quad_mask = quad_values.len() - 1;
         let quad_bits = quad_values.len().trailing_zeros();
         let precomputation = &self.polynomial_precomputation;
@@ -275,7 +332,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 accumulator
             })
             .collect();
-        self.live_prefix_round_poly(chunk_accumulators)
+        self.live_prefix_round_poly(chunk_accumulators, LinearSum::Taylor)
     }
 
     /// Bind an octet-prefix round. The round-3 challenge materializes the
@@ -295,23 +352,24 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 let r0 = prefix
                     .first_challenge
                     .expect("round 1 requires the round-0 challenge");
-                prefix.class_values = folded_quad_values(class_bits, r0, r);
+                prefix.quad_values = folded_quad_values(class_bits, r0, r);
             }
             2 => {
+                let basis = self.basis;
                 let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                prefix.class_values = folded_octet_values(&prefix.class_values, r);
+                prefix.octet_terms = octet_class_terms(&prefix.quad_values, r, basis);
             }
             3 => {
                 let source = self.compact_range_image();
-                let values = self.octet_prefix().class_values.as_slice();
+                let terms = self.octet_prefix().octet_terms.as_slice();
                 let next_live = source.len().div_ceil(8).div_ceil(2);
                 let folds_for_tile = |entries: Range<usize>| {
                     let start = entries.start;
                     let classes = octet_classes(source, 2 * start..2 * entries.end, class_bits);
                     move |entry: usize| {
                         let local = 2 * (entry - start);
-                        let left = values[usize::from(classes[local])];
-                        left + r * (values[usize::from(classes[local + 1])] - left)
+                        let left = terms[usize::from(classes[local])].value;
+                        left + r * (terms[usize::from(classes[local + 1])].value - left)
                     }
                 };
                 let (range_image, next_round_poly) = if self.rounds_completed + 1 < self.num_vars {

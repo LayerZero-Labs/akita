@@ -42,15 +42,26 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 if use_prefix_x_round || use_sparse_x_y_round {
                     let range_image = range_image.as_slice();
-                    self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
-                        move |pair| {
-                            let left = 2 * pair;
-                            (
-                                range_image[left],
-                                range_image.get(left + 1).copied().unwrap_or_else(E::zero),
-                            )
-                        }
-                    })
+                    let precomputation = &self.polynomial_precomputation;
+                    self.compute_round_live_prefix(
+                        range_image.len().div_ceil(2),
+                        LinearSum::Taylor,
+                        |_| {
+                            move |pair, sums| {
+                                let left = range_image[2 * pair];
+                                let right = range_image
+                                    .get(2 * pair + 1)
+                                    .copied()
+                                    .unwrap_or_else(E::zero);
+                                compute_entry_coefficients(
+                                    sums,
+                                    precomputation,
+                                    left,
+                                    right - left,
+                                );
+                            }
+                        },
+                    )
                 } else {
                     compute_range_round_polynomial_from_range_image(
                         &self.split_eq,
