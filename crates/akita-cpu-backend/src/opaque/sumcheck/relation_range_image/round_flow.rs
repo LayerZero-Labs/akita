@@ -157,6 +157,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         };
         if let RelationRoundState::ReducedDense { weights } = &mut self.relation_state {
             weights.bind(r);
+        } else {
+            unreachable!("reduced-dense ingestion requires reduced-dense weights");
         }
     }
 
@@ -167,7 +169,7 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         let RelationRoundState::QuotientFactored { weights, .. } = &self.relation_state else {
-            return;
+            unreachable!("factored coefficient ingestion requires quotient-factored weights");
         };
         let coeff_count = weights.common_alpha_factor().len();
         let partial_lanes = self.use_partial_lane_coefficient_round();
@@ -210,6 +212,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         self.witness_state = WitnessState::FoldedSuffix(folded_witness);
         if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
             *weights.components_mut().0 = next_alpha_factor;
+        } else {
+            unreachable!("coefficient folding preserves quotient-factored weights");
         }
     }
 }

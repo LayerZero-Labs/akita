@@ -377,7 +377,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         let digit_bits = match b {
             4 => 2,
             8 => 3,
-            _ => return None,
+            _ => return None, // Other bases use the ordinary coefficient-round path.
         };
         if coefficient_bits < 2
             || stage1_point.len() < 3
@@ -386,8 +386,9 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             || lane_weights.len() < live_lane_count
             || witness.len() != live_lane_count << coefficient_bits
         {
-            return None;
+            return None; // Unsupported geometry uses the ordinary coefficient-round path.
         }
+        // The optimization needs equality tables after two prefix folds.
         let (eq_low, eq_high) = split_eq.remaining_eq_tables_after(2)?;
         let last_round = coefficient_bits.min(MAX_PREFIX_ROUNDS) - 1;
         let coeff_count = 1usize << coefficient_bits;
@@ -448,6 +449,7 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             2 => scan_lanes::<E, 2>(&layout, task * task_lanes, task_classes),
             _ => scan_lanes::<E, 3>(&layout, task * task_lanes, task_classes),
         };
+        // An empty scan has no compact-prefix work; use the ordinary path.
         #[cfg(feature = "parallel")]
         let totals = classes
             .par_chunks_mut(task_lanes * quads_per_lane)
@@ -756,8 +758,24 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             RelationRoundState::QuotientFactored {
                 prefix: QuotientPrefixState::Compact(prefix),
                 ..
-            } => Some(prefix),
-            _ => None,
+            } => {
+                assert!(
+                    matches!(self.witness_state, WitnessState::CompactPrefix(_)),
+                    "compact quotient prefix requires a compact witness"
+                );
+                Some(prefix)
+            }
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Finished,
+                ..
+            } => {
+                assert!(
+                    matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
+                    "finished quotient prefix requires a folded witness"
+                );
+                None // Materialization finished the compact-prefix optimization.
+            }
+            _ => None, // This relation has no active compact-prefix optimization.
         }
     }
 
@@ -791,27 +809,25 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
     pub(super) fn ingest_compact_prefix_challenge(&mut self, r: E) {
         let RelationRoundState::QuotientFactored { weights, prefix } = &mut self.relation_state
         else {
-            return;
+            unreachable!("compact-prefix ingestion requires quotient-factored relation weights");
+        };
+        let WitnessState::CompactPrefix(witness) = &self.witness_state else {
+            unreachable!("compact quotient prefix requires a compact witness");
         };
         let QuotientPrefixState::Compact(mut engine) =
-            mem::replace(prefix, QuotientPrefixState::Disabled)
+            mem::replace(prefix, QuotientPrefixState::Finished)
         else {
-            return;
+            unreachable!("compact-prefix ingestion requires an active compact prefix");
         };
         fold_evals_in_place(weights.components_mut().0, r);
         self.split_eq.bind(r);
         self.linear_terms.fold_coefficients(r);
         engine.bind(r);
         if self.rounds_completed + 1 < engine.last_round() {
-            if let RelationRoundState::QuotientFactored { prefix, .. } = &mut self.relation_state {
-                *prefix = QuotientPrefixState::Compact(engine);
-            }
-            return;
+            *prefix = QuotientPrefixState::Compact(engine);
+            return; // More compact-prefix rounds remain before materialization.
         }
 
-        let WitnessState::CompactPrefix(witness) = &self.witness_state else {
-            return;
-        };
         let (folded, norm) = engine.materialize(
             witness.view(),
             &self.split_eq,
@@ -821,7 +837,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             RelationRoundState::QuotientFactored { weights, .. } => {
                 engine.relation_coeffs(weights.common_alpha_factor(), &self.linear_terms)
             }
-            RelationRoundState::ReducedDense { .. } | RelationRoundState::LaneProduct(_) => return,
+            RelationRoundState::ReducedDense { .. } | RelationRoundState::LaneProduct(_) => {
+                unreachable!("compact-prefix materialization preserves quotient-factored weights")
+            }
         };
         self.witness_state = WitnessState::FoldedSuffix(folded);
         let norm_poly = self.norm_poly_from_prefix(norm);

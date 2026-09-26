@@ -101,8 +101,11 @@ enum WitnessState<E: Field> {
 }
 
 enum QuotientPrefixState<E: Field> {
+    /// The compact-prefix optimization was not enabled.
     Disabled,
     Compact(Box<CompactQuotientPrefix<E>>),
+    /// The compact prefix has materialized a folded witness.
+    Finished,
 }
 
 enum RelationRoundState<E: Field> {

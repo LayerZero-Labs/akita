@@ -177,7 +177,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
     ) -> Option<(NormRoundTerms<E>, [E; 3])> {
         let fold = challenge.map(E::precompute);
         let Some((eq_low, eq_high)) = eq else {
-            let fold = fold.unwrap_or_else(|| E::precompute(E::zero()));
+            let fold = fold.expect("the final lane-product fold requires a challenge");
             let fold_all = |values: &[E]| -> Vec<E> {
                 (0..values.len().div_ceil(2))
                     .map(|index| fold_pair(values, 2 * index, &fold))
@@ -185,7 +185,7 @@ impl<E: Field + Unreduced + Fold> LaneProduct<E> {
             };
             *witness = fold_all(witness);
             self.weights = fold_all(&self.weights);
-            return None;
+            return None; // The final fold has no following round polynomial.
         };
         let live = if fold.is_some() {
             witness.len().div_ceil(2)
@@ -260,15 +260,38 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
     /// merging the relation weight and the structured linear terms into one
     /// lane table.
     pub(super) fn enter_lane_product(&mut self) {
-        if self.in_coefficient_round()
-            || matches!(self.relation_state, RelationRoundState::LaneProduct(_))
-        {
-            return;
+        // Validate prefix/witness combinations before changing the relation state.
+        let has_compact_prefix = self.compact_quotient_prefix().is_some();
+        if matches!(self.relation_state, RelationRoundState::LaneProduct(_)) {
+            assert!(
+                !self.in_coefficient_round(),
+                "lane-product state requires bound coefficients"
+            );
+            assert!(
+                matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
+                "lane-product state requires a folded witness"
+            );
+            return; // The lane-product transition already happened.
         }
+        if self.in_coefficient_round() {
+            assert!(
+                has_compact_prefix || self.rounds_completed == 0
+                    || matches!(self.witness_state, WitnessState::FoldedSuffix(_)),
+                "coefficient rounds outside the compact prefix require a folded witness after round zero"
+            );
+            return; // Coefficient rounds still use the original relation weights.
+        }
+        assert!(
+            !has_compact_prefix,
+            "lane-product transition requires a completed or disabled compact prefix"
+        );
         if let WitnessState::CompactPrefix(compact_witness) = &self.witness_state {
             // Only a table without coefficient variables reaches its lane
             // rounds unfolded.
-            debug_assert_eq!(self.rounds_completed, 0);
+            assert_eq!(
+                self.rounds_completed, 0,
+                "compact lane witness requires no coefficient rounds"
+            );
             let witness = compact_witness
                 .view()
                 .iter()
@@ -283,7 +306,11 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         });
         let (mut weights, weight_scale) = match mem::replace(&mut self.relation_state, entered) {
             RelationRoundState::QuotientFactored { mut weights, .. } => {
-                debug_assert_eq!(weights.common_alpha_factor().len(), 1);
+                assert_eq!(
+                    weights.common_alpha_factor().len(),
+                    1,
+                    "lane-product transition requires bound coefficient weights"
+                );
                 let alpha = weights.common_alpha_factor()[0];
                 (mem::take(weights.components_mut().1), alpha)
             }
@@ -307,6 +334,8 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             .drain_into_lane_weights(live_weights, weight_scale);
         if let RelationRoundState::LaneProduct(lane) = &mut self.relation_state {
             lane.weights = weights;
+        } else {
+            unreachable!("lane-product transition must install lane-product state");
         }
     }
 
@@ -317,18 +346,23 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         &mut self,
     ) -> Option<(UnivariatePoly<E>, UnivariatePoly<E>)> {
         self.enter_lane_product();
+        if self.in_coefficient_round() {
+            return None; // Coefficient rounds are computed by the caller.
+        }
         let skip_linear = self.can_skip_norm_linear_coeff();
         let (RelationRoundState::LaneProduct(lane), WitnessState::FoldedSuffix(witness)) =
             (&mut self.relation_state, &mut self.witness_state)
         else {
-            return None;
+            unreachable!("lane-product rounds require lane-product weights and a folded witness");
         };
-        let (norm, relation) = lane.round_terms(
-            witness,
-            None,
-            Some(self.split_eq.remaining_eq_tables()),
-            skip_linear,
-        )?;
+        let (norm, relation) = lane
+            .round_terms(
+                witness,
+                None,
+                Some(self.split_eq.remaining_eq_tables()),
+                skip_linear,
+            )
+            .expect("a lane-product round with equality tables produces round terms");
         let (norm_poly, relation_poly) = self.polys_from_terms(norm, relation);
         Some((self.combine_polys(&norm_poly, &relation_poly), norm_poly))
     }
@@ -342,7 +376,9 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
         let (RelationRoundState::LaneProduct(lane), WitnessState::FoldedSuffix(witness)) =
             (&mut self.relation_state, &mut self.witness_state)
         else {
-            return;
+            unreachable!(
+                "lane-product ingestion requires lane-product weights and a folded witness"
+            );
         };
         let eq = (!last).then(|| self.split_eq.remaining_eq_tables());
         let terms = lane.round_terms(witness, Some(r), eq, skip_linear);
