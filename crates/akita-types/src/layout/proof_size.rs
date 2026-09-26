@@ -17,7 +17,7 @@ pub fn field_bytes(field_bits: u32) -> usize {
 
 /// Serialized byte size for a terminal direct witness shape.
 pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -> usize {
-    crate::proof::terminal_response_upper_bound_bytes(
+    crate::layout::tail_segments::terminal_response_upper_bound_bytes(
         field_bits,
         &shape.layout,
         shape.layout.z_payload_bytes(),
@@ -86,11 +86,13 @@ pub fn native_terminal_response_planner_bytes(
     let [group] = shape.layout.groups.as_slice() else {
         return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
-    let Some(z_payload_bytes) = crate::golomb_rice::golomb_rice_l2_planner_payload_bytes(
-        group.z_coords,
-        l2_sq_cap,
-        group.z_rice_low_bits,
-    ) else {
+    let Some(z_payload_bytes) =
+        crate::tail_golomb_rice_low_bits::golomb_rice_l2_planner_payload_bytes(
+            group.z_coords,
+            l2_sq_cap,
+            group.z_rice_low_bits,
+        )
+    else {
         return checked_native_terminal_response_bytes(field_bits, shape, scheduled_z_bytes);
     };
     checked_native_terminal_response_bytes(

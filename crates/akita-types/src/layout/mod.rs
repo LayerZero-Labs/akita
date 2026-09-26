@@ -20,6 +20,7 @@ pub mod relation_address;
 pub mod relation_layout;
 pub(crate) mod relation_rhs_layout;
 pub mod ring_dims;
+pub mod tail_segments;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use digit_range::{
@@ -56,4 +57,8 @@ pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
     SUPPORTED_COMMITMENT_RING_DIMS,
+};
+pub use tail_segments::{
+    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponseShape,
 };

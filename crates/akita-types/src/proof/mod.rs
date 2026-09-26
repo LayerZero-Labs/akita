@@ -111,9 +111,7 @@ pub use setup_prefix::{
 pub use shapes::{canonical_extension_opening_reduction_shape, ExtensionOpeningReductionShape};
 pub use stage1::DigitRangeEqualityPoint;
 pub use tail_segments::{
-    build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
-    terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponse, TerminalResponseShape,
+    build_terminal_response_from_payload, decode_terminal_z_golomb_payload, TerminalResponse,
 };
 pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, WitnessCoefficientSink};
 
