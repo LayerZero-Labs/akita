@@ -15,7 +15,7 @@ fn accumulate_live_prefix_tile<E: Field + Ring + Unreduced>(
     tile: Range<usize>,
     mut pair: impl FnMut(usize) -> (E, E),
 ) -> [E::Product; MAX_DIRECT_RANGE_COEFFICIENTS] {
-    let num_coeffs_q = polynomial_precomputation.degree_q + 1;
+    let num_coeffs_q = polynomial_precomputation.num_coefficients();
     debug_assert!(num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
     let num_first = e_first.len();
     let first_bits = num_first.trailing_zeros();
@@ -85,8 +85,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 *total += term;
             }
         }
-        let num_coeffs_q = self.polynomial_precomputation.degree_q + 1;
-        OmittedConstantPoly::from_q_coefficients(
+        let num_coeffs_q = self.polynomial_precomputation.num_coefficients();
+        OmittedConstantPoly::new(
             accumulated[..num_coeffs_q]
                 .iter()
                 .copied()
@@ -202,7 +202,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let block_size = num_first.min(live_pairs);
 
         let polynomial_precomputation = &self.polynomial_precomputation;
-        let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
+        let full_num_coeffs_q = polynomial_precomputation.num_coefficients();
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             0..(1usize << (self.num_vars - self.col_bits)),
@@ -261,7 +261,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         .map(E::reduce_product)
         .collect();
 
-        OmittedConstantPoly::from_q_coefficients(q_coeffs)
+        OmittedConstantPoly::new(q_coeffs)
     }
 
     #[tracing::instrument(

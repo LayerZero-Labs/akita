@@ -166,25 +166,16 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
                         LowBasisRangeImageStorage::Materialized(Vec::new()),
                     ) {
                         LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                            if self.ring_bits() > 2 {
-                                let (range_image, round_poly) = self
-                                    .fuse_compact_to_round2_and_compute_round(
-                                        &compact_range_image,
-                                        r0,
-                                        r,
-                                    );
-                                self.cached_round_poly = Some(round_poly);
-                                LowBasisRangeImageStorage::Materialized(range_image)
-                            } else {
-                                let range_image = Self::fold_compact_range_image_to_round2(
+                            debug_assert_eq!(self.ring_bits(), 2);
+                            LowBasisRangeImageStorage::Materialized(
+                                Self::fold_compact_range_image_to_round2(
                                     &compact_range_image,
                                     self.live_x_cols,
                                     y_len,
                                     r0,
                                     r,
-                                );
-                                LowBasisRangeImageStorage::Materialized(range_image)
-                            }
+                                ),
+                            )
                         }
                         LowBasisRangeImageStorage::Materialized(_) => {
                             unreachable!("two-round prefix should hold compact table")

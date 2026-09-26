@@ -58,7 +58,10 @@ use std::ops::Range;
 
 use crate::sources::packed_digits::{PackedSignedDigitIter, PackedSignedDigits};
 
-const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 5;
+/// Nonconstant round coefficients `q_1..q_d` of the range polynomial. The
+/// eq-factored driver recovers `q_0` from the running claim, so no kernel
+/// computes it.
+const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactCoeffEntry {
@@ -150,13 +153,13 @@ impl RangePolynomialPrecomputation {
         }
 
         let mut compact_coeff_lut =
-            Vec::with_capacity(valid_range_image_count * valid_range_image_count * num_rows);
+            Vec::with_capacity(valid_range_image_count * valid_range_image_count * degree_q);
         for (left_index, &left_value) in pair_offsets.iter().enumerate() {
             let h_base = left_index * num_rows;
             for &right_value in &pair_offsets {
                 let delta = right_value - left_value;
-                let mut delta_pow = 1i128;
-                for &h_i in &valid_range_image_lut_int[h_base..h_base + num_rows] {
+                let mut delta_pow = delta;
+                for &h_i in &valid_range_image_lut_int[h_base + 1..h_base + num_rows] {
                     let coeff = h_i
                         .checked_mul(delta_pow)
                         .expect("compact affine coefficient overflow");
@@ -200,8 +203,9 @@ impl RangePolynomialPrecomputation {
         ci as usize
     }
 
-    fn num_rows(&self) -> usize {
-        self.degree_q + 1
+    /// Number of nonconstant round coefficients each pair contributes.
+    fn num_coefficients(&self) -> usize {
+        self.degree_q
     }
 
     #[inline]
@@ -212,7 +216,7 @@ impl RangePolynomialPrecomputation {
     ) -> usize {
         let pair_idx = self.compact_index(left_range_image_integer) * self.valid_range_image_count
             + self.compact_index(right_range_image_integer);
-        pair_idx * self.num_rows()
+        pair_idx * self.num_coefficients()
     }
 
     #[inline]
@@ -221,9 +225,9 @@ impl RangePolynomialPrecomputation {
         left_range_image_integer: i16,
         right_range_image_integer: i16,
     ) -> &[CompactCoeffEntry] {
-        let num_rows = self.num_rows();
+        let num_coefficients = self.num_coefficients();
         let start = self.pair_coeff_lut_start(left_range_image_integer, right_range_image_integer);
-        &self.compact_coeff_lut[start..start + num_rows]
+        &self.compact_coeff_lut[start..start + num_coefficients]
     }
 }
 
@@ -281,6 +285,11 @@ fn accumulate_dense_entry_coeffs<E: Field + Unreduced>(
     }
 }
 
+/// Write the nonconstant coefficients of `Q(left + X * delta)`.
+///
+/// With `b = left - 5`, the quartic range polynomial is
+/// `Q = b^4 - 42 b^2 - 64 b + 105`, so its Taylor coefficients at `left` need
+/// seven multiplications in total.
 #[inline]
 fn compute_entry_coefficients<E: Field + Ring + Unreduced>(
     out: &mut [E],
@@ -288,36 +297,34 @@ fn compute_entry_coefficients<E: Field + Ring + Unreduced>(
     left_range_image: E,
     range_image_delta: E,
 ) {
-    let num_rows = precomp.num_rows();
-    debug_assert!(out.len() >= num_rows);
+    debug_assert!(out.len() >= precomp.num_coefficients());
 
     match precomp.degree_q {
         2 => {
             let twice_left = left_range_image + left_range_image;
-            out[0] = left_range_image * (left_range_image - E::from_u64(2));
-            out[1] = range_image_delta * (twice_left - E::from_u64(2));
-            out[2] = range_image_delta * range_image_delta;
+            out[0] = range_image_delta * (twice_left - E::from_u64(2));
+            out[1] = range_image_delta * range_image_delta;
         }
         4 => {
-            let twice_left = left_range_image + left_range_image;
-            let four_times_left = twice_left + twice_left;
-            let eight_times_left = four_times_left + four_times_left;
-            let sixteen_times_left = eight_times_left + eight_times_left;
-            let left_squared = left_range_image * left_range_image;
-            let first_quadratic = left_squared - twice_left;
-            let second_quadratic =
-                left_squared - (sixteen_times_left + twice_left) + E::from_u64(72);
+            let shifted = left_range_image - E::from_u64(5);
+            let shifted_squared = shifted * shifted;
+            let shifted_delta = shifted * range_image_delta;
             let delta_squared = range_image_delta * range_image_delta;
-            let first_linear = range_image_delta * (twice_left - E::from_u64(2));
-            let second_linear = range_image_delta * (twice_left - E::from_u64(18));
-
-            out[0] = first_quadratic * second_quadratic;
-            out[1] = first_quadratic * second_linear + first_linear * second_quadratic;
-            out[2] = first_quadratic * delta_squared
-                + first_linear * second_linear
-                + delta_squared * second_quadratic;
-            out[3] = delta_squared * (first_linear + second_linear);
-            out[4] = delta_squared * delta_squared;
+            let twice_delta = range_image_delta + range_image_delta;
+            let four_times_delta = twice_delta + twice_delta;
+            let eight_times_delta = four_times_delta + four_times_delta;
+            let sixteen_times_delta = eight_times_delta + eight_times_delta;
+            let first = (shifted_squared - E::from_u64(21)) * shifted_delta - sixteen_times_delta;
+            let twice_first = first + first;
+            let second_over_six = shifted_squared - E::from_u64(7);
+            let twice_second_over_six = second_over_six + second_over_six;
+            let third = shifted_delta * delta_squared;
+            let twice_third = third + third;
+            out[0] = twice_first + twice_first;
+            out[1] = (twice_second_over_six + twice_second_over_six + twice_second_over_six)
+                * delta_squared;
+            out[2] = twice_third + twice_third;
+            out[3] = delta_squared * delta_squared;
         }
         _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
     }
@@ -347,7 +354,7 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
 ) -> OmittedConstantPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
-    let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
+    let full_num_coeffs_q = polynomial_precomputation.num_coefficients();
     let num_coeffs_q = full_num_coeffs_q;
 
     let q_coeffs = cfg_fold_reduce!(
@@ -425,7 +432,7 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
     .collect::<Vec<_>>();
 
     let _ = split_eq;
-    OmittedConstantPoly::from_q_coefficients(q_coeffs)
+    OmittedConstantPoly::new(q_coeffs)
 }
 
 fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unreduced>(
@@ -436,7 +443,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unr
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
-    let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
+    let full_num_coeffs_q = polynomial_precomputation.num_coefficients();
     let num_coeffs_q = full_num_coeffs_q;
 
     let q_coeffs = cfg_fold_reduce!(
@@ -477,7 +484,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unr
     .collect::<Vec<_>>();
 
     let _ = split_eq;
-    OmittedConstantPoly::from_q_coefficients(q_coeffs)
+    OmittedConstantPoly::new(q_coeffs)
 }
 
 fn compute_range_round_polynomial_from_compact_image<
