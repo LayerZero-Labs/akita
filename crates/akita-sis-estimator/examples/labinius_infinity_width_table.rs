@@ -3,6 +3,7 @@
 //! This is intentionally an offline CSV artifact. It does not generate a
 //! runtime schedule table because the binary root protocol is not implemented.
 
+use akita_challenges::{BinaryChallengeFamily, BinaryChallengeProfile, BinaryScalarRing};
 use akita_sis_estimator::{
     width_table::{
         generate_infinity_width_rows, validate_infinity_width_rows, InfinityWidthOrigin,
@@ -22,46 +23,53 @@ const DELTA_16: u64 = (1u64 << 16) - 1;
 #[derive(Clone, Copy)]
 struct SourceProfile {
     label: &'static str,
-    scalar_degree: u32,
-    challenge_multiplication_bound: u128,
+    scalar_ring: BinaryScalarRing,
+    challenge_family: BinaryChallengeFamily,
+    challenge_weight: usize,
     accepted_response_diameter: u128,
 }
 
 const SOURCE_PROFILES: &[SourceProfile] = &[
     SourceProfile {
         label: "phi243-bounded-w46-delta16",
-        scalar_degree: 162,
-        challenge_multiplication_bound: 92,
+        scalar_ring: BinaryScalarRing::Cyclotomic243,
+        challenge_family: BinaryChallengeFamily::BoundedWeight,
+        challenge_weight: 46,
         accepted_response_diameter: DELTA_16 as u128,
     },
     SourceProfile {
         label: "phi243-fixed-w47-delta16",
-        scalar_degree: 162,
-        challenge_multiplication_bound: 94,
+        scalar_ring: BinaryScalarRing::Cyclotomic243,
+        challenge_family: BinaryChallengeFamily::FixedWeight,
+        challenge_weight: 47,
         accepted_response_diameter: DELTA_16 as u128,
     },
     SourceProfile {
         label: "phi243-bounded-w46-delta32",
-        scalar_degree: 162,
-        challenge_multiplication_bound: 92,
+        scalar_ring: BinaryScalarRing::Cyclotomic243,
+        challenge_family: BinaryChallengeFamily::BoundedWeight,
+        challenge_weight: 46,
         accepted_response_diameter: DELTA_32 as u128,
     },
     SourceProfile {
         label: "phi243-fixed-w47-delta32",
-        scalar_degree: 162,
-        challenge_multiplication_bound: 94,
+        scalar_ring: BinaryScalarRing::Cyclotomic243,
+        challenge_family: BinaryChallengeFamily::FixedWeight,
+        challenge_weight: 47,
         accepted_response_diameter: DELTA_32 as u128,
     },
     SourceProfile {
         label: "phi729-fixed-w25-delta16",
-        scalar_degree: 486,
-        challenge_multiplication_bound: 50,
+        scalar_ring: BinaryScalarRing::Cyclotomic729,
+        challenge_family: BinaryChallengeFamily::FixedWeight,
+        challenge_weight: 25,
         accepted_response_diameter: DELTA_16 as u128,
     },
     SourceProfile {
         label: "phi729-fixed-w25-delta32",
-        scalar_degree: 486,
-        challenge_multiplication_bound: 50,
+        scalar_ring: BinaryScalarRing::Cyclotomic729,
+        challenge_family: BinaryChallengeFamily::FixedWeight,
+        challenge_weight: 25,
         accepted_response_diameter: DELTA_32 as u128,
     },
 ];
@@ -119,8 +127,8 @@ fn main() {
         output.push_str(&format!(
             "{INFINITY_WIDTH_EVALUATOR_ID},{},{},{},{}\n",
             source.label,
-            source.scalar_degree,
-            row.d / source.scalar_degree,
+            source.scalar_degree(),
+            row.d / source.scalar_degree(),
             row.to_csv_record()
         ));
     }
@@ -166,7 +174,7 @@ fn selected_specs(args: &Args) -> Vec<(AkitaModulusProfileId, u32, SourceProfile
                 {
                     continue;
                 }
-                if source.scalar_degree == scalar_degree_for_ring(d)
+                if source.scalar_degree() == scalar_degree_for_ring(d)
                     && args.source_profiles.contains(&source.label)
                 {
                     specs.push((modulus_profile, d, source));
@@ -193,16 +201,35 @@ fn source_for_row(modulus_profile: AkitaModulusProfileId, d: u32, bound: u64) ->
         .iter()
         .copied()
         .find(|profile| {
-            profile.scalar_degree == scalar_degree_for_ring(d)
+            profile.scalar_degree() == scalar_degree_for_ring(d)
                 && profile.collision_bound(modulus_profile) == bound
         })
         .unwrap_or_else(|| fatal("generated row has an unknown source bound"))
 }
 
 impl SourceProfile {
+    fn scalar_degree(self) -> u32 {
+        self.scalar_ring.degree() as u32
+    }
+
+    fn challenge_profile(self) -> BinaryChallengeProfile {
+        let result = match self.challenge_family {
+            BinaryChallengeFamily::FixedWeight => {
+                BinaryChallengeProfile::fixed_weight(self.scalar_ring, self.challenge_weight)
+            }
+            BinaryChallengeFamily::BoundedWeight => {
+                BinaryChallengeProfile::bounded_weight(self.scalar_ring, self.challenge_weight)
+            }
+        };
+        result.unwrap_or_else(|error| fatal(&format!("invalid binary source profile: {error}")))
+    }
+
     fn collision_bound(self, modulus_profile: AkitaModulusProfileId) -> u64 {
         let occurrence = SourceOccurrenceBound::binary_extracted(
-            self.challenge_multiplication_bound,
+            u128::from(
+                self.challenge_profile()
+                    .multiplication_linf_operator_bound(),
+            ),
             self.accepted_response_diameter,
         )
         .unwrap_or_else(|| fatal("source occurrence bound overflow"));
@@ -334,6 +361,7 @@ fn fatal(message: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn canonical_bounds_are_the_exact_binary_diagonal_envelopes() {
@@ -344,5 +372,31 @@ mod tests {
         assert_eq!(SOURCE_PROFILES[3].collision_bound(p64), 1_614_907_702_920);
         assert_eq!(SOURCE_PROFILES[4].collision_bound(p64), 13_107_000);
         assert_eq!(SOURCE_PROFILES[5].collision_bound(p64), 858_993_459_000);
+    }
+
+    #[test]
+    fn checked_in_rows_use_the_generator_source_bounds() {
+        let mut seen = BTreeSet::new();
+        let csv = include_str!("../data/labinius_infinity_width.csv");
+        for line in csv.lines().skip(1) {
+            let mut fields = line.splitn(5, ',');
+            assert_eq!(fields.next(), Some(INFINITY_WIDTH_EVALUATOR_ID));
+            let label = fields.next().unwrap();
+            let source = SOURCE_PROFILES
+                .iter()
+                .find(|source| source.label == label)
+                .unwrap();
+            let scalar_degree: u32 = fields.next().unwrap().parse().unwrap();
+            let packing_degree: u32 = fields.next().unwrap().parse().unwrap();
+            let row = InfinityWidthRow::from_csv_record(fields.next().unwrap()).unwrap();
+            assert_eq!(scalar_degree, source.scalar_degree());
+            assert_eq!(row.d, scalar_degree * packing_degree);
+            assert_eq!(
+                row.coeff_linf_bound,
+                source.collision_bound(row.modulus_profile)
+            );
+            seen.insert(label);
+        }
+        assert_eq!(seen.len(), SOURCE_PROFILES.len());
     }
 }

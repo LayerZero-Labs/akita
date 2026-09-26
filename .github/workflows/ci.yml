@@ -294,6 +294,7 @@ jobs:
         run: |
           cargo test -p akita-types --lib --no-default-features --features labinius-sis,transcript-blake2b sis::labinius
           cargo test -p akita-sis-estimator --lib --test labinius_width_table --no-default-features --features labinius-sis
+          cargo test -p akita-sis-estimator --example labinius_infinity_width_table --no-default-features --features labinius-sis
       - name: Check opt-in estimator targets
         run: cargo clippy -p akita-types -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-blake2b -- -D warnings
 

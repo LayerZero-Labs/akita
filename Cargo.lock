@@ -204,6 +204,7 @@ dependencies = [
 name = "akita-sis-estimator"
 version = "0.1.0"
 dependencies = [
+ "akita-challenges",
  "akita-types",
  "criterion",
  "libm",
