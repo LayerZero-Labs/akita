@@ -857,6 +857,12 @@ impl Runner {
     fn finish_merge(&mut self, job: &Job, code: i32, elapsed: f64) {
         let name = job.lane.name();
         let target = job.lane.target.clone();
+        if code != 0 && job.terminated_at.is_some() && !job.watchdog_stopped {
+            // Stopped by the runner at shutdown, not a merge failure:
+            // compaction becomes due again on the next check.
+            self.event(&format!("compaction of {target} interrupted"));
+            return;
+        }
         if code != 0 {
             self.lane_state(&name).next_compaction_at = now() + 6 * 3600;
             self.event(&format!(
