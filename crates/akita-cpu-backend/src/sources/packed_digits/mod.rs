@@ -682,29 +682,6 @@ impl PackedSignedDigitIter<'_> {
             .decode_range(self.decoded_start, &mut self.decoded[..self.decoded_len])
             .expect("packed iterator range is in bounds");
     }
-
-    #[inline(always)]
-    pub(crate) fn next_array<const N: usize>(&mut self) -> Option<[i8; N]> {
-        let end = self.position.checked_add(N)?;
-        if end > self.view.len() {
-            return None;
-        }
-        if self.position < self.decoded_start || end > self.decoded_start + self.decoded_len {
-            self.refill();
-        }
-        let local_start = self.position - self.decoded_start;
-        if local_start + N > self.decoded_len {
-            let values = self
-                .view
-                .decode_array::<N>(self.position)
-                .expect("packed iterator array is in bounds");
-            self.position = end;
-            return Some(values);
-        }
-        let values = std::array::from_fn(|offset| self.decoded[local_start + offset]);
-        self.position = end;
-        Some(values)
-    }
 }
 
 #[cfg(test)]

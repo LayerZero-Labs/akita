@@ -53,7 +53,7 @@ where
 {
     fn add_scaled(
         &self,
-        destination: &mut [E],
+        destination: &mut LaneWindow<'_, E>,
         physical_start: usize,
         position: usize,
         scale: E,
@@ -121,7 +121,7 @@ where
 }
 
 fn add_scaled_kernel<E: Field>(
-    destination: &mut [E],
+    destination: &mut LaneWindow<'_, E>,
     physical_start: usize,
     kernel: &[E],
     scale: E,
@@ -129,12 +129,7 @@ fn add_scaled_kernel<E: Field>(
     if scale.is_zero() {
         return Ok(());
     }
-    let physical_end = physical_start
-        .checked_add(kernel.len())
-        .ok_or_else(|| AkitaError::InvalidSetup("reduced relation address overflow".into()))?;
-    let destination = destination
-        .get_mut(physical_start..physical_end)
-        .ok_or(AkitaError::InvalidProof)?;
+    let destination = destination.lanes_mut(physical_start, kernel.len())?;
     if scale == E::one() {
         for (weight, &coefficient) in destination.iter_mut().zip(kernel) {
             *weight += coefficient;
@@ -151,15 +146,16 @@ fn add_scaled_kernel<E: Field>(
     Ok(())
 }
 
-struct ReducedEtSink<'a, E> {
-    dense: &'a mut [E],
+struct ReducedEtSink<'w, 'a, E> {
+    e_weights: LaneWindow<'w, E>,
+    t_weights: LaneWindow<'w, E>,
     plan: &'a compiler::RelationWeightGroupPlan<E>,
     challenge_kernels: &'a [Vec<E>],
     d_setup_kernels: &'a SetupColumnValues<E>,
     b_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
+impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, '_, E> {
     fn add_e(
         &mut self,
         physical_start: usize,
@@ -174,7 +170,7 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
             .ok_or(AkitaError::InvalidProof)?;
         let kernel_start = role_subcolumn * self.plan.roles.d_d;
         add_scaled_kernel(
-            self.dense,
+            &mut self.e_weights,
             physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_d)
@@ -182,7 +178,7 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
             constraint_scale,
         )?;
         add_scaled_kernel(
-            self.dense,
+            &mut self.e_weights,
             physical_start,
             self.d_setup_kernels.get(0, setup_column)?,
             E::one(),
@@ -204,7 +200,7 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
             .ok_or(AkitaError::InvalidProof)?;
         let kernel_start = role_subcolumn * self.plan.roles.d_b;
         add_scaled_kernel(
-            self.dense,
+            &mut self.t_weights,
             physical_start,
             kernel
                 .get(kernel_start..kernel_start + self.plan.roles.d_b)
@@ -212,7 +208,7 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
             constraint_scale,
         )?;
         add_scaled_kernel(
-            self.dense,
+            &mut self.t_weights,
             physical_start,
             self.b_setup_kernels.get(slice_index, setup_column)?,
             E::one(),
@@ -220,13 +216,13 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
     }
 }
 
-struct ReducedZSink<'a, F, E> {
-    dense: &'a mut [E],
+struct ReducedZSink<'w, 'a, F, E> {
+    weights: LaneWindow<'w, E>,
     opening_kernels: &'a PositionMultiplierKernels<'a, F, E>,
     a_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<F, E> ZWeightSink<E> for ReducedZSink<'_, F, E>
+impl<F, E> ZWeightSink<E> for ReducedZSink<'_, '_, F, E>
 where
     F: Field,
     E: Field + ExtField<F>,
@@ -239,10 +235,14 @@ where
         constraint_scale: E,
         setup_scale: E,
     ) -> Result<(), AkitaError> {
-        self.opening_kernels
-            .add_scaled(self.dense, physical_start, position, constraint_scale)?;
+        self.opening_kernels.add_scaled(
+            &mut self.weights,
+            physical_start,
+            position,
+            constraint_scale,
+        )?;
         add_scaled_kernel(
-            self.dense,
+            &mut self.weights,
             physical_start,
             self.a_setup_kernels.get(0, setup_column)?,
             setup_scale,
@@ -330,14 +330,24 @@ where
 
         {
             let _span = tracing::info_span!("reduced_et_scatter").entered();
-            let mut et_sink = ReducedEtSink {
-                dense: &mut dense,
-                plan: group_plan,
-                challenge_kernels: &challenge_kernels,
-                d_setup_kernels: &d_setup_kernels,
-                b_setup_kernels: &b_setup_kernels,
-            };
-            compile_group_et_addresses(group_plan, &compilation.witness_layout, &mut et_sink)?;
+            let tasks = group_plan.et_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
+            cfg_into_iter!(tasks).try_for_each(
+                |schedule::EtScatterTask {
+                     range,
+                     e: e_weights,
+                     t: t_weights,
+                 }| {
+                    let mut sink = ReducedEtSink {
+                        e_weights,
+                        t_weights,
+                        plan: group_plan,
+                        challenge_kernels: &challenge_kernels,
+                        d_setup_kernels: &d_setup_kernels,
+                        b_setup_kernels: &b_setup_kernels,
+                    };
+                    compile_et_block_range(group_plan, &range, &mut sink)
+                },
+            )?;
         }
         drop(challenge_kernels);
         drop(d_setup_kernels);
@@ -363,12 +373,17 @@ where
         };
         {
             let _span = tracing::info_span!("reduced_z_scatter").entered();
-            let mut z_sink = ReducedZSink {
-                dense: &mut dense,
-                opening_kernels: &opening_kernels,
-                a_setup_kernels: &a_setup_kernels,
-            };
-            compile_group_z_addresses(group_plan, &compilation.witness_layout, &mut z_sink)?;
+            let tasks = group_plan.z_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
+            cfg_into_iter!(tasks).try_for_each(
+                |schedule::ZScatterTask { range, z: weights }| {
+                    let mut sink = ReducedZSink {
+                        weights,
+                        opening_kernels: &opening_kernels,
+                        a_setup_kernels: &a_setup_kernels,
+                    };
+                    compile_z_position_range(group_plan, &range, &mut sink)
+                },
+            )?;
         }
     }
 

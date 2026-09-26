@@ -1,6 +1,5 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
-use super::fold_two_round_quad;
 use std::num::NonZeroUsize;
 #[cfg(test)]
 use std::ops::Range;
@@ -11,6 +10,7 @@ use akita_error::AkitaError;
 use akita_types::{
     basis_weights_prefix, BasisMode, CoefficientPackingStage2Source, CoefficientPackingStage2Terms,
 };
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
@@ -775,20 +775,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     #[inline]
-    pub(crate) fn pair_at_lanes(
-        &self,
-        lane0: usize,
-        lane1: usize,
-        coefficient: usize,
-        coeff_count: usize,
-    ) -> (E, E) {
-        (
-            self.get(lane0, coefficient, coeff_count),
-            self.get(lane1, coefficient, coeff_count),
-        )
-    }
-
-    #[inline]
     pub(crate) fn pair_from_flat_index(&self, index0: usize) -> (E, E) {
         let coeff_count = self.coeff_count;
         debug_assert!(coeff_count.is_power_of_two());
@@ -854,56 +840,27 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         self.coeff_count = next_coeff_count;
     }
 
-    pub(crate) fn fold_two_coefficients(&mut self, r0: E, r1: E) {
-        let coeff_count = self.coeff_count;
-        debug_assert!(coeff_count.is_power_of_two() && coeff_count >= 4);
-        let next_coeff_count = coeff_count / 4;
-        for source in &mut self.sources {
-            for lane in 0..source.lane_count {
-                let source_start = lane * coeff_count;
-                let target_start = lane * next_coeff_count;
-                for coefficient in 0..next_coeff_count {
-                    let base = source_start + 4 * coefficient;
-                    source.values[target_start + coefficient] = fold_two_round_quad(
-                        source.values[base],
-                        source.values[base + 1],
-                        source.values[base + 2],
-                        source.values[base + 3],
-                        r0,
-                        r1,
-                    );
-                }
-            }
-            source.values.truncate(source.lane_count * next_coeff_count);
+    /// Set `weights[lane] = weight_scale * weights[lane] + L(lane)` on every
+    /// live lane of a lane-only table and release the support. The terms are
+    /// empty afterwards, so [`Self::final_value`] rejects.
+    pub(crate) fn drain_into_lane_weights(&mut self, weights: &mut [E], weight_scale: E) {
+        debug_assert_eq!(self.coeff_count, 1);
+        debug_assert_eq!(weights.len(), self.live_lane_count);
+        let this = &*self;
+        if weight_scale == E::one() {
+            cfg_iter_mut!(weights)
+                .enumerate()
+                .for_each(|(lane, weight)| *weight += this.get(lane, 0, 1));
+        } else {
+            cfg_iter_mut!(weights)
+                .enumerate()
+                .for_each(|(lane, weight)| {
+                    *weight = weight_scale * *weight + this.get(lane, 0, 1);
+                });
         }
-        self.coeff_count = next_coeff_count;
-    }
-
-    pub(crate) fn fold_lanes(&mut self, challenge: E) {
-        if !matches!(self.lane_weights, PreparedLaneWeights::Dense(_)) {
-            debug_assert_eq!(self.coeff_count, 1);
-            let dense = (0..self.live_lane_count)
-                .map(|lane| self.get(lane, 0, 1))
-                .collect();
-            self.lane_weights = PreparedLaneWeights::Dense(dense);
-            self.sources.clear();
-        }
-        let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let PreparedLaneWeights::Dense(values) = &mut self.lane_weights else {
-            unreachable!("lane weights were materialized above");
-        };
-        let even_scale = E::one() - challenge;
-        for target in 0..next_live_lane_count {
-            let source = 2 * target;
-            let left = values[source];
-            values[target] = if let Some(&right) = values.get(source + 1) {
-                left + challenge * (right - left)
-            } else {
-                even_scale * left
-            }
-        }
-        values.truncate(next_live_lane_count);
-        self.live_lane_count = next_live_lane_count;
+        self.lane_weights = PreparedLaneWeights::Dense(Vec::new());
+        self.sources.clear();
+        self.live_lane_count = 0;
     }
 
     #[cfg(test)]

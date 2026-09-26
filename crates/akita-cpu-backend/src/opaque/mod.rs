@@ -72,16 +72,13 @@ pub use operation_plans::{
 };
 pub(crate) use operation_plans::{RingSwitchRelationPlan, ValidatedFoldRelationPlan};
 pub use owned::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
+pub(crate) use recursive::build_w_evals_compact;
 pub(crate) use recursive::OpaqueRecursiveWitness;
-pub(crate) use recursive::{build_w_evals_compact, PreparedProverLinearTerms};
 pub(in crate::opaque) use recursive::{
     cpu_extension_opening_session_from_witnesses, prepare_recursive_witness_opening,
 };
 #[cfg(test)]
-pub(crate) use recursive::{
-    pad_compact_witness, LowBasisRangeCheckProver, StructuredLinearSegment, StructuredLinearTerm,
-    StructuredLinearWeights,
-};
+pub(crate) use recursive::{pad_compact_witness, LowBasisRangeCheckProver};
 pub(crate) use recursive::{
     CpuPreparedOpeningHandle, CpuRelationHandle, CpuStage1SessionHandle, CpuStage2SessionHandle,
     CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,

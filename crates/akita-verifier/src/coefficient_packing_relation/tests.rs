@@ -5,7 +5,8 @@ use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_types::{
     coefficient_packing_fixture, coefficient_packing_multigroup_fixture,
-    prepare_coefficient_packing_batch_semantics, BasisMode, CoefficientPackingFixture,
+    coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
+    validate_coefficient_packing_batch_groups, BasisMode, CoefficientPackingFixture,
     CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
     PreparedSubringCoefficientPackingPoint, RelationWeightEvent, SisModulusProfileId,
 };
@@ -129,7 +130,13 @@ where
             .unwrap()
             .groups()[0]
             .clone();
-    let (events, expanded) =
+    let events = validate_coefficient_packing_batch_groups(
+        &batch_inputs(fixture, &points, alpha),
+        |group| coefficient_packing_relation_events(&group),
+    )
+    .unwrap()
+    .concat();
+    let expanded =
         prepare_coefficient_packing_batch_semantics(batch_inputs(fixture, &points, alpha)).unwrap();
     let semantics = &expanded.groups()[0];
     let padded_len = semantics
@@ -396,7 +403,12 @@ fn multi_group_compact_factors_follow_relation_group_order() {
         claim_coefficients: &fixture.claim_coefficients,
     };
     let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(inputs()).unwrap();
-    let (events, expanded) = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
+    let events = validate_coefficient_packing_batch_groups(&inputs(), |group| {
+        coefficient_packing_relation_events(&group)
+    })
+    .unwrap()
+    .concat();
+    let expanded = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     assert_eq!(
         compact_batch
             .groups()

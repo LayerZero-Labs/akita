@@ -1,8 +1,10 @@
 use super::*;
 
+use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
+    coefficient_packing_relation_events, prepare_coefficient_packing_batch_semantics,
+    r_decomp_levels, relation_rhs_coeff_len, validate_coefficient_packing_batch_groups,
     AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
     CoefficientPackingBatchSemantics, CoefficientPackingChallenges, CoefficientPackingStage2Source,
     CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
@@ -149,18 +151,23 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let tau1 = (0..relation_plan.relation_row_index_num_vars().unwrap())
         .map(|index| E::from_u64(13 + index as u64))
         .collect::<Vec<_>>();
-    let (relation_events, batch) =
-        prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
-            level_params: &params,
-            opening_batch: &opening_batch,
-            relation_plan: &relation_plan,
-            relation: &relation,
-            prepared_points: &[(0, &prepared_point)],
-            alpha: E::from_u64(17),
-            tau1: &tau1,
-            claim_coefficients: &claim_coefficients,
-        })
-        .unwrap();
+    let prepared_points = [(0, &prepared_point)];
+    let inputs = || CoefficientPackingBatchSemanticInputs {
+        level_params: &params,
+        opening_batch: &opening_batch,
+        relation_plan: &relation_plan,
+        relation: &relation,
+        prepared_points: &prepared_points,
+        alpha: E::from_u64(17),
+        tau1: &tau1,
+        claim_coefficients: &claim_coefficients,
+    };
+    let relation_events = validate_coefficient_packing_batch_groups(&inputs(), |group| {
+        coefficient_packing_relation_events(&group)
+    })
+    .unwrap()
+    .concat();
+    let batch = prepare_coefficient_packing_batch_semantics(inputs()).unwrap();
     Fixture {
         params,
         opening_batch,
@@ -236,11 +243,12 @@ fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
         for &challenge in &point[..coefficient_bits] {
             prepared.fold_coefficients(challenge);
         }
-        for &challenge in &point[coefficient_bits..] {
-            prepared.fold_lanes(challenge);
-        }
+        let lane_point = &point[coefficient_bits..];
+        let mut lanes = vec![E::zero(); 1 << lane_point.len()];
+        let live_lanes = prepared.materialize_dense().len();
+        prepared.drain_into_lane_weights(&mut lanes[..live_lanes], E::one());
         assert_eq!(
-            prepared.final_value().unwrap(),
+            multilinear_eval(&lanes, lane_point).unwrap(),
             semantics.stage2_terms().evaluate_at_point(&point).unwrap()
         );
     }
@@ -275,69 +283,78 @@ fn duplicate_packing_group_support_is_rejected() {
 #[test]
 fn method_aware_relation_builder_uses_shared_packing_events_once() {
     use crate::opaque::relation_weights::{
-        build_relation_weight_events, RelationSetupSource, RelationWeightEventInputs,
+        build_relation_lane_weights, RelationLaneWeightInputs, RelationSetupSource,
     };
+    use akita_algebra::ring::scalar_powers;
 
     let fixture = fixture();
     let domain = fixture.relation_plan.digit_witness_domain();
     let opening_ring_dim = fixture.params.role_dims().d_d();
-    let (events, built_batch) = build_relation_weight_events(RelationWeightEventInputs {
+    let alpha = E::from_u64(17);
+    // Packing weights must use the batch that also supplies the Stage 2 terms,
+    // even if the separately supplied relation coefficients differ.
+    let unrelated_coefficients = vec![E::from_u64(23); fixture.claim_coefficients.len()];
+    let deferred = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::DeferredClaim,
         instance: &fixture.relation,
-        alpha: E::from_u64(17),
+        alpha,
         level_params: &fixture.params,
         relation_row_point: &fixture.tau1,
-        claim_coefficients: &fixture.claim_coefficients,
+        claim_coefficients: &unrelated_coefficients,
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: Some(&fixture.batch),
         opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
-    assert_eq!(
-        built_batch,
-        OpeningFamily::SubringCoefficientPacking(fixture.batch.clone())
+
+    // Without setup terms, the shared packing events are the only
+    // contributions to their lanes, added once.
+    let block_len = fixture
+        .relation_plan
+        .relation_address_geometry()
+        .relation_coefficient_block_len();
+    let alpha_powers = scalar_powers(
+        alpha,
+        fixture
+            .relation_events
+            .iter()
+            .map(|event| event.alpha_exponent_start() + event.physical_coefficients().len())
+            .max()
+            .unwrap(),
     );
+    let mut shared_lanes = vec![None; deferred.lanes().len()];
+    for event in &fixture.relation_events {
+        let coefficients = event.physical_coefficients();
+        for (offset, lane) in
+            (coefficients.start / block_len..coefficients.end / block_len).enumerate()
+        {
+            *shared_lanes[lane].get_or_insert(E::zero()) +=
+                event.scalar() * alpha_powers[event.alpha_exponent_start() + offset * block_len];
+        }
+    }
+    assert!(shared_lanes.iter().any(Option::is_some));
+    for (lane, expected) in shared_lanes.iter().enumerate() {
+        if let Some(expected) = expected {
+            assert_eq!(deferred.lanes()[lane], *expected);
+        }
+    }
 
-    let shared = &fixture.relation_events;
-    let shared_ranges = shared
-        .iter()
-        .map(|event| event.physical_coefficients())
-        .collect::<Vec<_>>();
-    let emitted_on_shared_ranges = events
-        .events()
-        .iter()
-        .filter(|event| shared_ranges.contains(&event.physical_coefficients()))
-        .map(|event| {
-            (
-                event.physical_coefficients(),
-                event.alpha_exponent_start(),
-                event.scalar(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let expected = shared
-        .iter()
-        .map(|event| {
-            (
-                event.physical_coefficients(),
-                event.alpha_exponent_start(),
-                event.scalar(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(emitted_on_shared_ranges, expected);
-
-    for unit in fixture
+    let units = fixture
         .relation_plan
         .witness_layout()
         .units_for_group(0)
         .unwrap()
-    {
-        assert!(events.events().iter().all(|event| {
-            let range = event.physical_coefficients();
-            range.end <= unit.z_range().start || range.start >= unit.z_range().end
-        }));
+        .collect::<Vec<_>>();
+    for unit in &units {
+        let z_range = unit.z_range();
+        assert!(z_range.start.is_multiple_of(block_len) && z_range.end.is_multiple_of(block_len));
+        assert!(
+            deferred.lanes()[z_range.start / block_len..z_range.end / block_len]
+                .iter()
+                .all(Zero::is_zero)
+        );
     }
 
     let setup_field_len = 1usize << 18;
@@ -354,44 +371,36 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
                 .collect(),
         ),
     );
-    let (direct_events, _) = build_relation_weight_events(RelationWeightEventInputs {
+    let direct = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::Matrix(&setup),
         instance: &fixture.relation,
-        alpha: E::from_u64(17),
+        alpha,
         level_params: &fixture.params,
         relation_row_point: &fixture.tau1,
         claim_coefficients: &fixture.claim_coefficients,
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: Some(&fixture.batch),
         opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
-    let e_ranges = fixture
-        .relation_plan
-        .witness_layout()
-        .units_for_group(0)
-        .unwrap()
-        .map(|unit| unit.e_range())
-        .collect::<Vec<_>>();
-    let setup_e_events = direct_events
-        .events()
+    // Every packed D column adds one setup term across its opening-ring lanes.
+    let setup_e_lanes = units
         .iter()
-        .filter(|event| {
-            event.contribution() == akita_types::RelationWeightContribution::SetupMatrix
-                && e_ranges.iter().any(|range| {
-                    let event_range = event.physical_coefficients();
-                    event_range.start >= range.start && event_range.end <= range.end
-                })
-        })
+        .flat_map(|unit| unit.e_range().start / block_len..unit.e_range().end / block_len)
+        .filter(|&lane| direct.lanes()[lane] != deferred.lanes()[lane])
         .count();
     let expected_d_columns = fixture.opening_batch.num_total_polynomials()
         * fixture.prepared_point.num_live_blocks()
         * fixture.params.open().digits.num_digits
         * (fixture.prepared_point.geometry().partial_base_field_width() / opening_ring_dim);
-    assert_eq!(setup_e_events, expected_d_columns);
+    assert_eq!(
+        setup_e_lanes,
+        expected_d_columns * (opening_ring_dim / block_len)
+    );
 
-    assert!(build_relation_weight_events(RelationWeightEventInputs {
+    assert!(build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::DeferredClaim,
         instance: &fixture.relation,
         alpha: E::from_u64(17),
@@ -401,6 +410,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: None,
         opening_points: OpeningFamily::EvaluationTrace(()),
     })
     .is_err());

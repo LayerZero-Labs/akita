@@ -495,7 +495,7 @@ mod tests {
             },
         )
         .unwrap();
-        let (_, expanded_oracle) =
+        let expanded_oracle =
             prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
                 level_params: &params,
                 opening_batch: &opening_batch,

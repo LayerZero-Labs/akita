@@ -195,10 +195,6 @@ fn plan_fused_quotients<
         capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
         lut: actual_z_abs_bound,
     };
-    debug_assert!(
-        centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
-        "fused quotient centered RHS bound is smaller than the actual max"
-    );
 
     let t_chunk_width = (t_len == 0)
         .then_some(1)
@@ -483,22 +479,6 @@ fn accumulate_cyclic_i8_rows<
             a
         }
     )
-}
-
-fn centered_rows_within_bound<const D: usize>(rows: &[[i32; D]], len: usize, bound: u64) -> bool {
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
-}
-
-fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64 {
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .map(|&coeff| u64::from(coeff.unsigned_abs()))
-        .max()
-        .unwrap_or(0)
 }
 
 fn centered_i32_ring<F: Field + CanonicalEncoding, const D: usize>(

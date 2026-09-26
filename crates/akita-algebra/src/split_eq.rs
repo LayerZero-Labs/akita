@@ -134,6 +134,28 @@ impl<E: Field> GruenSplitEq<E> {
         )
     }
 
+    /// Return the tables [`remaining_eq_tables`](Self::remaining_eq_tables)
+    /// will return after `binds` more calls to [`bind`](Self::bind), or `None`
+    /// when fewer than `binds` variables follow the current one.
+    ///
+    /// The tables do not depend on the challenges, so a prover can weight data
+    /// by a later round's equality factor before that round's challenges exist.
+    pub fn remaining_eq_tables_after(&self, binds: usize) -> Option<(&[E], &[E])> {
+        let first_levels = self.E_first.len() - 1;
+        let second_levels = self.E_second.len() - 1;
+        if binds <= first_levels {
+            return Some((
+                self.E_first[first_levels - binds].as_slice(),
+                self.E_second[second_levels].as_slice(),
+            ));
+        }
+        let second_level = second_levels.checked_sub(binds - first_levels)?;
+        Some((
+            self.E_first[0].as_slice(),
+            self.E_second[second_level].as_slice(),
+        ))
+    }
+
     /// Bind the current variable to challenge `r`, advancing to the next round.
     ///
     /// Multiplies `current_scalar` by `eq(τ[current_round], r)` and pops the
@@ -299,6 +321,25 @@ mod tests {
                 fold_evals_in_place(&mut full_eq, r);
                 split_eq.bind(r);
             }
+        }
+    }
+
+    #[test]
+    fn remaining_eq_tables_after_matches_bound_tables() {
+        let mut rng = StdRng::seed_from_u64(0xBC);
+        for n in 1..10 {
+            let tau: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let fresh = GruenSplitEq::new(&tau).unwrap();
+            let mut bound = GruenSplitEq::new(&tau).unwrap();
+            for binds in 0..n {
+                assert_eq!(
+                    fresh.remaining_eq_tables_after(binds),
+                    Some(bound.remaining_eq_tables()),
+                    "n={n} binds={binds}"
+                );
+                bound.bind(F::random(&mut rng));
+            }
+            assert_eq!(fresh.remaining_eq_tables_after(n), None, "n={n}");
         }
     }
 

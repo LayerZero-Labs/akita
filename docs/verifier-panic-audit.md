@@ -47,7 +47,7 @@ regression.
 | `RingMatrixView::rows` and `RingMatrixView::as_slice` unchecked internal slicing. | Guarded | Only constructed by `FlatMatrix::ring_view`, which validates row count, column count, ring dimension divisibility, and backing length first. |
 | `EqPolynomial` table indexing inside table construction. | Guarded | Public table constructors now validate the implied table length before allocation and mutation. |
 | Opening-point weight indexing in `lagrange_weights` and `monomial_weights`. | Guarded | Public weight constructors now validate the implied table length before allocation and mutation. |
-| Relation-event row, claim, block, and opening-point indexing. | Guarded | `ring_switch_verifier`, `prepare_relation_weight_evaluator`, and `build_relation_weight_events` validate layout shape, route shape, challenge counts, opening-point lengths, row counts, and setup stride before evaluation. |
+| Relation-event row, claim, block, and opening-point indexing. | Guarded | `ring_switch_verifier`, `prepare_relation_weight_evaluator`, and `build_relation_lane_weights` validate layout shape, route shape, challenge counts, opening-point lengths, row counts, and setup stride before evaluation. |
 | `akita-verifier` `setup_contribution` (direct scan, structured groups, setup-index weight MLE) and ZK blinding row/column indexing. | Guarded | The functions check derived row/column widths and `setup.seed.max_stride` once before indexing the validated flat matrix slice. |
 | Transcript serialization fail-fast paths. | Intentional fail-fast | Transcript append serialization has no recoverable continuation; this is documented as outside the verifier malformed-input recovery path. |
 

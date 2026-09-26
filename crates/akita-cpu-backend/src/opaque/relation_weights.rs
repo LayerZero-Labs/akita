@@ -1,7 +1,11 @@
-//! Semantic relation-weight events and their canonical consumers.
+//! Relation-weight compilation over the canonical witness addresses.
 
 #[path = "relation_weights/compiler.rs"]
 mod compiler;
+mod lifted_sinks;
+mod schedule;
+mod sinks;
+use lifted_sinks::{scatter_et, scatter_z, split_disjoint_mut};
 #[path = "relation_weights/reduced_dense.rs"]
 mod reduced_dense;
 #[path = "relation_weights/setup_columns.rs"]
@@ -24,32 +28,30 @@ use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
 use akita_types::RelationWeightContribution;
 use akita_types::{
-    gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
-    AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CoefficientPackingBatchSemantics,
     CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
     RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
-use compiler::{
-    compile_group_et_addresses, compile_group_z_addresses, EtWeightSink, RelationWeightCompilation,
-    ZWeightSink,
-};
+use compiler::RelationWeightCompilation;
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{
     contract_setup_columns, contract_setup_residue_columns, SetupColumnValues, SetupRows,
 };
+use sinks::{compile_et_block_range, compile_z_position_range, EtWeightSink, ZWeightSink};
 
 /// Source of setup-matrix relation weights for this evaluation.
 #[derive(Clone, Copy)]
 pub(crate) enum RelationSetupSource<'a, F: Field> {
-    /// Emit setup events directly from the expanded setup matrix.
+    /// Add setup contributions directly from the expanded setup matrix.
     Matrix(&'a AkitaExpandedSetup<F>),
     #[cfg(test)]
     DeferredClaim,
 }
 
-/// Inputs to the one semantic relation-event builder.
-pub(crate) struct RelationWeightEventInputs<'a, F: Field, E: Field> {
+/// Inputs to the one quotient-lift relation-weight builder.
+pub(crate) struct RelationLaneWeightInputs<'a, F: Field, E: Field> {
     pub setup: RelationSetupSource<'a, F>,
     pub instance: &'a RingRelationInstance<F>,
     pub alpha: E,
@@ -59,13 +61,15 @@ pub(crate) struct RelationWeightEventInputs<'a, F: Field, E: Field> {
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
     pub relation_plan: &'a RelationRangeImagePlan,
+    pub packing_semantics: Option<&'a CoefficientPackingBatchSemantics<E>>,
     /// Method-typed prepared points for the current fold.
     pub opening_points:
         OpeningFamily<(), &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)]>,
 }
 
-mod events;
-pub(crate) use events::{RelationWeightEvents, RelationWeightFactorization};
+mod lane_weights;
+use lane_weights::LaneWindow;
+pub(crate) use lane_weights::{RelationLaneWeights, RelationWeightFactorization};
 pub(crate) use reduced_dense::build_reduced_dense_relation_weights;
 
 fn relation_d_group_width(
@@ -146,179 +150,87 @@ fn matching_row_range(
     Ok(start..end)
 }
 
-#[derive(Clone, Copy)]
-enum LiftedEtSetup<'a, E: Field> {
-    Matrix {
-        d: &'a SetupColumnValues<E>,
-        b: &'a SetupColumnValues<E>,
-    },
-    Deferred,
-}
-
-struct LiftedEtSink<'a, E: Field> {
-    events: &'a mut RelationWeightEvents<E>,
-    plan: &'a compiler::RelationWeightGroupPlan<E>,
-    challenge_evaluations: &'a [E],
-    setup: LiftedEtSetup<'a, E>,
-}
-
-impl<E: Field> EtWeightSink<E> for LiftedEtSink<'_, E> {
-    fn add_e(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError> {
-        if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
-            self.events.push(
-                physical_start,
-                self.plan.roles.d_d,
-                role_subcolumn * self.plan.roles.d_d,
-                self.challenge_evaluations
-                    .get(challenge_index)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?
-                    * constraint_scale,
-                RelationWeightContribution::Constraint,
-            )?;
-        }
-        if let LiftedEtSetup::Matrix { d, .. } = self.setup {
-            self.events.push(
-                physical_start,
-                self.plan.roles.d_d,
-                0,
-                d.get_scalar(0, setup_column)?,
-                RelationWeightContribution::SetupMatrix,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn add_t(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        slice_index: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError> {
-        self.events.push(
-            physical_start,
-            self.plan.roles.d_b,
-            role_subcolumn * self.plan.roles.d_b,
-            self.challenge_evaluations
-                .get(challenge_index)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?
-                * constraint_scale,
-            RelationWeightContribution::Constraint,
-        )?;
-        if let LiftedEtSetup::Matrix { b, .. } = self.setup {
-            self.events.push(
-                physical_start,
-                self.plan.roles.d_b,
-                0,
-                b.get_scalar(slice_index, setup_column)?,
-                RelationWeightContribution::SetupMatrix,
-            )?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-enum LiftedZSetup<'a, E: Field> {
-    Matrix(&'a SetupColumnValues<E>),
-    Deferred,
-}
-
-struct LiftedZSink<'a, E: Field> {
-    events: &'a mut RelationWeightEvents<E>,
-    plan: &'a compiler::RelationWeightGroupPlan<E>,
-    opening_evaluations: &'a [E],
-    setup: LiftedZSetup<'a, E>,
-}
-
-impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, E> {
-    fn add_z(
-        &mut self,
-        physical_start: usize,
-        position: usize,
-        setup_column: usize,
-        constraint_scale: E,
-        setup_scale: E,
-    ) -> Result<(), AkitaError> {
-        if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
-            self.events.push_native_ring(
-                physical_start,
-                self.plan.roles.d_a,
-                self.opening_evaluations
-                    .get(position)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?
-                    * constraint_scale,
-                RelationWeightContribution::Constraint,
-            )?;
-        }
-        if let LiftedZSetup::Matrix(setup) = self.setup {
-            self.events.push_native_ring(
-                physical_start,
-                self.plan.roles.d_a,
-                setup.get_scalar(0, setup_column)? * setup_scale,
-                RelationWeightContribution::SetupMatrix,
-            )?;
-        }
-        Ok(())
-    }
-}
-
-/// Emit the complete checked relation semantics for one fold.
-pub(super) type RelationWeightBuild<E> = (
-    RelationWeightEvents<E>,
-    OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
-);
-
-#[tracing::instrument(skip_all, name = "build_relation_weight_events")]
-pub(crate) fn build_relation_weight_events<F, E>(
-    inputs: RelationWeightEventInputs<'_, F, E>,
-) -> Result<RelationWeightBuild<E>, AkitaError>
+fn validate_relation_inputs<'a, F, E>(
+    inputs: &RelationLaneWeightInputs<'a, F, E>,
+) -> Result<RelationWeightCompilation<'a, F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
-    let RelationWeightEventInputs {
-        setup,
-        instance,
-        alpha,
-        level_params: lp,
-        relation_row_point: tau1,
-        claim_coefficients: gamma,
-        opening_source_len,
-        opening_ring_dim,
-        relation_plan,
-        opening_points,
-    } = inputs;
-    let opening_batch = instance.opening_batch();
-    if gamma.len() != opening_batch.num_total_polynomials() {
+    if inputs.claim_coefficients.len() != inputs.instance.opening_batch().num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let setup_matrix = match setup {
+    let setup_matrix = match inputs.setup {
         RelationSetupSource::Matrix(setup) => Some(setup),
         #[cfg(test)]
         RelationSetupSource::DeferredClaim => None,
     };
-    let compilation = RelationWeightCompilation::new(
+    RelationWeightCompilation::new(
         setup_matrix,
+        inputs.instance,
+        inputs.level_params,
+        inputs.relation_row_point,
+        inputs.opening_source_len,
+        inputs.opening_ring_dim,
+        inputs.relation_plan,
+    )
+}
+
+fn pack_relation_events<E: Field>(
+    weights: &mut RelationLaneWeights<E>,
+    num_groups: usize,
+    packing_required: bool,
+    packing_semantics: Option<&CoefficientPackingBatchSemantics<E>>,
+    live_coeff_len: usize,
+    relation_coefficient_block_len: usize,
+) -> Result<Vec<Option<usize>>, AkitaError> {
+    let mut packing_a_ring_dims = vec![None; num_groups];
+    if packing_required != packing_semantics.is_some() {
+        return Err(AkitaError::InvalidProof);
+    }
+    if let Some(batch) = packing_semantics {
+        for group in batch.groups() {
+            let terms = group.stage2_terms();
+            if terms.physical_field_len() != live_coeff_len
+                || terms.relation_coefficient_block_len() != relation_coefficient_block_len
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "packing semantics disagree with the current ring switch".into(),
+                ));
+            }
+            let slot = packing_a_ring_dims
+                .get_mut(group.group_index())
+                .ok_or(AkitaError::InvalidProof)?;
+            if slot.replace(group.geometry().a_ring_dimension()).is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "packing relation group appears more than once".into(),
+                ));
+            }
+            weights.extend_events(group.relation_weight_events().iter().cloned())?;
+        }
+    }
+    Ok(packing_a_ring_dims)
+}
+
+/// The complete checked relation weights for one fold.
+#[tracing::instrument(skip_all, name = "build_relation_lane_weights")]
+pub(crate) fn build_relation_lane_weights<F, E>(
+    inputs: RelationLaneWeightInputs<'_, F, E>,
+) -> Result<RelationLaneWeights<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
+{
+    let compilation = validate_relation_inputs(&inputs)?;
+    let RelationLaneWeightInputs {
         instance,
-        lp,
-        tau1,
-        opening_source_len,
-        opening_ring_dim,
-        relation_plan,
-    )?;
+        alpha,
+        level_params: lp,
+        opening_points,
+        packing_semantics,
+        ..
+    } = inputs;
+    let opening_batch = instance.opening_batch();
     let role_dims = instance.role_dims();
     let d_a = role_dims.d_a();
     let d_b = role_dims.d_b();
@@ -356,35 +268,11 @@ where
         }
     }
     let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
-    let setup_is_deferred = setup_matrix.is_none();
+    let setup_is_deferred = compilation.setup_sources.is_none();
     let relation_coefficient_block_len = compilation.relation_coefficient_block_len;
     let physical_field_len = compilation.physical_field_len;
-    let live_witness_coeff_len = compilation.witness_layout.live_coeff_len();
-    let (coefficient_packing_events, opening_semantics) = match opening_points {
-        OpeningFamily::SubringCoefficientPacking(prepared_points) => {
-            let (events, batch) = prepare_coefficient_packing_batch_semantics(
-                CoefficientPackingBatchSemanticInputs {
-                    level_params: lp,
-                    opening_batch,
-                    relation_plan,
-                    relation: instance,
-                    prepared_points,
-                    alpha,
-                    tau1,
-                    claim_coefficients: gamma,
-                },
-            )?;
-            (events, OpeningFamily::SubringCoefficientPacking(batch))
-        }
-        OpeningFamily::EvaluationTrace(()) => (Vec::new(), OpeningFamily::EvaluationTrace(())),
-    };
-    let coefficient_packing_groups = match &opening_semantics {
-        OpeningFamily::EvaluationTrace(()) => &[][..],
-        OpeningFamily::SubringCoefficientPacking(batch) => batch.groups(),
-    };
-    let mut relation_events = RelationWeightEvents {
-        events: Vec::new(),
-        alpha_powers: scalar_powers(
+    let mut weights = RelationLaneWeights::new(
+        scalar_powers(
             alpha,
             quotient_row_dims
                 .iter()
@@ -395,32 +283,16 @@ where
         relation_coefficient_block_len,
         physical_field_len,
         setup_is_deferred,
-    };
-    let mut packing_semantics_by_group = vec![None; opening_batch.num_groups()];
-    for semantics in coefficient_packing_groups {
-        let group_index = semantics.group_index();
-        let slot = packing_semantics_by_group
-            .get_mut(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
-        if slot.replace(semantics).is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation group appears more than once".into(),
-            ));
-        }
-        if semantics.stage2_terms().physical_field_len() != live_witness_coeff_len {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation live domain disagrees with the current ring switch".into(),
-            ));
-        }
-        if semantics.stage2_terms().relation_coefficient_block_len()
-            != relation_coefficient_block_len
-        {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation coefficient block disagrees with the current ring switch".into(),
-            ));
-        }
-    }
-    relation_events.extend_events(coefficient_packing_events)?;
+    )?;
+    let lane_alpha_powers = weights.lane_alpha_powers();
+    let packing_a_ring_dims = pack_relation_events(
+        &mut weights,
+        opening_batch.num_groups(),
+        packing_required,
+        packing_semantics,
+        compilation.witness_layout.live_coeff_len(),
+        relation_coefficient_block_len,
+    )?;
     for group_plan in &compilation.plan.groups {
         let group_index = group_plan.group_index;
         let group_source = compilation.group_source(group_index)?;
@@ -429,7 +301,7 @@ where
             .as_ref()
             .map(|sources| sources.group(group_index))
             .transpose()?;
-        let packing_semantics = *packing_semantics_by_group
+        let packing_a_ring_dim = *packing_a_ring_dims
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
         let group_d_a = group_plan.roles.d_a;
@@ -439,10 +311,10 @@ where
         let group_alpha_pows_b = scalar_powers(alpha, group_d_b);
         let group_alpha_pows_d = scalar_powers(alpha, group_d_d);
         let opening_method = group_plan.opening_method;
-        match (opening_method, packing_semantics) {
+        match (opening_method, packing_a_ring_dim) {
             (OpeningMethod::EvaluationTrace, None) => {}
-            (OpeningMethod::SubringCoefficientPacking { .. }, Some(semantics))
-                if semantics.geometry().a_ring_dimension() == group_d_a => {}
+            (OpeningMethod::SubringCoefficientPacking { .. }, Some(a_ring_dim))
+                if a_ring_dim == group_d_a => {}
             _ => {
                 return Err(AkitaError::InvalidSetup(
                     "packing semantic groups do not match scheduled opening methods".into(),
@@ -455,9 +327,16 @@ where
         };
         let challenges = group_source.challenges;
         let total_blocks = challenges.len();
-        let challenge_evaluations = (0..total_blocks)
-            .map(|index| challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a))
-            .collect::<Result<Vec<_>, _>>()?;
+        let challenge_lanes = {
+            let lane_count = akita_error::checked::product([total_blocks, lane_alpha_powers.len()])
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut lanes = Vec::with_capacity(lane_count);
+            for index in 0..total_blocks {
+                let evaluation = challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a)?;
+                lanes.extend(lane_alpha_powers.iter().map(|&power| evaluation * power));
+            }
+            lanes
+        };
         let d_setup_accs = if let Some(setup) = compilation.setup_sources.as_ref() {
             let _span = tracing::info_span!("relation_weight_d_setup_columns").entered();
             Some(contract_setup_columns(
@@ -495,27 +374,19 @@ where
             None
         };
 
-        {
-            let setup = match (d_setup_accs.as_ref(), b_setup_accs.as_ref()) {
-                (Some(d), Some(b)) => LiftedEtSetup::Matrix { d, b },
-                (None, None) => LiftedEtSetup::Deferred,
-                _ => {
-                    return Err(AkitaError::InvalidSetup(
-                        "lifted E/T setup phases disagree".into(),
-                    ));
-                }
-            };
-            let mut et_sink = LiftedEtSink {
-                events: &mut relation_events,
-                plan: group_plan,
-                challenge_evaluations: &challenge_evaluations,
-                setup,
-            };
-            compile_group_et_addresses(group_plan, &compilation.witness_layout, &mut et_sink)?;
-        }
+        scatter_et(
+            group_plan,
+            &compilation.witness_layout,
+            weights.lanes_mut(),
+            relation_coefficient_block_len,
+            &challenge_lanes,
+            &lane_alpha_powers,
+            d_setup_accs.as_ref(),
+            b_setup_accs.as_ref(),
+        )?;
         // These setup-column accumulators can be large and are not used by
         // the z-hat phase below. Release them at the named phase boundary.
-        drop(challenge_evaluations);
+        drop(challenge_lanes);
         drop(d_setup_accs);
         drop(b_setup_accs);
 
@@ -553,17 +424,15 @@ where
                 )
             })
             .transpose()?;
-        let setup = match a_setup.as_ref() {
-            Some(values) => LiftedZSetup::Matrix(values),
-            None => LiftedZSetup::Deferred,
-        };
-        let mut z_sink = LiftedZSink {
-            events: &mut relation_events,
-            plan: group_plan,
-            opening_evaluations: &opening_evaluations,
-            setup,
-        };
-        compile_group_z_addresses(group_plan, &compilation.witness_layout, &mut z_sink)?;
+        scatter_z(
+            group_plan,
+            &compilation.witness_layout,
+            weights.lanes_mut(),
+            relation_coefficient_block_len,
+            &opening_evaluations,
+            &lane_alpha_powers,
+            a_setup.as_ref(),
+        )?;
     }
     let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.open().digits.log_basis)
         .into_iter()
@@ -587,7 +456,7 @@ where
         }
         let eq_weight = compilation.row_weights[row];
         let row_alpha_pows = if row_dim == d_a {
-            relation_events.alpha_powers.as_slice()
+            weights.alpha_powers()
         } else if row_dim == d_b {
             alpha_pows_b.as_slice()
         } else if row_dim == d_d {
@@ -605,15 +474,16 @@ where
             let physical_start = compilation
                 .witness_layout
                 .r_coefficient_index(row, digit, 0, 0)?;
-            relation_events.push_native_ring(
+            weights.push(
                 physical_start,
                 row_dim,
+                0,
                 -(eq_weight * row_denom * *gadget),
                 RelationWeightContribution::Constraint,
             )?;
         }
     }
-    Ok((relation_events, opening_semantics))
+    Ok(weights)
 }
 
 #[cfg(test)]

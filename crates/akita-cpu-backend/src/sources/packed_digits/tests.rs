@@ -252,19 +252,6 @@ fn unaligned_subview_full_block_decode_matches_the_source() {
 }
 
 #[test]
-fn iterator_arrays_cross_decode_block_boundaries_exactly() {
-    let digits = (0..140)
-        .map(|index| (index % 8) as i8 - 4)
-        .collect::<Vec<_>>();
-    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 4).unwrap();
-    let mut iter = packed.view().slice(62..134).unwrap().iter();
-    for expected in digits[62..134].chunks_exact(4) {
-        assert_eq!(iter.next_array::<4>().unwrap().as_slice(), expected);
-    }
-    assert!(iter.next_array::<4>().is_none());
-}
-
-#[test]
 fn architecture_decoder_matches_scalar_blocks() {
     let mut rng = StdRng::seed_from_u64(0xa4c4_17ec);
     for bit_width in 1..=8 {

@@ -1,8 +1,8 @@
 //! Per-lane views over prepared structured linear terms.
 
 use super::evaluation_trace::{
-    PreparedLaneTerm, PreparedLaneWeights, PreparedPackingSegment, PreparedProverLinearTerms,
-    PreparedTraceSource,
+    PreparedLaneTerm, PreparedLaneWeights, PreparedPackingLaneMap, PreparedPackingSegment,
+    PreparedProverLinearTerms, PreparedTraceSource,
 };
 use jolt_field::Field;
 
@@ -22,30 +22,22 @@ enum PreparedLinearLaneKind<'a, E: Field> {
 
 /// One resolved linear-term lane.
 ///
-/// Packing support is resolved once at the outer lane boundary. Source
-/// coefficients stay factored so linear kernels can accumulate a batch before
-/// applying each source's common factor.
+/// Packing support is resolved once at the outer lane boundary.
 pub(crate) struct PreparedLinearLane<'a, E: Field> {
     kind: PreparedLinearLaneKind<'a, E>,
 }
 
-fn packing_segment_values<'a, E: Field>(
-    segment: &PreparedPackingSegment<E>,
-    sources: &'a [PreparedTraceSource<E>],
-    lane: usize,
-    coeff_count: usize,
-) -> Option<(E, &'a [E])> {
-    let lane_offset = lane.checked_sub(segment.target_lane_start)?;
-    if lane_offset >= segment.lane_count {
-        return None;
+impl<E: Field> PreparedPackingLaneMap<E> {
+    /// The segment covering witness lane `lane`, and the source lane it reads.
+    fn source_lane(&self, lane: usize) -> Option<(&PreparedPackingSegment<E>, usize)> {
+        let segment = self
+            .segments
+            .get(self.lane_to_segment.get(lane).copied().flatten()?.get() - 1)?;
+        let lane_offset = lane
+            .checked_sub(segment.target_lane_start)
+            .filter(|&offset| offset < segment.lane_count)?;
+        Some((segment, segment.source_lane_start + lane_offset))
     }
-    let source = sources.get(segment.source_index)?;
-    let source_lane = segment.source_lane_start + lane_offset;
-    let source_lane_start = source_lane * coeff_count;
-    source
-        .values
-        .get(source_lane_start..source_lane_start + coeff_count)
-        .map(|values| (segment.factor, values))
 }
 
 impl<E: Field> PreparedLinearLane<'_, E> {
@@ -86,36 +78,36 @@ impl<E: Field> PreparedLinearLane<'_, E> {
         let [left, right] = self.evaluated_values([left, left + 1]);
         (left, right)
     }
-
-    #[inline]
-    pub(crate) fn for_each_factored(&self, mut visit: impl FnMut(E, &[E])) {
-        match &self.kind {
-            PreparedLinearLaneKind::Dense(value) => visit(E::one(), std::slice::from_ref(value)),
-            PreparedLinearLaneKind::Packing { factor, values } => visit(*factor, values),
-            PreparedLinearLaneKind::Sparse {
-                terms,
-                sources,
-                coeff_count,
-            } => {
-                for term in *terms {
-                    let Some(source) = sources.get(term.source_index) else {
-                        continue;
-                    };
-                    let source_lane_start = term.lane * coeff_count;
-                    if let Some(values) = source
-                        .values
-                        .get(source_lane_start..source_lane_start + coeff_count)
-                    {
-                        visit(term.factor, values);
-                    }
-                }
-            }
-            PreparedLinearLaneKind::Zero => {}
-        }
-    }
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Visit `(factor, source_index, source_lane)` for every source term of
+    /// witness lane `lane`. Dense weights have no source terms.
+    #[inline]
+    pub(crate) fn for_each_source_term(&self, lane: usize, mut visit: impl FnMut(E, usize, usize)) {
+        let source_lane_count =
+            |source_index: usize| self.sources.get(source_index).map_or(0, |s| s.lane_count);
+        match &self.lane_weights {
+            PreparedLaneWeights::Dense(_) => {}
+            PreparedLaneWeights::Packing(packing) => {
+                if let Some((segment, source_lane)) =
+                    packing.source_lane(lane).filter(|&(segment, source_lane)| {
+                        source_lane < source_lane_count(segment.source_index)
+                    })
+                {
+                    visit(segment.factor, segment.source_index, source_lane);
+                }
+            }
+            PreparedLaneWeights::Sparse(lane_terms) => {
+                for term in lane_terms.get(lane).map_or(&[][..], Vec::as_slice) {
+                    if term.lane < source_lane_count(term.source_index) {
+                        visit(term.factor, term.source_index, term.lane);
+                    }
+                }
+            }
+        }
+    }
+
     #[inline]
     pub(crate) fn resolve_lane(&self, lane: usize) -> PreparedLinearLane<'_, E> {
         let kind = match &self.lane_weights {
@@ -124,26 +116,21 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 .copied()
                 .map(PreparedLinearLaneKind::Dense)
                 .unwrap_or(PreparedLinearLaneKind::Zero),
-            PreparedLaneWeights::Packing(packing) => {
-                let Some(segment) = packing
-                    .lane_to_segment
-                    .get(lane)
-                    .and_then(|segment| *segment)
-                    .and_then(|segment| packing.segments.get(segment.get() - 1))
-                else {
-                    return PreparedLinearLane {
-                        kind: PreparedLinearLaneKind::Zero,
-                    };
-                };
-                let Some((factor, values)) =
-                    packing_segment_values(segment, &self.sources, lane, self.coeff_count)
-                else {
-                    return PreparedLinearLane {
-                        kind: PreparedLinearLaneKind::Zero,
-                    };
-                };
-                PreparedLinearLaneKind::Packing { factor, values }
-            }
+            PreparedLaneWeights::Packing(packing) => packing
+                .source_lane(lane)
+                .and_then(|(segment, source_lane)| {
+                    let start = source_lane * self.coeff_count;
+                    let values = self
+                        .sources
+                        .get(segment.source_index)?
+                        .values
+                        .get(start..start + self.coeff_count)?;
+                    Some(PreparedLinearLaneKind::Packing {
+                        factor: segment.factor,
+                        values,
+                    })
+                })
+                .unwrap_or(PreparedLinearLaneKind::Zero),
             PreparedLaneWeights::Sparse(lane_terms) => lane_terms
                 .get(lane)
                 .filter(|terms| !terms.is_empty())
