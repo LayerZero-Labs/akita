@@ -17,9 +17,12 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 keccak = { version = "0.1.6", features = ["asm"] }
+num-bigint = { version = "0.5.1", optional = true }
+shake = { version = "0.1.0", optional = true }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
 [dev-dependencies]
+criterion = "0.8"
 shake = "0.1.0"
 
 [features]
@@ -28,6 +31,12 @@ transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+labinius-challenges = ["dep:num-bigint", "dep:shake"]
+
+[[bench]]
+name = "binary_challenge"
+harness = false
+required-features = ["labinius-challenges"]
 
 [lints]
 workspace = true
