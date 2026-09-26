@@ -741,6 +741,13 @@ mod tests {
             max_rank: 1,
             search_cap: Some(4),
             profile: InfinityWidthProfile::LatticeEstimatorParity,
+            explicit_origins: Some(vec![
+                akita_sis_estimator::width_table::InfinityWidthOrigin {
+                    modulus_profile: AkitaModulusProfileId::Q32Offset99,
+                    d: 64,
+                    coeff_linf_bound: 2,
+                },
+            ]),
             ..InfinityWidthTableConfig::default()
         };
         let work = infinity_width_work_items(&config).unwrap();

@@ -191,6 +191,16 @@ pub fn akita_q64() -> BigUint {
     (BigUint::one() << 64usize) - BigUint::from(59u32)
 }
 
+/// LaBinius coefficient prime `2^64 - 23703`.
+///
+/// This exact modulus is exposed only through the offline estimator until a
+/// binary root protocol and its schedule admission exist.
+#[must_use]
+#[cfg(feature = "labinius-sis")]
+pub fn labinius_q64() -> BigUint {
+    (BigUint::one() << 64usize) - BigUint::from(23_703u32)
+}
+
 /// Representative modulus for Akita q128 tables:
 /// `2^128 - (2^32 - 22537)`.
 #[must_use]
@@ -268,6 +278,8 @@ mod tests {
     fn representative_moduli_match_golden_families() {
         assert_eq!(akita_q32(), BigUint::from(4_294_967_197u64));
         assert_eq!(akita_q64(), BigUint::from(u64::MAX) - BigUint::from(58u32));
+        #[cfg(feature = "labinius-sis")]
+        assert_eq!(labinius_q64(), BigUint::from(18_446_744_073_709_527_913u64));
         assert_eq!(
             akita_q128().to_string(),
             "340282366920938463463374607427473266697"

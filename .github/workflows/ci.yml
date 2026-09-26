@@ -95,6 +95,22 @@ jobs:
       - name: Clippy trinomial bridge and benchmarks
         run: cargo clippy -p akita-types -p akita-cpu-backend --lib --benches --no-default-features --features labinius-trinomial,transcript-blake2b -- -D warnings
 
+
+  labinius-binary:
+    name: LaBinius binary arithmetic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: clippy
+      - name: Test algebra without the extension
+        run: cargo test -p akita-algebra --lib --no-default-features
+      - name: Test binary arithmetic
+        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary binary
+      - name: Lint binary arithmetic and benchmarks
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary -- -D warnings
+
   machete:
     name: Unused dependencies
     runs-on: ubuntu-latest
@@ -299,6 +315,40 @@ jobs:
           --features parallel,${{ matrix.backend }}
           --
           --test-threads=1
+
+  test-labinius-sis:
+    name: LaBinius SIS foundations
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: clippy
+      - name: Test opt-in source bounds and certified table
+        run: |
+          cargo test -p akita-types --lib --no-default-features --features labinius-sis,transcript-blake2b sis::labinius
+          cargo test -p akita-sis-estimator --lib --test labinius_width_table --no-default-features --features labinius-sis
+          cargo test -p akita-sis-estimator --example labinius_infinity_width_table --no-default-features --features labinius-sis
+      - name: Check opt-in estimator targets
+        run: cargo clippy -p akita-types -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-blake2b -- -D warnings
+
+  test-labinius-challenges:
+    name: LaBinius challenge families (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        backend: [transcript-blake2b, transcript-keccak]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: clippy
+      - name: Test opt-in binary families
+        run: cargo test -p akita-challenges --lib --no-default-features --features labinius-challenges,${{ matrix.backend }}
+      - name: Check opt-in challenge targets
+        run: cargo clippy -p akita-challenges --all-targets --no-default-features --features labinius-challenges,${{ matrix.backend }} -- -D warnings
 
   test-timing:
     name: Test timing
