@@ -1,10 +1,11 @@
 use super::*;
 use jolt_field::WithCommitAccumulator;
 
-/// Destination coefficients per register tile. Four `Fp128` tile sums take
-/// eight SSE2 or NEON registers or four AVX2 registers, leaving room for the
-/// window loads.
-const TILE: usize = 4;
+/// Shifts summed per destination pass. Each pass streams the destination
+/// once and reads one contiguous window per shift, so a batch of `n` shifts
+/// costs `⌊n / GROUP⌋` destination read-modify-writes plus at most three for
+/// the remainder, instead of `n`.
+const GROUP: usize = 8;
 
 /// Every negacyclic shift of one ring element, prepared for batched
 /// accumulation into wide destinations.
@@ -13,8 +14,9 @@ const TILE: usize = 4;
 /// `[-a_0, …, -a_{D-1}, a_0, …, a_{D-1}]`, so coefficient `j` of `a · X^k` is
 /// entry `D + j - k` for every `k < D`. A batch of shifts into one
 /// destination then reads each shift as a contiguous window of half-width
-/// lanes, sums the batch in registers, and writes each destination tile
-/// once, instead of one full read-modify-write of the destination per shift.
+/// lanes and sums up to eight of them per destination coefficient before
+/// writing it back, instead of one full read-modify-write of the destination
+/// per shift.
 /// Loading costs two lane splits per coefficient, so a load pays off when the
 /// element is accumulated into several destinations or with several shifts.
 #[derive(Debug, Clone)]
@@ -24,7 +26,6 @@ pub struct NegacyclicShiftWindows<F: WithCommitAccumulator, const D: usize> {
 
 impl<F: WithCommitAccumulator, const D: usize> Default for NegacyclicShiftWindows<F, D> {
     fn default() -> Self {
-        const { assert!(D.is_multiple_of(TILE)) };
         Self {
             lanes: vec![F::CommitLanes::default(); 2 * D],
         }
@@ -62,8 +63,8 @@ impl<F: WithCommitAccumulator, const D: usize> NegacyclicShiftWindows<F, D> {
         self.accumulate_shifts_into_portable(dst, shifts);
     }
 
-    /// Baseline x86-64 widens `u16` lanes with SSE2 unpacks; AVX2 widens and
-    /// adds a full tile row per instruction pair.
+    /// Baseline x86-64 widens `u16` lanes with SSE2 unpacks; AVX2 widens
+    /// eight lanes per `vpmovzxwd`.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn accumulate_shifts_into_avx2(
@@ -81,17 +82,43 @@ impl<F: WithCommitAccumulator, const D: usize> NegacyclicShiftWindows<F, D> {
         shifts: &[usize],
     ) {
         debug_assert!(shifts.iter().all(|&shift| shift < D));
-        for (tile, out) in dst.coeffs.chunks_exact_mut(TILE).enumerate() {
-            let base = D + tile * TILE;
-            let mut sums = [F::Wide::zero(); TILE];
-            for &shift in shifts {
-                for (sum, &lanes) in sums.iter_mut().zip(&self.lanes[base - shift..][..TILE]) {
-                    F::add_commit_lanes(sum, lanes);
-                }
-            }
-            for (out, sum) in out.iter_mut().zip(sums) {
-                *out += sum;
-            }
+        // Flat lanes widen and add one vector at a time; per-coefficient lane
+        // structs would make the vectorizer shuffle lanes across coefficients.
+        let lanes = F::flatten_commit_lanes(&self.lanes);
+        let out = F::flatten_wide_mut(&mut dst.coeffs);
+        let len = out.len();
+        let width = len / D;
+        let window = |shift: usize| &lanes[(D - shift) * width..][..len];
+        let mut rest = shifts;
+        while let Some((group, tail)) = rest.split_first_chunk::<GROUP>() {
+            add_windows(out, group.map(window));
+            rest = tail;
         }
+        // The remainder is below `GROUP`, so at most one pass of each
+        // smaller power of two covers it.
+        if let Some((group, tail)) = rest.split_first_chunk::<4>() {
+            add_windows(out, group.map(window));
+            rest = tail;
+        }
+        if let Some((group, tail)) = rest.split_first_chunk::<2>() {
+            add_windows(out, group.map(window));
+            rest = tail;
+        }
+        if let Some((group, _)) = rest.split_first_chunk::<1>() {
+            add_windows(out, group.map(window));
+        }
+    }
+}
+
+/// `out[i] += Σ_w w[i]` over `G` lane windows as long as `out`.
+#[inline(always)]
+fn add_windows<const G: usize>(out: &mut [i32], windows: [&[u16]; G]) {
+    let windows = windows.map(|window| &window[..out.len()]);
+    for (i, out) in out.iter_mut().enumerate() {
+        let mut sum = *out;
+        for window in &windows {
+            sum += i32::from(window[i]);
+        }
+        *out = sum;
     }
 }

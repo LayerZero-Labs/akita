@@ -428,7 +428,7 @@ where
     for src in [CyclotomicRing::<F, D>::random(&mut rng), edge] {
         windows.load(&src);
         let wide_src = WideCyclotomicRing::<F::Wide, D>::from_ring(&src);
-        for batch in [0, 1, 3, 11, 2 * D] {
+        for batch in [0, 1, 3, 7, 11, 2 * D] {
             let initial = CyclotomicRing::<F, D>::random(&mut rng);
             let shifts: Vec<usize> = (0..batch)
                 .map(|_| (rng.next_u64() % D as u64) as usize)
