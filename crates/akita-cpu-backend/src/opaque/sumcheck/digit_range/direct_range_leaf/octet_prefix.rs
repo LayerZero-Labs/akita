@@ -24,6 +24,8 @@ use super::*;
 pub(super) const OCTET_PREFIX_ROUNDS: usize = 4;
 /// Octet pairs per tile of the class-weight histogram.
 const HISTOGRAM_TILE_PAIRS: usize = 1 << 11;
+/// Octet classes per chunk of the parallel class-table merge.
+const HISTOGRAM_MERGE_CLASSES: usize = 1 << 10;
 /// Octet classes per round-2 accumulation chunk.
 const ROUND2_CLASS_CHUNK: usize = 1 << 12;
 
@@ -137,6 +139,9 @@ fn little_endian_word(bytes: &[u8]) -> u64 {
 /// Sum the round-3 equality weight `e_first[p & mask] * e_second[p >> bits]`
 /// of every live octet pair `p` into the classes of its even (`[0]`) and odd
 /// (`[1]`) octets.
+///
+/// A class table is megabytes wide, so each of a few tasks fills one table
+/// over a contiguous run of tiles, and the tables are then summed per class.
 fn octet_pair_class_weights<E: Field>(
     reader: &OctetClassReader<'_>,
     live_pairs: usize,
@@ -146,36 +151,61 @@ fn octet_pair_class_weights<E: Field>(
     let num_classes = 1usize << (8 * reader.class_bits);
     let first_mask = e_first.len() - 1;
     let first_bits = e_first.len().trailing_zeros();
-    cfg_fold_reduce!(
-        0..live_pairs.div_ceil(HISTOGRAM_TILE_PAIRS),
-        || vec![[E::zero(); 2]; num_classes],
-        |mut weights, tile| {
-            let start = tile * HISTOGRAM_TILE_PAIRS;
-            let end = (start + HISTOGRAM_TILE_PAIRS).min(live_pairs);
-            let classes = reader.classes(2 * start..2 * end);
-            for (pair, classes) in (start..end).zip(classes.chunks_exact(2)) {
-                let (even, odd) = (usize::from(classes[0]), usize::from(classes[1]));
-                if even | odd == 0 {
-                    continue;
-                }
-                let weight = e_first[pair & first_mask] * e_second[pair >> first_bits];
-                if even != 0 {
-                    weights[even][0] += weight;
-                }
-                if odd != 0 {
-                    weights[odd][1] += weight;
+    let tiles = live_pairs.div_ceil(HISTOGRAM_TILE_PAIRS);
+    let tiles_per_task = tiles.div_ceil(histogram_tasks()).max(1);
+    let mut tables: Vec<Vec<[E; 2]>> = cfg_into_iter!(0..tiles.div_ceil(tiles_per_task))
+        .map(|task| {
+            let mut weights = vec![[E::zero(); 2]; num_classes];
+            for tile in task * tiles_per_task..((task + 1) * tiles_per_task).min(tiles) {
+                let start = tile * HISTOGRAM_TILE_PAIRS;
+                let end = (start + HISTOGRAM_TILE_PAIRS).min(live_pairs);
+                let classes = reader.classes(2 * start..2 * end);
+                for (pair, classes) in (start..end).zip(classes.chunks_exact(2)) {
+                    let (even, odd) = (usize::from(classes[0]), usize::from(classes[1]));
+                    if even | odd == 0 {
+                        continue;
+                    }
+                    let weight = e_first[pair & first_mask] * e_second[pair >> first_bits];
+                    if even != 0 {
+                        weights[even][0] += weight;
+                    }
+                    if odd != 0 {
+                        weights[odd][1] += weight;
+                    }
                 }
             }
             weights
-        },
-        |mut left, right| {
-            for (left, right) in left.iter_mut().zip(right) {
-                left[0] += right[0];
-                left[1] += right[1];
+        })
+        .collect();
+    let Some((totals, rest)) = tables.split_first_mut() else {
+        return vec![[E::zero(); 2]; num_classes];
+    };
+    cfg_chunks_mut!(totals, HISTOGRAM_MERGE_CLASSES)
+        .enumerate()
+        .for_each(|(chunk, totals)| {
+            let first = chunk * HISTOGRAM_MERGE_CLASSES;
+            for table in rest.iter() {
+                for (total, weight) in totals.iter_mut().zip(&table[first..]) {
+                    total[0] += weight[0];
+                    total[1] += weight[1];
+                }
             }
-            left
-        }
-    )
+        });
+    tables.swap_remove(0)
+}
+
+/// Class-table tasks: enough for load balance across uneven cores, few enough
+/// that zeroing and merging the tables stays small beside the scan.
+#[inline]
+fn histogram_tasks() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        2 * rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1
+    }
 }
 
 /// Quad-class weights for rounds 0 and 1.
