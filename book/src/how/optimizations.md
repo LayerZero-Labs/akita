@@ -128,7 +128,17 @@ retained CPU choices are:
 * Bucketed sweep. Entries are grouped by active matrix column, then every
   matrix row is scanned once.
 * Merge sweep. Sorted block cursors are advanced while a bounded group of
-  active columns is widened once.
+  active columns is loaded once.
+
+Both sweeps load a matrix entry `a` as `NegacyclicShiftWindows`: the canonical
+16-bit lanes of `[-a, a]`, so coefficient `j` of `a * X^k` is entry
+`D + j - k`. When a ring holds several one-hot rows (`K < D`), one block adds
+several shifts of the same entry. The windows sum all of them in a register
+tile of destination coefficients and write each tile once, instead of
+updating the whole wide destination once per shift. Each shift adds a value
+below `2^16` to each signed 32-bit lane, so the field's commit accumulation
+budget bounds the shifts between reductions. On x86-64 the kernel dispatches
+at runtime to an AVX2 build of the same loop.
 
 Both sweeps consume the same flat sparse entries and produce the same rows.
 The private selector uses total block count, active column count, and worker

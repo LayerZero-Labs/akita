@@ -185,9 +185,7 @@ fn production_selector_has_measured_regions_and_explicit_boundaries() {
 
 #[test]
 fn retained_sweeps_handle_oversized_and_empty_blocks() {
-    use super::super::column_sweep::{
-        bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile, MERGE_COL_CHUNK,
-    };
+    use super::super::column_sweep::{bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile};
 
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -208,13 +206,17 @@ fn retained_sweeps_handle_oversized_and_empty_blocks() {
     let small = (0..97)
         .map(|pos| block_entry(pos * 11, pos % D))
         .collect::<Vec<_>>();
-    let blocks = super::super::test_helpers::from_buckets(vec![big, small, Vec::new()]);
+    // Several shifts per column, as when a ring packs multiple one-hot rows,
+    // with enough runs to cross the accumulation budget between runs.
+    let runs = (0..F::MAX_COMMIT_ACCUMULATIONS / 5 + 3)
+        .flat_map(|pos| (0..7).map(move |shift| block_entry(pos, (pos + 9 * shift) % D)))
+        .collect::<Vec<_>>();
+    let blocks = super::super::test_helpers::from_buckets(vec![big, small, Vec::new(), runs]);
     let views = (0..blocks.num_live_blocks())
         .map(|block| blocks.block(block))
         .collect::<Vec<_>>();
 
-    let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
-    let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1, &mut chunk_buf);
+    let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1);
     let direct = direct_sweep_tile(&a_view, &views, 1);
     let bucketed = bucketed_sweep_tile(&a_view, &views, n_a, active_a_cols, 1);
     assert_eq!(merge, direct);
@@ -317,6 +319,7 @@ fn benchmark_production_sweep_matrix() {
     benchmark_sweep_case::<64>("large_group4", 256, 64, 512, 4, 1);
     benchmark_sweep_case::<128>("equal_group2", 128, 64, 256, 2, 1);
     benchmark_sweep_case::<256>("k_lt_d_group4", 64, 64, 128, 4, 1);
+    benchmark_sweep_case::<512>("jolt_trace_k16", 16, 64, 64, 4, 3);
     benchmark_sweep_case::<256>("equal_group8", 256, 64, 128, 8, 1);
     benchmark_sweep_case::<64>("wide_group29", 256, 64, 64, 29, 1);
     benchmark_sweep_case::<64>("dense_columns", 64, 4096, 64, 4, 1);
