@@ -100,10 +100,10 @@ pub use layout::{
     PrecommittedGroupAdmissionPolicy, RelationAddressGeometry, RelationGroupRows,
     RelationRhsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
     RingMatrixView, RingOpeningPoint, RingRole, RoleParams, SetupMatrixCapacity, SetupPrefixSlotId,
-    SetupProjectionGeometry, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE, SUPPORTED_CHALLENGE_RING_DIMS,
-    SUPPORTED_COMMITMENT_RING_DIMS,
+    SetupProjectionGeometry, SubringCoefficientPackingGeometry, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use native_eor::{
     native_eor_prover_final_claims, native_eor_prover_prefix, native_eor_verifier_final_claims,
@@ -207,7 +207,6 @@ pub use subring_coefficient_packing::coefficient_packing_partials;
 pub use subring_coefficient_packing::{
     coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
     CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

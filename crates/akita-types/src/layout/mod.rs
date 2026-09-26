@@ -23,6 +23,7 @@ pub mod ring_dims;
 pub mod setup_envelope;
 pub mod setup_prefix_slots;
 pub mod setup_projection;
+pub mod subring_packing_geometry;
 pub mod tail_segments;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
@@ -74,6 +75,7 @@ pub use setup_prefix_slots::{
     SetupPrefixSlotId, SETUP_PREFIX_CONTENT_TAG,
 };
 pub use setup_projection::SetupProjectionGeometry;
+pub use subring_packing_geometry::SubringCoefficientPackingGeometry;
 pub use tail_segments::{
     terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalResponseShape,

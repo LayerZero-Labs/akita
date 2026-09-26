@@ -349,7 +349,7 @@ chapter shows the full coefficient grid and the current packed proof relation.
 | How are base values lifted into an extension? | `jolt_field::ExtField` and the Solinas extension implementations |
 | Which field and extension does a preset use? | `crates/akita-config/src/proof_optimized/` |
 | Which ring dimensions may a preset schedule use? | The `A_RING_DIMENSIONS`, `B_RING_DIMENSIONS`, and `D_RING_DIMENSIONS` declarations in each preset |
-| How is subring coefficient packing validated? | `crates/akita-types/src/subring_coefficient_packing.rs` |
+| How is subring coefficient packing validated? | `crates/akita-types/src/layout/subring_packing_geometry.rs` and `crates/akita-types/src/subring_coefficient_packing.rs` |
 | How are subfield embeddings and traces checked? | `crates/akita-types/src/field_reduction.rs` |
 
 A review should check that all representations agree on four facts. The prime

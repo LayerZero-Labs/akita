@@ -1,4 +1,4 @@
-use super::SubringCoefficientPackingGeometry;
+use crate::layout::subring_packing_geometry::SubringCoefficientPackingGeometry;
 use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
 use jolt_field::{ExtField, Field, Ring};
