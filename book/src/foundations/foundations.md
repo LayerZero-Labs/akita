@@ -158,7 +158,6 @@ The main implementation owners are:
 | --- | --- |
 | Prime fields, extension fields, packed values, and field kernels | external `jolt-field` |
 | Cyclotomic rings, NTTs, modules, and gadget decomposition | `akita-algebra` |
-| Multilinear polynomial views shared by proof code | `akita-witness` |
 | Generic sumcheck proof types and drivers | `akita-sumcheck` |
 | Transcript construction and challenge sampling | `akita-transcript` and `akita-challenges` |
 | SIS parameters, commitments, proof shapes, and schedules | `akita-types` |

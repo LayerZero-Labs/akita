@@ -343,13 +343,14 @@ where
     Ok(())
 }
 
-/// Resolve the frozen commit params of one root commitment and admit its sources.
+/// Resolve the frozen commit params of one root commitment and admit its
+/// sources, returning the producer contract that admitted them.
 pub(crate) fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
     context: GroupContext<'_>,
-) -> Result<GroupCommitPhaseParams, AkitaError>
+) -> Result<(GroupCommitPhaseParams, CommittedSourceContract), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding,
@@ -416,7 +417,7 @@ where
         contract,
     )?;
 
-    Ok(commit_params)
+    Ok((commit_params, contract))
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -446,7 +447,7 @@ where
     SP: CommitmentStatePolicy<Cfg::Field>,
 {
     executor.validate_setup(expanded)?;
-    let commit_params = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
+    let (commit_params, _) = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
     let execution_plan = CommitmentExecutionPlan::for_root(&commit_params)?;
     let source_refs: Vec<&dyn CommitmentSource<Cfg::Field>> = polys
         .iter()

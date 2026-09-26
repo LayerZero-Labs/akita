@@ -5,6 +5,7 @@ pub mod cyclotomic;
 pub mod eval;
 mod ifma52;
 mod residue;
+#[cfg(feature = "labinius-trinomial")]
 pub mod trinomial;
 
 pub use crt_ntt_repr::{
@@ -16,13 +17,12 @@ pub use cyclotomic::{
     balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing, WideCyclotomicRing,
 };
 pub use eval::{
-    eval_flat_ring_at_pows, eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows,
-    eval_ring_at_pows_fast, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
+    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, evaluate_power_sequence_mle,
+    scalar_powers, scalar_powers_with_stride,
 };
 pub use ifma52::{Ifma52NttMatrix, Ifma52Params};
-pub use residue::{
-    residue_kernel, sparse_residue_kernel, terminal_residue_kernel, ResidueKernelPoint,
-};
+pub use residue::{residue_kernel, terminal_residue_kernel, ResidueKernelPoint};
+#[cfg(feature = "labinius-trinomial")]
 pub use trinomial::{
     embed_scalar, pack_scalar_components, unpack_scalar_components, MinusTrinomial, PlusTrinomial,
     TrinomialError, TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,

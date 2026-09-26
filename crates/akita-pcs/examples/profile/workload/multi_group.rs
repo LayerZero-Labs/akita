@@ -1,18 +1,17 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, random_claim_point,
+    onehot_lagrange_opening, proof_size_budgets, random_claim_point,
     report_proof_size_against_planner, run_verifier_timings,
 };
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
+    emit_native_proof_tail_report, emit_runtime_schedule_summary, print_native_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
@@ -23,22 +22,13 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-fn materialize_schedule_setup_prefix_slots<Cfg>(
-    setup: &mut AkitaProverSetup<Cfg::Field>,
-    backend: &CpuBackend<Cfg>,
+fn materialize_schedule_setup_prefix_slots<F, E>(
+    setup: &mut AkitaProverSetup<F>,
+    backend: &CpuBackend<F, E>,
     schedule: &FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    Cfg: CommitmentConfig,
-    Cfg::Field: Field
-        + CanonicalEncoding
-        + akita_serialization::AkitaSerialize
-        + Ring
-        + Unreduced
-        + WithCommitAccumulator
-        + Valid
-        + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
     let ids = schedule
         .recursive_folds
@@ -47,7 +37,7 @@ where
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
         .filter(|id| setup.prefix_slots.get(id).is_none())
         .collect::<Vec<_>>();
-    let artifacts = backend.export_setup_prefixes::<Cfg::Field>(&ids)?;
+    let artifacts = backend.export_setup_prefixes(&ids)?;
     for (_, slot) in artifacts.iter() {
         setup.prefix_slots.insert(slot.clone())?;
     }
@@ -216,8 +206,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend =
-            CpuBackend::<ProofCfg>::new(setup.expanded.clone(), proof_scheme.schedules()).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
@@ -271,6 +260,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 private_handle: hint,
             } = backend
                 .commit(
+                    proof_scheme.schedules(),
                     &source,
                     akita_cpu_backend::GroupContext::explicit(&pre_descriptor),
                 )
@@ -304,6 +294,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             private_handle: final_hint,
         } = backend
             .commit(
+                proof_scheme.schedules(),
                 &source,
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
@@ -332,7 +323,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
         let t_prove = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -352,7 +342,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 &setup,
                 prover_data,
                 &backend,
-                &mut prover_transcript,
+                b"profile",
                 BasisMode::Lagrange,
             )
             .expect("multi-group prove");
@@ -373,22 +363,16 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
     };
 
-    assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
+    assert_observed_proof_size(label, &proof);
     let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
         .expect("profile grinding plan");
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
-        label,
-        &proof,
-        Some(&schedule),
-        &grinding_plan,
-    );
+    print_native_proof_summary(label, &proof, &schedule, &grinding_plan);
     report_proof_size_against_planner(
         label,
         &proof,
-        planned_payload_bytes::<ProofCfg>(&schedule, final_group),
+        proof_size_budgets::<ProofCfg>(&schedule, final_group),
         "planned",
         setup_contribution_mode,
-        &schedule,
     );
     emit_runtime_schedule_summary(
         label,
@@ -398,12 +382,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         Cfg::EXT_DEGREE,
     )
     .expect("runtime schedule report geometry");
-    emit_proof_tail_report::<FF, Cfg::ExtField>(
-        label,
-        &proof,
-        &schedule,
-        Cfg::decomposition().field_bits(),
-    );
+    emit_native_proof_tail_report(label, &schedule, Cfg::decomposition().field_bits());
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -449,11 +428,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .expect("verifier statement")
     };
     let verify = |statement| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         proof_scheme.batched_verify(
             &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"profile",
             statement,
             BasisMode::Lagrange,
         )

@@ -73,16 +73,6 @@ class TestLoadMap(unittest.TestCase):
             )
         )
 
-    def test_witness_region(self) -> None:
-        regions = mod.load_map()
-        witness = next(r for r in regions if r["id"] == "witness-polyops")
-        self.assertTrue(
-            mod.path_matches_glob(
-                "crates/akita-witness/src/lib.rs",
-                witness["code"][0],
-            )
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,7 @@ use jolt_field::{CanonicalEncoding, Field, PseudoMersenne};
 
 mod fields;
 
+#[cfg(feature = "labinius-trinomial")]
 pub use fields::{
     Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, PRIME64_OFFSET_23703_MODULUS,
 };

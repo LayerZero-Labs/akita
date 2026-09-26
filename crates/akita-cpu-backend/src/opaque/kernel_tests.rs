@@ -15,7 +15,7 @@ struct RecordingBatch {
     centered: Vec<[i32; D]>,
 }
 
-impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend {
+impl OpeningBatchKernel<RecordingBatch, F, D> for CpuBackend<F, F> {
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -88,7 +88,7 @@ fn fold_endpoint_probe(
     )
     .unwrap();
     FoldResponseKernel::probe(
-        &CpuBackend::for_arithmetic_tests(),
+        &CpuBackend::<F, F>::for_arithmetic_tests(),
         None,
         RecordingBatch { centered },
         &plan,
@@ -153,7 +153,7 @@ fn chunked_probe_dispatches_and_traverses_once() {
         )
         .unwrap();
         let outcome = FoldResponseKernel::probe(
-            &CpuBackend::for_arithmetic_tests(),
+            &CpuBackend::<F, F>::for_arithmetic_tests(),
             None,
             RecordingBatch {
                 centered: Vec::new(),
@@ -208,7 +208,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
     )
     .unwrap();
     let outcome = FoldResponseKernel::probe(
-        &CpuBackend::for_arithmetic_tests(),
+        &CpuBackend::<F, F>::for_arithmetic_tests(),
         None,
         RecordingBatch {
             centered: vec![[20; D], [-20; D]],
@@ -232,7 +232,7 @@ fn chunk_aggregation_sums_exactly_and_accepts_empty_chunks() {
 
 #[test]
 fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let proof = backend.owner().begin_test_scope(vec![2, 1]).unwrap();
     let session =
         crate::opaque::CpuProofSessionHandle::new(std::sync::Arc::clone(backend.owner()), proof);
@@ -253,7 +253,7 @@ fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
     assert!(opening
         .validate_lineage(&opening.for_level_operation(1, opening.operation_id()))
         .is_err());
-    let foreign = CpuBackend::for_arithmetic_tests();
+    let foreign = CpuBackend::<F, F>::for_arithmetic_tests();
     assert!(foreign.validate_binding(&opening).is_err());
     let independent = backend.owner().begin_test_scope(vec![2, 1]).unwrap();
     let independent_session = crate::opaque::CpuProofSessionHandle::new(
@@ -281,7 +281,7 @@ fn opening_bindings_reject_foreign_scopes_levels_groups_and_computations() {
 #[test]
 fn accepted_fold_rejects_substituted_challenges_and_opening_computation() {
     let _guard = RECORDING_LOCK.lock().unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let proof = backend.owner().begin_test_scope(vec![1]).unwrap();
     let session =
         crate::opaque::CpuProofSessionHandle::new(std::sync::Arc::clone(backend.owner()), proof);

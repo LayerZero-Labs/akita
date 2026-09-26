@@ -8,8 +8,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
 
     let scheme = workspace_scheme::<DenseGroupCfg>().expect("workspace schedule artifact");
     let setup = scheme.setup_prover(NUM_VARS, 1).expect("dense group setup");
-    let stack = CpuBackend::<DenseGroupCfg>::new(setup.expanded.clone(), scheme.schedules())
-        .expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((3 * index + 7) as u64))
@@ -21,6 +20,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
         private_handle: _hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )

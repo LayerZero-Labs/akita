@@ -955,13 +955,8 @@ fn bucketed_high_rows_plan(
     }
     let split_low_bits = split_bits / 2;
     let split_high_bits = split_bits - split_low_bits;
-    let split_entries = 1usize
-        .checked_shl(split_low_bits as u32)
-        .and_then(|low| {
-            1usize
-                .checked_shl(split_high_bits as u32)
-                .and_then(|high| low.checked_add(high))
-        })
+    let split_entries = checked::pow2(split_low_bits)
+        .and_then(|low| checked::pow2(split_high_bits).and_then(|high| low.checked_add(high)))
         .ok_or_else(|| AkitaError::InvalidInput("affine split table work overflow".into()))?;
     let fallback_work = total_rows
         .checked_mul(carry_count)

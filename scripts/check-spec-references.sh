@@ -170,6 +170,8 @@ live_specs=(
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md
   specs/transcript-grinding.md
+  specs/grinding-nonce-encoding.md
+  specs/family-agnostic-cpu-backend.md
 )
 
 missing_live=()

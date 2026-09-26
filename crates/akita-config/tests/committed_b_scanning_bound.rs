@@ -126,7 +126,6 @@ fn committed_b_rejects_the_honest_alphabet_bound() {
 fn committed_b_scanning_bound_changes_the_required_rank() {
     let (profiles, schedule) = differing_basis_schedule::<fp32::OneHot>(19, 3);
     let matrix = schedule.root.params.outer().matrix;
-    assert_eq!(schedule.root.params.d_a(), 512);
     assert_eq!(matrix.ring_dimension(), 128);
     assert_eq!(matrix.input_width(), 4096);
     assert_eq!(matrix.output_rank(), 1);

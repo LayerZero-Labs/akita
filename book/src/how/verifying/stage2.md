@@ -45,10 +45,8 @@ The terms have separate owners:
 - `CompressionRelationWeights` and `NegativeBinarySupport` evaluate the F and
   H compression relations and their digit constraints.
 - `PreparedEvaluationTrace` evaluates an evaluation trace opening.
-- `CoefficientPackingRelationEvents` evaluates the packed E and Q relation
-  events at the checked physical coefficient blocks.
-- `CoefficientPackingStage2Terms` evaluates the packing Z and direct-opening
-  structured linear terms.
+- `CoefficientPackingCompactFactors` evaluates the packed E and Q relation
+  weights and the packing Z and direct-opening structured terms.
 
 If `eta` is zero, the verifier skips the range equality evaluation. This is an
 arithmetic shortcut only. The transcript and proof shape do not change.
@@ -73,8 +71,8 @@ w(r)\widetilde M_{native}(\tau_1,r).
 ```
 
 The previous chapter explains `M`. Direct setup mode reads the public setup
-during this evaluation. Deferred setup mode substitutes the Stage 3 setup claim
-and caches the exact `SetupContributionPlan` for Stage 3.
+during this evaluation. Deferred setup mode substitutes the Stage 3 setup claim;
+Stage 3 then prepares its setup-index weight from the same challenge point.
 
 Compressed F and H rows are evaluated separately because their digit support
 and native dimensions differ from the ordinary A, B, and D roles. Their result
@@ -94,15 +92,17 @@ The scheduled method supplies that binding. Evaluation trace uses
 is a virtual row because the verifier evaluates its public tensor formula at
 the final point instead of adding a physical matrix row and quotient digits.
 
-Subring coefficient packing splits its contribution across the common relation
-path and the structured path. `CoefficientPackingRelationEvents` supplies the
-packed E and Q weights to the common relation-weight factorization.
-`CoefficientPackingStage2Terms` supplies the two ordered structured sources:
-packing-Z and direct opening. Their weights come from the block point, tail
-point, extension basis coordinates, and opening digit weights. The packing-Z
-weights do not share the native A row's low alpha factor, so they remain a
-separate factorized term. Every contribution still evaluates the same flat
-witness at the same final point.
+Subring coefficient packing has two contributions: the packed E and Q relation
+weights, and two ordered structured sources, packing-Z and direct opening.
+The prover expands both into explicit tables
+(`CoefficientPackingRelationEvents` and `CoefficientPackingStage2Terms`). The
+verifier never builds those tables. It builds `CoefficientPackingCompactFactors`
+from the same validated packing groups, a small set of tensor families over the
+block point, tail point, extension basis coordinates, and opening digit
+weights, and evaluates them directly at the final point. The packing-Z weights
+do not share the native A row's low alpha factor, so they remain a separate
+factorized term. Every contribution still evaluates the same flat witness at
+the same final point.
 
 ## Why the terms share one point
 
@@ -116,6 +116,8 @@ address split.
 - Stage 2 verifier: `crates/akita-verifier/src/stages/stage2.rs`.
 - Stage 1 verifier: `crates/akita-verifier/src/stages/stage1.rs`.
 - Relation preparation: `crates/akita-verifier/src/protocol/ring_switch.rs`.
+- Coefficient-packing compact factors:
+  `crates/akita-verifier/src/coefficient_packing_relation/`.
 - Evaluation trace: `crates/akita-verifier/src/protocol/evaluation_trace.rs`.
 - Prover stage: `crates/akita-cpu-backend/src/opaque/sumcheck/relation_range_image/`.
 

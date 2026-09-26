@@ -353,7 +353,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_round_compact_dense_polys(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
-    ) -> (UniPoly<E>, UniPoly<E>) {
+    ) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
         let weights = self
             .quotient_weights()
             .expect("factored dense test helper requires quotient weights");

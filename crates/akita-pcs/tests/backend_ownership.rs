@@ -9,7 +9,6 @@ use akita_prover::{
     ProofAdmission, ProofContext, ProofScope, ProofScopeConsumer, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
@@ -24,9 +23,9 @@ const DOMAIN: &[u8] = b"akita/owning-backend-contract";
 
 fn claims(
     commitment: &CommittedGroup<F>,
-    handle: CommitmentHandle<F, F, Cfg>,
+    handle: CommitmentHandle<F, F>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
-) -> SelectedProverOpeningData<'static, F, CommitmentHandle<F, F, Cfg>, F> {
+) -> SelectedProverOpeningData<'static, F, CommitmentHandle<F, F>, F> {
     SelectedProverOpeningData::from_committed_claims::<Cfg>(
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             vec![F::from_u64(2); NV],
@@ -46,8 +45,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
     common::run_on_large_stack(|| {
         let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend =
-            Arc::new(CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap());
+        let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
         let source = backend
             .import_source(vec![DensePoly::from_field_evals(
                 NV,
@@ -57,13 +55,14 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             .unwrap();
         let output = backend
             .commit(
+                scheme.schedules(),
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
         drop(source);
 
-        let foreign = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let foreign = CpuBackend::new(setup.expanded.clone()).unwrap();
         assert!(scheme
             .batched_prove(
                 &setup,
@@ -73,7 +72,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                     scheme.schedules()
                 ),
                 &foreign,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
+                DOMAIN,
                 BasisMode::Lagrange,
             )
             .is_err());
@@ -89,7 +88,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                 &setup,
                 claims(&changed, output.private_handle.clone(), scheme.schedules()),
                 &backend,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
+                DOMAIN,
                 BasisMode::Lagrange,
             )
             .is_err());
@@ -109,13 +108,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
         )
         .unwrap();
         assert!(scheme
-            .batched_prove(
-                &setup,
-                false_claim,
-                &backend,
-                &mut AkitaTranscript::<F>::new(DOMAIN),
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, false_claim, &backend, DOMAIN, BasisMode::Lagrange,)
             .is_err());
 
         // A public statement can arrive over the wire without carrying the
@@ -136,13 +129,7 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             let opening = claims(&decoded, output.private_handle.clone(), scheme.schedules());
             let selection = opening.selection();
             let proof = scheme
-                .batched_prove(
-                    &setup,
-                    opening,
-                    &backend,
-                    &mut AkitaTranscript::<F>::new(DOMAIN),
-                    BasisMode::Lagrange,
-                )
+                .batched_prove(&setup, opening, &backend, DOMAIN, BasisMode::Lagrange)
                 .unwrap();
             let public = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 vec![F::from_u64(2); NV],
@@ -155,14 +142,12 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
                 .batched_verify(
                     &proof,
                     &scheme.setup_verifier(&setup).unwrap(),
-                    &mut AkitaTranscript::<F>::new(DOMAIN),
+                    DOMAIN,
                     GroupBatchStatement::new(selection, public).unwrap(),
                     BasisMode::Lagrange,
                 )
                 .unwrap();
-            let mut bytes = Vec::new();
-            proof.serialize_compressed(&mut bytes).unwrap();
-            bytes
+            proof
         };
         let (first, second) = std::thread::scope(|scope| {
             let a = std::thread::Builder::new()
@@ -185,7 +170,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
     common::run_on_large_stack(|| {
         let scheme = common::load_workspace_scheme::<Cfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         let source = backend
             .import_source(vec![DensePoly::from_field_evals(
                 NV,
@@ -195,6 +180,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             .unwrap();
         let output = backend
             .commit(
+                scheme.schedules(),
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -208,38 +194,41 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             .validate_structure()
             .expect("the altered public plan is structurally valid");
         assert!(matches!(
-            <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
                 &backend,
                 setup.expanded.descriptor(),
+                scheme.schedules(),
                 &absent_schedule,
                 &layout,
             ),
             Err(akita_pcs::AkitaError::UnsupportedSchedule(_)),
         ));
-        let a = <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
+        let a = <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
+            scheme.schedules(),
             schedule,
             &layout,
         )
         .unwrap();
-        let b = <CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
+        let b = <CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
+            scheme.schedules(),
             schedule,
             &layout,
         )
         .unwrap();
         let guard_a = ProofScope::admitted(&backend, a);
         let guard_b = ProofScope::admitted(&backend, b);
-        let context = <CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
+        let context = <CpuBackend<F, F> as ProofAdmission<F, F>>::proof_context(
             &backend,
             guard_a.session(),
             0,
         )
         .unwrap()
         .for_group(0);
-        assert!(<CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
+        assert!(<CpuBackend<F, F> as ProofAdmission<F, F>>::proof_context(
             &backend,
             guard_a.session(),
             u32::MAX
@@ -249,7 +238,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             ProofContext::new(context.backend_id(), [0; 32], context.scope_id(), 0).for_group(0);
         for bad in [wrong_setup, context.for_group(1)] {
             assert!(
-                <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+                <CpuBackend<F, F> as ProofAdmission<F, F>>::validate_commitment(
                     &backend,
                     guard_a.session(),
                     &bad,
@@ -263,7 +252,7 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         let mut changed_profile = *output.committed_group.profile();
         changed_profile.group = PolynomialGroupLayout::new(NV, 2);
         assert!(
-            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
                 guard_a.session(),
                 &context,
@@ -273,9 +262,10 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             )
             .is_err()
         );
-        <CpuBackend<Cfg> as ProofScopeConsumer>::finish_scope(&backend, guard_a.session()).unwrap();
+        <CpuBackend<F, F> as ProofScopeConsumer>::finish_scope(&backend, guard_a.session())
+            .unwrap();
         assert!(
-            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
                 guard_a.session(),
                 &context,
@@ -285,16 +275,17 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
             )
             .is_err()
         );
-        let context_b = <CpuBackend<Cfg> as ProofAdmission<F, F>>::proof_context(
+        let context_b = <CpuBackend<F, F> as ProofAdmission<F, F>>::proof_context(
             &backend,
             guard_b.session(),
             0,
         )
         .unwrap()
         .for_group(0);
-        <CpuBackend<Cfg> as ProofScopeConsumer>::finish_scope(&backend, guard_b.session()).unwrap();
+        <CpuBackend<F, F> as ProofScopeConsumer>::finish_scope(&backend, guard_b.session())
+            .unwrap();
         assert!(
-            <CpuBackend<Cfg> as ProofAdmission<F, F>>::validate_commitment(
+            <CpuBackend<F, F> as ProofAdmission<F, F>>::validate_commitment(
                 &backend,
                 guard_b.session(),
                 &context_b,
@@ -306,9 +297,10 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
         );
         let mut changed_setup = setup.expanded.descriptor().clone();
         changed_setup.setup_seed = [9; 32].into();
-        assert!(<CpuBackend<Cfg> as ProofAdmission<F, F>>::begin_proof(
+        assert!(<CpuBackend<F, F> as ProofAdmission<F, F>>::begin_proof(
             &backend,
             &changed_setup,
+            scheme.schedules(),
             schedule,
             &layout
         )
@@ -324,17 +316,18 @@ fn admission_uses_the_extension_field_owned_by_the_configuration() {
         type SmallE = <SmallCfg as akita_config::CommitmentConfig>::ExtField;
         let scheme = common::load_workspace_scheme::<SmallCfg>().unwrap();
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let backend =
-            CpuBackend::<SmallCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         let key = akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(NV, 1));
         let row = scheme.schedules().resolve_key(&key).unwrap();
-        let session = <CpuBackend<SmallCfg> as ProofAdmission<SmallF, SmallE>>::begin_proof(
+        let session = <CpuBackend<SmallF, SmallE> as ProofAdmission<SmallF, SmallE>>::begin_proof(
             &backend,
             setup.expanded.descriptor(),
+            scheme.schedules(),
             row.schedule(),
             &key.opening_layout().unwrap(),
         )
         .unwrap();
-        <CpuBackend<SmallCfg> as ProofScopeConsumer>::finish_scope(&backend, &session).unwrap();
+        <CpuBackend<SmallF, SmallE> as ProofScopeConsumer>::finish_scope(&backend, &session)
+            .unwrap();
     });
 }
