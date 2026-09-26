@@ -133,7 +133,7 @@ enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
     },
     LiveRings {
         coeffs: &'a [CyclotomicRing<F, D>],
-        params: &'a BalancedDecomposePow2Params,
+        params: &'a BalancedDecomposePow2Params<F>,
     },
     PackedTight {
         digits: PackedSignedDigitView<'a>,
@@ -143,8 +143,10 @@ enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
 }
 
 enum DigitScratch<const D: usize> {
+    None,
     I8(Vec<[i8; D]>),
     I16(Vec<[i16; D]>),
+    Packed([i8; D]),
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
@@ -171,307 +173,137 @@ impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
         }
     }
 
-    fn digit_scratch(&self, num_digits: usize) -> Option<DigitScratch<D>> {
+    fn digit_scratch(&self, num_digits: usize) -> DigitScratch<D> {
         match self {
-            Self::LiveRings { params, .. } => Some(
+            Self::LiveRings { params, .. } => {
                 match SignedDigitKernel::for_log_basis(params.log_basis())
                     .expect("decompose-fold parameters must use a validated signed-digit basis")
                 {
                     SignedDigitKernel::I8 => DigitScratch::I8(vec![[0i8; D]; num_digits]),
                     SignedDigitKernel::I16 => DigitScratch::I16(vec![[0i16; D]; num_digits]),
-                },
-            ),
-            _ => None,
+                }
+            }
+            Self::PackedTight { .. } => DigitScratch::Packed([0i8; D]),
+            Self::Predecomposed { .. } => DigitScratch::None,
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn accumulate_ring(
-        &self,
+    /// Resolve the source once per ring. Cached planes are borrowed directly;
+    /// live and packed sources reuse the tile's scratch across rings.
+    fn digit_planes<'s>(
+        &'s self,
         ring_idx: usize,
-        local_elem_idx: usize,
+        num_digits: usize,
+        scratch: &'s mut DigitScratch<D>,
+    ) -> DigitPlanes<'s, D> {
+        match (self, scratch) {
+            (Self::Predecomposed { digit_planes, .. }, DigitScratch::None) => {
+                let start = ring_idx * num_digits;
+                DigitPlanes::I8(&digit_planes[start..start + num_digits])
+            }
+            (Self::LiveRings { coeffs, params }, DigitScratch::I8(planes)) => {
+                coeffs[ring_idx].balanced_decompose_pow2_i8_into_with_params(planes, params);
+                DigitPlanes::I8(planes)
+            }
+            (Self::LiveRings { coeffs, params }, DigitScratch::I16(planes)) => {
+                coeffs[ring_idx].balanced_decompose_pow2_i16_into(planes, params);
+                DigitPlanes::I16(planes)
+            }
+            (Self::PackedTight { digits, .. }, DigitScratch::Packed(plane)) => {
+                debug_assert_eq!(num_digits, 1);
+                *plane = digits
+                    .decode_array::<D>(ring_idx * D)
+                    .expect("validated packed recursive ring");
+                DigitPlanes::I8(std::slice::from_ref(plane))
+            }
+            _ => unreachable!("source and tile scratch must match"),
+        }
+    }
+}
+
+/// A ring's digit planes, independent of how the source supplied them.
+enum DigitPlanes<'a, const D: usize> {
+    I8(&'a [[i8; D]]),
+    I16(&'a [[i16; D]]),
+}
+
+impl<const D: usize> DigitPlanes<'_, D> {
+    fn accumulate_wide(
+        self,
         acc: &mut [[i32; D]],
         challenge: &SparseChallenge,
         plan: &ChallengePlan<D>,
-        digit_scratch: Option<&mut DigitScratch<D>>,
-        num_digits: usize,
     ) {
-        let dst_base = local_elem_idx * num_digits;
-        match (self, plan) {
-            (Self::Predecomposed { digit_planes, .. }, ChallengePlan::Rotated(rotated)) => {
-                let src_base = ring_idx * num_digits;
-                for digit_idx in 0..num_digits {
-                    accumulate_rotated_digit_plane(
-                        &digit_planes[src_base + digit_idx],
-                        rotated.as_ref(),
-                        &mut acc[dst_base + digit_idx],
-                    );
-                }
-            }
-            (Self::PackedTight { digits, .. }, ChallengePlan::Rotated(rotated)) => {
-                debug_assert_eq!(num_digits, 1);
-                let digit_plane = digits
-                    .decode_array::<D>(ring_idx * D)
-                    .expect("validated packed recursive ring");
-                accumulate_rotated_digit_plane(&digit_plane, rotated.as_ref(), &mut acc[dst_base]);
-            }
-            (Self::PackedTight { digits, .. }, plan) => {
-                debug_assert_eq!(num_digits, 1);
-                let digit_plane = digits
-                    .decode_array::<D>(ring_idx * D)
-                    .expect("validated packed recursive ring");
-                match plan {
-                    ChallengePlan::WidePm1(pm1) => sparse_mul_acc_pm1(
-                        &digit_plane,
-                        &pm1.positive,
-                        &pm1.negative,
-                        &mut acc[dst_base],
-                    ),
-                    ChallengePlan::WideGeneric => {
-                        sparse_mul_acc(&digit_plane, challenge, &mut acc[dst_base]);
-                    }
-                    ChallengePlan::Rotated(_)
-                    | ChallengePlan::NarrowFull(_)
-                    | ChallengePlan::NarrowChunked(_) => unreachable!(),
-                }
-            }
-            (Self::Predecomposed { digit_planes, .. }, plan) => {
-                let src_base = ring_idx * num_digits;
-                for digit_idx in 0..num_digits {
-                    let digit_plane = &digit_planes[src_base + digit_idx];
-                    let digit_acc = &mut acc[dst_base + digit_idx];
-                    match plan {
-                        ChallengePlan::WidePm1(pm1) => {
-                            sparse_mul_acc_pm1(digit_plane, &pm1.positive, &pm1.negative, digit_acc)
-                        }
-                        ChallengePlan::WideGeneric => {
-                            sparse_mul_acc(digit_plane, challenge, digit_acc);
-                        }
-                        ChallengePlan::Rotated(_)
-                        | ChallengePlan::NarrowFull(_)
-                        | ChallengePlan::NarrowChunked(_) => unreachable!(),
-                    }
-                }
-            }
-            (Self::LiveRings { coeffs, params }, ChallengePlan::Rotated(rotated)) => {
-                let acc = &mut acc[dst_base..dst_base + num_digits];
-                match digit_scratch.expect("live rotated path requires signed-digit scratch") {
-                    DigitScratch::I8(digit_buf) => {
-                        coeffs[ring_idx]
-                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
-                        for (digit_plane, digit_acc) in digit_buf.iter().zip(acc) {
-                            accumulate_rotated_digit_plane(
-                                digit_plane,
-                                rotated.as_ref(),
-                                digit_acc,
-                            );
-                        }
-                    }
-                    DigitScratch::I16(digit_buf) => {
-                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
-                        for (digit_plane, digit_acc) in digit_buf.iter().zip(acc) {
-                            accumulate_rotated_digit_plane(
-                                digit_plane,
-                                rotated.as_ref(),
-                                digit_acc,
-                            );
-                        }
-                    }
-                }
-            }
-            (Self::LiveRings { coeffs, params }, plan) => {
-                let base = dst_base;
-                match digit_scratch.expect("live sparse path requires signed-digit scratch") {
-                    DigitScratch::I8(digit_buf) => {
-                        coeffs[ring_idx]
-                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
-                        for digit in 0..num_digits {
-                            match plan {
-                                ChallengePlan::WidePm1(pm1) => sparse_mul_acc_pm1(
-                                    &digit_buf[digit],
-                                    &pm1.positive,
-                                    &pm1.negative,
-                                    &mut acc[base + digit],
-                                ),
-                                ChallengePlan::WideGeneric => sparse_mul_acc(
-                                    &digit_buf[digit],
-                                    challenge,
-                                    &mut acc[base + digit],
-                                ),
-                                ChallengePlan::Rotated(_)
-                                | ChallengePlan::NarrowFull(_)
-                                | ChallengePlan::NarrowChunked(_) => unreachable!(),
-                            }
-                        }
-                    }
-                    DigitScratch::I16(digit_buf) => {
-                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
-                        for digit in 0..num_digits {
-                            match plan {
-                                ChallengePlan::WidePm1(pm1) => sparse_mul_acc_i16_pm1(
-                                    &digit_buf[digit],
-                                    &pm1.positive,
-                                    &pm1.negative,
-                                    &mut acc[base + digit],
-                                ),
-                                ChallengePlan::WideGeneric => sparse_mul_acc_i16(
-                                    &digit_buf[digit],
-                                    challenge,
-                                    &mut acc[base + digit],
-                                ),
-                                ChallengePlan::Rotated(_)
-                                | ChallengePlan::NarrowFull(_)
-                                | ChallengePlan::NarrowChunked(_) => unreachable!(),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn accumulate_ring_narrow(
-        &self,
-        ring_idx: usize,
-        local_elem_idx: usize,
-        acc: &mut [[i16; D]],
-        challenge: &SparseChallenge,
-        digit_scratch: Option<&mut DigitScratch<D>>,
-        num_digits: usize,
-    ) {
-        let dst_base = local_elem_idx * num_digits;
         match self {
-            Self::Predecomposed { digit_planes, .. } => {
-                let src_base = ring_idx * num_digits;
-                for digit_idx in 0..num_digits {
-                    sparse_mul_acc_narrow(
-                        &digit_planes[src_base + digit_idx],
-                        challenge,
-                        &mut acc[dst_base + digit_idx],
-                    );
+            Self::I8(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    match plan {
+                        ChallengePlan::Rotated(rotated) => {
+                            accumulate_rotated_digit_plane(plane, rotated.as_ref(), dst)
+                        }
+                        ChallengePlan::WidePm1(pm1) => {
+                            sparse_mul_acc_pm1(plane, &pm1.positive, &pm1.negative, dst)
+                        }
+                        ChallengePlan::WideGeneric => sparse_mul_acc(plane, challenge, dst),
+                        _ => unreachable!("wide accumulation requires a wide plan"),
+                    }
                 }
             }
-            Self::PackedTight { digits, .. } => {
-                debug_assert_eq!(num_digits, 1);
-                let digit_plane = digits
-                    .decode_array::<D>(ring_idx * D)
-                    .expect("validated packed recursive ring");
-                sparse_mul_acc_narrow(&digit_plane, challenge, &mut acc[dst_base]);
-            }
-            Self::LiveRings { coeffs, params } => {
-                match digit_scratch.expect("live narrow path requires signed-digit scratch") {
-                    DigitScratch::I8(digit_buf) => {
-                        coeffs[ring_idx]
-                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
-                        for digit in 0..num_digits {
-                            sparse_mul_acc_narrow(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[dst_base + digit],
-                            );
+            Self::I16(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    match plan {
+                        ChallengePlan::Rotated(rotated) => {
+                            accumulate_rotated_digit_plane(plane, rotated.as_ref(), dst)
                         }
-                    }
-                    DigitScratch::I16(digit_buf) => {
-                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
-                        for digit in 0..num_digits {
-                            sparse_mul_acc_i16_narrow(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[dst_base + digit],
-                            );
+                        ChallengePlan::WidePm1(pm1) => {
+                            sparse_mul_acc_i16_pm1(plane, &pm1.positive, &pm1.negative, dst)
                         }
+                        ChallengePlan::WideGeneric => sparse_mul_acc_i16(plane, challenge, dst),
+                        _ => unreachable!("wide accumulation requires a wide plan"),
                     }
                 }
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn accumulate_ring_chunked_narrow(
-        &self,
-        ring_idx: usize,
-        local_elem_idx: usize,
-        narrow_acc: &mut [[i16; D]],
-        wide_acc: &mut [[i32; D]],
+    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
+        match self {
+            Self::I8(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    sparse_mul_acc_narrow(plane, challenge, dst);
+                }
+            }
+            Self::I16(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    sparse_mul_acc_i16_narrow(plane, challenge, dst);
+                }
+            }
+        }
+    }
+
+    fn accumulate_chunked_narrow(
+        self,
+        narrow: &mut [[i16; D]],
+        wide: &mut [[i32; D]],
         challenge: &SparseChallenge,
         term_ranges: &[Range<usize>],
-        digit_scratch: Option<&mut DigitScratch<D>>,
-        num_digits: usize,
     ) {
-        let dst_base = local_elem_idx * num_digits;
-        let narrow = &mut narrow_acc[dst_base..dst_base + num_digits];
-        let wide = &mut wide_acc[dst_base..dst_base + num_digits];
-        match self {
-            Self::Predecomposed { digit_planes, .. } => {
-                let src_base = ring_idx * num_digits;
-                for term_range in term_ranges {
-                    let positions = &challenge.positions[term_range.clone()];
-                    let coefficients = &challenge.coeffs[term_range.clone()];
-                    for digit_idx in 0..num_digits {
-                        sparse_mul_acc_narrow_terms(
-                            &digit_planes[src_base + digit_idx],
-                            positions,
-                            coefficients,
-                            &mut narrow[digit_idx],
-                        );
+        for term_range in term_ranges {
+            let positions = &challenge.positions[term_range.clone()];
+            let coefficients = &challenge.coeffs[term_range.clone()];
+            match self {
+                Self::I8(planes) => {
+                    for (plane, dst) in planes.iter().zip(narrow.iter_mut()) {
+                        sparse_mul_acc_narrow_terms(plane, positions, coefficients, dst);
                     }
-                    flush_narrow_accumulator(narrow, wide);
                 }
-            }
-            Self::PackedTight { digits, .. } => {
-                debug_assert_eq!(num_digits, 1);
-                let digit_plane = digits
-                    .decode_array::<D>(ring_idx * D)
-                    .expect("validated packed recursive ring");
-                for term_range in term_ranges {
-                    sparse_mul_acc_narrow_terms(
-                        &digit_plane,
-                        &challenge.positions[term_range.clone()],
-                        &challenge.coeffs[term_range.clone()],
-                        &mut narrow[0],
-                    );
-                    flush_narrow_accumulator(narrow, wide);
-                }
-            }
-            Self::LiveRings { coeffs, params } => {
-                match digit_scratch.expect("live chunked narrow path requires signed-digit scratch")
-                {
-                    DigitScratch::I8(digit_buf) => {
-                        coeffs[ring_idx]
-                            .balanced_decompose_pow2_i8_into_with_params(digit_buf, params);
-                        for term_range in term_ranges {
-                            let positions = &challenge.positions[term_range.clone()];
-                            let coefficients = &challenge.coeffs[term_range.clone()];
-                            for digit in 0..num_digits {
-                                sparse_mul_acc_narrow_terms(
-                                    &digit_buf[digit],
-                                    positions,
-                                    coefficients,
-                                    &mut narrow[digit],
-                                );
-                            }
-                            flush_narrow_accumulator(narrow, wide);
-                        }
-                    }
-                    DigitScratch::I16(digit_buf) => {
-                        coeffs[ring_idx].balanced_decompose_pow2_i16_into(digit_buf, params);
-                        for term_range in term_ranges {
-                            let positions = &challenge.positions[term_range.clone()];
-                            let coefficients = &challenge.coeffs[term_range.clone()];
-                            for digit in 0..num_digits {
-                                sparse_mul_acc_i16_narrow_terms(
-                                    &digit_buf[digit],
-                                    positions,
-                                    coefficients,
-                                    &mut narrow[digit],
-                                );
-                            }
-                            flush_narrow_accumulator(narrow, wide);
-                        }
+                Self::I16(planes) => {
+                    for (plane, dst) in planes.iter().zip(narrow.iter_mut()) {
+                        sparse_mul_acc_i16_narrow_terms(plane, positions, coefficients, dst);
                     }
                 }
             }
+            flush_narrow_accumulator(narrow, wide);
         }
     }
 }
@@ -553,14 +385,13 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
                         .as_mut()
                         .expect("narrow fold path requires an accumulator");
                     for local_elem_idx in 0..(ring_end - ring_start) {
-                        source.accumulate_ring_narrow(
+                        let planes = source.digit_planes(
                             ring_start + local_elem_idx,
-                            local_elem_idx,
-                            narrow,
-                            challenge,
-                            digit_scratch.as_mut(),
                             num_digits,
+                            &mut digit_scratch,
                         );
+                        let base = local_elem_idx * num_digits;
+                        planes.accumulate_narrow(&mut narrow[base..base + num_digits], challenge);
                     }
                     narrow_bound += contribution_bound;
                 } else if let ChallengePlan::NarrowChunked(term_ranges) = plan {
@@ -577,15 +408,17 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
                         .as_mut()
                         .expect("narrow fold path requires an accumulator");
                     for local_elem_idx in 0..(ring_end - ring_start) {
-                        source.accumulate_ring_chunked_narrow(
+                        let planes = source.digit_planes(
                             ring_start + local_elem_idx,
-                            local_elem_idx,
-                            narrow,
-                            acc,
+                            num_digits,
+                            &mut digit_scratch,
+                        );
+                        let base = local_elem_idx * num_digits;
+                        planes.accumulate_chunked_narrow(
+                            &mut narrow[base..base + num_digits],
+                            &mut acc[base..base + num_digits],
                             challenge,
                             term_ranges,
-                            digit_scratch.as_mut(),
-                            num_digits,
                         );
                     }
                 } else {
@@ -599,15 +432,13 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
                         narrow_bound = 0;
                     }
                     for local_elem_idx in 0..(ring_end - ring_start) {
-                        source.accumulate_ring(
+                        let planes = source.digit_planes(
                             ring_start + local_elem_idx,
-                            local_elem_idx,
-                            acc,
-                            challenge,
-                            plan,
-                            digit_scratch.as_mut(),
                             num_digits,
+                            &mut digit_scratch,
                         );
+                        let base = local_elem_idx * num_digits;
+                        planes.accumulate_wide(&mut acc[base..base + num_digits], challenge, plan);
                     }
                 }
             }
@@ -656,7 +487,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, co
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) -> Vec<[i32; D]> {
     element_partitioned_decompose_fold::<F, D>(
         ElementFoldSource::LiveRings { coeffs, params },

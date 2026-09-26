@@ -58,7 +58,7 @@ unsafe fn biased_words_avx2(values: __m256i, constants: &U32BiasConstants) -> [_
 unsafe fn balanced_decompose_u32_block_avx2<const N: usize, const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
     base: usize,
     constants: &U32BiasConstants,
 ) {
@@ -123,7 +123,7 @@ unsafe fn balanced_decompose_u32_block_avx2<const N: usize, const WORDS: usize>(
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_avx2(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
 ) {
     debug_assert!(canonical.len().is_multiple_of(8));
     debug_assert_eq!(out.len(), canonical.len() * params.levels);
@@ -153,7 +153,7 @@ pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_avx2(
 unsafe fn balanced_decompose_u32_blocks_avx2<const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<impl jolt_field::Field + CanonicalEncoding>,
     constants: &U32BiasConstants,
 ) {
     let width = canonical.len();
@@ -171,12 +171,12 @@ unsafe fn balanced_decompose_u32_blocks_avx2<const WORDS: usize>(
 /// AVX-512 instantiation of the add-bias balanced decomposition kernel.
 #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512dq")]
 pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx512<
-    F: CanonicalEncoding,
+    F: jolt_field::Field + CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params);
 }
@@ -184,12 +184,12 @@ pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx512<
 /// AVX2 instantiation of the add-bias balanced decomposition kernel.
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx2<
-    F: CanonicalEncoding,
+    F: jolt_field::Field + CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params);
 }

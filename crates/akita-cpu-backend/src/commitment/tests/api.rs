@@ -459,7 +459,6 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .take(canonical.blocks().positions_per_block)
     {
         let digits = canonical.inner().digits;
-        let q = (-<F as jolt_field::One>::one()).to_u128_checked().unwrap() + 1;
         let mut planes = vec![[0i8; D]; digits.num_digits];
         akita_algebra::CyclotomicRing::<F, D>::from_coefficients(coefficients.try_into().unwrap())
             .balanced_decompose_pow2_i8_into_with_params(
@@ -467,7 +466,6 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
                 &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
                     digits.num_digits,
                     digits.log_basis,
-                    q,
                 ),
             );
         source_digits.extend(planes);

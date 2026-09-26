@@ -118,11 +118,11 @@ fn edge_values(
 /// different prefills so an unwritten digit cannot pass by accident.
 fn check_signed_kernels<F, T>(
     coefficients: &[F],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
     expected: &[Vec<i32>],
     context: &str,
 ) where
-    F: CanonicalEncoding,
+    F: Field + CanonicalEncoding,
     T: BalancedSignedDigit + From<i8> + Into<i32>,
 {
     let width = coefficients.len();
@@ -195,7 +195,7 @@ fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64)
         level_counts.sort_unstable();
         level_counts.dedup();
         for levels in level_counts {
-            let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+            let params = BalancedDecomposePow2Params::new(levels, log_basis);
             let values = edge_values(q, params.threshold, log_basis, levels, &mut rng);
             let coefficients = values
                 .iter()
@@ -205,6 +205,24 @@ fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64)
                 .iter()
                 .map(|&value| exact_balanced_digits(value, q, params.threshold, levels, log_basis))
                 .collect::<Vec<_>>();
+            if log_basis <= 8 {
+                // The public u32 SIMD path requires an aligned width. Pad the
+                // complete corpus so carry boundaries and random values reach it.
+                let aligned_width = values.len().next_multiple_of(8);
+                let mut aligned = coefficients.clone();
+                aligned.resize(aligned_width, F::zero());
+                let mut out = vec![0i8; aligned_width * levels];
+                balanced_decompose_coefficients_pow2_i8_into(&aligned, &mut out, &params);
+                for (coefficient, digits) in expected.iter().enumerate() {
+                    for (level, &digit) in digits.iter().enumerate() {
+                        assert_eq!(
+                            i32::from(out[level * aligned_width + coefficient]),
+                            digit,
+                            "aligned i8 corpus q={q:#x} log_basis={log_basis} levels={levels} coefficient={coefficient} level={level}"
+                        );
+                    }
+                }
+            }
             for width in [values.len(), 1, 8, 40, 63, 64, 65, 72, 129] {
                 let width = width.min(values.len());
                 let context = format!("q={q:#x} log_basis={log_basis} levels={levels}");
@@ -245,6 +263,12 @@ fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64)
 }
 
 #[test]
+fn parameters_derive_the_field_modulus() {
+    let params = BalancedDecomposePow2Params::<Prime32Offset99>::new(4, 8);
+    assert_eq!(params.q, modulus::<Prime32Offset99>());
+}
+
+#[test]
 fn add_bias_decomposition_matches_exact_recurrence_fp128() {
     check_field_against_exact_recurrence::<Prime128OffsetA7F7>(0xa7f7);
     check_field_against_exact_recurrence::<Prime128Offset275>(0x275);
@@ -266,7 +290,7 @@ fn fp128_near_half_modulus_does_not_wrap_the_carry() {
     type F = Prime128Offset275;
     let q = modulus::<F>();
     let (levels, log_basis) = (15, 9);
-    let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+    let params = BalancedDecomposePow2Params::new(levels, log_basis);
     let value = F::from_u128_reduced(q / 2 - 1);
     let mut digits = [0i16; 15];
     balanced_decompose_coefficients_pow2_signed_into(&[value], &mut digits, &params);
@@ -286,8 +310,7 @@ fn fp128_near_half_modulus_does_not_wrap_the_carry() {
 #[test]
 fn log_basis_one_accepts_levels_up_to_the_field_width() {
     type F = Prime32Offset99;
-    let q = modulus::<F>();
-    let params = BalancedDecomposePow2Params::new(32, 1, q);
+    let params = BalancedDecomposePow2Params::new(32, 1);
     let one = [F::one(); 8];
     let mut digits = [0i8; 8 * 32];
     balanced_decompose_coefficients_pow2_i8_into(&one, &mut digits, &params);
@@ -303,7 +326,7 @@ fn log_basis_one_accepts_levels_up_to_the_field_width() {
 #[test]
 #[should_panic(expected = "log_basis 1 needs levels <= the field width")]
 fn log_basis_one_rejects_levels_past_the_field_width() {
-    BalancedDecomposePow2Params::new(33, 1, (1 << 32) - 99);
+    BalancedDecomposePow2Params::<Prime32Offset99>::new(33, 1);
 }
 
 /// `2^32 + 1` levels used to truncate to 1 in the digit-budget guard.
@@ -311,5 +334,5 @@ fn log_basis_one_rejects_levels_past_the_field_width() {
 #[test]
 #[should_panic(expected = "levels must fit in u32")]
 fn levels_beyond_u32_are_rejected() {
-    BalancedDecomposePow2Params::new((1 << 32) + 1, 16, (1 << 32) - 99);
+    BalancedDecomposePow2Params::<Prime32Offset99>::new((1 << 32) + 1, 16);
 }

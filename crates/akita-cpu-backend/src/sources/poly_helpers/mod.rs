@@ -55,7 +55,7 @@ pub(crate) fn balanced_ring_decompose_fold_chunked<F, const D: usize>(
     challenges: &[SparseChallenge],
     chunk_ranges: &[std::ops::Range<usize>],
     num_positions_per_block: usize,
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) -> Vec<DecomposeFoldWitness>
 where
     F: Field + CanonicalEncoding,

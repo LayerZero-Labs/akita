@@ -1,8 +1,9 @@
 use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
 use super::{
     balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
-    fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1,
-    sparse_mul_acc_i16_scalar, sparse_mul_acc_pm1, sparse_mul_acc_scalar,
+    fill_rotated_challenge, packed_tight_digit_fold_partitioned, sparse_mul_acc,
+    sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar, sparse_mul_acc_pm1,
+    sparse_mul_acc_scalar,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
@@ -41,11 +42,7 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
                 .collect(),
         })
         .collect::<Vec<_>>();
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let actual = balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params);
     let mut digit_planes = vec![[0i8; D]; rings.len() * num_digits];
@@ -76,6 +73,64 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
     }
     assert_eq!(actual, expected);
     assert_eq!(cached, expected);
+}
+
+#[test]
+fn all_fold_sources_share_rotated_narrow_and_chunked_results() {
+    use crate::sources::packed_digits::PackedSignedDigits;
+    use jolt_field::Prime32Offset99;
+
+    type F = Prime32Offset99;
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    let challenges = vec![
+        SparseChallenge {
+            positions: (0..D as u32).collect(),
+            coeffs: (0..D).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect(),
+        },
+        SparseChallenge {
+            positions: vec![1, 17].into(),
+            coeffs: vec![2, -1].into(),
+        },
+        SparseChallenge {
+            positions: (0..41).map(|i| (i * 3 % D) as u32).collect(),
+            coeffs: vec![127; 41].into(),
+        },
+    ];
+    let planes = (0..challenges.len() * POSITIONS)
+        .map(|ring| std::array::from_fn(|i| (ring * D + i) as i8))
+        .collect::<Vec<[i8; D]>>();
+    let rings = planes
+        .iter()
+        .map(|plane| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_i64(plane[i].into())))
+        })
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(planes.iter().flatten().copied().collect(), 8)
+        .expect("digits fit in eight bits");
+    let params = BalancedDecomposePow2Params::new(1, 8);
+    let live = balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params);
+    let cached =
+        cached_digit_decompose_fold_partitioned::<F, D>(&planes, &challenges, POSITIONS, 1, 8);
+    let packed = packed_tight_digit_fold_partitioned::<F, D>(
+        packed.view(),
+        rings.len(),
+        &challenges,
+        POSITIONS,
+    );
+    let mut expected = vec![[0i32; D]; POSITIONS];
+    for (block, challenge) in challenges.iter().enumerate() {
+        for position in 0..POSITIONS {
+            sparse_mul_acc_scalar(
+                &planes[block * POSITIONS + position],
+                challenge,
+                &mut expected[position],
+            );
+        }
+    }
+    assert_eq!(live, expected);
+    assert_eq!(cached, expected);
+    assert_eq!(packed, expected);
 }
 
 #[test]
@@ -304,11 +359,7 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
             coeffs: vec![-1, 2, 1].into(),
         },
     ];
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let actual = balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params);
     let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
@@ -362,11 +413,7 @@ fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
             coeffs: vec![127].into(),
         },
     ];
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let actual = balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params);
     let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
@@ -447,11 +494,7 @@ fn rotated_digit_plane_accumulate_matches_generic_sparse_path() {
             .collect(),
     };
     let log_basis = 3u32;
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let mut digits = vec![[0i8; D]; num_digits];
     ring.balanced_decompose_pow2_i8_into_with_params(&mut digits, &params);
@@ -517,11 +560,7 @@ fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
         },
     ];
     let log_basis = 3u32;
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
         &coeffs,
@@ -580,11 +619,7 @@ fn partitioned_high_density_d64_challenge_uses_rotated_path() {
     assert!(!should_use_rotated_challenge::<D>(&sparse));
     let challenges = vec![high_density, sparse];
     let log_basis = 4u32;
-    let params = BalancedDecomposePow2Params::new(
-        num_digits,
-        log_basis,
-        akita_types::field_modulus::<F>().expect("test field fits in u128"),
-    );
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
         &coeffs,
@@ -642,7 +677,7 @@ fn fp128_boundary_values_fold_through_rotated_and_sparse_paths() {
 
     for log_basis in [4u32, 8, 9, 11] {
         let num_digits = compute_num_digits_field_width(128, log_basis);
-        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
         );

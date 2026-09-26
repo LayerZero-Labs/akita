@@ -32,17 +32,13 @@ where
         let coeffs = self
             .ring_coeffs::<D>()
             .expect("DensePoly::decompose_fold_chunked: invalid ring view");
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
         let Some(planes) = self.digit_planes_for::<D>(num_digits, log_basis) else {
             return balanced_ring_decompose_fold_chunked(
                 coeffs,
                 challenges,
                 chunk_ranges,
                 num_positions_per_block,
-                &BalancedDecomposePow2Params::new(num_digits, log_basis, q),
+                &BalancedDecomposePow2Params::new(num_digits, log_basis),
             );
         };
         chunk_ranges
@@ -164,11 +160,7 @@ where
             return DecomposeFoldWitness::from_centered_rows(coeff_accum);
         }
 
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
         // The single-digit scratch is i8; wider bases need the checked i16 kernel below.
         if num_digits == 1 && log_basis <= akita_types::MAX_I8_LOG_BASIS {

@@ -121,11 +121,7 @@ fn dense_i16_commit_matches_schoolbook_composition_inner() {
             )
             .expect("dense i16 commit");
 
-        let params = BalancedDecomposePow2Params::new(
-            num_digits_inner,
-            log_basis_inner,
-            akita_types::field_modulus::<F>().expect("test field fits in u128"),
-        );
+        let params = BalancedDecomposePow2Params::new(num_digits_inner, log_basis_inner);
         let mut digit_planes = vec![[0i16; D]; row_width];
         for (ring_index, ring) in block.iter().enumerate() {
             let start = ring_index * num_digits_inner;

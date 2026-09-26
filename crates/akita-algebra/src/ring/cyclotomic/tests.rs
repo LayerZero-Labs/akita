@@ -165,14 +165,10 @@ fn wide_many_accumulations_fp128() {
 }
 
 fn decompose_i8(ring: &CyclotomicRing<F128, D>, levels: usize, log_basis: u32) -> Vec<[i8; D]> {
-    let q = (-F128::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
     let mut digits = vec![[0i8; D]; levels];
     ring.balanced_decompose_pow2_i8_into_with_params(
         &mut digits,
-        &BalancedDecomposePow2Params::new(levels, log_basis, q),
+        &BalancedDecomposePow2Params::new(levels, log_basis),
     );
     digits
 }
@@ -213,11 +209,7 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
 
 #[test]
 fn fp32_i8_decomposition_with_zero_levels_is_a_noop() {
-    let q = (-F32::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(0, 8, q);
+    let params = BalancedDecomposePow2Params::new(0, 8);
     let coefficients = [F32::one(); D];
     let mut output = [];
 
@@ -236,15 +228,11 @@ fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
         _ => F128::from_i64(1023),
     }));
 
-    let q = (-F128::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
     for log_basis in [10, 11] {
         let mut digits = vec![[0i16; D]; 12];
         ring.balanced_decompose_pow2_i16_into(
             &mut digits,
-            &BalancedDecomposePow2Params::new(12, log_basis, q),
+            &BalancedDecomposePow2Params::new(12, log_basis),
         );
         let bound = 1i16 << (log_basis - 1);
         assert!(digits

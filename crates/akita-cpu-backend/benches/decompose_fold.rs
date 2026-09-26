@@ -61,11 +61,7 @@ fn dense_case<F: Field + CanonicalEncoding, const D: usize>(
     let blocks = rings.len().div_ceil(POSITIONS_PER_BLOCK);
     let challenges = (0..blocks).map(challenge::<D>).collect::<Vec<_>>();
     let num_digits = compute_num_digits_field_width(field_bits, log_basis);
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+    let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     let mut group = c.benchmark_group(format!("decompose_fold/dense_{field_label}"));
     group.throughput(Throughput::Elements(FIELD_COEFFICIENTS as u64));

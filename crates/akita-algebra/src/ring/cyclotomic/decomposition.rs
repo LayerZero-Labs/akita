@@ -68,7 +68,7 @@ impl BalancedSignedDigit for i16 {
 /// and `x + H` is the canonical residue plus `H` (nonnegative side) or plus
 /// `H - q` (negative side). The bias words below store those two constants.
 #[derive(Clone, Copy, Debug)]
-pub struct BalancedDecomposePow2Params {
+pub struct BalancedDecomposePow2Params<F: Field + CanonicalEncoding> {
     levels: usize,
     log_basis: u32,
     q: u128,
@@ -77,9 +77,10 @@ pub struct BalancedDecomposePow2Params {
     bias_nonnegative: [u64; 3],
     /// `H - q mod 2^192`, added to residues `> threshold`.
     bias_negative: [u64; 3],
+    field: std::marker::PhantomData<F>,
 }
 
-impl BalancedDecomposePow2Params {
+impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     /// Build decomposition parameters for `levels` digits in base `2^log_basis`.
     ///
     /// # Panics
@@ -87,7 +88,12 @@ impl BalancedDecomposePow2Params {
     /// Panics if `log_basis` is outside `1..=16`, if the requested digit
     /// budget exceeds the supported field-width guard, or if `log_basis` is 1
     /// and `levels` exceeds the bit width of `q`.
-    pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
+    pub fn new(levels: usize, log_basis: u32) -> Self {
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field modulus must fit in u128")
+            .checked_add(1)
+            .expect("Akita field modulus must fit in u128");
         assert!(
             log_basis > 0 && log_basis <= 16,
             "log_basis must be in 1..=16 for signed i16 output"
@@ -123,6 +129,7 @@ impl BalancedDecomposePow2Params {
             threshold: decompose_centering_threshold(levels, log_basis, q),
             bias_nonnegative,
             bias_negative: [negative0, negative1, negative2],
+            field: std::marker::PhantomData,
         }
     }
 
@@ -182,10 +189,10 @@ impl BalancedDecomposePow2Params {
 /// Panics if `out.len() != coefficients.len() * params.levels`, or if the
 /// precomputed parameters use a basis wider than signed `i8` digits.
 #[inline]
-pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
+pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding>(
     coefficients: &[F],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     let expected_len = coefficients
         .len()
@@ -248,12 +255,12 @@ const BIASED_CHUNK: usize = 64;
 /// Panics if `out.len() != coefficients.len() * params.levels`.
 #[inline]
 fn balanced_decompose_coefficients_pow2_signed_into<
-    F: CanonicalEncoding,
+    F: Field + CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     let expected_len = coefficients
         .len()
@@ -299,12 +306,12 @@ fn balanced_decompose_coefficients_pow2_signed_into<
 /// kernel stages just the 64-bit words those bits span.
 #[inline(always)]
 fn balanced_decompose_coefficients_pow2_signed_kernel<
-    F: CanonicalEncoding,
+    F: Field + CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     match params.digit_bits().div_ceil(64) {
         0 | 1 => balanced_decompose_biased_words::<F, T, 1>(coefficients, out, params),
@@ -319,13 +326,13 @@ fn balanced_decompose_coefficients_pow2_signed_kernel<
 /// features of the instantiating function.
 #[inline(always)]
 fn balanced_decompose_biased_words<
-    F: CanonicalEncoding,
+    F: Field + CanonicalEncoding,
     T: BalancedSignedDigit,
     const WORDS: usize,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     let width = coefficients.len();
     let log_basis = params.log_basis;
@@ -385,7 +392,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     #[cfg(test)]
     pub(crate) fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
     where
-        F: CanonicalEncoding,
+        F: Field + CanonicalEncoding,
     {
         if digits.is_empty() {
             return Self::zero();
@@ -418,9 +425,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2_i8_into_with_params(
         &self,
         out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2Params,
+        params: &BalancedDecomposePow2Params<F>,
     ) where
-        F: CanonicalEncoding,
+        F: Field + CanonicalEncoding,
     {
         assert!(
             params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
@@ -441,9 +448,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2_i16_into(
         &self,
         out: &mut [[i16; D]],
-        params: &BalancedDecomposePow2Params,
+        params: &BalancedDecomposePow2Params<F>,
     ) where
-        F: CanonicalEncoding,
+        F: Field + CanonicalEncoding,
     {
         balanced_decompose_coefficients_pow2_signed_into(
             &self.coeffs,
