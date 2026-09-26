@@ -1,6 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
+mod shift_windows;
 #[cfg(test)]
 mod tests;
 mod traits;
@@ -24,6 +25,7 @@ pub use decomposition::{
     peel_first_balanced_digit, try_balanced_decompose_coefficients_pow2_i8_u64_into,
     BalancedDecomposePow2Params,
 };
+pub use shift_windows::NegacyclicShiftWindows;
 pub use wide::WideCyclotomicRing;
 
 /// Element of the cyclotomic ring `Z_q[X]/(X^D + 1)`.

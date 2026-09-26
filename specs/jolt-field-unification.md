@@ -207,7 +207,7 @@ single post-cutover implementation cannot accidentally bless its own output.
 The cutover was compared in one release binary on an Apple M4 (`arm64`) with
 Rust 1.95 and `-C target-cpu=native`. The binary linked the pre-cutover
 `akita-field` from `03e3f2f96988c251f40608fd8735d011377c37b4` and the pinned
-`jolt-field` from `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`, ran 4,096
+`jolt-field` from `679f838496ae4539566e7591e837ea1b0edcd91c`, ran 4,096
 deterministic operand pairs for 80 repetitions, and reported the median of 15
 interleaved samples per implementation.
 
@@ -401,7 +401,7 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c`, the merge commit of
+upstream commit `679f838496ae4539566e7591e837ea1b0edcd91c`, the merge commit of
 Jolt PR #1810. That revision includes the merged field stack and kernel work
 from Jolt PRs #1792 and #1794.
 

@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn prime_field_wire_bytes_are_stable() {
-        let fp32 = Prime32Offset99::from_canonical_u32(0x0102_0304);
+        let fp32 = Prime32Offset99::from_u64(0x0102_0304);
         assert_eq!(serialized(&fp32), [0x04, 0x03, 0x02, 0x01]);
 
-        let fp64 = Prime64Offset59::from_canonical_u64(0x0102_0304_0506_0708);
+        let fp64 = Prime64Offset59::from_u64(0x0102_0304_0506_0708);
         assert_eq!(
             serialized(&fp64),
             [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]

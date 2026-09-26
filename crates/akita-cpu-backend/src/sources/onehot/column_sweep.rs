@@ -38,6 +38,30 @@ fn unpack_col_entry(entry: PackedColEntry) -> (usize, usize) {
     ((entry >> 16) as usize, (entry & 0xffff) as usize)
 }
 
+/// `accum += a · Σ_k X^k` over `shifts` for the `a` held by `windows`,
+/// folding `accum` into `partial` before any batch would exceed the commit
+/// accumulation budget.
+#[inline(always)]
+fn accumulate_shift_run<F, const D: usize>(
+    windows: &NegacyclicShiftWindows<F, D>,
+    shifts: &[usize],
+    accum: &mut WideCyclotomicRing<F::Wide, D>,
+    partial: &mut CyclotomicRing<F, D>,
+    count: &mut usize,
+) where
+    F: Field + WithCommitAccumulator,
+{
+    for batch in shifts.chunks(F::MAX_COMMIT_ACCUMULATIONS) {
+        if *count + batch.len() > F::MAX_COMMIT_ACCUMULATIONS {
+            *partial += accum.reduce();
+            *accum = WideCyclotomicRing::zero();
+            *count = 0;
+        }
+        windows.accumulate_shifts_into(accum, batch);
+        *count += batch.len();
+    }
+}
+
 /// Bucket one materialized tile by A column, then sweep each A row once.
 pub(super) fn bucketed_sweep_tile<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
@@ -86,6 +110,8 @@ where
         vec![WideCyclotomicRing::zero(); blocks.len()];
     let mut partials = vec![CyclotomicRing::zero(); blocks.len()];
     let mut accum_counts = vec![0usize; blocks.len()];
+    let mut windows = NegacyclicShiftWindows::<F, D>::default();
+    let mut shifts = Vec::new();
     for a_row in a_view.rows().take(n_a) {
         row_accums.fill(WideCyclotomicRing::zero());
         partials.fill(CyclotomicRing::zero());
@@ -95,16 +121,20 @@ where
             if entries.is_empty() {
                 continue;
             }
-            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
-            for &entry in entries {
-                let (local_block, coefficient) = unpack_col_entry(entry);
-                if accum_counts[local_block] == F::MAX_COMMIT_ACCUMULATIONS {
-                    partials[local_block] += row_accums[local_block].reduce();
-                    row_accums[local_block] = WideCyclotomicRing::zero();
-                    accum_counts[local_block] = 0;
-                }
-                a_wide.shift_accumulate_into(&mut row_accums[local_block], coefficient);
-                accum_counts[local_block] += 1;
+            windows.load(&a_row[col]);
+            // Buckets fill in block order, so each block's entries in this
+            // column are one contiguous run.
+            for run in entries.chunk_by(|&x, &y| unpack_col_entry(x).0 == unpack_col_entry(y).0) {
+                let (local_block, _) = unpack_col_entry(run[0]);
+                shifts.clear();
+                shifts.extend(run.iter().map(|&entry| unpack_col_entry(entry).1));
+                accumulate_shift_run(
+                    &windows,
+                    &shifts,
+                    &mut row_accums[local_block],
+                    &mut partials[local_block],
+                    &mut accum_counts[local_block],
+                );
             }
         }
         for (local_block, (rows, accum)) in result.iter_mut().zip(&row_accums).enumerate() {
@@ -114,25 +144,26 @@ where
     result
 }
 
-/// Number of A columns widened together by the merge sweep. Bench-tuned:
+/// Number of A columns loaded together by the merge sweep. Bench-tuned:
 /// the (tile, chunk) matrix is flat within ~5-30% and (64 blocks, 32 cols)
 /// is its minimum at trace-like sparse shapes.
-pub(super) const MERGE_COL_CHUNK: usize = 32;
+const MERGE_COL_CHUNK: usize = 32;
 
-/// Walk sorted block cursors while each active A-column chunk is widened once.
+/// Walk sorted block cursors while each active A-column chunk is loaded once.
 pub(super) fn merge_sweep_tile<F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
     tile_blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
-    chunk_buf: &mut [WideCyclotomicRing<F::Wide, D>],
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: Field + CanonicalEncoding + WithCommitAccumulator,
     F::Wide: AdditiveGroup + From<F>,
 {
-    let col_chunk = chunk_buf.len();
+    let mut chunk_windows: Vec<NegacyclicShiftWindows<F, D>> =
+        vec![NegacyclicShiftWindows::default(); MERGE_COL_CHUNK];
+    let mut shifts = Vec::new();
     let tile_len = tile_blocks.len();
     let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tile_len);
     result.resize_with(tile_len, || Vec::with_capacity(n_a));
@@ -157,10 +188,10 @@ where
             accum_counts.fill(0);
             cursors.fill(0);
 
-            for chunk_start in (0..active_a_cols).step_by(col_chunk) {
-                let chunk_end = (chunk_start + col_chunk).min(active_a_cols);
+            for chunk_start in (0..active_a_cols).step_by(MERGE_COL_CHUNK) {
+                let chunk_end = (chunk_start + MERGE_COL_CHUNK).min(active_a_cols);
 
-                // Skip widening chunks no block has entries in.
+                // Skip loading chunks no block has entries in.
                 let live = tile_blocks.iter().zip(&cursors).any(|(entries, &cur)| {
                     entries
                         .get(cur)
@@ -169,15 +200,16 @@ where
                 if !live {
                     continue;
                 }
-                for (buf, col) in chunk_buf.iter_mut().zip(chunk_start..chunk_end) {
-                    *buf = WideCyclotomicRing::from_ring(&a_row[col]);
+                for (windows, col) in chunk_windows.iter_mut().zip(chunk_start..chunk_end) {
+                    windows.load(&a_row[col]);
                 }
 
                 for (local_b, entries) in tile_blocks.iter().enumerate() {
                     let cur = &mut cursors[local_b];
+                    // Entries are sorted by position, so each column's
+                    // entries in this block are one contiguous run.
                     while let Some(entry) = entries.get(*cur) {
                         let pos_in_block = entry.pos_in_block();
-                        let coeff_idx = entry.coeff_idx();
                         let col = pos_in_block * num_digits_inner;
                         if col >= chunk_end {
                             break;
@@ -186,15 +218,21 @@ where
                             col >= chunk_start,
                             "one-hot entries must be sorted by position within a block"
                         );
-                        let a_wide = &chunk_buf[col - chunk_start];
-                        if accum_counts[local_b] + 1 > F::MAX_COMMIT_ACCUMULATIONS {
-                            partials[local_b] += row_accums[local_b].reduce();
-                            row_accums[local_b] = WideCyclotomicRing::zero();
-                            accum_counts[local_b] = 0;
+                        shifts.clear();
+                        while let Some(entry) = entries
+                            .get(*cur)
+                            .filter(|entry| entry.pos_in_block() == pos_in_block)
+                        {
+                            shifts.push(entry.coeff_idx());
+                            *cur += 1;
                         }
-                        accum_counts[local_b] += 1;
-                        a_wide.shift_accumulate_into(&mut row_accums[local_b], coeff_idx);
-                        *cur += 1;
+                        accumulate_shift_run(
+                            &chunk_windows[col - chunk_start],
+                            &shifts,
+                            &mut row_accums[local_b],
+                            &mut partials[local_b],
+                            &mut accum_counts[local_b],
+                        );
                     }
                 }
             }
@@ -255,6 +293,9 @@ where
     let wide_ring = D
         .checked_mul(std::mem::size_of::<F::Wide>())
         .ok_or_else(|| AkitaError::InvalidSetup("one hot wide ring size overflow".into()))?;
+    let shift_windows = D
+        .checked_mul(2 * std::mem::size_of::<F::CommitLanes>())
+        .ok_or_else(|| AkitaError::InvalidSetup("one hot shift window size overflow".into()))?;
     let field_ring = D
         .checked_mul(std::mem::size_of::<F>())
         .ok_or_else(|| AkitaError::InvalidSetup("one hot field ring size overflow".into()))?;
@@ -272,9 +313,10 @@ where
     let bucket_fixed = active_a_cols
         .checked_mul(3 * std::mem::size_of::<usize>())
         .and_then(|bytes| bytes.checked_add(std::mem::size_of::<usize>()))
+        .and_then(|bytes| bytes.checked_add(shift_windows))
         .ok_or_else(|| AkitaError::InvalidSetup("one hot bucket scratch overflow".into()))?;
     let merge_fixed = MERGE_COL_CHUNK
-        .checked_mul(wide_ring)
+        .checked_mul(shift_windows)
         .ok_or_else(|| AkitaError::InvalidSetup("one hot merge scratch overflow".into()))?;
     let fixed = bucket_fixed.max(merge_fixed);
     let minimum = fixed
@@ -357,15 +399,7 @@ where
             bucketed_sweep_tile(a_view, blocks, n_a, active_a_cols, num_digits_inner)
         }
         OneHotSweep::Merge => {
-            let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
-            merge_sweep_tile(
-                a_view,
-                blocks,
-                n_a,
-                active_a_cols,
-                num_digits_inner,
-                &mut chunk_buf,
-            )
+            merge_sweep_tile(a_view, blocks, n_a, active_a_cols, num_digits_inner)
         }
     }
 }
