@@ -26,8 +26,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Check verifier with portable CPU target
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features --features transcript-blake2b
-      - name: Test exact-cache boundary
+      - name: Test binary arithmetic and exact-cache boundary
         run: |
+          cargo test --release -p akita-algebra --lib --features labinius-binary binary
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
 
@@ -41,10 +42,12 @@ jobs:
         run: |
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
-      - name: Run architecture-specific exact NTT tests
+          grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
+      - name: Run architecture-specific arithmetic tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: |
+          cargo test --release -p akita-algebra --lib --features labinius-binary binary
           cargo test --release -p akita-algebra --lib ntt
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
@@ -66,6 +69,7 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
         run: |
+          cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib --features labinius-binary binary
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-algebra --lib ntt::avx -- --include-ignored
           cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored

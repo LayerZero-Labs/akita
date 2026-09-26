@@ -76,6 +76,21 @@ jobs:
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
 
+  labinius-binary:
+    name: LaBinius binary arithmetic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: clippy
+      - name: Test algebra without the extension
+        run: cargo test -p akita-algebra --lib --no-default-features
+      - name: Test binary arithmetic
+        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary binary
+      - name: Lint binary arithmetic and benchmarks
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary -- -D warnings
+
   machete:
     name: Unused dependencies
     runs-on: ubuntu-latest
