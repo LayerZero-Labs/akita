@@ -950,11 +950,13 @@ page.
    alignment are live.
 5. **Prepare the Stage 2 relation evaluators.** Quotient lifting uses the
    factored
-   [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs)
+   [`build_relation_lane_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/relation_weights.rs)
    path for the `consistency`, $\mathbf A$, $\mathbf B$, and $\mathbf D$
-   contributions. Reduced evaluation uses the semantic compiler in
-   `ring_switch/relation_weights/compiler.rs` to build one dense Stage-2
-   weight oracle. Compressed mode additionally uses
+   contributions. It accumulates one weight per relation coefficient lane;
+   the shared low alpha factor stays implicit. Reduced evaluation builds one
+   dense Stage-2 weight oracle instead. Both paths take their relation
+   addresses from the semantic compiler in
+   `opaque/relation_weights/compiler.rs`. Compressed mode additionally uses
    [`build_compression_relation_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
    or its reduced counterpart for the recomposition, $\mathbf F/\mathbf H$,
    and mode-selected compression-quotient contributions, while

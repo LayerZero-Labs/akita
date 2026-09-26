@@ -58,7 +58,7 @@ where
     };
     let ordinary = match parameters.ring_relation_mode {
         akita_types::RingRelationMode::QuotientLift => {
-            let (events, _) = build_relation_weight_events(RelationWeightEventInputs {
+            let (weights, _) = build_relation_lane_weights(RelationLaneWeightInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
                 alpha: request.alpha,
@@ -70,7 +70,7 @@ where
                 relation_plan: request.relation_plan,
                 opening_points,
             })?;
-            RelationWeightDescription::QuotientFactored(events.factor_common_alpha()?)
+            RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
         }
         akita_types::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {
