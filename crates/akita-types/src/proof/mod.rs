@@ -18,7 +18,6 @@ mod relation_weight_event;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
-pub mod setup_envelope;
 pub mod setup_prefix;
 pub mod stage1;
 
@@ -93,20 +92,11 @@ pub use scheme::OpeningPoints;
 pub use setup::{
     derive_public_matrix_prefix, sample_akita_setup_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaVerifierSetup,
-    PublicMatrixDerivation, SetupMatrixCapacity, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-};
-pub use setup_envelope::{
-    accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
-    commit_only_setup_field_elements, commitment_execution_setup_field_elements,
-    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
-    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
-    CommitmentSetupMatrixShape,
+    PublicMatrixDerivation, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 pub use setup_prefix::{
-    active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
-    setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
-    validate_setup_prefix_domain, SetupPrefixPublicCommitment, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
+    setup_prefix_coverage_eval_len, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot,
 };
 pub use shapes::{canonical_extension_opening_reduction_shape, ExtensionOpeningReductionShape};
 pub use stage1::DigitRangeEqualityPoint;

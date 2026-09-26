@@ -1,4 +1,8 @@
 use super::*;
+use crate::layout::setup_prefix_slots::{
+    active_setup_field_len, active_setup_projection_geometry, scheduled_setup_prefix,
+    setup_prefix_precommitted_params,
+};
 use crate::{
     CommittedGroupParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
     OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, SisModulusProfileId,
@@ -6,26 +10,6 @@ use crate::{
 use akita_challenges::SparseChallengeConfig;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use std::collections::{BTreeSet, HashSet};
-
-#[test]
-fn setup_prefix_policy_wire_tag_tracks_policy_identity() {
-    let policy = SisSecurityPolicyId::Quantum128BitADPS16;
-    let mut wire = Vec::new();
-    serialize_sis_security_policy(policy, &mut wire).expect("serialize SIS security policy");
-    assert_eq!(wire, vec![1]);
-    assert_eq!(
-        deserialize_sis_security_policy(wire.as_slice()).expect("deserialize current policy"),
-        policy
-    );
-    assert!(deserialize_sis_security_policy(&[2u8][..]).is_err());
-}
-
-#[test]
-fn setup_prefix_domain_is_the_smallest_covering_power_of_two() {
-    validate_setup_prefix_domain(65, 128).expect("canonical full prefix domain");
-    validate_setup_prefix_domain(65, 256).expect_err("overpadded prefix domain");
-    validate_setup_prefix_domain(0, 1).expect_err("empty prefix domain");
-}
 
 #[test]
 fn setup_prefix_profile_must_commit_every_ring_in_the_full_domain() {

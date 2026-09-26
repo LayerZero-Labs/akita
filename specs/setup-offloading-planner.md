@@ -1389,6 +1389,7 @@ Update the statuses of related specs when their deferred work is completed.
 - `book/src/how/proving/sumcheck-stages.md`
 - `specs/archive/2026-Q3/multi-group-batching.md`
 - `specs/heterogeneous-group-source-contracts.md`
+- `crates/akita-types/src/layout/setup_prefix_slots.rs`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-types/src/layout/params.rs`
 - `crates/akita-types/src/opening_claims.rs`
