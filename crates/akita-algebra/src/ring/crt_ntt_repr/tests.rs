@@ -1,10 +1,14 @@
+use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
 use crate::ntt::butterfly::forward_ntt;
 use crate::ntt::prime::NttPrime;
 use crate::ntt::tables::{
-    q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_PRIMES, Q64_PRIMES,
+    q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
+    Q64_NUM_PRIMES, Q64_PRIMES,
 };
+use crate::CyclotomicRing;
 
 const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
 
@@ -71,6 +75,84 @@ fn centered_mont_reducer_matches_euclidean_residues() {
     for p in Q128_RAW_PRIMES.into_iter().chain([1_073_707_009]) {
         check_reducer(NttPrime::compute(p));
     }
+}
+
+/// Canonical coefficients at every centering and 26-bit slice boundary below
+/// `modulus`, followed by pseudo-random fill.
+fn field_residue_probes<const D: usize>(modulus: u128) -> [u128; D] {
+    let half = modulus / 2;
+    let mut edges = vec![0, 1, 2, half - 1, half, half + 1, modulus - 2, modulus - 1];
+    for bit in (26..128).step_by(26) {
+        for value in [1u128 << bit, (1u128 << bit) - 1, half ^ (1u128 << bit)] {
+            if value < modulus {
+                edges.push(value);
+                edges.push(modulus - 1 - value);
+            }
+        }
+    }
+    let mut state = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834u128;
+    std::array::from_fn(|index| {
+        edges.get(index).copied().unwrap_or_else(|| {
+            state = state
+                .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645)
+                .wrapping_add(0x5851_f42d_4c95_7f2d_1405_7b7e_f767_814f);
+            state % modulus
+        })
+    })
+}
+
+fn assert_field_residues_match<F, W, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+) where
+    F: CrtNttConvertibleField,
+    W: PrimeWidth,
+{
+    let modulus = (-F::one()).to_u128_checked().unwrap() + 1;
+    let canonical = field_residue_probes::<D>(modulus);
+    let ring = CyclotomicRing::<F, D>::from_coefficients(
+        canonical.map(|value| F::from_u128_checked(value).unwrap()),
+    );
+    let mut residues = [[MontCoeff::from_raw(W::default()); D]; K];
+    params.field_residues(&ring, &mut residues);
+    for (prime, residues) in params.primes.iter().zip(&residues) {
+        let p = i128::from(prime.p.to_i64());
+        for (&value, residue) in canonical.iter().zip(residues) {
+            let centered = if value > modulus / 2 {
+                -((modulus - value) as i128)
+            } else {
+                value as i128
+            };
+            let expected =
+                prime.from_canonical(prime.center(W::from_i64(centered.rem_euclid(p) as i64)));
+            assert!(
+                residue.raw().to_i64().unsigned_abs() < prime.p.to_i64() as u64,
+                "residue of {value} outside (-p, p) for p = {p}"
+            );
+            assert_eq!(
+                prime.normalize(*residue),
+                prime.normalize(expected),
+                "residue of {value} modulo {p}"
+            );
+        }
+    }
+}
+
+#[test]
+fn field_residues_match_centered_reduction() {
+    fn check<F: CrtNttConvertibleField>() {
+        // Several conversion chunks, so the SIMD kernels see nonzero offsets.
+        assert_field_residues_match::<F, i32, Q128_NUM_PRIMES, 256>(&CrtNttParamSet::new(
+            q128_primes(),
+        ));
+        assert_field_residues_match::<F, i32, Q32_NUM_PRIMES, 4>(&CrtNttParamSet::new(Q32_PRIMES));
+        assert_field_residues_match::<F, i16, 1, 128>(&CrtNttParamSet::new([I16_TAIL_PRIME]));
+        assert_field_residues_match::<F, i16, SYNTHETIC_I16_NUM_PRIMES, 64>(&CrtNttParamSet::new(
+            synthetic_i16_primes(),
+        ));
+    }
+    check::<Prime32Offset99>();
+    check::<Prime64Offset59>();
+    check::<Prime128OffsetA7F7>();
 }
 
 #[test]
@@ -178,4 +260,186 @@ fn q128_parameters_build_on_a_2_mib_stack() {
         .expect("spawn")
         .join()
         .expect("build Q128 parameters");
+}
+
+/// Deterministic centered values in `[-bound, bound]`, including both ends.
+fn centered_probe(seed: usize, bound: i128) -> i128 {
+    match seed % 5 {
+        0 => bound,
+        1 => -bound,
+        _ => {
+            let mixed = (seed as u64)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .rotate_left(17);
+            i128::from(mixed).rem_euclid(2 * bound + 1) - bound
+        }
+    }
+}
+
+/// Exact `matrix * rhs` over `Z[X] / (X^D + 1)` by schoolbook multiplication.
+fn schoolbook_mat_vec<const D: usize>(
+    matrix: &[[i128; D]],
+    num_rows: usize,
+    rhs: &[[i16; D]],
+) -> Vec<[i128; D]> {
+    matrix
+        .chunks_exact(rhs.len())
+        .take(num_rows)
+        .map(|row| {
+            let mut out = [0i128; D];
+            for (entry, digits) in row.iter().zip(rhs) {
+                for (i, &lhs) in entry.iter().enumerate() {
+                    for (j, &digit) in digits.iter().enumerate() {
+                        let term = lhs * i128::from(digit);
+                        if i + j < D {
+                            out[i + j] += term;
+                        } else {
+                            out[i + j - D] -= term;
+                        }
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+fn assert_matches_schoolbook<F: Field + CanonicalEncoding, const D: usize>(
+    actual: &[CyclotomicRing<F, D>],
+    expected: &[[i128; D]],
+    modulus: i128,
+) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        let expected = expected.map(|value| {
+            let residue = value.rem_euclid(modulus);
+            if residue > modulus / 2 {
+                residue - modulus
+            } else {
+                residue
+            }
+        });
+        assert_eq!(actual.centered_coefficients_i128(), expected, "D={D}");
+    }
+}
+
+fn rings<F: Field + CanonicalEncoding, const D: usize>(
+    entries: &[[i128; D]],
+) -> Vec<CyclotomicRing<F, D>> {
+    entries
+        .iter()
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(
+                entry.map(|value| F::from_i64(i64::try_from(value).expect("probe fits i64"))),
+            )
+        })
+        .collect()
+}
+
+/// Full-range fp64 entries through the three-prime i32 profile, whose
+/// worst case `2 * 3 * D * floor(q / 2) * 128` stays below 2^84 at D = 2048.
+fn assert_i32_mat_vec_matches_schoolbook<const D: usize>() {
+    type F = Prime64Offset59;
+    const Q: i128 = (1 << 64) - 59;
+    let (num_rows, num_cols) = (2, 3);
+    let params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| from_fn(|index| centered_probe(entry * D + index, Q / 2)))
+        .collect::<Vec<[i128; D]>>();
+    let rhs = (0..num_cols)
+        .map(|column| from_fn(|index| centered_probe(7 + column * D + index, 128) as i16))
+        .collect::<Vec<[i16; D]>>();
+    let matrix = rings::<F, D>(&entries)
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect::<Vec<_>>();
+    let actual = CyclotomicCrtNtt::mat_vec_i16::<F>(&matrix, num_rows, num_cols, &rhs, &params)
+        .expect("i32 matvec");
+    assert_matches_schoolbook(&actual, &schoolbook_mat_vec(&entries, num_rows, &rhs), Q);
+}
+
+#[test]
+fn i32_crt_mat_vec_matches_schoolbook() {
+    assert_i32_mat_vec_matches_schoolbook::<256>();
+    assert_i32_mat_vec_matches_schoolbook::<1024>();
+    assert_i32_mat_vec_matches_schoolbook::<2048>();
+}
+
+/// A pure i16 profile of about 2^41.2 with `|A| <= 2^20` and `|x| <= 4`.
+fn assert_i16_mat_vec_matches_schoolbook<const D: usize>() {
+    type F = Prime32Offset99;
+    const Q: i128 = (1 << 32) - 99;
+    let (num_rows, num_cols) = (2, 2);
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| from_fn(|index| centered_probe(entry * D + index, 1 << 20)))
+        .collect::<Vec<[i128; D]>>();
+    let rhs = (0..num_cols)
+        .map(|column| from_fn(|index| centered_probe(3 + column * D + index, 4) as i16))
+        .collect::<Vec<[i16; D]>>();
+    let matrix = rings::<F, D>(&entries)
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect::<Vec<_>>();
+    let actual = CyclotomicCrtNtt::mat_vec_i16::<F>(&matrix, num_rows, num_cols, &rhs, &params)
+        .expect("i16 matvec");
+    assert_matches_schoolbook(&actual, &schoolbook_mat_vec(&entries, num_rows, &rhs), Q);
+}
+
+#[test]
+fn i16_crt_mat_vec_matches_schoolbook() {
+    assert_i16_mat_vec_matches_schoolbook::<256>();
+    assert_i16_mat_vec_matches_schoolbook::<512>();
+}
+
+/// Row 0 is the aligned worst case: constant `floor(q / 2)` entries against
+/// constant `-2^15` digits reach `4 * (D - 2) * floor(q / 2) * 2^15`, about
+/// 2^91 at D = 2048, past the three i32 primes and within the i16 tail.
+#[test]
+fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
+    const D: usize = 2048;
+    type F = Prime64Offset59;
+    const Q: i128 = (1 << 64) - 59;
+    let (num_rows, num_cols) = (2, 4);
+    let wide = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let tail = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+    let entries = (0..num_rows * num_cols)
+        .map(|entry| {
+            from_fn(|index| {
+                if entry < num_cols {
+                    Q / 2
+                } else {
+                    centered_probe(entry * D + index, Q / 2)
+                }
+            })
+        })
+        .collect::<Vec<[i128; D]>>();
+    let rhs = vec![[i16::MIN; D]; num_cols];
+    let rings = rings::<F, D>(&entries);
+    let wide_matrix = rings
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &wide))
+        .collect::<Vec<_>>();
+    let tail_matrix = rings
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail))
+        .collect::<Vec<_>>();
+    let expected = schoolbook_mat_vec(&entries, num_rows, &rhs);
+
+    let actual = mat_vec_i16_with_tail::<F, Q64_NUM_PRIMES, D>(
+        &wide_matrix,
+        &tail_matrix,
+        num_rows,
+        num_cols,
+        &rhs,
+        &I16TailParams::new(wide.clone(), tail),
+    )
+    .expect("tail matvec");
+    assert_matches_schoolbook(&actual, &expected, Q);
+
+    // The wide primes alone wrap on the aligned row, so the tail is load-bearing.
+    let wide_only =
+        CyclotomicCrtNtt::mat_vec_i16::<F>(&wide_matrix, num_rows, num_cols, &rhs, &wide)
+            .expect("wide matvec");
+    assert_ne!(wide_only[0], actual[0]);
 }
