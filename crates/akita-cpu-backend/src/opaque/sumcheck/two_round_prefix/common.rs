@@ -27,15 +27,6 @@ pub(crate) const STAGE1_B8_S_VALUES: [i64; 4] = [0, 2, 6, 12];
 pub(crate) const STAGE2_B4_W_VALUES: [i64; 4] = [-2, -1, 0, 1];
 pub(crate) const STAGE2_B8_W_VALUES: [i64; 8] = [-4, -3, -2, -1, 0, 1, 2, 3];
 pub(crate) const STAGE2_PREFIX_POINT_COUNT: usize = 9;
-pub(crate) const STAGE2_COMPRESSED_POINT_COUNT: usize = STAGE2_PREFIX_POINT_COUNT - 1;
-pub(crate) const STAGE2_COMPRESSED_POINT_INDICES_BY_OMITTED_CORNER: [[usize;
-    STAGE2_COMPRESSED_POINT_COUNT];
-    4] = [
-    [1, 2, 3, 4, 5, 6, 7, 8],
-    [0, 2, 3, 4, 5, 6, 7, 8],
-    [0, 1, 2, 4, 5, 6, 7, 8],
-    [0, 1, 2, 3, 5, 6, 7, 8],
-];
 
 pub(crate) const fn lookup_bilinear_coeffs_from_quad(quad: [i64; 4]) -> [i64; 4] {
     let [t00, t10, t01, t11] = quad;
@@ -258,23 +249,6 @@ pub(crate) const fn stage2_local_norm_raw_eval_i64(w_quad: [i64; 4], x: i64, y: 
     }
 }
 
-pub(crate) const fn compress_stage2_lookup_values(
-    values: [i64; STAGE2_PREFIX_POINT_COUNT],
-    omitted_idx: usize,
-) -> [i64; STAGE2_COMPRESSED_POINT_COUNT] {
-    let mut out = [0i64; STAGE2_COMPRESSED_POINT_COUNT];
-    let mut src_idx = 0usize;
-    let mut dst_idx = 0usize;
-    while src_idx < STAGE2_PREFIX_POINT_COUNT {
-        if src_idx != omitted_idx {
-            out[dst_idx] = values[src_idx];
-            dst_idx += 1;
-        }
-        src_idx += 1;
-    }
-    out
-}
-
 pub(crate) const fn build_stage2_b4_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
     let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
     let mut d0 = 0usize;
@@ -311,61 +285,6 @@ pub(crate) const fn build_stage2_b4_norm_lookup_table() -> [[i64; STAGE2_PREFIX_
 
 pub(crate) static STAGE2_B4_NORM_LOOKUP_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
     build_stage2_b4_norm_lookup_table();
-
-pub(crate) const fn build_stage2_b4_relation_weight_table(
-) -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] {
-    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 256];
-    let mut d0 = 0usize;
-    while d0 < 4 {
-        let mut d1 = 0usize;
-        while d1 < 4 {
-            let mut d2 = 0usize;
-            while d2 < 4 {
-                let mut d3 = 0usize;
-                while d3 < 4 {
-                    let quad = [
-                        STAGE2_B4_W_VALUES[d0],
-                        STAGE2_B4_W_VALUES[d1],
-                        STAGE2_B4_W_VALUES[d2],
-                        STAGE2_B4_W_VALUES[d3],
-                    ];
-                    let table_idx = stage2_b4_lookup_index_from_digits([d0, d1, d2, d3]);
-                    let mut point_idx = 0usize;
-                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
-                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
-                        table[table_idx][point_idx] =
-                            lookup_bilinear_eval_on_prefix_points(quad, x, y);
-                        point_idx += 1;
-                    }
-                    d3 += 1;
-                }
-                d2 += 1;
-            }
-            d1 += 1;
-        }
-        d0 += 1;
-    }
-    table
-}
-
-pub(crate) static STAGE2_B4_RELATION_WEIGHT_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 256] =
-    build_stage2_b4_relation_weight_table();
-
-pub(crate) const fn build_stage2_b4_relation_weight_compressed_table(
-) -> [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 256] {
-    let mut table = [[0i64; STAGE2_COMPRESSED_POINT_COUNT]; 256];
-    let mut table_idx = 0usize;
-    while table_idx < 256 {
-        table[table_idx] =
-            compress_stage2_lookup_values(STAGE2_B4_RELATION_WEIGHT_TABLE[table_idx], 0);
-        table_idx += 1;
-    }
-    table
-}
-
-pub(crate) static STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64;
-    STAGE2_COMPRESSED_POINT_COUNT];
-    256] = build_stage2_b4_relation_weight_compressed_table();
 
 pub(crate) const fn build_stage2_b8_norm_lookup_table() -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096]
 {
@@ -405,61 +324,6 @@ pub(crate) const fn build_stage2_b8_norm_lookup_table() -> [[i64; STAGE2_PREFIX_
 pub(crate) static STAGE2_B8_NORM_LOOKUP_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096] =
     build_stage2_b8_norm_lookup_table();
 
-pub(crate) const fn build_stage2_b8_relation_weight_table(
-) -> [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096] {
-    let mut table = [[0i64; STAGE2_PREFIX_POINT_COUNT]; 4096];
-    let mut d0 = 0usize;
-    while d0 < 8 {
-        let mut d1 = 0usize;
-        while d1 < 8 {
-            let mut d2 = 0usize;
-            while d2 < 8 {
-                let mut d3 = 0usize;
-                while d3 < 8 {
-                    let quad = [
-                        STAGE2_B8_W_VALUES[d0],
-                        STAGE2_B8_W_VALUES[d1],
-                        STAGE2_B8_W_VALUES[d2],
-                        STAGE2_B8_W_VALUES[d3],
-                    ];
-                    let table_idx = stage2_b8_lookup_index_from_digits([d0, d1, d2, d3]);
-                    let mut point_idx = 0usize;
-                    while point_idx < STAGE2_PREFIX_POINT_COUNT {
-                        let (x, y) = STAGE2_PREFIX_LOOKUP_POINTS_I64[point_idx];
-                        table[table_idx][point_idx] =
-                            lookup_bilinear_eval_on_prefix_points(quad, x, y);
-                        point_idx += 1;
-                    }
-                    d3 += 1;
-                }
-                d2 += 1;
-            }
-            d1 += 1;
-        }
-        d0 += 1;
-    }
-    table
-}
-
-pub(crate) static STAGE2_B8_RELATION_WEIGHT_TABLE: [[i64; STAGE2_PREFIX_POINT_COUNT]; 4096] =
-    build_stage2_b8_relation_weight_table();
-
-pub(crate) const fn build_stage2_b8_relation_weight_compressed_table(
-) -> [[i64; STAGE2_COMPRESSED_POINT_COUNT]; 4096] {
-    let mut table = [[0i64; STAGE2_COMPRESSED_POINT_COUNT]; 4096];
-    let mut table_idx = 0usize;
-    while table_idx < 4096 {
-        table[table_idx] =
-            compress_stage2_lookup_values(STAGE2_B8_RELATION_WEIGHT_TABLE[table_idx], 0);
-        table_idx += 1;
-    }
-    table
-}
-
-pub(crate) static STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64;
-    STAGE2_COMPRESSED_POINT_COUNT];
-    4096] = build_stage2_b8_relation_weight_compressed_table();
-
 #[inline]
 pub(crate) fn accum_lookup_vector_signed<E: Field + Unreduced, const N: usize>(
     pos: &mut [E::SmallProduct; N],
@@ -477,80 +341,8 @@ pub(crate) fn accum_lookup_vector_signed<E: Field + Unreduced, const N: usize>(
 }
 
 #[inline]
-pub(crate) fn accum_lookup_vector_signed_selected<
-    E: Field + Unreduced,
-    const N: usize,
-    const M: usize,
->(
-    pos: &mut [E::SmallProduct; N],
-    neg: &mut [E::SmallProduct; N],
-    coeff: E,
-    values: &[i64; M],
-    selected_indices: &[usize; N],
-) {
-    for (dst_idx, &src_idx) in selected_indices.iter().enumerate() {
-        let value = values[src_idx];
-        if value > 0 {
-            pos[dst_idx] += coeff.mul_u64_unreduced(value as u64);
-        } else if value < 0 {
-            neg[dst_idx] += coeff.mul_u64_unreduced(value.unsigned_abs());
-        }
-    }
-}
-
-#[inline]
-pub(crate) fn accum_pointwise_signed<E: Field + Unreduced, const N: usize>(
-    pos: &mut [E::SmallProduct; N],
-    neg: &mut [E::SmallProduct; N],
-    coeffs: &[E; N],
-    weights: &[i64; N],
-) {
-    for (idx, (&coeff, &weight)) in coeffs.iter().zip(weights.iter()).enumerate() {
-        if weight > 0 {
-            pos[idx] += coeff.mul_u64_unreduced(weight as u64);
-        } else if weight < 0 {
-            neg[idx] += coeff.mul_u64_unreduced(weight.unsigned_abs());
-        }
-    }
-}
-
-#[inline(always)]
-pub(crate) fn stage2_b4_w_digit(w: i8) -> usize {
-    let w = i32::from(w);
-    debug_assert!((-2..=1).contains(&w));
-    (w + 2) as usize
-}
-
-#[inline(always)]
-pub(crate) fn stage2_b8_w_digit(w: i8) -> usize {
-    let w = i32::from(w);
-    debug_assert!((-4..=3).contains(&w));
-    (w + 4) as usize
-}
-
-#[inline]
 pub(crate) fn linear_eq_eval<E: Field>(tau: E, x: E) -> E {
     tau * x + (E::one() - tau) * (E::one() - x)
-}
-
-#[inline]
-pub(crate) fn stage2_relation_m_point_values_compressed<E: Field>(
-    m_quad: [E; 4],
-) -> [E; STAGE2_COMPRESSED_POINT_COUNT] {
-    let m00 = m_quad[0];
-    let m10 = m_quad[1];
-    let m01 = m_quad[2];
-    let m11 = m_quad[3];
-    [
-        m01,
-        m01 - m00,
-        m10,
-        m11,
-        m11 - m10,
-        m10 - m00,
-        m11 - m01,
-        m11 - m10 - m01 + m00,
-    ]
 }
 
 pub(crate) fn interpolate_eq_factored_q_poly<E: Field + Ring>(
@@ -701,40 +493,6 @@ pub(crate) fn stage2_local_norm_raw_eval<E: Field>(
     match (x, y) {
         (PrefixPoint::Finite(_), PrefixPoint::Finite(_)) => w_eval * (w_eval + E::one()),
         _ => w_eval * w_eval,
-    }
-}
-
-/// Evaluate the stage-2 local relation contribution for one witness quad, one
-/// local bilinear factor quad, and one fixed scalar factor.
-#[inline]
-#[cfg(test)]
-pub(crate) fn stage2_local_relation_eval<E: Field>(
-    w_quad: [E; 4],
-    local_factor_quad: [E; 4],
-    fixed_factor: E,
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-) -> E {
-    fixed_factor
-        * bilinear_eval_on_prefix_points(w_quad, x, y)
-        * bilinear_eval_on_prefix_points(local_factor_quad, x, y)
-}
-
-/// Evaluate a quadratic from its values at `{0, 1, Infinity}`.
-#[inline]
-#[cfg(test)]
-pub(crate) fn eval_quadratic_from_01_inf<E: Field>(
-    at_zero: E,
-    at_one: E,
-    at_inf: E,
-    x: PrefixPoint<E>,
-) -> E {
-    match x {
-        PrefixPoint::Infinity => at_inf,
-        PrefixPoint::Finite(x) => {
-            let linear = at_one - at_zero - at_inf;
-            at_zero + x * (linear + x * at_inf)
-        }
     }
 }
 

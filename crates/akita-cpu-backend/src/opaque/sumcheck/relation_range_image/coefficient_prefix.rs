@@ -23,7 +23,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let block_size = num_first.min(current_coefficient_half);
         let common_alpha_factor = weights.common_alpha_factor();
         let relation_lane_weights = weights.relation_lane_weights();
-        debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
+        debug_assert_eq!(relation_lane_weights.len(), 1usize << self.lane_bits);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -207,7 +207,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let block_size = num_first.min(current_coefficient_half);
         let common_alpha_factor = weights.common_alpha_factor();
         let relation_lane_weights = weights.relation_lane_weights();
-        debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
+        debug_assert_eq!(relation_lane_weights.len(), 1usize << self.lane_bits);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
@@ -241,8 +241,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             let w1 = lane_values[left + 1];
                             let dw = w1 - w0;
 
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * dw);
+                            inner_virt[0] += e_in * (w0.square() + w0);
+                            inner_virt[1] += e_in * dw.square();
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;
@@ -308,9 +308,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                            inner_virt[0] += e_in * (w0.square() + w0);
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                            inner_virt[2] += e_in * (dw * dw);
+                            inner_virt[2] += e_in * dw.square();
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;

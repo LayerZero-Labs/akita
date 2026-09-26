@@ -2,18 +2,13 @@ use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
 use crate::opaque::LowBasisRangeCheckProver;
-use crate::opaque::{
-    PreparedProverLinearTerms, StructuredLinearSegment, StructuredLinearTerm,
-    StructuredLinearWeights,
-};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::{ExtField, Field, FpExt4, One, Prime128Offset275, Prime32Offset99, Ring, Zero};
+use jolt_field::{Field, One, Prime128Offset275, Ring, Zero};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 type F = Prime128Offset275;
 
@@ -90,79 +85,6 @@ fn stage2_norm_round_values(w_quad: [F; 4], tau0: F, tau1: F, r0: F) -> Vec<F> {
     for y in 0..=3u64 {
         let y = F::from_u64(y);
         out.push(l1(y) * l0(r0) * q(r0, y));
-    }
-    out
-}
-
-fn stage2_relation_round_values(w_quad: [F; 4], m_quad: [F; 4], r0: F) -> Vec<F> {
-    let relation = |x: F, y: F| bilinear_eval(w_quad, x, y) * bilinear_eval(m_quad, x, y);
-    let mut out = Vec::new();
-    for x in 0..=2u64 {
-        let x = F::from_u64(x);
-        out.push(relation(x, F::zero()) + relation(x, F::one()));
-    }
-    for y in 0..=2u64 {
-        let y = F::from_u64(y);
-        out.push(relation(r0, y));
-    }
-    out
-}
-
-fn stage2_norm_claim_from_full_grid(full_grid: [F; 9], corner_weights: [F; 4]) -> F {
-    BooleanCorner::ALL
-        .iter()
-        .copied()
-        .fold(F::zero(), |acc, corner| {
-            acc + corner_weights[corner.boolean_index()] * full_grid[corner.grid_index()]
-        })
-}
-
-fn stage2_norm_round_values_from_full_grid(full_grid: [F; 9], tau0: F, tau1: F, r0: F) -> Vec<F> {
-    let l0_at = |x: PrefixPoint<F>| match x {
-        PrefixPoint::Finite(x) => tau0 * x + (F::one() - tau0) * (F::one() - x),
-        PrefixPoint::Infinity => tau0,
-    };
-    let l1_0 = F::one() - tau1;
-    let l1_1 = tau1;
-    let mut out = Vec::new();
-    for x in [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)] {
-        let x_point = PrefixPoint::Finite(x);
-        let q_x0 =
-            eval_biquadratic_from_full_grid(full_grid, x_point, PrefixPoint::Finite(F::zero()));
-        let q_x1 =
-            eval_biquadratic_from_full_grid(full_grid, x_point, PrefixPoint::Finite(F::one()));
-        out.push(l0_at(x_point) * (l1_0 * q_x0 + l1_1 * q_x1));
-    }
-    for y in [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)] {
-        let y_point = PrefixPoint::Finite(y);
-        let q_r0_y = eval_biquadratic_from_full_grid(full_grid, PrefixPoint::Finite(r0), y_point);
-        let l1_y = tau1 * y + (F::one() - tau1) * (F::one() - y);
-        out.push(l1_y * l0_at(PrefixPoint::Finite(r0)) * q_r0_y);
-    }
-    out
-}
-
-fn stage2_relation_round_values_from_full_grid(full_grid: [F; 9], r0: F) -> Vec<F> {
-    let mut out = Vec::new();
-    for x in [F::zero(), F::one(), F::from_u64(2)] {
-        let q_x0 = eval_biquadratic_from_full_grid(
-            full_grid,
-            PrefixPoint::Finite(x),
-            PrefixPoint::Finite(F::zero()),
-        );
-        let q_x1 = eval_biquadratic_from_full_grid(
-            full_grid,
-            PrefixPoint::Finite(x),
-            PrefixPoint::Finite(F::one()),
-        );
-        out.push(q_x0 + q_x1);
-    }
-    for y in [F::zero(), F::one(), F::from_u64(2)] {
-        out.push(eval_biquadratic_from_full_grid(
-            full_grid,
-            PrefixPoint::Finite(r0),
-            PrefixPoint::Finite(y),
-        ));
     }
     out
 }
@@ -245,73 +167,6 @@ fn build_stage1_prefix_grid_from_m_compact_reference(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_stage2_prefix_grids_reference(
-    w_compact: &[i8],
-    alpha_evals_y: &[F],
-    relation_matrix_col_evals: &[F],
-    trace_compact: Option<&[F]>,
-    stage1_point: &[F],
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Option<Stage2PrefixGrids<F>> {
-    if !can_use_stage2_two_round_prefix(ring_bits, b) {
-        return None;
-    }
-
-    let y_len = 1usize << ring_bits;
-    assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
-    if let Some(trace) = trace_compact {
-        assert_eq!(trace.len(), live_x_cols * y_len);
-    }
-    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
-        .expect("stage-2 reference two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
-        .expect("stage-2 reference x-prefix dimensions are prevalidated");
-    let points = stage2_full_prefix_points::<F>();
-    let y_quads = y_len >> 2;
-    let mut norm_full = [F::zero(); 9];
-    let mut relation_full = [F::zero(); 9];
-
-    for x_idx in 0..live_x_cols {
-        let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-        let trace_column = trace_compact.map(|trace| &trace[x_idx * y_len..(x_idx + 1) * y_len]);
-        let row_val = relation_matrix_col_evals[x_idx];
-        let eq_x_weight = eq_x[x_idx];
-        for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
-            let base = 4 * y_quad;
-            let w_quad = std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
-            let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
-            let trace_quad = trace_column
-                .map(|trace_column| std::array::from_fn(|offset| trace_column[base + offset]));
-            let norm_weight = eq_y_weight * eq_x_weight;
-            for idx in 0..9 {
-                let x = points[idx / 3];
-                let y = points[idx % 3];
-                norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
-                relation_full[idx] += stage2_local_relation_eval(w_quad, alpha_quad, row_val, x, y);
-                if let Some(trace_quad) = trace_quad {
-                    relation_full[idx] +=
-                        stage2_local_relation_eval(w_quad, trace_quad, F::one(), x, y);
-                }
-            }
-        }
-    }
-
-    let norm_omitted_corner = default_stage2_norm_omitted_corner(
-        stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
-    );
-    Some(Stage2PrefixGrids {
-        norm: Stage2CompressedGrid::from_full_grid(norm_full, norm_omitted_corner),
-        relation: Stage2CompressedGrid::from_full_grid(
-            relation_full,
-            BooleanCorner::DEFAULT_STAGE2_RELATION,
-        ),
-    })
-}
-
 #[test]
 fn stage1_b8_lookup_table_matches_raw_evals() {
     let points = stage1_full_prefix_points::<F>();
@@ -381,35 +236,50 @@ fn stage2_b8_norm_lookup_table_matches_raw_evals() {
 }
 
 #[test]
-fn stage2_b8_relation_weight_table_matches_prefix_w_evals() {
-    let points = stage2_full_prefix_points::<F>();
-    for w00 in -4i64..=3 {
-        for w10 in -4i64..=3 {
-            for w01 in -4i64..=3 {
-                for w11 in -4i64..=3 {
-                    let lookup = &STAGE2_B8_RELATION_WEIGHT_TABLE
-                        [stage2_b8_lookup_index_from_digits([
-                            (w00 + 4) as usize,
-                            (w10 + 4) as usize,
-                            (w01 + 4) as usize,
-                            (w11 + 4) as usize,
-                        ])];
-                    let quad = [
-                        F::from_i64(w00),
-                        F::from_i64(w10),
-                        F::from_i64(w01),
-                        F::from_i64(w11),
-                    ];
-                    for point_idx in 0..STAGE2_PREFIX_POINT_COUNT {
-                        let x = points[point_idx / 3];
-                        let y = points[point_idx % 3];
-                        assert_eq!(
-                            F::from_i64(lookup[point_idx]),
-                            bilinear_eval_on_prefix_points(quad, x, y),
-                        );
-                    }
-                }
+fn stage2_norm_histogram_matches_local_round_messages() {
+    let tau0 = F::from_u64(1_234_567);
+    let tau1 = F::from_u64(7_654_321);
+    let batching_coeff = F::from_u64(424_242);
+    let r0 = F::from_u64(98_765);
+    for b in [4usize, 8] {
+        let bits = b.trailing_zeros();
+        let half = (b / 2) as i64;
+        let mut histogram = vec![F::zero(); b.pow(4)];
+        let mut round0 = [F::zero(); 4];
+        let mut round1 = [F::zero(); 4];
+        for sample in 0..97u64 {
+            let digits: [usize; 4] = std::array::from_fn(|i| {
+                ((sample * (7 + 2 * i as u64) + i as u64) % b as u64) as usize
+            });
+            let class = digits
+                .iter()
+                .enumerate()
+                .fold(0usize, |class, (i, &d)| class | (d << (i as u32 * bits)));
+            let weight = F::from_u64(1_000 + 31 * sample);
+            histogram[class] += weight;
+            let quad = digits.map(|d| F::from_i64(d as i64 - half));
+            let values = stage2_norm_round_values(quad, tau0, tau1, r0);
+            for point in 0..4 {
+                round0[point] += weight * values[point];
+                round1[point] += weight * values[4 + point];
             }
+        }
+        let cache =
+            Stage2PrefixCache::from_norm_histogram(&histogram, b, tau0, tau1, batching_coeff);
+        let poly0 = cache.round0_norm_poly();
+        let poly1 = cache.round1_norm_poly(r0);
+        for point in 0..4u64 {
+            let x = F::from_u64(point);
+            assert_eq!(
+                poly0.evaluate(x),
+                batching_coeff * round0[point as usize],
+                "b={b} round 0 at {point}"
+            );
+            assert_eq!(
+                poly1.evaluate(x),
+                batching_coeff * round1[point as usize],
+                "b={b} round 1 at {point}"
+            );
         }
     }
 }
@@ -433,370 +303,6 @@ fn stage1_prefix_proof_builder_matches_reference() {
         build_stage1_prefix_grid_from_m_compact(&w_compact, &tau0, 8),
         build_stage1_prefix_grid_from_m_compact_reference(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits,
-        ),
-    );
-}
-
-#[test]
-fn stage2_prefix_proof_builder_matches_reference() {
-    let w_compact = vec![1, -2, 0, 2, 1, -1, 2, 1, 0, 2];
-    let alpha_evals_y = [F::from_u64(3), F::from_u64(5)];
-    let relation_matrix_col_evals = [
-        F::from_u64(7),
-        F::from_u64(11),
-        F::from_u64(13),
-        F::from_u64(17),
-        F::from_u64(19),
-        F::from_u64(23),
-        F::from_u64(29),
-        F::from_u64(31),
-    ];
-    let stage1_point = [
-        F::from_u64(3),
-        F::from_u64(5),
-        F::from_u64(7),
-        F::from_u64(11),
-    ];
-    let evaluation_trace = PreparedProverLinearTerms::from_dense(vec![F::zero(); 10], 5, 2);
-    assert_eq!(
-        build_stage2_prefix_grids(
-            packed(&w_compact).view(),
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            &evaluation_trace,
-            &stage1_point,
-            8,
-            5,
-            3,
-            1,
-        ),
-        build_stage2_prefix_grids_reference(
-            &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            None,
-            &stage1_point,
-            8,
-            5,
-            3,
-            1,
-        ),
-    );
-}
-
-#[test]
-fn stage2_prefix_proof_builder_with_trace_matches_reference() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
-        .map(|i| ((5 * i + 3) % 8) as i8 - 4)
-        .collect();
-    let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
-        .map(|i| F::from_u64((7 * i as u64) + 11))
-        .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
-        .map(|i| F::from_u64((13 * i as u64) + 17))
-        .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
-        .map(|i| F::from_u64((19 * i as u64) + 23))
-        .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
-        .map(|i| F::from_u64((29 * i as u64) + 31))
-        .collect();
-
-    assert_eq!(
-        {
-            let evaluation_trace =
-                PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
-            build_stage2_prefix_grids(
-                packed(&w_compact).view(),
-                &alpha_evals_y,
-                &relation_matrix_col_evals,
-                &evaluation_trace,
-                &stage1_point,
-                8,
-                live_x_cols,
-                col_bits,
-                ring_bits,
-            )
-        },
-        build_stage2_prefix_grids_reference(
-            &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            Some(&trace_compact),
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        ),
-    );
-}
-
-#[test]
-fn stage2_prefix_proof_builder_with_prepared_trace_matches_dense() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
-        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
-        .collect();
-    let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
-        .map(|i| F::from_u64((11 * i as u64) + 13))
-        .collect();
-    let evaluation_trace =
-        PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
-    let alpha_evals_y: Vec<F> = (0..y_len)
-        .map(|i| F::from_u64((17 * i as u64) + 19))
-        .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
-        .map(|i| F::from_u64((23 * i as u64) + 29))
-        .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
-        .map(|i| F::from_u64((31 * i as u64) + 37))
-        .collect();
-    assert_eq!(
-        build_stage2_prefix_grids(
-            packed(&w_compact).view(),
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            &evaluation_trace,
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        ),
-        build_stage2_prefix_grids_reference(
-            &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            Some(&trace_compact),
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        ),
-    );
-}
-
-#[test]
-fn stage2_prefix_proof_builder_hoists_factored_trace_lanes() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
-        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
-        .collect();
-    let source0 = (0..(3 * y_len))
-        .map(|i| F::from_u64((11 * i as u64) + 13))
-        .collect::<Vec<_>>();
-    let source1 = (0..(3 * y_len))
-        .map(|i| F::from_u64((17 * i as u64) + 19))
-        .collect::<Vec<_>>();
-    let factor0 = F::from_u64(23);
-    let factor1 = F::from_u64(29);
-    let mut dense = vec![F::zero(); live_x_cols * y_len];
-    for lane in 0..3 {
-        for coefficient in 0..y_len {
-            dense[(lane + 1) * y_len + coefficient] = factor0 * source0[lane * y_len + coefficient]
-                + factor1 * source1[lane * y_len + coefficient];
-        }
-    }
-    let structured = StructuredLinearWeights {
-        sources: vec![Arc::from(source0), Arc::from(source1)],
-        segments: vec![
-            StructuredLinearSegment {
-                physical_coefficient_start: y_len,
-                source_coefficient_start: 0,
-                coefficient_count: 3 * y_len,
-            },
-            StructuredLinearSegment {
-                physical_coefficient_start: y_len,
-                source_coefficient_start: 0,
-                coefficient_count: 3 * y_len,
-            },
-        ],
-        terms: vec![
-            StructuredLinearTerm {
-                factor: factor0,
-                source_index: 0,
-                segment_range: 0..1,
-            },
-            StructuredLinearTerm {
-                factor: factor1,
-                source_index: 1,
-                segment_range: 1..2,
-            },
-        ],
-        physical_field_len: live_x_cols * y_len,
-    };
-    let factored = PreparedProverLinearTerms::from_structured_weights(&structured, y_len).unwrap();
-    let dense = PreparedProverLinearTerms::from_dense(dense, live_x_cols, y_len);
-    let alpha_evals_y = (0..y_len)
-        .map(|i| F::from_u64((31 * i as u64) + 37))
-        .collect::<Vec<_>>();
-    let relation_matrix_col_evals = (0..(1usize << col_bits))
-        .map(|i| F::from_u64((41 * i as u64) + 43))
-        .collect::<Vec<_>>();
-    let stage1_point = (0..(col_bits + ring_bits))
-        .map(|i| F::from_u64((47 * i as u64) + 53))
-        .collect::<Vec<_>>();
-    let build = |linear_terms| {
-        build_stage2_prefix_grids(
-            packed(&w_compact).view(),
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            linear_terms,
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-    };
-    assert_eq!(build(&factored), build(&dense));
-}
-
-#[test]
-fn stage2_factored_trace_hoist_matches_dense_near_fp32_modulus() {
-    type E = FpExt4<Prime32Offset99>;
-
-    const MAX_CANONICAL: u64 = 0xffff_ff9c;
-    let near_modulus = |seed: usize| {
-        E::from_base_slice(&std::array::from_fn::<_, 4, _>(|coordinate| {
-            Prime32Offset99::from_u64(MAX_CANONICAL - ((seed + 17 * coordinate) % 89) as u64)
-        }))
-    };
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 6usize;
-    let y_len = 1usize << ring_bits;
-    let w_compact = (0..live_x_cols * y_len)
-        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
-        .collect::<Vec<_>>();
-    let source = (0..3 * y_len)
-        .map(|i| near_modulus(3 * i + 1))
-        .collect::<Vec<_>>();
-    let factor = near_modulus(7);
-    let mut dense_values = vec![E::zero(); live_x_cols * y_len];
-    for lane in 0..3 {
-        for coefficient in 0..y_len {
-            dense_values[(lane + 1) * y_len + coefficient] =
-                factor * source[lane * y_len + coefficient];
-        }
-    }
-    let structured = StructuredLinearWeights {
-        sources: vec![Arc::from(source)],
-        segments: vec![StructuredLinearSegment {
-            physical_coefficient_start: y_len,
-            source_coefficient_start: 0,
-            coefficient_count: 3 * y_len,
-        }],
-        terms: vec![StructuredLinearTerm {
-            factor,
-            source_index: 0,
-            segment_range: 0..1,
-        }],
-        physical_field_len: live_x_cols * y_len,
-    };
-    let factored = PreparedProverLinearTerms::from_structured_weights(&structured, y_len).unwrap();
-    let dense = PreparedProverLinearTerms::from_dense(dense_values, live_x_cols, y_len);
-    let alpha_evals_y = (0..y_len)
-        .map(|i| near_modulus(5 * i + 11))
-        .collect::<Vec<_>>();
-    let relation_matrix_col_evals = (0..1usize << col_bits)
-        .map(|i| near_modulus(7 * i + 13))
-        .collect::<Vec<_>>();
-    let stage1_point = (0..col_bits + ring_bits)
-        .map(|i| near_modulus(11 * i + 19))
-        .collect::<Vec<_>>();
-    let build = |linear_terms| {
-        build_stage2_prefix_grids(
-            packed(&w_compact).view(),
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            linear_terms,
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-    };
-
-    assert_eq!(build(&factored), build(&dense));
-}
-
-#[test]
-fn stage2_prefix_proof_builder_matches_reference_large_odd_randomized() {
-    let live_x_cols = 34_519usize;
-    let col_bits = 16usize;
-    let ring_bits = 6usize;
-    let y_len = 1usize << ring_bits;
-    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
-        .map(|i| ((i * 37 + 11) % 8) as i8 - 4)
-        .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
-        .map(|i| {
-            F::from_u64(
-                (i as u64)
-                    .wrapping_mul(0x9e37_79b9)
-                    .wrapping_add(0x1234_5678),
-            )
-        })
-        .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
-        .map(|i| {
-            F::from_u64(
-                (i as u64)
-                    .wrapping_mul(0x85eb_ca6b)
-                    .wrapping_add(0xc2b2_ae35),
-            )
-        })
-        .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
-        .map(|i| {
-            F::from_u64(
-                (i as u64)
-                    .wrapping_mul(0x27d4_eb2d)
-                    .wrapping_add(0x1656_67b1),
-            )
-        })
-        .collect();
-    let evaluation_trace = PreparedProverLinearTerms::from_dense(
-        vec![F::zero(); live_x_cols * y_len],
-        live_x_cols,
-        y_len,
-    );
-    assert_eq!(
-        build_stage2_prefix_grids(
-            packed(&w_compact).view(),
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            &evaluation_trace,
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        ),
-        build_stage2_prefix_grids_reference(
-            &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            None,
-            &stage1_point,
-            8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
         ),
     );
 }
@@ -1043,36 +549,6 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
 }
 
 #[test]
-fn stage2_default_norm_omitted_corner_prefers_00() {
-    let weights = stage2_norm_corner_weights_from_taus(F::from_u64(7), F::from_u64(11));
-    assert_eq!(
-        default_stage2_norm_omitted_corner(weights),
-        BooleanCorner::DEFAULT_STAGE2_NORM
-    );
-}
-
-#[test]
-fn stage2_default_norm_omitted_corner_falls_back_when_00_is_zero() {
-    let weights = stage2_norm_corner_weights_from_taus(F::one(), F::from_u64(11));
-    assert_eq!(
-        default_stage2_norm_omitted_corner(weights),
-        BooleanCorner::OneZero
-    );
-
-    let weights = stage2_norm_corner_weights_from_taus(F::from_u64(7), F::one());
-    assert_eq!(
-        default_stage2_norm_omitted_corner(weights),
-        BooleanCorner::ZeroOne
-    );
-
-    let weights = stage2_norm_corner_weights_from_taus(F::one(), F::one());
-    assert_eq!(
-        default_stage2_norm_omitted_corner(weights),
-        BooleanCorner::OneOne
-    );
-}
-
-#[test]
 fn stage2_norm_reduced_domain_has_round_message_collision() {
     let reduced = stage2_reduced_prefix_points::<F>();
     let tau0 = F::from_u64(7);
@@ -1124,73 +600,6 @@ fn stage2_norm_reduced_domain_has_round_message_collision() {
 }
 
 #[test]
-fn stage2_relation_reduced_domain_has_round_message_collision() {
-    let reduced = stage2_reduced_prefix_points::<F>();
-    let r0 = F::from_u64(13);
-    let alpha = F::one();
-    let bit = [F::zero(), F::one()];
-
-    let mut seen: HashMap<String, Vec<F>> = HashMap::new();
-    let mut found_collision = false;
-    for &w00 in &bit {
-        for &w10 in &bit {
-            for &w01 in &bit {
-                for &w11 in &bit {
-                    let w_quad = [w00, w10, w01, w11];
-                    for &m00 in &bit {
-                        for &m10 in &bit {
-                            for &m01 in &bit {
-                                for &m11 in &bit {
-                                    let m_quad = [m00, m10, m01, m11];
-                                    let storage = tensor_values(reduced, reduced, |x, y| {
-                                        stage2_local_relation_eval(w_quad, m_quad, alpha, x, y)
-                                    });
-                                    let target = stage2_relation_round_values(w_quad, m_quad, r0);
-                                    let key = vec_key(&storage);
-                                    if let Some(existing) = seen.get(&key) {
-                                        if *existing != target {
-                                            found_collision = true;
-                                            break;
-                                        }
-                                    } else {
-                                        seen.insert(key, target);
-                                    }
-                                }
-                                if found_collision {
-                                    break;
-                                }
-                            }
-                            if found_collision {
-                                break;
-                            }
-                        }
-                        if found_collision {
-                            break;
-                        }
-                    }
-                    if found_collision {
-                        break;
-                    }
-                }
-                if found_collision {
-                    break;
-                }
-            }
-            if found_collision {
-                break;
-            }
-        }
-        if found_collision {
-            break;
-        }
-    }
-    assert!(
-        found_collision,
-        "reduced stage-2 relation domain should not uniquely determine local round messages"
-    );
-}
-
-#[test]
 fn stage2_norm_full_domain_matches_local_round_messages() {
     let full = stage2_full_prefix_points::<F>();
     let tau0 = F::from_u64(7);
@@ -1219,155 +628,6 @@ fn stage2_norm_full_domain_matches_local_round_messages() {
                         );
                     } else {
                         seen.insert(key, target);
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn stage2_norm_8_point_reconstruction_matches_full_grid_and_round_messages() {
-    let tau_choices = [F::zero(), F::one(), F::from_u64(2), F::from_u64(7)];
-    let r0 = F::from_u64(13);
-
-    for &tau0 in &tau_choices {
-        for &tau1 in &tau_choices {
-            let corner_weights = stage2_norm_corner_weights_from_taus(tau0, tau1);
-            for w00 in -4i64..=3 {
-                for w10 in -4i64..=3 {
-                    for w01 in -4i64..=3 {
-                        for w11 in -4i64..=3 {
-                            let quad = [
-                                F::from_i64(w00),
-                                F::from_i64(w10),
-                                F::from_i64(w01),
-                                F::from_i64(w11),
-                            ];
-                            let full_grid = stage2_full_grid_values(|x, y| {
-                                stage2_local_norm_raw_eval(quad, x, y)
-                            });
-                            let norm_claim =
-                                stage2_norm_claim_from_full_grid(full_grid, corner_weights);
-                            let omitted_corner = default_stage2_norm_omitted_corner(corner_weights);
-                            let compressed =
-                                Stage2CompressedGrid::from_full_grid(full_grid, omitted_corner);
-                            let recovered = recover_stage2_grid_from_corner_claim(
-                                &compressed,
-                                corner_weights,
-                                norm_claim,
-                            )
-                            .expect("selected norm corner should be recoverable");
-
-                            assert_eq!(
-                                    recovered, full_grid,
-                                    "norm full-grid reconstruction mismatch for quad={quad:?}, tau0={tau0:?}, tau1={tau1:?}"
-                                );
-                            assert_eq!(
-                                    stage2_norm_round_values_from_full_grid(recovered, tau0, tau1, r0),
-                                    stage2_norm_round_values(quad, tau0, tau1, r0),
-                                    "norm round reconstruction mismatch for quad={quad:?}, tau0={tau0:?}, tau1={tau1:?}"
-                                );
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn stage2_relation_full_domain_matches_local_round_messages() {
-    let full = stage2_full_prefix_points::<F>();
-    let r0 = F::from_u64(13);
-    let alpha = F::one();
-    let bit = [F::zero(), F::one()];
-
-    let mut seen: HashMap<String, Vec<F>> = HashMap::new();
-    for &w00 in &bit {
-        for &w10 in &bit {
-            for &w01 in &bit {
-                for &w11 in &bit {
-                    let w_quad = [w00, w10, w01, w11];
-                    for &m00 in &bit {
-                        for &m10 in &bit {
-                            for &m01 in &bit {
-                                for &m11 in &bit {
-                                    let m_quad = [m00, m10, m01, m11];
-                                    let storage = tensor_values(full, full, |x, y| {
-                                        stage2_local_relation_eval(w_quad, m_quad, alpha, x, y)
-                                    });
-                                    let target = stage2_relation_round_values(w_quad, m_quad, r0);
-                                    let key = vec_key(&storage);
-                                    if let Some(existing) = seen.get(&key) {
-                                        assert_eq!(
-                                            existing, &target,
-                                            "full stage-2 relation domain lost information"
-                                        );
-                                    } else {
-                                        seen.insert(key, target);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn stage2_relation_8_point_reconstruction_matches_full_grid_and_round_messages() {
-    let r0 = F::from_u64(13);
-    let alpha_choices = [F::zero(), F::one(), F::from_u64(3)];
-    let bit = [F::zero(), F::one()];
-
-    for &alpha in &alpha_choices {
-        for &w00 in &bit {
-            for &w10 in &bit {
-                for &w01 in &bit {
-                    for &w11 in &bit {
-                        let w_quad = [w00, w10, w01, w11];
-                        for &m00 in &bit {
-                            for &m10 in &bit {
-                                for &m01 in &bit {
-                                    for &m11 in &bit {
-                                        let m_quad = [m00, m10, m01, m11];
-                                        let full_grid = stage2_full_grid_values(|x, y| {
-                                            stage2_local_relation_eval(w_quad, m_quad, alpha, x, y)
-                                        });
-                                        let relation_claim = stage2_norm_claim_from_full_grid(
-                                            full_grid,
-                                            [F::one(); 4],
-                                        );
-                                        let compressed = Stage2CompressedGrid::from_full_grid(
-                                            full_grid,
-                                            BooleanCorner::DEFAULT_STAGE2_RELATION,
-                                        );
-                                        let recovered = recover_stage2_relation_grid_from_claim(
-                                            &compressed,
-                                            relation_claim,
-                                        );
-
-                                        assert_eq!(
-                                            recovered, full_grid,
-                                            "relation full-grid reconstruction mismatch"
-                                        );
-                                        assert_eq!(
-                                            stage2_relation_round_values_from_full_grid(
-                                                recovered, r0
-                                            ),
-                                            stage2_relation_round_values(w_quad, m_quad, r0)
-                                                .into_iter()
-                                                .map(|value| alpha * value)
-                                                .collect::<Vec<_>>(),
-                                            "relation round reconstruction mismatch"
-                                        );
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }

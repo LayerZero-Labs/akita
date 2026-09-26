@@ -177,36 +177,23 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
             batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
+        let split_eq = GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?;
         let relation_state = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
-                let prefix = if can_use_stage2_two_round_prefix(coefficient_bits, b) {
-                    let cache = build_stage2_prefix_cache(
-                        w_evals_compact.view(),
-                        weights.common_alpha_factor(),
-                        weights.relation_lane_weights(),
-                        &linear_terms,
-                        stage1_point,
-                        b,
-                        live_lane_count,
-                        lane_bits,
-                        coefficient_bits,
-                        range_image_evaluation,
-                        relation_linear_claim,
-                        batching_coeff,
-                    )
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "stage-2 compact prefix is unavailable for the validated geometry"
-                                .into(),
-                        )
-                    })?;
-                    QuotientPrefixState::Deferred(DeferredCompactPrefix {
-                        cache,
-                        phase: DeferredCompactPrefixPhase::Round0,
-                    })
-                } else {
-                    QuotientPrefixState::Disabled
-                };
+                let prefix = CompactQuotientPrefix::new(
+                    &w_evals_compact,
+                    weights.relation_lane_weights(),
+                    &linear_terms,
+                    &split_eq,
+                    stage1_point,
+                    batching_coeff,
+                    b,
+                    live_lane_count,
+                    coefficient_bits,
+                )
+                .map_or(QuotientPrefixState::Disabled, |prefix| {
+                    QuotientPrefixState::Compact(Box::new(prefix))
+                });
                 RelationRoundState::QuotientFactored { weights, prefix }
             }
             RelationWeightOracle::ReducedDense(weights) => {
@@ -216,9 +203,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
-            b,
             input_claim,
-            split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
+            split_eq,
             relation_state,
             additional_relation_terms,
             linear_terms,
@@ -254,43 +240,36 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
         let witness = self.final_w_eval();
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
-        let ordinary_relation = witness
-            * match &self.relation_state {
-                RelationRoundState::QuotientFactored { weights, .. } => {
-                    match (
-                        weights.common_alpha_factor(),
-                        weights.relation_lane_weights(),
-                    ) {
-                        ([alpha], [lane]) => *alpha * *lane,
-                        _ => return Err(AkitaError::InvalidProof),
-                    }
+        let relation_weight = match &self.relation_state {
+            RelationRoundState::QuotientFactored { weights, .. } => {
+                match (
+                    weights.common_alpha_factor(),
+                    weights.relation_lane_weights(),
+                ) {
+                    ([alpha], [lane]) => *alpha * *lane + self.linear_terms.final_value()?,
+                    _ => return Err(AkitaError::InvalidProof),
                 }
-                RelationRoundState::ReducedDense { weights } => weights.terminal_weight()?,
-            };
-        let linear_claim = witness * self.linear_terms.final_value()?;
+            }
+            RelationRoundState::ReducedDense { weights } => {
+                weights.terminal_weight()? + self.linear_terms.final_value()?
+            }
+            RelationRoundState::LaneProduct(lane) => lane.final_weight()?,
+        };
         let additional = self
             .additional_relation_terms
             .as_ref()
             .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
-        Ok(virtual_claim + ordinary_relation + linear_claim + additional)
+        Ok(virtual_claim + witness * relation_weight + additional)
     }
 
     pub(super) fn additional_round_polynomial(&self) -> Option<UnivariatePoly<E>> {
         let additional = self.additional_relation_terms.as_ref()?;
         Some(match &self.witness_state {
             WitnessState::CompactPrefix(compact_witness) => {
-                let first_challenge = if self.rounds_completed == 0 {
-                    None
-                } else {
-                    self.deferred_compact_prefix()
-                        .and_then(|prefix| match prefix.phase {
-                            DeferredCompactPrefixPhase::Round0 => None,
-                            DeferredCompactPrefixPhase::Round1 { first_challenge } => {
-                                Some(first_challenge)
-                            }
-                        })
-                };
-                additional.round_polynomial_compact(compact_witness.view(), first_challenge)
+                let bound = self
+                    .compact_quotient_prefix()
+                    .map_or(&[][..], CompactQuotientPrefix::challenges);
+                additional.round_polynomial_compact(compact_witness.view(), bound)
             }
             WitnessState::FoldedSuffix(folded_witness) => {
                 additional.round_polynomial_folded(folded_witness)
@@ -309,12 +288,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn lane_rounds_completed(&self) -> usize {
-        self.rounds_completed
-            .saturating_sub(self.coefficient_bits())
-    }
-
-    #[inline]
     pub(super) fn in_coefficient_round(&self) -> bool {
         self.rounds_completed < self.coefficient_bits()
     }
@@ -326,48 +299,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     #[inline]
-    pub(super) fn current_lane_width(&self) -> usize {
-        self.lane_bits.saturating_sub(self.lane_rounds_completed())
-    }
-
-    #[inline]
-    pub(super) fn current_lane_capacity(&self) -> usize {
-        1usize << self.current_lane_width()
-    }
-
-    #[inline]
     pub(super) fn use_partial_lane_coefficient_round(&self) -> bool {
-        self.in_coefficient_round() && self.live_lane_count < self.current_lane_capacity()
-    }
-
-    #[inline]
-    pub(super) fn use_partial_lane_round(&self) -> bool {
-        self.rounds_completed >= self.coefficient_bits()
-            && self.lane_rounds_completed() < self.lane_bits
-            && self.live_lane_count < self.current_lane_capacity()
-    }
-
-    #[inline]
-    pub(super) fn next_uses_partial_lane_round(&self) -> bool {
-        self.rounds_completed >= self.coefficient_bits()
-            && self.lane_rounds_completed() + 1 < self.lane_bits
-            && self.live_lane_count.div_ceil(2) < (self.current_lane_capacity() / 2)
-    }
-
-    #[inline]
-    pub(crate) fn can_use_deferred_compact_prefix(&self) -> bool {
-        matches!(
-            self.relation_state,
-            RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Deferred(_),
-                ..
-            }
-        )
-    }
-
-    #[inline]
-    pub(super) fn using_deferred_compact_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_deferred_compact_prefix()
+        self.in_coefficient_round() && self.live_lane_count < (1usize << self.lane_bits)
     }
 
     #[inline]
@@ -431,27 +364,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         combined
     }
 
-    pub(super) fn deferred_compact_prefix(&self) -> Option<&DeferredCompactPrefix<E>> {
-        match &self.relation_state {
-            RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Deferred(prefix),
-                ..
-            } => Some(prefix),
-            _ => None,
-        }
-    }
-
-    pub(super) fn finish_deferred_compact_prefix(&mut self) {
-        match &mut self.relation_state {
-            RelationRoundState::QuotientFactored { prefix, .. } => {
-                *prefix = QuotientPrefixState::Disabled;
-            }
-            RelationRoundState::ReducedDense { .. } => {}
-        }
-    }
-
     #[cfg(test)]
-    pub(super) fn disable_deferred_compact_prefix(&mut self) {
-        self.finish_deferred_compact_prefix();
+    pub(super) fn disable_compact_quotient_prefix(&mut self) {
+        if let RelationRoundState::QuotientFactored { prefix, .. } = &mut self.relation_state {
+            *prefix = QuotientPrefixState::Disabled;
+        }
     }
 }

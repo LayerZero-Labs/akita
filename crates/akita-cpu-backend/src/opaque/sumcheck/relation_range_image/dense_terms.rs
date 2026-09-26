@@ -142,36 +142,30 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         }
     }
 
+    /// `(p(left), p(left + 1))` for the factored relation weight
+    /// `p = alpha(coefficient) * lw(lane)` in a coefficient round.
+    fn factored_relation_pair<'a>(
+        &self,
+        weights: &'a RelationWeightFactorization<E>,
+    ) -> impl Fn(usize) -> (E, E) + Sync + 'a {
+        debug_assert!(self.in_coefficient_round());
+        let coefficient_width = self.current_coefficient_width();
+        let coefficient_mask = (1usize << coefficient_width) - 1;
+        let common_alpha_factor = weights.common_alpha_factor();
+        let relation_lane_weights = weights.relation_lane_weights();
+        let weight = move |index: usize| {
+            common_alpha_factor[index & coefficient_mask]
+                * relation_lane_weights[index >> coefficient_width]
+        };
+        move |left| (weight(left), weight(left + 1))
+    }
+
     pub(super) fn compute_round_compact_dense_terms(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
         weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        let folding_coefficient_round = self.in_coefficient_round();
-        let current_lane_width = self.current_lane_width();
-        let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
-        let current_coefficient_width = self.current_coefficient_width();
-        let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
-        let common_alpha_factor = weights.common_alpha_factor();
-        let relation_lane_weights = weights.relation_lane_weights();
-        let relation_pair = |left: usize| {
-            let right = left + 1;
-            if folding_coefficient_round {
-                (
-                    common_alpha_factor[left & current_coefficient_mask]
-                        * relation_lane_weights[left >> current_coefficient_width],
-                    common_alpha_factor[right & current_coefficient_mask]
-                        * relation_lane_weights[right >> current_coefficient_width],
-                )
-            } else {
-                (
-                    common_alpha_factor[left >> current_lane_width]
-                        * relation_lane_weights[left & current_lane_mask],
-                    common_alpha_factor[right >> current_lane_width]
-                        * relation_lane_weights[right & current_lane_mask],
-                )
-            }
-        };
+        let relation_pair = self.factored_relation_pair(weights);
         self.compute_round_compact_dense_terms_with(
             compact_witness,
             compact_witness.len().div_ceil(2),
@@ -226,8 +220,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             .unwrap_or_else(E::zero);
                         let dw = w1 - w0;
 
-                        inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                        inner_virt[1] += e_in * (dw * dw);
+                        inner_virt[0] += e_in * (w0.square() + w0);
+                        inner_virt[1] += e_in * dw.square();
 
                         let (p0, p1) = relation_pair(2 * j);
                         self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
@@ -271,9 +265,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         let dw = w1 - w0;
                         let two_w0_plus_one = w0 + w0 + E::one();
 
-                        inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                        inner_virt[0] += e_in * (w0.square() + w0);
                         inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                        inner_virt[2] += e_in * (dw * dw);
+                        inner_virt[2] += e_in * dw.square();
 
                         let (p0, p1) = relation_pair(2 * j);
                         self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
@@ -305,31 +299,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         folded_witness: &[E],
         weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        let folding_coefficient_round = self.in_coefficient_round();
-        let current_lane_width = self.current_lane_width();
-        let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
-        let current_coefficient_width = self.current_coefficient_width();
-        let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
-        let common_alpha_factor = weights.common_alpha_factor();
-        let relation_lane_weights = weights.relation_lane_weights();
-        let relation_pair = |left: usize| {
-            let right = left + 1;
-            if folding_coefficient_round {
-                (
-                    common_alpha_factor[left & current_coefficient_mask]
-                        * relation_lane_weights[left >> current_coefficient_width],
-                    common_alpha_factor[right & current_coefficient_mask]
-                        * relation_lane_weights[right >> current_coefficient_width],
-                )
-            } else {
-                (
-                    common_alpha_factor[left >> current_lane_width]
-                        * relation_lane_weights[left & current_lane_mask],
-                    common_alpha_factor[right >> current_lane_width]
-                        * relation_lane_weights[right & current_lane_mask],
-                )
-            }
-        };
+        let relation_pair = self.factored_relation_pair(weights);
         self.compute_folded_dense_round_terms_with(
             folded_witness,
             folded_witness.len().div_ceil(2),

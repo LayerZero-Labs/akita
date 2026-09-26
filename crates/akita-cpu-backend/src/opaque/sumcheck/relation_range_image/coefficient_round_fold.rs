@@ -45,11 +45,11 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
 
             let j_low = (equality_address_base + coefficient_pair) & (e_first.len() - 1);
             let e_in = e_first[j_low];
-            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+            inner_virt[0] += e_in * (w0.square() + w0);
             if !SKIP_LINEAR {
                 inner_virt[1] += e_in * (dw * (w0 + w0 + E::one()));
             }
-            inner_virt[2] += e_in * (dw * dw);
+            inner_virt[2] += e_in * dw.square();
 
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;

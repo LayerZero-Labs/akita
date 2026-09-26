@@ -1,6 +1,6 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
-use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros};
+use akita_algebra::{eq_poly::EqPolynomial, offset_eq::OffsetEqWindow, poly::trim_trailing_zeros};
 use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::Unreduced;
@@ -201,9 +201,9 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
             let d_linear = linear[1] - linear[0];
             let d_binary = binary[1] - binary[0];
 
-            let witness_square_constant = witness[0] * (witness[0] + E::one());
+            let witness_square_constant = witness[0].square() + witness[0];
             let witness_square_linear = dw * (witness[0] + witness[0] + E::one());
-            let witness_square_quadratic = dw * dw;
+            let witness_square_quadratic = dw.square();
             let batched_binary = self.binary_batching * binary[0];
             let batched_binary_delta = self.binary_batching * d_binary;
 
@@ -222,29 +222,31 @@ impl<E: Field + Ring> AdditionalRelationTerms<E> {
         UnivariatePoly::new(coefficients)
     }
 
+    /// Round polynomial while the witness is still packed signed digits, after
+    /// the coefficient challenges `bound` have been drawn.
     pub(crate) fn round_polynomial_compact(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
-        first_challenge: Option<E>,
+        bound: &[E],
     ) -> UnivariatePoly<E>
     where
         E: Unreduced,
     {
-        if first_challenge.is_none() {
+        if bound.is_empty() {
             return self.round_polynomial_compact_initial(compact_witness);
         }
+        let bound_weights =
+            EqPolynomial::evals(bound).expect("compact prefix binds few coefficient challenges");
+        let stride = bound_weights.len();
         self.round_polynomial_with(|index| {
-            let compact_value = |source_index| {
-                compact_witness
-                    .get(source_index)
-                    .map_or_else(E::zero, |value| E::from_i64(i64::from(value)))
-            };
-            if let Some(challenge) = first_challenge {
-                let left = compact_value(2 * index);
-                left + challenge * (compact_value(2 * index + 1) - left)
-            } else {
-                compact_value(index)
-            }
+            bound_weights
+                .iter()
+                .enumerate()
+                .fold(E::zero(), |sum, (offset, &weight)| {
+                    compact_witness
+                        .get(index * stride + offset)
+                        .map_or(sum, |value| sum + weight * E::from_i64(i64::from(value)))
+                })
         })
     }
 
@@ -471,7 +473,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(prover.input_claim(), claim);
-        let polynomial = prover.round_polynomial_compact(packed_witness.view(), None);
+        let polynomial = prover.round_polynomial_compact(packed_witness.view(), &[]);
         assert_eq!(
             polynomial.evaluate(F::zero()) + polynomial.evaluate(F::one()),
             claim
@@ -479,7 +481,7 @@ mod tests {
         let challenge = F::from_u64(17);
         let next_claim = polynomial.evaluate(challenge);
         prover.bind(challenge);
-        let next = prover.round_polynomial_compact(packed_witness.view(), Some(challenge));
+        let next = prover.round_polynomial_compact(packed_witness.view(), &[challenge]);
         assert_eq!(
             next.evaluate(F::zero()) + next.evaluate(F::one()),
             next_claim
@@ -539,7 +541,7 @@ mod tests {
             F::from_u64(13),
         )
         .unwrap();
-        let polynomial = terms.round_polynomial_compact(packed_witness.view(), None);
+        let polynomial = terms.round_polynomial_compact(packed_witness.view(), &[]);
         for point in 0..=5 {
             let point = F::from_u64(point);
             assert_eq!(

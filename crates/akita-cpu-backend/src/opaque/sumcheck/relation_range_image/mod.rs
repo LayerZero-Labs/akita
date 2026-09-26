@@ -78,14 +78,6 @@
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding as fold_folded_lane_pair;
-use crate::opaque::sumcheck::two_round_prefix::{
-    build_stage2_prefix_cache, can_use_stage2_two_round_prefix, Stage2PrefixCache,
-};
-use crate::opaque::sumcheck::two_round_prefix::{
-    stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
-    stage2_b8_w_digit,
-};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -100,28 +92,16 @@ use std::mem;
 use std::time::Instant;
 
 use crate::opaque::relation_weights::RelationWeightFactorization;
-use crate::sources::packed_digits::{
-    PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
-};
+use crate::sources::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 
 enum WitnessState<E: Field> {
     CompactPrefix(PackedSignedDigits),
     FoldedSuffix(Vec<E>),
 }
 
-struct DeferredCompactPrefix<E: Field> {
-    cache: Stage2PrefixCache<E>,
-    phase: DeferredCompactPrefixPhase<E>,
-}
-
-enum DeferredCompactPrefixPhase<E: Field> {
-    Round0,
-    Round1 { first_challenge: E },
-}
-
 enum QuotientPrefixState<E: Field> {
     Disabled,
-    Deferred(DeferredCompactPrefix<E>),
+    Compact(Box<CompactQuotientPrefix<E>>),
 }
 
 enum RelationRoundState<E: Field> {
@@ -132,6 +112,7 @@ enum RelationRoundState<E: Field> {
     ReducedDense {
         weights: DenseRelationWeights<E>,
     },
+    LaneProduct(LaneProduct<E>),
 }
 
 #[derive(Clone, Copy)]
@@ -149,13 +130,6 @@ fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UnivariatePoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
     trim_trailing_zeros(&mut coeffs);
     UnivariatePoly::new(coeffs)
-}
-
-#[inline]
-fn fold_two_round_quad<E: Field>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
-    let x0 = v00 + r0 * (v10 - v00);
-    let x1 = v01 + r0 * (v11 - v01);
-    x0 + r1 * (x1 - x0)
 }
 
 #[inline]
@@ -221,6 +195,36 @@ fn stage2_eq_block(
     (j_high, blk_end)
 }
 
+/// Sum of field products that delays reduction when the field's product
+/// accumulator is exact.
+#[derive(Clone, Copy)]
+struct ProductSum<E: Unreduced> {
+    exact: E::Product,
+    plain: E,
+}
+
+impl<E: Unreduced> ProductSum<E> {
+    fn zero() -> Self {
+        Self {
+            exact: E::Product::zero(),
+            plain: E::zero(),
+        }
+    }
+
+    #[inline(always)]
+    fn add(&mut self, left: E, right: E) {
+        if E::SUM_IS_EXACT {
+            self.exact += left.mul_unreduced(right);
+        } else {
+            self.plain += left * right;
+        }
+    }
+
+    fn finish(self) -> E {
+        E::reduce_product(self.exact) + self.plain
+    }
+}
+
 fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
     for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
         *left_term += right_term;
@@ -262,7 +266,6 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub(crate) struct RelationRangeImageProver<E: Field> {
     witness_state: WitnessState<E>,
-    b: usize,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -286,12 +289,12 @@ mod additional_terms;
 mod coefficient_packing_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
-mod compact_prefix;
 mod dense_terms;
 mod evaluation_trace;
-mod lane_prefix;
+mod lane_product;
 mod lifecycle;
 mod prepared_linear_lane;
+mod quotient_prefix;
 mod round_flow;
 mod weight_oracle;
 
@@ -302,44 +305,18 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+use lane_product::LaneProduct;
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
+use quotient_prefix::CompactQuotientPrefix;
 pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     #[inline]
-    fn common_alpha_factor(&self) -> Option<&[E]> {
-        self.quotient_weights()
-            .map(RelationWeightFactorization::common_alpha_factor)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    fn relation_lane_weights(&self) -> Option<&[E]> {
-        self.quotient_weights()
-            .map(RelationWeightFactorization::relation_lane_weights)
-    }
-
-    #[cfg(test)]
-    #[inline]
     fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
         match &self.relation_state {
             RelationRoundState::QuotientFactored { weights, .. } => Some(weights),
-            RelationRoundState::ReducedDense { .. } => None,
-        }
-    }
-
-    #[cfg(test)]
-    fn replace_common_alpha_factor(&mut self, replacement: Vec<E>) {
-        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
-            *weights.components_mut().0 = replacement;
-        }
-    }
-
-    #[cfg(test)]
-    fn replace_relation_lane_weights(&mut self, replacement: Vec<E>) {
-        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
-            *weights.components_mut().1 = replacement;
+            RelationRoundState::ReducedDense { .. } | RelationRoundState::LaneProduct(_) => None,
         }
     }
 
@@ -375,15 +352,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     ) {
         let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
         accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
-    }
-
-    #[inline]
-    pub(super) fn fold_linear_terms_for_current_round(&mut self, challenge: E) {
-        if self.in_coefficient_round() {
-            self.linear_terms.fold_coefficients(challenge);
-        } else {
-            self.linear_terms.fold_lanes(challenge);
-        }
     }
 }
 

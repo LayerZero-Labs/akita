@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Arc;
 
-fn two_source_linear_terms(
+pub(super) fn two_source_linear_terms(
     live_lane_count: usize,
     coeff_count: usize,
 ) -> (PreparedProverLinearTerms<F>, Vec<F>) {
@@ -84,7 +84,7 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         structured,
         params,
     );
-    assert!(optimized.can_use_deferred_compact_prefix());
+    assert!(optimized.compact_quotient_prefix().is_some());
     let (structured, _) = two_source_linear_terms(live_lane_count, coeff_count);
     let mut direct = new_stage2_test_prover_with_linear_terms(
         F::from_u64(701),
@@ -95,7 +95,7 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         structured,
         params,
     );
-    direct.disable_deferred_compact_prefix();
+    direct.disable_compact_quotient_prefix();
 
     let mut optimized_claim = optimized.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -112,10 +112,8 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
     }
     assert_eq!(optimized_claim, direct_claim);
     assert_eq!(optimized.final_w_eval(), direct.final_w_eval());
-    assert_eq!(
-        optimized.linear_terms.final_value().unwrap(),
-        direct.linear_terms.final_value().unwrap()
-    );
+    assert_eq!(optimized.expected_final_claim().unwrap(), optimized_claim);
+    assert_eq!(direct.expected_final_claim().unwrap(), direct_claim);
 }
 
 #[test]
@@ -157,7 +155,7 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    assert!(prover.can_use_deferred_compact_prefix());
+    assert!(prover.compact_quotient_prefix().is_some());
     let mut direct = new_stage2_test_prover_with_trace(
         F::from_u64(43),
         w_prefix,
@@ -166,8 +164,8 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    direct.disable_deferred_compact_prefix();
-    assert!(!direct.can_use_deferred_compact_prefix());
+    direct.disable_compact_quotient_prefix();
+    assert!(direct.compact_quotient_prefix().is_none());
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -267,120 +265,4 @@ fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
 
     assert_eq!(prefix_claim, padded_claim);
     assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
-}
-
-#[test]
-fn stage2_trace_round2_cached_poly_matches_reference() {
-    let lane_bits = 4usize;
-    let coefficient_bits = 4usize;
-    let live_lane_count = 11usize;
-    let b = 8usize;
-    let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
-        .map(|i| ((i * 31 + 11) % b) as i8 - half)
-        .collect();
-    let trace_compact: Vec<F> = (0..(live_lane_count * coeff_count))
-        .map(|i| F::from_u64((37 * i as u64) + 79))
-        .collect();
-    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
-        .map(|i| F::from_u64((29 * i as u64) + 83))
-        .collect();
-    let common_alpha_factor: Vec<F> = (0..coeff_count)
-        .map(|i| F::from_u64((31 * i as u64) + 89))
-        .collect();
-    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
-        .map(|i| F::from_u64((37 * i as u64) + 97))
-        .collect();
-    let params = Stage2Params {
-        stage1_point: &stage1_point,
-        b,
-        live_lane_count,
-        lane_bits,
-        coefficient_bits,
-    };
-
-    let mut prover = new_stage2_test_prover_with_trace(
-        F::from_u64(101),
-        w_prefix.clone(),
-        common_alpha_factor.clone(),
-        relation_lane_weights.clone(),
-        trace_compact.clone(),
-        params,
-    );
-    let round0 = prover.compute_round_univariate(0, prover.input_claim());
-    let r0 = F::from_u64(103);
-    prover.ingest_challenge(0, r0);
-    let round1 = prover.compute_round_univariate(1, round0.evaluate(r0));
-    let r1 = F::from_u64(107);
-
-    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        packed(&w_prefix).view(),
-        live_lane_count,
-        coeff_count,
-        r0,
-        r1,
-    );
-    let expected_alpha_round2 =
-        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let mut expected_trace =
-        PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_lane_count, coeff_count);
-    expected_trace.fold_two_coefficients(r0, r1);
-    let expected_relation_lane_weights = prover
-        .relation_lane_weights()
-        .expect("quotient test state")
-        .to_vec();
-
-    let mut expected = new_stage2_test_prover_with_trace(
-        F::from_u64(101),
-        w_prefix,
-        common_alpha_factor,
-        relation_lane_weights,
-        trace_compact.clone(),
-        params,
-    );
-    let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
-    assert_eq!(expected_round0, round0);
-    expected.ingest_challenge(0, r0);
-    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(r0));
-    assert_eq!(expected_round1, round1);
-    expected.prev_norm_claim = expected
-        .prev_norm_poly
-        .as_ref()
-        .expect("round1 norm poly should be cached")
-        .evaluate(r1);
-    expected.split_eq.bind(r1);
-    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
-    expected.replace_common_alpha_factor(expected_alpha_round2.clone());
-    expected.linear_terms = expected_trace;
-    expected.rounds_completed = 2;
-    expected.replace_relation_lane_weights(expected_relation_lane_weights.clone());
-    let expected_round2 = expected.compute_current_round_poly_from_state();
-
-    prover.ingest_challenge(1, r1);
-
-    match &prover.witness_state {
-        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
-        WitnessState::CompactPrefix(_) => {
-            panic!("expected fused trace transition to enter the folded suffix")
-        }
-    }
-    assert_eq!(
-        prover.common_alpha_factor().expect("quotient test state"),
-        expected_alpha_round2
-    );
-    let expected_trace_round2 = trace_compact
-        .chunks_exact(4)
-        .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        prover.linear_terms.materialize_dense(),
-        expected_trace_round2,
-        "two-round handoff must preserve the folded trace"
-    );
-    assert_eq!(
-        prover.relation_lane_weights().expect("quotient test state"),
-        expected_relation_lane_weights
-    );
-    assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }

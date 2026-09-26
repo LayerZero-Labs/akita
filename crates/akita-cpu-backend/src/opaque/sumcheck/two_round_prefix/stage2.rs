@@ -1,507 +1,88 @@
 use super::common::*;
-use crate::opaque::PreparedProverLinearTerms;
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::reduce_signed_accum;
-use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Unreduced, Zero};
 use jolt_poly::UnivariatePoly;
 
-/// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BooleanCorner {
-    ZeroZero,
-    ZeroOne,
-    OneZero,
-    OneOne,
-}
-
-impl BooleanCorner {
-    pub(crate) const ALL: [Self; 4] = [Self::ZeroZero, Self::ZeroOne, Self::OneZero, Self::OneOne];
-    #[cfg(test)]
-    pub(crate) const DEFAULT_STAGE2_NORM: Self = Self::ZeroZero;
-    pub(crate) const DEFAULT_STAGE2_RELATION: Self = Self::ZeroZero;
-
-    #[inline]
-    pub(crate) fn default_norm_order() -> [Self; 4] {
-        Self::ALL
-    }
-
-    #[inline]
-    pub(crate) fn boolean_index(self) -> usize {
-        match self {
-            Self::ZeroZero => 0,
-            Self::ZeroOne => 1,
-            Self::OneZero => 2,
-            Self::OneOne => 3,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn grid_index(self) -> usize {
-        match self {
-            Self::ZeroZero => 0,
-            Self::ZeroOne => 1,
-            Self::OneZero => 3,
-            Self::OneOne => 4,
-        }
-    }
-}
-
-/// Internal compressed stage-2 `{0, 1, Infinity}^2` grid with one omitted
-/// Boolean corner.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage2CompressedGrid<E: Field> {
-    pub omitted_corner: BooleanCorner,
-    pub evals_except_corner: [E; 8],
-}
-
-impl<E: Field> Stage2CompressedGrid<E> {
-    #[cfg(test)]
-    pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
-        let omitted_idx = omitted_corner.grid_index();
-        let mut out_idx = 0usize;
-        let evals_except_corner = std::array::from_fn(|_| {
-            while out_idx == omitted_idx {
-                out_idx += 1;
-            }
-            let value = full_grid[out_idx];
-            out_idx += 1;
-            value
-        });
-        Self {
-            omitted_corner,
-            evals_except_corner,
-        }
-    }
-
-    pub(crate) fn reconstruct_with_corner_value(&self, omitted_value: E) -> [E; 9] {
-        let omitted_idx = self.omitted_corner.grid_index();
-        let mut src_idx = 0usize;
-        std::array::from_fn(|dst_idx| {
-            if dst_idx == omitted_idx {
-                omitted_value
-            } else {
-                let value = self.evals_except_corner[src_idx];
-                src_idx += 1;
-                value
-            }
-        })
-    }
-}
-
-/// Internal stage-2 first-two-round prefix payload.
+/// Range-image grid of the first two stage-2 rounds.
 ///
-/// This payload is built and consumed inside the prover to reconstruct ordinary
-/// stage-2 sumcheck round messages; it is not serialized in the Akita proof.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Stage2PrefixGrids<E: Field> {
-    pub norm: Stage2CompressedGrid<E>,
-    pub relation: Stage2CompressedGrid<E>,
-}
-
-/// Return the stage-2 full-domain grid in row-major `x`-major order over
-/// `{0, 1, Infinity}^2`.
-#[cfg(test)]
-pub(crate) fn stage2_full_grid_values<E: Field + Ring>(
-    mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
-) -> [E; 9] {
-    let points = stage2_full_prefix_points::<E>();
-    std::array::from_fn(|idx| {
-        let x = points[idx / 3];
-        let y = points[idx % 3];
-        eval(x, y)
-    })
-}
-
-/// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
-#[inline]
-#[cfg(test)]
-pub(crate) fn eval_biquadratic_from_full_grid<E: Field>(
-    full_grid: [E; 9],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-) -> E {
-    let q_y0 = eval_quadratic_from_01_inf(full_grid[0], full_grid[3], full_grid[6], x);
-    let q_y1 = eval_quadratic_from_01_inf(full_grid[1], full_grid[4], full_grid[7], x);
-    let q_yinf = eval_quadratic_from_01_inf(full_grid[2], full_grid[5], full_grid[8], x);
-    eval_quadratic_from_01_inf(q_y0, q_y1, q_yinf, y)
-}
-
-/// Return the local claim weights for the four Boolean corners of the stage-2
-/// norm half, ordered as `[(0,0), (0,1), (1,0), (1,1)]`.
-#[inline]
-pub(crate) fn stage2_norm_corner_weights_from_linear_evals<E: Field>(
-    l0_at_0: E,
-    l0_at_1: E,
-    l1_at_0: E,
-    l1_at_1: E,
-) -> [E; 4] {
-    [
-        l0_at_0 * l1_at_0,
-        l0_at_0 * l1_at_1,
-        l0_at_1 * l1_at_0,
-        l0_at_1 * l1_at_1,
-    ]
-}
-
-/// Return the local claim weights for the four Boolean corners of the stage-2
-/// norm half when the two local eq factors are `eq(tau0, X)` and `eq(tau1, Y)`.
-#[inline]
-pub(crate) fn stage2_norm_corner_weights_from_taus<E: Field>(tau0: E, tau1: E) -> [E; 4] {
-    stage2_norm_corner_weights_from_linear_evals(E::one() - tau0, tau0, E::one() - tau1, tau1)
-}
-
-/// Choose the default omitted corner for stage-2 norm compression, preferring
-/// `(0,0)` when its claim weight is nonzero.
-#[inline]
-pub(crate) fn default_stage2_norm_omitted_corner<E: Field>(
-    corner_weights: [E; 4],
-) -> BooleanCorner {
-    for corner in BooleanCorner::default_norm_order() {
-        if !corner_weights[corner.boolean_index()].is_zero() {
-            return corner;
-        }
-    }
-    unreachable!("at least one Boolean-corner weight must be nonzero");
-}
-
-/// Recover a full stage-2 grid from an omitted-corner compression and a
-/// weighted Boolean-corner claim relation.
-pub(crate) fn recover_stage2_grid_from_corner_claim<E: Field>(
-    compressed: &Stage2CompressedGrid<E>,
-    corner_weights: [E; 4],
-    claim: E,
-) -> Option<[E; 9]> {
-    let omitted_weight = corner_weights[compressed.omitted_corner.boolean_index()];
-    let omitted_weight_inv = omitted_weight.inverse()?;
-    let mut full_grid = compressed.reconstruct_with_corner_value(E::zero());
-    let known_sum = BooleanCorner::ALL
-        .iter()
-        .copied()
-        .filter(|corner| *corner != compressed.omitted_corner)
-        .fold(E::zero(), |acc, corner| {
-            acc + corner_weights[corner.boolean_index()] * full_grid[corner.grid_index()]
-        });
-    let omitted_value = (claim - known_sum) * omitted_weight_inv;
-    full_grid[compressed.omitted_corner.grid_index()] = omitted_value;
-    Some(full_grid)
-}
-
-/// Recover a full stage-2 relation grid from its default `(0,0)` omission.
-#[inline]
-pub(crate) fn recover_stage2_relation_grid_from_claim<E: Field>(
-    compressed: &Stage2CompressedGrid<E>,
-    relation_claim: E,
-) -> [E; 9] {
-    recover_stage2_grid_from_corner_claim(compressed, [E::one(); 4], relation_claim)
-        .expect("relation corner weights are all one")
-}
-
-/// Whether stage 2 has enough y-rounds to use the 2-round prefix path.
-#[inline]
-pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> bool {
-    ring_bits >= 2 && matches!(b, 4 | 8)
-}
-
-/// Build the stage-2 first-two-round prefix payload from the compact
-/// witness table at the start of stage 2.
-///
-/// Returns `None` when there are fewer than two y-rounds to batch.
-#[tracing::instrument(skip_all, name = "two_round_prefix::build_stage2_prefix_cache")]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_stage2_prefix_cache<E: Field + Ring + Unreduced>(
-    w_compact: crate::sources::packed_digits::PackedSignedDigitView<'_>,
-    alpha_evals_y: &[E],
-    relation_matrix_col_evals: &[E],
-    linear_terms: &PreparedProverLinearTerms<E>,
-    stage1_point: &[E],
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-    range_image_evaluation: E,
-    relation_claim: E,
-    batching_coefficient: E,
-) -> Option<Stage2PrefixCache<E>> {
-    let grids = build_stage2_prefix_grids(
-        w_compact,
-        alpha_evals_y,
-        relation_matrix_col_evals,
-        linear_terms,
-        stage1_point,
-        b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
-    )?;
-    Stage2PrefixCache::new(
-        &grids,
-        stage1_point,
-        range_image_evaluation,
-        relation_claim,
-        batching_coefficient,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_stage2_prefix_grids<E: Field + Ring + Unreduced>(
-    w_compact: crate::sources::packed_digits::PackedSignedDigitView<'_>,
-    alpha_evals_y: &[E],
-    relation_matrix_col_evals: &[E],
-    linear_terms: &PreparedProverLinearTerms<E>,
-    stage1_point: &[E],
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Option<Stage2PrefixGrids<E>> {
-    if !can_use_stage2_two_round_prefix(ring_bits, b) {
-        return None;
-    }
-
-    let y_len = 1usize << ring_bits;
-    assert_eq!(alpha_evals_y.len(), y_len);
-    assert_eq!(w_compact.len(), live_x_cols * y_len);
-    debug_assert!(linear_terms.validate_len(live_x_cols * y_len).is_ok());
-    assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
-    assert_eq!(stage1_point.len(), col_bits + ring_bits);
-
-    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
-        .expect("stage-2 two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
-        .expect("stage-2 x-prefix dimensions are prevalidated");
-    let y_quads = y_len >> 2;
-    debug_assert_eq!(eq_y_suffix.len(), y_quads);
-    let norm_omitted_corner = default_stage2_norm_omitted_corner(
-        stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
-    );
-    let norm_point_indices =
-        &STAGE2_COMPRESSED_POINT_INDICES_BY_OMITTED_CORNER[norm_omitted_corner.boolean_index()];
-    let alpha_point_values_by_quad: Vec<[E; STAGE2_COMPRESSED_POINT_COUNT]> = (0..y_quads)
-        .map(|y_quad| {
-            let base = 4 * y_quad;
-            let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
-            stage2_relation_m_point_values_compressed(alpha_quad)
-        })
-        .collect();
-
-    let w_digit_fn: fn(i8) -> usize = match b {
-        4 => stage2_b4_w_digit,
-        8 => stage2_b8_w_digit,
-        _ => unreachable!("unsupported stage-2 two-round prefix basis"),
-    };
-    let lookup_index_fn: fn([usize; 4]) -> usize = match b {
-        4 => stage2_b4_lookup_index_from_digits,
-        8 => stage2_b8_lookup_index_from_digits,
-        _ => unreachable!(),
-    };
-    let norm_table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
-        4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
-        8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
-        _ => unreachable!(),
-    };
-    let rel_table: &[[i64; STAGE2_COMPRESSED_POINT_COUNT]] = match b {
-        4 => &STAGE2_B4_RELATION_WEIGHT_COMPRESSED_TABLE,
-        8 => &STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE,
-        _ => unreachable!(),
-    };
-
-    let (norm_pos, norm_neg, relation_accum, _) = cfg_fold_reduce!(
-        0..live_x_cols,
-        || {
-            (
-                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::Product::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                vec![0usize; y_quads],
-            )
-        },
-        |(mut norm_pos, mut norm_neg, mut relation_accum, mut lookup_indices), x_idx| {
-            let column_start = x_idx * y_len;
-            let mut column = w_compact
-                .slice(column_start..column_start + y_len)
-                .expect("stage-2 compact column is in bounds")
-                .iter();
-            let eq_x_weight = eq_x[x_idx];
-            let row_val = relation_matrix_col_evals[x_idx];
-            let linear_lane = linear_terms.resolve_lane(x_idx);
-            let mut x_rel_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
-                let quad = column.next_array::<4>().expect("compact quad digits");
-                let lookup_idx = lookup_index_fn(quad.map(w_digit_fn));
-                lookup_indices[y_quad] = lookup_idx;
-                let norm_weight = eq_y_weight * eq_x_weight;
-                accum_lookup_vector_signed_selected(
-                    &mut norm_pos,
-                    &mut norm_neg,
-                    norm_weight,
-                    &norm_table[lookup_idx],
-                    norm_point_indices,
-                );
-                accum_pointwise_signed(
-                    &mut x_rel_pos,
-                    &mut x_rel_neg,
-                    &alpha_point_values_by_quad[y_quad],
-                    &rel_table[lookup_idx],
-                );
-            }
-            for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
-                relation_accum[idx] += row_val.mul_unreduced(x_rel);
-            }
-            linear_lane.for_each_factored(|factor, values| {
-                debug_assert_eq!(values.len(), y_len);
-                let mut x_linear_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-                let mut x_linear_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-                for (linear_quad, &lookup_idx) in values.chunks_exact(4).zip(&lookup_indices) {
-                    let linear_point_values = stage2_relation_m_point_values_compressed([
-                        linear_quad[0],
-                        linear_quad[1],
-                        linear_quad[2],
-                        linear_quad[3],
-                    ]);
-                    accum_pointwise_signed(
-                        &mut x_linear_pos,
-                        &mut x_linear_neg,
-                        &linear_point_values,
-                        &rel_table[lookup_idx],
-                    );
-                }
-                for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                    let x_linear = reduce_signed_accum::<E>(x_linear_pos[idx], x_linear_neg[idx]);
-                    relation_accum[idx] += factor.mul_unreduced(x_linear);
-                }
-            });
-            (norm_pos, norm_neg, relation_accum, lookup_indices)
-        },
-        |(mut norm_pos_a, mut norm_neg_a, mut relation_accum_a, lookup_indices_a),
-         (norm_pos_b, norm_neg_b, relation_accum_b, _)| {
-            for (dst, src) in norm_pos_a.iter_mut().zip(norm_pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in norm_neg_a.iter_mut().zip(norm_neg_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in relation_accum_a.iter_mut().zip(relation_accum_b.iter()) {
-                *dst += *src;
-            }
-            (norm_pos_a, norm_neg_a, relation_accum_a, lookup_indices_a)
-        }
-    );
-    let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
-    let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| E::reduce_product(relation_accum[idx]));
-    Some(Stage2PrefixGrids {
-        norm: Stage2CompressedGrid {
-            omitted_corner: norm_omitted_corner,
-            evals_except_corner: norm_evals_except_corner,
-        },
-        relation: Stage2CompressedGrid {
-            omitted_corner: BooleanCorner::DEFAULT_STAGE2_RELATION,
-            evals_except_corner: relation_evals_except_corner,
-        },
-    })
-}
-
-/// State needed to reconstruct the first two ordinary stage-2 round messages
-/// from the internal prefix payload.
+/// Each witness quad `[w00, w10, w01, w11]` spans the first two coefficient
+/// variables. The grid holds, for every point of `{0, 1, Infinity}^2`, the sum
+/// over quads of the equality weight of the variables after the quad times the
+/// quad's local range-image value `W (W + 1)`, where `Infinity` takes the
+/// leading coefficient in that coordinate. It is stored as one quadratic in the
+/// first variable per value of the second.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2PrefixCache<E: Field> {
     norm_x_row_coeffs: [[E; 3]; 3],
-    relation_x_row_coeffs: [[E; 3]; 3],
     tau0: E,
     tau1: E,
     batching_coeff: E,
 }
 
-impl<E: Field> Stage2PrefixCache<E> {
-    pub(super) fn new(
-        proof: &Stage2PrefixGrids<E>,
-        stage1_point: &[E],
-        range_image_evaluation: E,
-        relation_claim: E,
+impl<E: Field + Unreduced> Stage2PrefixCache<E> {
+    /// Build the grid from the equality weight of every quad digit class.
+    ///
+    /// Class `d0 | d1 << bits | d2 << 2 bits | d3 << 3 bits` holds quads whose
+    /// digits are `d_i - b / 2`, with `bits = log2(b)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `b` is not 4 or 8, or if `histogram` does not have one entry
+    /// per class.
+    pub(crate) fn from_norm_histogram(
+        histogram: &[E],
+        b: usize,
+        tau0: E,
+        tau1: E,
         batching_coeff: E,
-    ) -> Option<Self> {
-        if stage1_point.len() < 2 {
-            return None;
+    ) -> Self {
+        let table: &[[i64; STAGE2_PREFIX_POINT_COUNT]] = match b {
+            4 => &STAGE2_B4_NORM_LOOKUP_TABLE,
+            8 => &STAGE2_B8_NORM_LOOKUP_TABLE,
+            _ => unreachable!("unsupported stage-2 prefix basis"),
+        };
+        assert_eq!(histogram.len(), table.len());
+        let mut pos = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
+        let mut neg = [E::SmallProduct::zero(); STAGE2_PREFIX_POINT_COUNT];
+        for (&weight, values) in histogram.iter().zip(table) {
+            if !weight.is_zero() {
+                accum_lookup_vector_signed(&mut pos, &mut neg, weight, values);
+            }
         }
-        let tau0 = stage1_point[0];
-        let tau1 = stage1_point[1];
-        let norm_full_grid = recover_stage2_grid_from_corner_claim(
-            &proof.norm,
-            stage2_norm_corner_weights_from_taus(tau0, tau1),
-            range_image_evaluation,
-        )?;
-        let relation_full_grid =
-            recover_stage2_relation_grid_from_claim(&proof.relation, relation_claim);
-        let norm_x_row_coeffs = std::array::from_fn(|y_idx| {
-            quadratic_coeffs_from_01_inf(
-                norm_full_grid[y_idx],
-                norm_full_grid[3 + y_idx],
-                norm_full_grid[6 + y_idx],
-            )
-        });
-        let relation_x_row_coeffs = std::array::from_fn(|y_idx| {
-            quadratic_coeffs_from_01_inf(
-                relation_full_grid[y_idx],
-                relation_full_grid[3 + y_idx],
-                relation_full_grid[6 + y_idx],
-            )
-        });
-        Some(Self {
-            norm_x_row_coeffs,
-            relation_x_row_coeffs,
+        let grid: [E; STAGE2_PREFIX_POINT_COUNT] =
+            std::array::from_fn(|point| reduce_signed_accum::<E>(pos[point], neg[point]));
+        Self {
+            norm_x_row_coeffs: std::array::from_fn(|y| {
+                quadratic_coeffs_from_01_inf(grid[y], grid[3 + y], grid[6 + y])
+            }),
             tau0,
             tau1,
             batching_coeff,
-        })
+        }
     }
 }
 
 impl<E: Field + Ring> Stage2PrefixCache<E> {
-    #[inline]
-    pub(crate) fn reconstruct_round0_polys(&self) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
+    /// Range-image message of round 0, including the batching coefficient.
+    pub(crate) fn round0_norm_poly(&self) -> UnivariatePoly<E> {
         let norm_q = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.norm_x_row_coeffs[0], E::one() - self.tau1),
             scale_quadratic_coeffs(self.norm_x_row_coeffs[1], self.tau1),
         );
-        let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau0, norm_q);
-        for coeff in &mut norm_coeffs {
-            *coeff = self.batching_coeff * *coeff;
-        }
-        let relation_coeffs =
-            add_quadratic_coeffs(self.relation_x_row_coeffs[0], self.relation_x_row_coeffs[1]);
-        (
-            UnivariatePoly::new(norm_coeffs.to_vec()),
-            UnivariatePoly::new(relation_coeffs.to_vec()),
-        )
+        let coeffs = mul_linear_by_quadratic_coeffs(self.tau0, norm_q)
+            .map(|coeff| self.batching_coeff * coeff);
+        UnivariatePoly::new(coeffs.to_vec())
     }
 
-    #[inline]
-    pub(crate) fn reconstruct_round1_polys(&self, r0: E) -> (UnivariatePoly<E>, UnivariatePoly<E>) {
-        let norm_y_values: [E; 3] = std::array::from_fn(|y_idx| {
-            eval_quadratic_from_coeffs(self.norm_x_row_coeffs[y_idx], r0)
-        });
+    /// Range-image message of round 1 after challenge `r0`, including the
+    /// batching coefficient.
+    pub(crate) fn round1_norm_poly(&self, r0: E) -> UnivariatePoly<E> {
+        let norm_y_values: [E; 3] =
+            std::array::from_fn(|y| eval_quadratic_from_coeffs(self.norm_x_row_coeffs[y], r0));
         let norm_q =
             quadratic_coeffs_from_01_inf(norm_y_values[0], norm_y_values[1], norm_y_values[2]);
-        let round0_eq = linear_eq_eval(self.tau0, r0);
-        let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q);
-        for coeff in &mut norm_coeffs {
-            *coeff = self.batching_coeff * round0_eq * *coeff;
-        }
-        let relation_rhs_values: [E; 3] = std::array::from_fn(|y_idx| {
-            eval_quadratic_from_coeffs(self.relation_x_row_coeffs[y_idx], r0)
-        });
-        let relation_coeffs = quadratic_coeffs_from_01_inf(
-            relation_rhs_values[0],
-            relation_rhs_values[1],
-            relation_rhs_values[2],
-        );
-        (
-            UnivariatePoly::new(norm_coeffs.to_vec()),
-            UnivariatePoly::new(relation_coeffs.to_vec()),
-        )
+        let scale = self.batching_coeff * linear_eq_eval(self.tau0, r0);
+        let coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q).map(|coeff| scale * coeff);
+        UnivariatePoly::new(coeffs.to_vec())
     }
 }

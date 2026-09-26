@@ -21,16 +21,13 @@ fn fold_prepared_trace_at_point<E: Field>(
     point: &[E],
 ) -> E {
     let coefficient_bits = coeff_count.trailing_zeros() as usize;
-    let mut live_lanes = live_len / coeff_count;
     for &challenge in &point[..coefficient_bits] {
         trace.fold_coefficients(challenge);
     }
-    for &challenge in &point[coefficient_bits..] {
-        trace.fold_lanes(challenge);
-        live_lanes = live_lanes.div_ceil(2);
-    }
-    assert_eq!(live_lanes, 1);
-    trace.get(0, 0, 1)
+    let lane_point = &point[coefficient_bits..];
+    let mut lanes = vec![E::zero(); 1 << lane_point.len()];
+    trace.drain_into_lane_weights(&mut lanes[..live_len / coeff_count], E::one());
+    multilinear_eval(&lanes, lane_point).unwrap()
 }
 
 fn materialize_semantic_trace_oracle<E: Field>(
@@ -289,17 +286,15 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
         .iter()
         .map(|source| (source.values.as_ptr(), source.values.capacity()))
         .collect::<Vec<_>>();
-    two_round.fold_two_coefficients(r0, r1);
+    two_round.fold_coefficients(r0);
+    two_round.fold_coefficients(r1);
     for (source, &(pointer, capacity)) in two_round.sources.iter().zip(&two_round_allocations) {
         assert_eq!(source.values.as_ptr(), pointer);
         assert_eq!(source.values.capacity(), capacity);
     }
-    let expected_two_round = dense
-        .chunks_exact(coeff_count)
-        .flat_map(|lane| {
-            lane.chunks_exact(4)
-                .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
-        })
+    let expected_two_round = expected_one_round
+        .chunks_exact(2)
+        .map(|pair| pair[0] + r1 * (pair[1] - pair[0]))
         .collect::<Vec<_>>();
     assert_eq!(two_round.materialize_dense(), expected_two_round);
 }

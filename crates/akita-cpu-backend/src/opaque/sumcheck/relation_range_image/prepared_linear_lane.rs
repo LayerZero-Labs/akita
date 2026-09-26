@@ -22,9 +22,7 @@ enum PreparedLinearLaneKind<'a, E: Field> {
 
 /// One resolved linear-term lane.
 ///
-/// Packing support is resolved once at the outer lane boundary. Source
-/// coefficients stay factored so linear kernels can accumulate a batch before
-/// applying each source's common factor.
+/// Packing support is resolved once at the outer lane boundary.
 pub(crate) struct PreparedLinearLane<'a, E: Field> {
     kind: PreparedLinearLaneKind<'a, E>,
 }
@@ -86,36 +84,46 @@ impl<E: Field> PreparedLinearLane<'_, E> {
         let [left, right] = self.evaluated_values([left, left + 1]);
         (left, right)
     }
-
-    #[inline]
-    pub(crate) fn for_each_factored(&self, mut visit: impl FnMut(E, &[E])) {
-        match &self.kind {
-            PreparedLinearLaneKind::Dense(value) => visit(E::one(), std::slice::from_ref(value)),
-            PreparedLinearLaneKind::Packing { factor, values } => visit(*factor, values),
-            PreparedLinearLaneKind::Sparse {
-                terms,
-                sources,
-                coeff_count,
-            } => {
-                for term in *terms {
-                    let Some(source) = sources.get(term.source_index) else {
-                        continue;
-                    };
-                    let source_lane_start = term.lane * coeff_count;
-                    if let Some(values) = source
-                        .values
-                        .get(source_lane_start..source_lane_start + coeff_count)
-                    {
-                        visit(term.factor, values);
-                    }
-                }
-            }
-            PreparedLinearLaneKind::Zero => {}
-        }
-    }
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Visit `(factor, source_index, source_lane)` for every source term of
+    /// witness lane `lane`. Dense weights have no source terms.
+    #[inline]
+    pub(crate) fn for_each_source_term(&self, lane: usize, mut visit: impl FnMut(E, usize, usize)) {
+        let source_lane_count =
+            |source_index: usize| self.sources.get(source_index).map_or(0, |s| s.lane_count);
+        match &self.lane_weights {
+            PreparedLaneWeights::Dense(_) => {}
+            PreparedLaneWeights::Packing(packing) => {
+                let Some(segment) = packing
+                    .lane_to_segment
+                    .get(lane)
+                    .and_then(|segment| *segment)
+                    .and_then(|segment| packing.segments.get(segment.get() - 1))
+                else {
+                    return;
+                };
+                let Some(lane_offset) = lane.checked_sub(segment.target_lane_start) else {
+                    return;
+                };
+                let source_lane = segment.source_lane_start + lane_offset;
+                if lane_offset < segment.lane_count
+                    && source_lane < source_lane_count(segment.source_index)
+                {
+                    visit(segment.factor, segment.source_index, source_lane);
+                }
+            }
+            PreparedLaneWeights::Sparse(lane_terms) => {
+                for term in lane_terms.get(lane).map_or(&[][..], Vec::as_slice) {
+                    if term.lane < source_lane_count(term.source_index) {
+                        visit(term.factor, term.source_index, term.lane);
+                    }
+                }
+            }
+        }
+    }
+
     #[inline]
     pub(crate) fn resolve_lane(&self, lane: usize) -> PreparedLinearLane<'_, E> {
         let kind = match &self.lane_weights {

@@ -25,10 +25,10 @@
 //! Stage 1 (`b = 8`): domain `{0, 1, -1, 2, Infinity}^2`, 25-point internal
 //! grid with the four Boolean corners omitted (21 cached values).
 //!
-//! Stage 2 (`b = 8`): domain `{0, 1, Infinity}^2`, 9-point internal grid. The
-//! norm and relation families each cache a compressed grid with one Boolean
-//! corner omitted (8 values each), recovered via the known claim before ordinary
-//! round polynomials are emitted.
+//! Stage 2 (`b = 4` or `8`): domain `{0, 1, Infinity}^2`, 9-point range-image
+//! grid built from an equality-weighted histogram of witness quad digit
+//! classes. The relation term is linear in the witness and does not use the
+//! grid.
 //!
 //! This private backend directory keeps the transient two-round prefix
 //! optimization split by shared lookup machinery and stage-specific caches.
@@ -40,11 +40,6 @@ mod stage2;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use common::{
-    range_polynomial_eval, stage2_b4_lookup_index_from_digits, stage2_b4_w_digit,
-    stage2_b8_lookup_index_from_digits, stage2_b8_w_digit,
-};
+pub(crate) use common::range_polynomial_eval;
 pub(crate) use stage1::{build_stage1_prefix_cache, Stage1PrefixCache};
-pub(crate) use stage2::{
-    build_stage2_prefix_cache, can_use_stage2_two_round_prefix, Stage2PrefixCache,
-};
+pub(crate) use stage2::Stage2PrefixCache;

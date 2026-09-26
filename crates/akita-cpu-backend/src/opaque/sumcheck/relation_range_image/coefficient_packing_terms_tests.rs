@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
@@ -236,11 +237,12 @@ fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
         for &challenge in &point[..coefficient_bits] {
             prepared.fold_coefficients(challenge);
         }
-        for &challenge in &point[coefficient_bits..] {
-            prepared.fold_lanes(challenge);
-        }
+        let lane_point = &point[coefficient_bits..];
+        let mut lanes = vec![E::zero(); 1 << lane_point.len()];
+        let live_lanes = prepared.materialize_dense().len();
+        prepared.drain_into_lane_weights(&mut lanes[..live_lanes], E::one());
         assert_eq!(
-            prepared.final_value().unwrap(),
+            multilinear_eval(&lanes, lane_point).unwrap(),
             semantics.stage2_terms().evaluate_at_point(&point).unwrap()
         );
     }
