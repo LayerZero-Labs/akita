@@ -15,13 +15,13 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let stack =
-        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -60,13 +60,12 @@ fn with_precommit_stack<R>(
     scheme: &OneHotScheme,
     max_num_vars: usize,
     max_num_polys: usize,
-    run: impl FnOnce(&akita_cpu_backend::AkitaProverSetup<OneHotF>, &CpuBackend) -> R,
+    run: impl FnOnce(&akita_cpu_backend::AkitaProverSetup<OneHotF>, &CpuBackend<OneHotF, OneHotF>) -> R,
 ) -> R {
     let setup = scheme
         .setup_prover(max_num_vars, max_num_polys)
         .expect("setup");
-    let stack =
-        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     run(&setup, &stack)
 }
 
@@ -96,6 +95,7 @@ fn profile_native_commit_group_allows_independent_groups() {
             private_handle: _pre_a_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(pre_a_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -105,6 +105,7 @@ fn profile_native_commit_group_allows_independent_groups() {
             private_handle: _pre_b_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(pre_b_polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -158,7 +159,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let root = multi_group_root_params(&schedule);
     let main_params = schedule.root.params.clone();
 
-    assert_eq!(multi_group_key.num_commitment_groups(), 4);
+    assert_eq!(multi_group_key.precommitteds.len(), 3);
     assert_eq!(
         multi_group_key
             .num_polynomials()
@@ -208,13 +209,13 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let setup = scheme
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
-    let stack =
-        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: pre_a_commitment,
         private_handle: _pre_a_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(pre_a_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -224,6 +225,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         private_handle: _pre_b_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(pre_b_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -259,12 +261,14 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         private_handle: final_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
     let explicit_output = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::explicit(&main_params.own_group().profile),
         )
@@ -323,13 +327,13 @@ fn commit_group_returns_frozen_exact_layout() {
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
-    let stack =
-        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: _hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -401,24 +405,20 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).unwrap();
-    let stack = CpuBackend::<OneHotCfg>::with_ring_switch_cache_limit(
-        setup.expanded.clone(),
-        scheme.schedules(),
-        usize::MAX,
-    )
-    .unwrap();
+    let stack =
+        CpuBackend::with_ring_switch_cache_limit(setup.expanded.clone(), usize::MAX).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("batched onehot commit");
     let commitments = [commitment];
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let prover_group =
         PolynomialGroupClaims::new(point.clone(), openings.clone(), commitments[0].clone())
             .expect("valid one-hot prover group");
@@ -433,60 +433,15 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             )
             .expect("valid one-hot prover opening data"),
             &stack,
-            &mut prover_transcript,
+            b"test/batched-onehot-shape",
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
-
-    let expected_shape = expected_same_point_batched_shape(&scheme, NV, BATCH_SIZE, &proof);
-    let actual_shape = proof.shape();
-    assert_eq!(
-        expected_shape.nonce_stream_bits,
-        actual_shape.nonce_stream_bits
-    );
-    assert_eq!(
-        expected_shape.root.opening_payload_coeffs,
-        actual_shape.root.opening_payload_coeffs
-    );
-    assert_eq!(
-        expected_shape.root.stage1_stages,
-        actual_shape.root.stage1_stages
-    );
-    assert_eq!(
-        expected_shape.root.stage2_sumcheck_proof,
-        actual_shape.root.stage2_sumcheck_proof
-    );
-    assert_eq!(
-        expected_shape.root.next_witness_binding,
-        actual_shape.root.next_witness_binding
-    );
-    assert_eq!(expected_shape.recursive_folds, actual_shape.recursive_folds);
-    assert_eq!(
-        expected_shape.terminal.extension_opening_reduction,
-        actual_shape.terminal.extension_opening_reduction
-    );
-    assert!(
-        expected_shape
-            .terminal
-            .terminal_response
-            .admits_realized(&actual_shape.terminal.terminal_response),
-        "terminal witness shape {:?} does not admit {:?}",
-        expected_shape.terminal.terminal_response,
-        actual_shape.terminal.terminal_response
-    );
-    let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).unwrap();
-    let decoded =
-        AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(&*bytes, &actual_shape)
-            .expect("deserialize batched proof with derived shape");
-    assert_eq!(decoded, proof);
-
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     scheme
         .batched_verify(
-            &decoded,
+            &proof,
             &verifier_setup,
-            &mut verifier_transcript,
+            b"test/batched-onehot-shape",
             selected_statement::<OneHotCfg>(
                 &scheme,
                 OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

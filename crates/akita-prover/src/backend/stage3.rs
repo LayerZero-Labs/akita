@@ -1,11 +1,11 @@
 //! Setup-product operations over backend-owned setup storage.
 
-use akita_algebra::uni_poly::UniPoly;
 use akita_error::AkitaError;
 use akita_types::{
     CommittedGroupParams, RelationAddressGeometry, RingRelationInstance, SetupPrefixSlotId,
 };
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
 
 /// Public inputs fixing one setup-product computation.
 pub struct Stage3Request<'a, F: Field, E: Field, ProofSession> {
@@ -34,7 +34,7 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
         session: &mut Self::Stage3SessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError>;
+    ) -> Result<UnivariatePoly<E>, AkitaError>;
     fn bind_stage3_challenge(
         &self,
         session: &mut Self::Stage3SessionHandle,

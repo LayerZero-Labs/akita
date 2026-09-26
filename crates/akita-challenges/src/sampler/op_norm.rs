@@ -36,9 +36,8 @@
 //! conj(zeta_k)` and `c` is real, so `|c_hat(D-1-k)| = |c_hat(k)|`.
 //!
 //! This is the acceptance oracle for operator-norm rejection sampling of fold
-//! challenges: [`crate::sample_sparse_challenges`] retains a sampled challenge
-//! only if it passes [`OpNormTable::accept_strict_parts`] (see the rejection loop in
-//! [`crate::sampler`]).
+//! challenges: the crate's private sparse sampler retains a sampled challenge
+//! only if it passes [`OpNormTable::accept_strict_parts`].
 
 use akita_error::AkitaError;
 

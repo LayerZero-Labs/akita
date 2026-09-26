@@ -2,38 +2,37 @@
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
 use crate::commitment::{CommitmentExecutor, GroupContext, PortableStatePolicy};
 use crate::opaque::CpuBackend;
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+impl<F, E> CpuBackend<F, E>
+where
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + jolt_field::Ring
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
+    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    E: jolt_field::ExtField<F>
+        + FpExtEncoding<F>
+        + jolt_field::MulBaseUnreduced<F>
+        + Unreduced
+        + jolt_field::Fold
+        + AkitaSerialize
+        + 'static,
+{
     /// Import a retained commitment from another backend after validating its
     /// source and complete commitment material against this backend's setup.
-    pub fn import_commitment<ForeignCfg>(
+    pub fn import_commitment(
         &self,
-        foreign: &CommitmentHandle<Cfg::Field, Cfg::ExtField, ForeignCfg>,
-    ) -> Result<CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
-    where
-        ForeignCfg: CommitmentConfig<Field = Cfg::Field, ExtField = Cfg::ExtField>,
-        Cfg::Field: Field
-            + CanonicalEncoding
-            + AkitaSerialize
-            + jolt_field::Ring
-            + Unreduced
-            + WithCommitAccumulator
-            + 'static,
-        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
-        Cfg::ExtField: jolt_field::ExtField<Cfg::Field>
-            + FpExtEncoding<Cfg::Field>
-            + jolt_field::MulBaseUnreduced<Cfg::Field>
-            + Unreduced
-            + jolt_field::Fold
-            + AkitaSerialize
-            + 'static,
-    {
+        foreign: &CommitmentHandle<F, E>,
+    ) -> Result<CommitmentHandle<F, E>, AkitaError> {
         let prepared = self.prepared()?;
         let committed = &foreign.committed;
         let source = self.import_source(committed.source.dense_polynomials()?)?;
@@ -66,27 +65,37 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
                 source: source.storage,
                 metadata: committed.metadata,
                 parameters: committed.parameters,
+                // Recomputation above proves the same source and commitment,
+                // so the admitting contract carries over unchanged.
+                producer_contract: committed.producer_contract,
                 public: committed.public.clone(),
                 retained,
             }),
         })
     }
+}
 
-    /// Commit an imported immutable source and retain its exact source and parameters.
-    pub fn commit(
+impl<F, E> CpuBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + Unreduced + WithCommitAccumulator + 'static,
+    F::Wide: From<F>,
+    E: FpExtEncoding<F> + 'static,
+{
+    /// Commit an imported immutable source under the producer schedule family
+    /// `family`, retaining its exact source and parameters.
+    ///
+    /// `family` supplies the catalog row for scheduler contexts and the
+    /// declared committed-source contract that admits the source. The handle
+    /// records that contract. One backend can commit groups from different
+    /// families that share `F` and `E`.
+    pub fn commit<Cfg>(
         &self,
-        source: &SourceHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
         context: GroupContext<'_>,
-    ) -> Result<CommitOutput<Cfg::Field, Cfg::ExtField, Cfg>, AkitaError>
+    ) -> Result<CommitOutput<F, E>, AkitaError>
     where
-        Cfg::Field: Field
-            + CanonicalEncoding
-            + AkitaSerialize
-            + Unreduced
-            + WithCommitAccumulator
-            + 'static,
-        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
-        Cfg::ExtField: FpExtEncoding<Cfg::Field> + 'static,
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(
@@ -103,10 +112,10 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         )?;
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
-        let profile = crate::commitment::resolve_commit_params::<Cfg, _>(
+        let (profile, producer_contract) = crate::commitment::resolve_commit_params::<Cfg, _>(
             &sources,
             &prepared.expanded,
-            self.schedules()?,
+            family,
             context,
         )?;
         let (committed_group, prover_state) =
@@ -118,6 +127,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
                 source: source.storage.clone(),
                 metadata: source.metadata,
                 parameters: *committed_group.profile(),
+                producer_contract,
                 public: committed_group.commitment().clone(),
                 retained: prover_state,
             }),
@@ -134,11 +144,13 @@ mod tests {
     use super::*;
     use crate::{AkitaProverSetup, DensePoly};
     use akita_config::proof_optimized::fp64;
+    use akita_prover::CommitmentHandleMetadata;
     use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout};
     use jolt_field::Ring;
 
     type Cfg = fp64::Dense;
     type F = <Cfg as CommitmentConfig>::Field;
+    type E = <Cfg as CommitmentConfig>::ExtField;
 
     #[test]
     fn cpu_commit_matches_full_executor_state_after_outer_image_completion() {
@@ -154,10 +166,10 @@ mod tests {
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, NUM_VARS, 1)
                         .unwrap()
-                        .matrix_capacity;
+                        .matrix_capacity();
                 let setup =
                     AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, capacity).unwrap();
-                let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
+                let backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
                 let prepared = backend.prepared().unwrap();
                 let executor = CommitmentExecutor::cpu(
                     &backend,
@@ -181,7 +193,7 @@ mod tests {
                 .unwrap();
                 let source = backend.import_source(vec![poly]).unwrap();
                 let actual = backend
-                    .commit(&source, GroupContext::explicit(&profile))
+                    .commit(&schedules, &source, GroupContext::explicit(&profile))
                     .unwrap();
 
                 assert_eq!(actual.committed_group, expected.committed_group);
@@ -190,12 +202,19 @@ mod tests {
                     expected.prover_state
                 );
 
-                let receiving_backend =
-                    CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
+                let receiving_backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
                 let transferred = receiving_backend
                     .import_commitment(&actual.private_handle)
                     .unwrap();
                 assert_eq!(transferred.committed.retained, expected.prover_state);
+                assert_eq!(
+                    actual.private_handle.producer_contract(),
+                    Cfg::committed_source_contract().unwrap()
+                );
+                assert_eq!(
+                    transferred.producer_contract(),
+                    actual.private_handle.producer_contract()
+                );
             })
             .unwrap()
             .join()

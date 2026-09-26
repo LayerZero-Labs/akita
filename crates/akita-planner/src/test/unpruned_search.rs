@@ -140,7 +140,10 @@ fn consider_complete_schedule(
     else {
         return Ok(());
     };
-    if !policy.admits_setup_field_elements(candidate.setup_field_elements) {
+    if !policy
+        .setup_field_budget
+        .is_none_or(|budget| candidate.setup_field_elements <= budget)
+    {
         return Ok(());
     }
     let candidate_score = score(policy, &candidate)?;
@@ -163,7 +166,7 @@ pub(super) fn find_schedule(
     akita_schedules::planner_support::validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
-    let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
+    let input_witness_len = akita_error::checked::pow2(key.num_vars()).ok_or_else(|| {
         AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
     })?;
     let (min_log_basis, max_log_basis) = crate::policy::log_basis_search_range_at_level(policy, 0);
@@ -267,8 +270,8 @@ pub(super) fn find_schedule(
     };
     let cached_first_direct_setup_field_len = if matches!(
         policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         selected.first_direct_setup_field_len.map(NonZeroUsize::get)
     } else {

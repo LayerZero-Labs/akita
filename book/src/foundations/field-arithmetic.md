@@ -217,11 +217,11 @@ The field code is supplied by Akita's pinned `jolt-field` dependency.
 
 | Property | Primary source |
 | --- | --- |
-| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/mod.rs) |
-| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/word.rs) |
-| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/fp128.rs) |
-| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/unreduced.rs) |
-| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/ext.rs) |
+| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c/crates/jolt-field/src/solinas/mod.rs) |
+| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c/crates/jolt-field/src/solinas/word.rs) |
+| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c/crates/jolt-field/src/solinas/fp128.rs) |
+| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c/crates/jolt-field/src/solinas/unreduced.rs) |
+| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c/crates/jolt-field/src/solinas/ext.rs) |
 | Production field selection | `crates/akita-config/src/proof_optimized/` |
 
 A field change must preserve canonical encoding, exact sampling, centered
@@ -231,6 +231,7 @@ the ordinary field operations.
 
 ## Binary scalar arithmetic
 
+With the opt-in `labinius-binary` Cargo feature,
 `akita_algebra::binary::BinaryField162` provides arithmetic over
 `F_2[X]/(X^162 + X^81 + 1)`. An element has 162 bit coefficients; addition is
 XOR, and multiplication reduces the polynomial product using

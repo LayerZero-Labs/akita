@@ -2,10 +2,7 @@
 
 mod reduced;
 
-pub use reduced::{
-    build_reduced_compression_relation_weights, evaluate_reduced_compression_map,
-    ReducedCompressionRelationWeights,
-};
+pub use reduced::{build_reduced_compression_relation_weights, ReducedCompressionRelationWeights};
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
@@ -13,7 +10,7 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
@@ -114,7 +111,7 @@ impl NegativeBinarySupport {
         point: &[E],
     ) -> Result<E, AkitaError> {
         if equality_point.len() != point.len()
-            || self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0)
+            || checked::pow2(point.len()) != Some(self.physical_field_len)
         {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
@@ -178,7 +175,8 @@ impl<E: Field> CompressionRelationWeights<E> {
     }
 
     /// Materialize the complete padded linear-weight table.
-    pub fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
+    #[cfg(test)]
+    pub(crate) fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
         let mut weights = vec![E::zero(); self.physical_field_len];
         self.accumulate_dense(&mut weights)?;
         Ok(weights)
@@ -254,16 +252,10 @@ impl<E: Field> CompressionRelationWeights<E> {
         Ok(sparse)
     }
 
-    /// Padded physical field domain covered by this table.
-    #[must_use]
-    pub fn physical_field_len(&self) -> usize {
-        self.physical_field_len
-    }
-
     /// Evaluate the table's multilinear extension at one full witness point.
     #[tracing::instrument(skip_all, name = "compression_relation_mle")]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
+        if checked::pow2(point.len()) != Some(self.physical_field_len) {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
                 actual: point.len(),

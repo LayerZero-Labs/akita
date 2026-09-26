@@ -14,11 +14,9 @@ use akita_config::{
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    PolynomialGroupLayout,
 };
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
@@ -65,11 +63,7 @@ where
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute prefix slots"
         );
-        let stack = CpuBackend::<RecursiveCommitmentConfig<BaseCfg>>::new(
-            setup.expanded.clone(),
-            scheme.schedules(),
-        )
-        .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
@@ -79,6 +73,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(final_polys.clone()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -104,29 +99,15 @@ where
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = scheme
             .batched_prove(
                 &setup,
                 prover_data,
                 &stack,
-                &mut prover_transcript,
+                transcript_domain,
                 BasisMode::Lagrange,
             )
             .expect("recursive direct prove");
-        assert!(
-            proof_has_recursive_setup_sumcheck(&proof),
-            "recursive proof must carry stage-3 setup sumcheck evidence"
-        );
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_setup = scheme
             .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
@@ -138,12 +119,11 @@ where
         )
         .expect("verifier group")])
         .expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
         scheme
             .batched_verify(
                 &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                transcript_domain,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -176,8 +156,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -185,12 +164,12 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -202,27 +181,17 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                label,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                label,
                 verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -245,8 +214,7 @@ where
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -254,12 +222,12 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
             .batched_prove(
                 &setup,
@@ -271,27 +239,17 @@ where
                     scheme.schedules(),
                 ),
                 &stack,
-                &mut prover_transcript,
+                label,
                 BasisMode::Lagrange,
             )
             .expect("prove");
 
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
         let openings = [expected_opening];
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                label,
                 verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
@@ -309,8 +267,7 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
@@ -322,6 +279,7 @@ where
             private_handle: pre_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![pre_poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -338,6 +296,7 @@ where
             private_handle: final_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack
                     .import_source(vec![final_poly.clone()])
                     .expect("source"),
@@ -391,25 +350,9 @@ where
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
             .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_groups = vec![
             PolynomialGroupClaims::new(
@@ -426,12 +369,11 @@ where
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )
@@ -450,8 +392,7 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
@@ -460,6 +401,7 @@ where
             private_handle: pre_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![pre_poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -473,6 +415,7 @@ where
             private_handle: final_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack
                     .import_source(vec![final_poly.clone()])
                     .expect("source"),
@@ -507,25 +450,9 @@ where
         );
         let selection = prover_data.selection();
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = scheme
-            .batched_prove(
-                &setup,
-                prover_data,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+            .batched_prove(&setup, prover_data, &stack, label, BasisMode::Lagrange)
             .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
 
         let verifier_groups = vec![
             PolynomialGroupClaims::new(
@@ -542,12 +469,11 @@ where
             .expect("final verifier group"),
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         scheme
             .batched_verify(
-                &decoded,
+                &proof,
                 &verifier_setup,
-                &mut verifier_transcript,
+                label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
             )

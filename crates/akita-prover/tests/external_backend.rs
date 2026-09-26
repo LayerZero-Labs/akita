@@ -1,9 +1,11 @@
 //! External implementation fixture: the real entrypoint must require no CPU types.
-use akita_algebra::uni_poly::UniPoly;
+
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::*;
 use akita_types::*;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::UnivariatePoly;
 use std::marker::PhantomData;
 
 pub struct ExternalBackend<F, E>(PhantomData<(F, E)>);
@@ -13,6 +15,17 @@ pub struct ExternalProofSession;
 impl CommitmentHandleMetadata for Handle {
     fn metadata(&self) -> SourceMetadata {
         SourceMetadata::try_new(1, 0).expect("fixture public shape")
+    }
+    fn producer_contract(&self) -> sis::CommittedSourceContract {
+        sis::CommittedSourceContract::try_new(
+            sis::CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 64,
+                log_open_bound: None,
+            },
+        )
+        .expect("fixture producer contract")
     }
 }
 impl AcceptedFoldHandle for Handle {
@@ -55,7 +68,10 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueProverConsumer<F, E> for Exte
 impl<F: Field + CanonicalEncoding, E: Field> TerminalCommitmentMaterialKernel<F, Handle>
     for ExternalBackend<F, E>
 {
-    fn terminal_message(&self, _material: &Handle) -> Result<TerminalTFieldsMessage, AkitaError> {
+    fn terminal_message(
+        &self,
+        _material: &Handle,
+    ) -> Result<TerminalTFieldsMessage<F>, AkitaError> {
         Err(AkitaError::InvalidProof)
     }
     fn consume_terminal_row(&self, _material: Handle) -> Result<RingVec<F>, AkitaError> {
@@ -65,12 +81,16 @@ impl<F: Field + CanonicalEncoding, E: Field> TerminalCommitmentMaterialKernel<F,
 
 #[allow(unused_variables)]
 impl<F: Field + CanonicalEncoding, E: Field> ProofAdmission<F, E> for ExternalBackend<F, E> {
-    fn begin_proof(
+    fn begin_proof<Cfg>(
         &self,
         setup: &AkitaSetupDescriptor,
+        schedules: &TrustedScheduleCatalog<Cfg>,
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
-    ) -> Result<Self::ProofSessionHandle, AkitaError> {
+    ) -> Result<Self::ProofSessionHandle, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -151,7 +171,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueEorKernel<F, E> for ExternalB
         session: &mut Self::EorSessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -340,7 +360,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage2Kernel<F, E> for Extern
         session_handle: &mut Self::Stage2SessionHandle,
         round: usize,
         previous_claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -442,7 +462,7 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage3Kernel<F, E> for Extern
         session: &mut Self::Stage3SessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))
@@ -467,13 +487,13 @@ impl<F: Field + CanonicalEncoding, E: Field> OpaqueStage3Kernel<F, E> for Extern
 /// This body instantiates the actual prover for a backend in an external crate.
 /// Admission rejects unsupported plans without requiring CPU preparation or sources.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_with_external_backend<'a, Cfg, T>(
+pub fn prove_with_external_backend<'a, Cfg>(
     expanded: &AkitaSetupDescriptor,
     prefixes: &akita_prover::SetupPrefixProverRegistry<Cfg::Field, Handle>,
     schedules: &akita_config::TrustedScheduleCatalog<Cfg>,
     opening: akita_prover::SelectedProverOpeningData<'a, Cfg::ExtField, Handle, Cfg::Field>,
-    transcript: &mut T,
-) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
+    transcript_session: &[u8],
+) -> Result<Vec<u8>, AkitaError>
 where
     Cfg: akita_config::CommitmentConfig,
     Cfg::Field: CanonicalEncoding
@@ -491,16 +511,15 @@ where
         + jolt_field::MulBaseUnreduced<Cfg::Field>
         + akita_serialization::AkitaSerialize
         + 'static,
-    T: akita_transcript::Transcript<Cfg::Field> + akita_transcript::TranscriptChallengePreview,
 {
     let backend = ExternalBackend::<Cfg::Field, Cfg::ExtField>(PhantomData);
-    akita_prover::batched_prove::<Cfg, T, _>(
+    akita_prover::batched_prove::<Cfg, _>(
         expanded,
         prefixes,
         schedules,
         &backend,
         opening,
-        transcript,
+        transcript_session,
         BasisMode::Lagrange,
     )
 }

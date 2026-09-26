@@ -5,8 +5,6 @@ use super::super::coverage::{
 use super::super::generated_sis_table::{
     sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST,
 };
-#[cfg(test)]
-use super::InnerCommitMatrixParams;
 
 /// Digest of the generated scalar table and its coverage certificate.
 ///

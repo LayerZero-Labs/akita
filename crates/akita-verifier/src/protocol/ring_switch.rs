@@ -4,8 +4,6 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::sample_ext_challenge;
 use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
@@ -16,7 +14,7 @@ use akita_types::{
     RingRelationMode, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::validate_log_basis;
 
@@ -80,12 +78,6 @@ pub struct RelationMatrixEvaluator<F: Field> {
     pub(crate) log_basis: u32,
     pub(crate) eq_tau1: Arc<[F]>,
     pub(crate) flat_context: FlatRelationContext,
-    pub(crate) setup_plan_cache: Arc<Mutex<Option<CachedSetupContributionPlan<F>>>>,
-}
-
-pub(crate) struct CachedSetupContributionPlan<F: Field> {
-    x_challenges: Vec<F>,
-    plan: SetupContributionPlan<F>,
 }
 
 #[derive(Clone)]
@@ -125,7 +117,7 @@ pub(crate) enum PreparedRelationGroups<E: Field> {
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
-pub struct RingSwitchReplay<'a, F: Field, E> {
+pub(crate) struct RingSwitchReplay<'a, F: Field, E> {
     pub setup: &'a AkitaExpandedSetup<F>,
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
@@ -134,20 +126,64 @@ pub struct RingSwitchReplay<'a, F: Field, E> {
     pub opening_ring_dim: usize,
 }
 
-/// Replay the verifier half of ring switching after the caller has absorbed
-/// the schedule-selected outgoing witness binding.
-#[tracing::instrument(skip_all, name = "ring_switch_verifier")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier<F, E, T>(
+trait RingSwitchChallengeSource<F, E>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError>;
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError>;
+}
+
+struct NativeRingSwitchChallenges<'a, 'proof, 'plan>(
+    &'a mut akita_types::NativeVerifierGrinding<'proof, 'plan>,
+);
+
+impl<F, E> RingSwitchChallengeSource<F, E> for NativeRingSwitchChallenges<'_, '_, '_>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+{
+    fn alpha(&mut self, level: u32) -> Result<E, AkitaError> {
+        self.0
+            .grinded_ext_challenge::<F, E>(akita_types::GrindingSite::RingSwitchAlpha { level })
+    }
+
+    fn tau0(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau0Point { level }, count)
+    }
+
+    fn tau1(&mut self, level: u32, count: usize) -> Result<Vec<E>, AkitaError> {
+        self.0
+            .grinded_ext_challenges::<F, E>(akita_types::GrindingSite::Tau1Point { level }, count)
+    }
+}
+pub(crate) fn ring_switch_verifier_native<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeVerifierGrinding<'_, '_>,
     level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
+{
+    let mut challenges = NativeRingSwitchChallenges(grinding);
+    ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
+}
+
+fn ring_switch_verifier_with_challenges<F, E, C>(
+    replay: &RingSwitchReplay<'_, F, E>,
+    w_len: usize,
+    challenges: &mut C,
+    level: u32,
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    C: RingSwitchChallengeSource<F, E>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -155,10 +191,9 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
-    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
     let alpha: E = {
         let _span = tracing::info_span!("ring_switch_transcript_challenges").entered();
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH)
+        challenges.alpha(level)?
     };
 
     let num_claims = relation.opening_batch().num_total_polynomials();
@@ -221,14 +256,8 @@ where
             tau1_len = num_i
         )
         .entered();
-        transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-        let tau0 = (0..num_sc_vars)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect();
-        transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
-        let tau1 = (0..num_i)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-            .collect::<Vec<_>>();
+        let tau0 = challenges.tau0(level, num_sc_vars)?;
+        let tau1 = challenges.tau1(level, num_i)?;
         (tau0, tau1)
     };
     if gamma.len() != num_claims {
@@ -296,7 +325,7 @@ where
 /// the expanded tau1 table is too short for the level layout, or sparse
 /// challenge evaluation fails.
 #[tracing::instrument(skip_all, name = "prepare_relation_matrix_evaluator")]
-pub fn prepare_relation_matrix_evaluator<F, E>(
+pub(crate) fn prepare_relation_matrix_evaluator<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
@@ -550,7 +579,6 @@ where
             witness_layout: layout,
             extension_degree,
         },
-        setup_plan_cache: Default::default(),
     })
 }
 
@@ -601,43 +629,6 @@ pub(crate) fn setup_contribution_group_inputs<F: Field>(
 }
 
 impl<E: Field> RelationMatrixEvaluator<E> {
-    /// Evaluate the canonical relation weights directly in the flattened
-    /// opening domain, without materializing its padded Boolean suffix.
-    pub fn eval_flat_at_point<F>(
-        &self,
-        point: &[E],
-        setup: &AkitaExpandedSetup<F>,
-        alpha: E,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
-    {
-        relation_evaluation::evaluate_relation_at_point::<F, E>(self, point, setup, alpha)
-    }
-
-    /// Evaluate quotient-lift relation weights using an authenticated deferred
-    /// setup-contribution claim. Reduced evaluation has no deferred setup state.
-    pub fn eval_flat_at_point_with_deferred_setup<F>(
-        &self,
-        point: &[E],
-        setup: &AkitaExpandedSetup<F>,
-        alpha: E,
-        setup_claim: E,
-    ) -> Result<E, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
-    {
-        relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<F, E>(
-            self,
-            point,
-            setup,
-            alpha,
-            setup_claim,
-        )
-    }
-
     pub(crate) fn setup_contribution_inputs(&self) -> Vec<SetupContributionGroupInputs> {
         setup_contribution_group_inputs(&self.groups)
     }
@@ -677,37 +668,6 @@ impl<E: Field> RelationMatrixEvaluator<E> {
             fold_gadget,
             self.relation_address_geometry,
         )
-    }
-
-    pub(crate) fn take_cached_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-    ) -> Result<Option<SetupContributionPlan<E>>, AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        let Some(cached) = cache.as_ref() else {
-            return Ok(None);
-        };
-        if cached.x_challenges.as_slice() != x_challenges {
-            return Ok(None);
-        }
-        Ok(cache.take().map(|cached| cached.plan))
-    }
-
-    fn cache_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-        plan: SetupContributionPlan<E>,
-    ) -> Result<(), AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        *cache = Some(CachedSetupContributionPlan {
-            x_challenges: x_challenges.to_vec(),
-            plan,
-        });
-        Ok(())
     }
 
     pub(crate) fn witness_layout(&self) -> Result<&WitnessLayout, AkitaError> {
