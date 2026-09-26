@@ -67,7 +67,7 @@ pub use compression_relation_weights::{
     CompressionRelationWeights, NegativeBinarySupport, ReducedCompressionRelationWeights,
 };
 pub use containers::{DigitBlockIter, DigitBlocks, RingVec, RingView};
-pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
+pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges, OpeningFamily};
 
 #[cfg(test)]
 pub(crate) use levels::{

@@ -106,8 +106,13 @@ pub(crate) fn recursive_multi_group_round_trip_on<BaseCfg>(
             make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64)
         })
         .collect();
-    let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-        .expect("nonempty precommitted groups");
+    let precommitteds = PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,

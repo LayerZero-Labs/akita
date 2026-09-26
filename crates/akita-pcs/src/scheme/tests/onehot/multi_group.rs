@@ -159,9 +159,13 @@ where
             )
         })
         .collect();
-    let precommitteds =
-        akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-            .expect("nonempty precommitted groups");
+    let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,

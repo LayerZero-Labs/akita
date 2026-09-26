@@ -67,7 +67,7 @@ mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 use groups::FoldGroups;
 pub use precommitted::{
-    opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, OpeningFamily, OpeningMethod,
+    opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, OpeningMethod,
     PrecommittedGroupAdmissionPolicy,
 };
 

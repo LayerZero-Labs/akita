@@ -283,9 +283,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .iter()
             .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
-        let precommitteds =
-            akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-                .expect("nonempty precommitted groups");
+        let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+            pre_commitments
+                .iter()
+                .map(|group| *group.profile())
+                .collect(),
+        )
+        .expect("nonempty precommitted groups");
         let source = backend
             .import_source(final_polys)
             .expect("import final sources");

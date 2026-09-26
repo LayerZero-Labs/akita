@@ -690,8 +690,13 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|poly| onehot_opening(poly, &final_point))
         .collect::<Result<Vec<_>, _>>()?;
-    let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-        .map_err(|err| format!("precommitted profile list: {err}"))?;
+    let precommitteds = PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .map_err(|err| format!("precommitted profile list: {err}"))?;
     let source = backend
         .import_source(final_polys)
         .map_err(|err| format!("final source import: {err}"))?;
