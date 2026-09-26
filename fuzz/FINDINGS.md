@@ -27,6 +27,8 @@ parallel lane uses 2 internal threads.
 
 ## F-5 (Medium, robustness): schedule-artifact admission panics on a zero terminal `log_basis`
 
+Fix: draft PR #91 (`fix/artifact-log-basis-validation`).
+
 `TrustedScheduleCatalog::from_artifact_bytes` panics instead of returning an
 error when a row's `schedule.terminal.inner.digits.log_basis` is `0`:
 
@@ -69,6 +71,8 @@ only. Until it is fixed the `schedule_artifact` lane keeps rediscovering it;
 occurrences only increment the finding's count.
 
 ## F-4 (Low, encoding): `CommittedGroup` decoding accepts non-canonical coefficient bounds
+
+Fix: draft PR #92 (`fix/committed-group-canonical-bound`).
 
 `CommittedGroup::deserialize_with_mode` (`crates/akita-types/src/proof/
 commitment.rs`) reads each matrix's `coeff_linf_bound` and passes it to
