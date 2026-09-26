@@ -291,11 +291,13 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
             RelationRoundState::LaneProduct(_) => unreachable!("checked above"),
         };
         let live = self.live_lane_count;
-        let support = weights
-            .iter()
-            .rposition(|weight| !weight.is_zero())
-            .map_or(0, |last| last + 1)
-            .max(live);
+        // Only a nonzero weight past the live lanes extends the support.
+        let tail = weights.get(live..).unwrap_or_default();
+        #[cfg(feature = "parallel")]
+        let last_nonzero = tail.par_iter().position_last(|weight| !weight.is_zero());
+        #[cfg(not(feature = "parallel"))]
+        let last_nonzero = tail.iter().rposition(|weight| !weight.is_zero());
+        let support = last_nonzero.map_or(live, |last| live + last + 1);
         weights.resize(support, E::zero());
         let (live_weights, tail) = weights.split_at_mut(live);
         if weight_scale != E::one() {
