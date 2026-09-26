@@ -2,7 +2,13 @@
 
 use akita_error::AkitaError;
 
-use crate::{PolynomialGroupLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
+use crate::{PolynomialGroupLayout, TerminalResponseShape};
+
+/// Degree bound for one witness factor times one transparent reduction factor.
+pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
+
+/// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
+pub const SETUP_SUMCHECK_DEGREE: usize = 2;
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {

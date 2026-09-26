@@ -42,7 +42,7 @@ pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
     sample_row_coefficients_native, verify_row_coefficients_native, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    OpeningClaims, PolynomialGroupClaims,
 };
 pub use batch::{
     prepare_opening_point, ring_subfield_packed_extension_opening_point, PreparedOpeningPoint,
@@ -108,11 +108,8 @@ pub use setup_prefix::{
     validate_setup_prefix_domain, SetupPrefixPublicCommitment, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
 };
-pub use shapes::{
-    canonical_extension_opening_reduction_shape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, PhysicalL2NormProofWireShape, SETUP_SUMCHECK_DEGREE,
-};
-pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+pub use shapes::{canonical_extension_opening_reduction_shape, ExtensionOpeningReductionShape};
+pub use stage1::DigitRangeEqualityPoint;
 pub use tail_segments::{
     build_terminal_response_from_payload, decode_terminal_z_golomb_payload,
     terminal_response_upper_bound_bytes, TailSegmentGroupLayout, TailSegmentLayout,

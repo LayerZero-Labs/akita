@@ -3,12 +3,12 @@
 use akita_error::AkitaError;
 use std::iter::repeat_n;
 
+use crate::layout::opening_layout::OpeningClaimsLayout;
 use crate::layout::relation_layout::{
     RelationCompressionLayout, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
     RelationRowGeometry, RelationWitnessGeometry,
 };
 use crate::layout::CommittedGroupParams;
-use crate::opening_claims::OpeningClaimsLayout;
 use crate::{
     CommitmentRingDims, CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan,
     OpeningMethod, SisModulusProfileId, SubringCoefficientPackingGeometry,

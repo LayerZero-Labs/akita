@@ -9,12 +9,12 @@ use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
+use crate::layout::opening_layout::OpeningClaimsLayout;
 use crate::layout::relation_address::{
     CompressionRelationAddressGeometry, RelationAddressGeometry,
 };
 use crate::layout::relation_layout::RelationRowFamily;
 use crate::layout::ring_dims::CommitmentRingDims;
-use crate::opening_claims::OpeningClaimsLayout;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,

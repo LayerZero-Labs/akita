@@ -9,8 +9,10 @@
 //! `CommitmentConfig`.
 
 pub mod digit_math;
+pub mod digit_range;
 pub mod flat_matrix;
 pub mod geometry;
+pub mod opening_layout;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
@@ -20,10 +22,14 @@ pub(crate) mod relation_rhs_layout;
 pub mod ring_dims;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
+pub use digit_range::{
+    AkitaStage1StageShape, DigitRangePlan, FlatBooleanDomain, PhysicalL2NormProofWireShape,
+};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use geometry::{
     BlockGeometry, GadgetDigits, InnerRoleParams, OpenRoleParams, OuterRoleParams, RoleParams,
 };
+pub use opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
 pub use opening_point::{
     basis_weights, basis_weights_prefix, checked_opening_source_index, lagrange_weights,
     monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
@@ -38,7 +44,8 @@ pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     native_terminal_response_max_bytes, native_terminal_response_planner_bytes,
     padded_boolean_opening_vars, sumcheck_rounds, terminal_response_bytes,
-    try_extension_opening_reduction_level_bytes,
+    try_extension_opening_reduction_level_bytes, EXTENSION_OPENING_REDUCTION_DEGREE,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_layout::{
