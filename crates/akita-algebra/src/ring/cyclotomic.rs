@@ -316,7 +316,8 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
-    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+    /// Coefficients as centered integers in `(-q/2, q/2]`.
+    pub fn centered_coefficients_i128(&self) -> [i128; D] {
         let modulus = (-F::one())
             .to_u128_checked()
             .expect("Akita field element must fit in u128")

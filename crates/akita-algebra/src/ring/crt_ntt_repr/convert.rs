@@ -222,17 +222,42 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         ring: &CyclotomicRing<F, D>,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let coefficient_limbs = ring.centered_coefficients_i128().map(balanced_limbs);
+        Self::from_centered_coefficients(&ring.centered_coefficients_i128(), params)
+    }
 
+    /// Convert centered integer coefficients into negacyclic CRT+NTT form.
+    ///
+    /// Primes whose centered range holds every coefficient skip the wide
+    /// reduction.
+    pub fn from_centered_coefficients(
+        centered_coeffs: &[i128; D],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let max_abs = centered_coeffs
+            .iter()
+            .map(|value| value.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        // Keep the narrow path free of splitting work. The first wide prime
+        // initializes this once, and later wide primes reuse the same limbs.
+        let mut coefficient_limbs = None;
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
             .iter_mut()
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let reducer = CenteredMontReducer::new(*prime);
-            for (dst, coefficient) in limb.iter_mut().zip(coefficient_limbs.iter()) {
-                *dst = reducer.reduce_limbs(*coefficient);
+            if max_abs <= u128::from((prime.p.to_i64() / 2).unsigned_abs()) {
+                for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
+                    *dst = prime.from_canonical(W::from_i64(*centered as i64));
+                }
+            } else {
+                let reducer = CenteredMontReducer::new(*prime);
+                let split =
+                    coefficient_limbs.get_or_insert_with(|| centered_coeffs.map(balanced_limbs));
+                for (dst, split) in limb.iter_mut().zip(split.iter()) {
+                    *dst = reducer.reduce_limbs(*split);
+                }
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
         }
