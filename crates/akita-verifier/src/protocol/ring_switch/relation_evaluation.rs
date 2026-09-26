@@ -19,8 +19,8 @@ use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
-    PreparedRelationAddress, RelationAddressGeometry, RelationPolynomial, RelationQuotientLayout,
-    RelationRowFamily, RelationWitnessGeometry, SetupContributionPlan,
+    PreparedRelationAddress, RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily,
+    RelationWitnessGeometry, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -395,8 +395,13 @@ where
         }
         let row_dimension = family.geometry().polynomial_modulus_dimension();
         let role_factors = prepared_point.for_dimension(row_dimension)?;
-        let denominator = RelationPolynomial::negacyclic(row_dimension)?
-            .evaluate_modulus_with_powers(prepared_point.alpha(), &role_factors.powers)?;
+        let denominator = role_factors
+            .powers
+            .last()
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?
+            * prepared_point.alpha()
+            + E::one();
         let row_weight = evaluator
             .eq_tau1
             .get(row)

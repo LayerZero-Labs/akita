@@ -31,6 +31,7 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+#[cfg(feature = "labinius-trinomial")]
 mod relation_bridge;
 mod ring_relation_mode;
 pub mod schedule;
@@ -174,6 +175,7 @@ pub(crate) use proof::{
 pub use proof_size::{native_nonterminal_level_layout, NativeNonterminalLevelLayout};
 #[cfg(feature = "labinius-trinomial")]
 pub use relation_bridge::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
+#[cfg(feature = "labinius-trinomial")]
 pub use relation_bridge::{RelationPolynomial, RelationPolynomialKind};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{

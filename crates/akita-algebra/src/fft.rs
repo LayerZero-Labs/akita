@@ -42,7 +42,7 @@
 //! - **Low-multiplication radix kernels**
 //!   (`FftWorkspace::butterfly_stages`): the size-`r` DFT inside each
 //!   butterfly is hand-tuned per radix, taking the multiplication
-//!   count from the naive `r²` down to `1, 1, 6, 18` for
+//!   count from the naive `r²` down to `1, 2, 6, 18` for
 //!   `r ∈ {2, 3, 5, 7}` (radix 3 uses `1 + ω + ω² = 0`; radix 5 / 7
 //!   use Karatsuba on the conjugate-pair-symmetrized inputs, with
 //!   the constants precomputed in `StageData::winograd`).
@@ -582,6 +582,7 @@ pub struct SmoothDomain<F> {
 
 impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// Allocate reusable scratch for this domain's transforms.
+    #[cfg(feature = "labinius-trinomial")]
     pub fn workspace(&self) -> FftWorkspace<F> {
         FftWorkspace::new(self.n)
     }
