@@ -231,6 +231,7 @@ the ordinary field operations.
 
 ## Binary scalar arithmetic
 
+With the opt-in `labinius-binary` Cargo feature,
 `akita_algebra::binary::BinaryField162` provides arithmetic over
 `F_2[X]/(X^162 + X^81 + 1)`. An element has 162 bit coefficients; addition is
 XOR, and multiplication reduces the polynomial product using

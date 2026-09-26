@@ -12,6 +12,7 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+#[cfg(feature = "labinius-binary")]
 pub mod binary;
 pub mod eq_poly;
 pub mod fft;
