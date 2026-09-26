@@ -126,29 +126,21 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
                 "IFMA52 reconstruction tail does not match its parameters".into(),
             ));
         }
-        let mut field_product = F::one();
-        let field_weights: [F; K] = std::array::from_fn(|index| {
-            let weight = field_product;
-            field_product *= F::from_u64(self.primes[index].modulus);
-            weight
-        });
-        let tail_field_weight = field_product;
+        let (field_weights, tail_field_weight) = self.garner.field_weights::<F>();
+        // IFMA moduli are below 2^52, so canonical residues fit in i64.
+        let mut mixed_radix = canonical.map(|limb| limb.0.map(|residue| residue as i64));
+        self.garner.centered_mixed_radix(&mut mixed_radix);
         let coefficients = std::array::from_fn(|coefficient| {
-            let moduli = self.primes.map(|prime| prime.modulus);
-            let residues = std::array::from_fn(|limb| i128::from(canonical[limb].0[coefficient]));
-            let digits = self.garner.centered_mixed_radix(residues, moduli);
+            let digits = std::array::from_fn(|limb| mixed_radix[limb][coefficient]);
 
-            let mut result = F::zero();
-            for (digit, weight) in digits.iter().zip(field_weights) {
-                result += F::from_i128(*digit) * weight;
-            }
+            let mut result = self.garner.digits_to_field(&digits, &field_weights);
             if let (Some(tail), Some(tail_canonical)) = (&self.tail, tail_canonical) {
                 let tail_digit = i128::from(tail_canonical[coefficient].to_i64())
                     * i128::from(tail.residue_weight)
                     + digits
                         .iter()
                         .zip(tail.digit_weights)
-                        .map(|(digit, weight)| *digit * i128::from(weight))
+                        .map(|(digit, weight)| i128::from(*digit) * i128::from(weight))
                         .sum::<i128>();
                 let tail_modulus = i128::from(tail.modulus);
                 let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
