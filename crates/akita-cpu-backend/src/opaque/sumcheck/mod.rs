@@ -64,6 +64,18 @@ impl ReductionTiles {
     }
 }
 
+/// Pairs per parallel work item when a sum-check round has a single outer row.
+///
+/// Stage 1 x rounds and Stage 2 lane rounds run after every coefficient
+/// variable is bound, so their tables are one row and must split along pairs.
+/// The tile holds whole split-eq inner blocks: a power-of-two block no larger
+/// than the tile divides it, and a block of all live pairs gives one tile.
+#[inline]
+pub(crate) fn single_row_tile_pairs(block_size: usize) -> usize {
+    const SINGLE_ROW_TILE_PAIRS: usize = 1 << 10;
+    block_size.max(SINGLE_ROW_TILE_PAIRS)
+}
+
 /// Fold adjacent evaluations in a live-prefix row at a challenge `r`, treating
 /// indices past the materialized prefix as implicit zero-padding.
 #[inline]

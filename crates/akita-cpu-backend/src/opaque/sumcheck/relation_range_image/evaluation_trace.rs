@@ -1,6 +1,7 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
 use super::fold_two_round_quad;
+use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
 use std::num::NonZeroUsize;
 #[cfg(test)]
 use std::ops::Range;
@@ -11,6 +12,7 @@ use akita_error::AkitaError;
 use akita_types::{
     basis_weights_prefix, BasisMode, CoefficientPackingStage2Source, CoefficientPackingStage2Terms,
 };
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
@@ -880,29 +882,35 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     pub(crate) fn fold_lanes(&mut self, challenge: E) {
+        let live_lane_count = self.live_lane_count;
+        let next_live_lane_count = live_lane_count.div_ceil(2);
+        let folded = match &self.lane_weights {
+            PreparedLaneWeights::Dense(values) => cfg_into_iter!(0..next_live_lane_count)
+                .map(|target| fold_prefix_pair_with_zero_padding(values, 2 * target, challenge))
+                .collect(),
+            _ => {
+                // Structured lanes resolve once, on the first lane round, straight into
+                // the folded dense table.
+                debug_assert_eq!(self.coeff_count, 1);
+                let this = &*self;
+                cfg_into_iter!(0..next_live_lane_count)
+                    .map(|target| {
+                        let source = 2 * target;
+                        let left = this.get(source, 0, 1);
+                        let right = if source + 1 < live_lane_count {
+                            this.get(source + 1, 0, 1)
+                        } else {
+                            E::zero()
+                        };
+                        left + challenge * (right - left)
+                    })
+                    .collect()
+            }
+        };
         if !matches!(self.lane_weights, PreparedLaneWeights::Dense(_)) {
-            debug_assert_eq!(self.coeff_count, 1);
-            let dense = (0..self.live_lane_count)
-                .map(|lane| self.get(lane, 0, 1))
-                .collect();
-            self.lane_weights = PreparedLaneWeights::Dense(dense);
             self.sources.clear();
         }
-        let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let PreparedLaneWeights::Dense(values) = &mut self.lane_weights else {
-            unreachable!("lane weights were materialized above");
-        };
-        let even_scale = E::one() - challenge;
-        for target in 0..next_live_lane_count {
-            let source = 2 * target;
-            let left = values[source];
-            values[target] = if let Some(&right) = values.get(source + 1) {
-                left + challenge * (right - left)
-            } else {
-                even_scale * left
-            }
-        }
-        values.truncate(next_live_lane_count);
+        self.lane_weights = PreparedLaneWeights::Dense(folded);
         self.live_lane_count = next_live_lane_count;
     }
 

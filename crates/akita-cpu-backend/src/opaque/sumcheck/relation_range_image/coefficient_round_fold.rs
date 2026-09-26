@@ -69,15 +69,6 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
     (virt, rel)
 }
 
-fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
-    for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
-        *left_term += right_term;
-    }
-    for (left_term, right_term) in left.1.iter_mut().zip(right.1) {
-        *left_term += right_term;
-    }
-}
-
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,

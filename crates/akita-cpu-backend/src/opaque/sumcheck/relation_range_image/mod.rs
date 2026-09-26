@@ -221,6 +221,15 @@ fn stage2_eq_block(
     (j_high, blk_end)
 }
 
+fn add_round_terms<E: Field>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
+    for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
+        *left_term += right_term;
+    }
+    for (left_term, right_term) in left.1.iter_mut().zip(right.1) {
+        *left_term += right_term;
+    }
+}
+
 #[inline]
 pub(crate) fn accumulate_relation_coeffs<E: Field>(rel: &mut [E; 3], w0: E, dw: E, p0: E, p1: E) {
     let dp = p1 - p0;

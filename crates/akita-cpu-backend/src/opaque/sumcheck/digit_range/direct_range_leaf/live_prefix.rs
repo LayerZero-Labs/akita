@@ -16,52 +16,54 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
 
         let old_live_x_cols = self.live_x_cols;
         let next_live_x_cols = old_live_x_cols.div_ceil(2);
-        let y_len = range_image.len() / old_live_x_cols;
+        // The x phase follows every ring-coefficient round, so one y row remains.
+        debug_assert_eq!(range_image.len(), old_live_x_cols);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
-        let next_current_x_half = 1usize << (self.current_x_width() - 2);
         let live_pairs = next_live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
+        let tile_pairs = crate::opaque::sumcheck::single_row_tile_pairs(block_size);
 
         let polynomial_precomputation = &self.polynomial_precomputation;
         let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
-        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let mut out = vec![E::zero(); next_live_x_cols];
 
-        let process_row = |(y, row_out): (usize, &mut [E])| {
+        let process_tile = |(tile, tile_out): (usize, &mut [E])| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-            let row = &range_image[y * old_live_x_cols..(y + 1) * old_live_x_cols];
-            let j_base = y * next_current_x_half;
-            let mut outer_accum = vec![E::Product::zero(); num_coeffs_q];
+            let tile_start = tile * tile_pairs;
+            let tile_end = tile_start + tile_out.len().div_ceil(2);
+            let mut outer_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
             let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut fold_pair = |pair_x: usize| {
+                let left_next = 2 * pair_x;
+                let local_left = left_next - 2 * tile_start;
+                let left_old = 4 * pair_x;
+                let left_range_image = fold_prefix_pair_with_zero_padding(range_image, left_old, r);
+                tile_out[local_left] = left_range_image;
+                let right_range_image = if left_next + 1 < next_live_x_cols {
+                    let right_range_image =
+                        fold_prefix_pair_with_zero_padding(range_image, left_old + 2, r);
+                    tile_out[local_left + 1] = right_range_image;
+                    right_range_image
+                } else {
+                    E::zero()
+                };
+                (left_range_image, right_range_image)
+            };
 
-            let mut block_start = 0usize;
-            while block_start < live_pairs {
-                let block_end = (block_start + block_size).min(live_pairs);
-                let equality_suffix_index = (j_base + block_start) >> first_bits;
+            let mut block_start = tile_start;
+            while block_start < tile_end {
+                let block_end = (block_start + block_size).min(tile_end);
+                let equality_suffix_index = block_start >> first_bits;
                 let mut block_accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let complete_quartets = (block_end - block_start) / 4;
 
                 for quartet in 0..complete_quartets {
                     let pair_base = block_start + quartet * 4;
-                    let mut pairs = [(E::zero(), E::zero()); 4];
-                    for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
-                        let left_next = 2 * pair_x;
-                        let left_old = 4 * pair_x;
-                        let left_range_image = fold_prefix_pair_with_zero_padding(row, left_old, r);
-                        row_out[left_next] = left_range_image;
-                        let right_range_image = if left_next + 1 < next_live_x_cols {
-                            let right_range_image =
-                                fold_prefix_pair_with_zero_padding(row, left_old + 2, r);
-                            row_out[left_next + 1] = right_range_image;
-                            right_range_image
-                        } else {
-                            E::zero()
-                        };
-                        pairs[slot] = (left_range_image, right_range_image);
-                    }
+                    let pairs: [(E, E); 4] = std::array::from_fn(|slot| fold_pair(pair_base + slot));
 
                     compute_entry_coefficients_x4(
                         &mut batch_out,
@@ -75,37 +77,25 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         ],
                     );
 
-                    for (slot, _) in pairs.iter().enumerate() {
-                        let pair_x = pair_base + slot;
-                        let equality_prefix_index = (j_base + pair_x) & (num_first - 1);
+                    for (slot, entry) in batch_out.iter().enumerate() {
+                        let equality_prefix_index = (pair_base + slot) & (num_first - 1);
                         accumulate_dense_entry_coeffs(
                             &mut block_accumulator[..num_coeffs_q],
-                            &batch_out[slot][..full_num_coeffs_q],
+                            &entry[..full_num_coeffs_q],
                             e_first[equality_prefix_index],
                         );
                     }
                 }
 
                 for pair_x in block_start + complete_quartets * 4..block_end {
-                    let left_next = 2 * pair_x;
-                    let left_old = 4 * pair_x;
-                    let left_range_image = fold_prefix_pair_with_zero_padding(row, left_old, r);
-                    row_out[left_next] = left_range_image;
-                    let right_range_image = if left_next + 1 < next_live_x_cols {
-                        let right_range_image =
-                            fold_prefix_pair_with_zero_padding(row, left_old + 2, r);
-                        row_out[left_next + 1] = right_range_image;
-                        right_range_image
-                    } else {
-                        E::zero()
-                    };
+                    let (left_range_image, right_range_image) = fold_pair(pair_x);
                     compute_entry_coefficients(
                         &mut entry_buf,
                         polynomial_precomputation,
                         left_range_image,
                         right_range_image - left_range_image,
                     );
-                    let equality_prefix_index = (j_base + pair_x) & (num_first - 1);
+                    let equality_prefix_index = pair_x & (num_first - 1);
                     accumulate_dense_entry_coeffs(
                         &mut block_accumulator[..num_coeffs_q],
                         &entry_buf[..full_num_coeffs_q],
@@ -123,28 +113,22 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
 
             outer_accum
         };
-        let merge_accumulators = |mut left: Vec<E::Product>, right: Vec<E::Product>| {
-            for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
-                *left_coefficient += right_coefficient;
+
+        let tile_accumulators: Vec<_> = cfg_chunks_mut!(out, 2 * tile_pairs)
+            .enumerate()
+            .map(process_tile)
+            .collect();
+        let mut accumulated = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+        for tile_accumulator in tile_accumulators {
+            for (total, term) in accumulated.iter_mut().zip(tile_accumulator) {
+                *total += term;
             }
-            left
-        };
-
-        #[cfg(feature = "parallel")]
-        let accumulated = cfg_chunks_mut!(out, next_live_x_cols)
-            .enumerate()
-            .map(process_row)
-            .reduce(
-                || vec![E::Product::zero(); num_coeffs_q],
-                merge_accumulators,
-            );
-
-        #[cfg(not(feature = "parallel"))]
-        let accumulated = cfg_chunks_mut!(out, next_live_x_cols)
-            .enumerate()
-            .map(process_row)
-            .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
-        let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
+        }
+        let q_coeffs = accumulated[..num_coeffs_q]
+            .iter()
+            .copied()
+            .map(E::reduce_product)
+            .collect();
 
         let poly = OmittedConstantPoly::from_q_coefficients(q_coeffs);
         (out, poly)
