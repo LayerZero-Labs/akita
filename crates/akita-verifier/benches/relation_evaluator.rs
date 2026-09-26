@@ -138,7 +138,6 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                                     .evaluator
                                     .eval_flat_at_point_with_deferred_setup::<F>(
                                         black_box(&benchmark_case.point),
-                                        black_box(&benchmark_case.setup),
                                         black_box(benchmark_case.alpha),
                                         black_box(F::one()),
                                     )
@@ -170,7 +169,6 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                             .evaluator
                             .eval_flat_at_point_with_deferred_setup::<F>(
                                 black_box(&benchmark_case.point),
-                                black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
                                 black_box(F::one()),
                             )

@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(crate) reduction: ExtensionOpeningReduction<E>,
     pub(crate) protocol_points: Vec<Vec<E>>,
@@ -6,7 +7,7 @@ pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
 
 /// Drive one aggregate EOR session; individual contributions stay inside the backend.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_extension_opening_reduction<F, E, T, B>(
+pub(crate) fn prove_extension_opening_reduction<F, E, B>(
     backend: &B,
     session: &B::ProofSessionHandle,
     context: &crate::backend::ProofContext,
@@ -17,7 +18,7 @@ pub(crate) fn prove_extension_opening_reduction<F, E, T, B>(
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    transcript: &mut T,
+    grinding: &mut akita_types::NativeProverGrinding<'_>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
@@ -25,7 +26,6 @@ where
     F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize + 'static,
-    T: akita_types::ProverTranscriptGrinding<F>,
     B: crate::backend::OpaqueEorKernel<F, E>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
@@ -44,19 +44,15 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    append_claim_values_to_transcript::<F, E, T>(&prepared.openings, transcript);
-    for partial in &prepared.proof_partials {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
-    }
-    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
-    let eta = (0..split_bits)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
-        .collect::<Vec<_>>();
-    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+    let prefix = akita_types::native_eor_prover_prefix::<F, E>(
+        grinding,
         opening_batch,
-        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
-        transcript,
+        &prepared.openings,
+        &prepared.proof_partials,
+        level,
     )?;
+    let eta = prefix.eta;
+    let claim_coefficients = prefix.claim_coefficients;
     let (input_claim, mut session) =
         backend.begin_eor(prepared.handle, &eta, &claim_coefficients)?;
     // Reconstruct the aggregate input from scheduled public partials.
@@ -80,19 +76,22 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let mut round = 0u32;
-    let (sumcheck, rho, claim) =
-        akita_sumcheck::prove_sumcheck::<F, T, E, _, _>(&mut kernel, transcript, |tr| {
-            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
-                tr,
-                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                level,
-                0,
-                round,
-            )?;
-            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
-            Ok(challenge)
-        })?;
+    let mut channel = akita_types::NativeGrindingSumcheckProver::<F, E>::new(
+        grinding,
+        akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+        level,
+        0,
+    );
+    let shape = akita_sumcheck::NativeSumcheckShape::new(
+        max_tail_vars,
+        akita_types::EXTENSION_OPENING_REDUCTION_DEGREE,
+    )?;
+    let (rho, claim) = akita_sumcheck::prove_sumcheck_native::<F, E, _, _>(
+        &mut kernel,
+        &mut channel,
+        shape,
+        akita_types::NATIVE_EOR_SUMCHECK_INVOCATION,
+    )?;
     let final_claims = backend.finish_eor(session)?;
     if final_claims.len() != num_claims
         || final_claims
@@ -124,16 +123,15 @@ where
         final_factors.push(factor);
         protocol_points.push(point);
     }
-    for value in &final_claims {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EOR_FINAL_CLAIM, value);
-    }
+    akita_types::native_eor_prover_final_claims::<F, E>(
+        grinding,
+        opening_batch,
+        &final_claims,
+        level,
+    )?;
     Ok(ProvedExtensionOpeningReduction {
         reduction: ExtensionOpeningReduction {
-            proof: ExtensionOpeningReductionProof {
-                partials: prepared.proof_partials,
-                sumcheck,
-                final_claims,
-            },
+            final_claims,
             final_factors,
         },
         protocol_points,
@@ -168,7 +166,7 @@ impl<F: Field + CanonicalEncoding, E: Field, B: crate::backend::OpaqueEorKernel<
         &mut self,
         round: usize,
         claim: E,
-    ) -> Result<akita_algebra::uni_poly::UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.backend.eor_round(self.session, round, claim)
     }
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError> {

@@ -73,7 +73,7 @@ fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {
         let dense_poly = dense.compute_round_univariate(round, claim);
         assert_eq!(dense_poly, factored_poly, "round {round}");
         let challenge = F::from_u64(71 + round as u64);
-        claim = factored_poly.evaluate(&challenge);
+        claim = factored_poly.evaluate(challenge);
         factored.ingest_challenge(round, challenge);
         dense.ingest_challenge(round, challenge);
     }

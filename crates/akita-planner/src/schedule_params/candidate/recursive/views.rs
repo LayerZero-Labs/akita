@@ -22,7 +22,7 @@ pub(crate) fn derive_recursive_candidate_views(
     }
     if matches!(
         request.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         return Ok(RecursiveCandidateViews {
             terminal: derive_terminal_candidates(request)?,

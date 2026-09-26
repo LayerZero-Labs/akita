@@ -106,7 +106,7 @@ range, strict ordering, coefficients in `{-1, 1}`, and exact sign replay.
 `BinaryChallengeSampler` owns reusable scratch for its profile. A transcript
 draw absorbs the binary sampler domain, a length-prefixed caller label, the
 challenge count, and the complete profile identity. It then squeezes one
-32-byte root through the existing Akita transcript interface. The current
+32-byte root through the native `FoldDraw` transcript seam. The current
 support-mapping domain is `akita/labinius/binary-challenge/v2`.
 
 Challenge coordinate `i` expands the existing indexed SHAKE256 stream
@@ -178,10 +178,10 @@ path now performs `d` exact binomial-recurrence steps and retains `d + 1`
 construct the former quadratic Pascal triangle. Keep this one-time
 initialization outside hot sampling benchmarks.
 
-The `sparse_challenge` Criterion benchmark constructs profiles before timing
-and compares fixed and bounded samplers with the existing ordinary sparse
-sampler for context. A 20-sample development run on the same host measured
-batch size 4096 as follows:
+An earlier `sparse_challenge` Criterion benchmark, before the native transcript
+cutover, constructed profiles before timing and compared fixed and bounded
+samplers with the existing ordinary sparse sampler for context. Its 20-sample
+development run measured batch size 4096 as follows:
 
 | Sampler | Batch time | Throughput |
 | --- | ---: | ---: |
@@ -193,10 +193,11 @@ batch size 4096 as follows:
 | existing ordinary signed-sparse D64 | 1.606--1.734 ms | about 2.47 million/s |
 
 The ordinary D64 line is a runtime baseline, not an equal-security-family
-comparison. Reproduce these measurements with
+comparison. These measurements are historical. The current benchmark exercises
+the opt-in binary sampler through `FoldDraw` with a deterministic SHAKE draw:
 
 ```bash
-cargo bench -p akita-challenges --bench sparse_challenge -- \
+cargo bench -p akita-challenges --features labinius-challenges --bench binary_challenge -- \
   labinius_binary_challenge_batch
 ```
 

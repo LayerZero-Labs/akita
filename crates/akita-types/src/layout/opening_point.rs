@@ -4,10 +4,6 @@ use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 use jolt_field::Field;
-use jolt_field::Ring;
-
-use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
-const BLOCK_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -243,31 +239,11 @@ pub fn reduce_inner_opening_to_ring_element<F: Field, const D: usize>(
     Ok(CyclotomicRing::from_slice(&weights))
 }
 
-/// Embed `eq(block_open, j)` as a ring element for each live block index `j`.
-pub fn block_rings_at_opening<F, E, const D: usize>(
-    fold_open: &[E],
-    num_live_blocks: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: Field + Ring,
-    E: FpExtEncoding<F> + Field,
-{
-    basis_weights_prefix(fold_open, BasisMode::Lagrange, num_live_blocks)?
-        .into_iter()
-        .map(|weight| {
-            embed_ring_subfield_scalar::<F, E, D>(
-                weight,
-                AkitaError::InvalidInput(BLOCK_EMBED_ERROR.to_string()),
-            )
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{One, Ring};
 
     type F = Prime128OffsetA7F7;
 

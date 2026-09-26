@@ -11,18 +11,17 @@ mod position_sample;
 mod signed_sparse;
 mod xof;
 
-pub(crate) use position_sample::{
-    sample_distinct_positions_into, DistinctPositionScratch, MAX_STACK_RING_DIM,
-};
+pub(crate) use position_sample::MAX_STACK_RING_DIM;
+#[cfg(feature = "labinius-challenges")]
+pub(crate) use position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
 pub(crate) use signed_sparse::SignedSparseScratch;
-pub(crate) use xof::{shake256, IndexedXofPrefix, XofCursor};
+#[cfg(feature = "labinius-challenges")]
+pub(crate) use xof::shake256;
+pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
 use akita_error::AkitaError;
-use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
-use akita_transcript::Transcript;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
 use std::sync::{Arc, LazyLock};
 
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
@@ -238,45 +237,6 @@ fn sample_indexed_challenges_sequential_with(
             sample(&mut worker, coordinate_index)
         })
         .collect()
-}
-
-/// Sample `n` sparse ring fold challenges from a transcript.
-///
-/// # Errors
-///
-/// Returns an error if challenge sampling fails.
-#[tracing::instrument(skip_all, name = "sample_sparse_challenges")]
-pub fn sample_sparse_challenges<F, T>(
-    transcript: &mut T,
-    label: &[u8],
-    ring_d: usize,
-    n: usize,
-    cfg: &SparseChallengeConfig,
-    grind_nonce: u32,
-) -> Result<Vec<SparseChallenge>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    T: Transcript<F>,
-{
-    if ring_d > MAX_STACK_RING_DIM {
-        return Err(AkitaError::InvalidInput(format!(
-            "ring dimension {ring_d} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
-        )));
-    }
-    cfg.validate_dyn(ring_d)
-        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
-
-    let domain_sep = cfg.domain_separator_bytes();
-    let mut absorb_buf = Vec::with_capacity(label.len() + 8 + 8 + domain_sep.len() + 4);
-    absorb_buf.extend_from_slice(label);
-    absorb_buf.extend_from_slice(&(n as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
-    absorb_buf.extend_from_slice(&domain_sep);
-    absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
-
-    transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
-    let seed = transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE);
-    sample_indexed_challenges_from_seed(&seed, ring_d, n, cfg, None)
 }
 
 #[cfg(test)]

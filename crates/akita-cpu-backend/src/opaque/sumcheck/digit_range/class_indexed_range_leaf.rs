@@ -12,10 +12,11 @@ use super::{
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
+use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring};
 use jolt_field::{Fold, Unreduced};
+use jolt_poly::OmittedConstantPoly;
 
 struct CompactRangeLeafState<E: Field> {
     source: CompactDigitSource,
@@ -216,9 +217,9 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
         self.split_eq.current_tau()
     }
 
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+    fn compute_round_eq_factored(&mut self, round: usize) -> OmittedConstantPoly<E> {
         let coefficients = self.round_q_coefficients(round);
-        EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.degree_bound()].to_vec())
+        OmittedConstantPoly::from_q_coefficients(coefficients[..=self.degree_bound()].to_vec())
     }
 
     fn ingest_challenge(&mut self, round: usize, challenge: E) {

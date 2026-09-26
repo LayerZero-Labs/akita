@@ -1,7 +1,5 @@
+use crate::FoldDraw;
 use akita_error::{checked, AkitaError};
-use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
-use akita_transcript::Transcript;
-use jolt_field::{CanonicalEncoding, Field};
 use num_bigint::BigUint;
 
 use crate::sampler::{
@@ -54,16 +52,12 @@ impl BinaryChallengeSampler {
     /// Every challenge uses an independently indexed SHAKE256 substream. The
     /// bounded-weight sampler rejects out-of-range integers without a retry cap,
     /// so it has no sampler-failure probability to add to the fold budget.
-    pub fn sample_challenges<F, T>(
+    pub fn sample_challenges<D: FoldDraw>(
         &mut self,
-        transcript: &mut T,
+        draw: &mut D,
         label: &[u8],
         count: usize,
-    ) -> Result<Vec<BinaryChallenge>, AkitaError>
-    where
-        F: Field + CanonicalEncoding,
-        T: Transcript<F>,
-    {
+    ) -> Result<Vec<BinaryChallenge>, AkitaError> {
         let count_u64 = u64::try_from(count)
             .map_err(|_| AkitaError::InvalidInput("binary challenge count exceeds u64".into()))?;
         let label_len = u64::try_from(label.len())
@@ -87,8 +81,7 @@ impl BinaryChallengeSampler {
         context.extend_from_slice(label);
         context.extend_from_slice(&count_u64.to_le_bytes());
         context.extend_from_slice(self.profile.identity_bytes());
-        transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &context);
-        let seed = transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE);
+        let seed = draw.absorb_and_squeeze(&context)?;
         self.sample_from_seed(&seed, count)
     }
 
@@ -236,13 +229,20 @@ fn uniform_biguint_below(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
-    use akita_transcript::AkitaTranscript;
-    use jolt_field::Prime128OffsetA7F7;
     use shake::digest::{ExtendableOutput, Update, XofReader};
     use shake::Shake256;
 
-    type F = Prime128OffsetA7F7;
+    struct TestDraw;
+
+    impl FoldDraw for TestDraw {
+        fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Result<[u8; 32], AkitaError> {
+            let mut xof = Shake256::default();
+            xof.update(payload);
+            let mut seed = [0u8; 32];
+            xof.finalize_xof().read(&mut seed);
+            Ok(seed)
+        }
+    }
 
     #[test]
     fn bounded_integer_rejection_matches_an_independent_xof_mapping() {
@@ -301,10 +301,10 @@ mod tests {
             BinaryChallengeProfile::fixed_weight(super::super::BinaryScalarRing::Cyclotomic243, 46)
                 .unwrap();
         let sample = |profile: BinaryChallengeProfile| {
-            let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+            let mut draw = TestDraw;
             let mut sampler = BinaryChallengeSampler::new(profile);
             sampler
-                .sample_challenges::<F, _>(&mut transcript, b"binary-fold", 4)
+                .sample_challenges(&mut draw, b"binary-fold", 4)
                 .unwrap()
         };
         let first = sample(bounded_profile.clone());

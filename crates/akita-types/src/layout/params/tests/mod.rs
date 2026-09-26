@@ -215,7 +215,6 @@ fn with_decomp_derives_exact_live_block_geometry() {
     assert_eq!(lp.position_index_bits(), 3);
     assert_eq!(lp.block_index_bits(), 2);
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);
-    assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
     assert!(sample_params_only().with_decomp(3, 17, 2, 2, 2).is_err());
 }
@@ -281,10 +280,6 @@ fn derived_log_values() {
 
     assert_eq!(lp.block_index_bits(), layout_lp.block_index_bits());
     assert_eq!(lp.position_index_bits(), layout_lp.position_index_bits());
-    assert_eq!(
-        lp.outer_vars(),
-        layout_lp.position_index_bits() + layout_lp.block_index_bits()
-    );
 }
 
 #[test]
@@ -320,8 +315,6 @@ fn canonical_row_offsets_match_open_coded_layout() {
         let d_start = b_start + n_b * nc;
 
         assert_eq!(lp.a_start(), a_start);
-        assert_eq!(lp.b_start().unwrap(), b_start);
-        assert_eq!(lp.d_start(nc).unwrap(), d_start);
         assert_eq!(
             lp.relation_matrix_row_count(nc).unwrap(),
             d_start + n_d_active + 2 * (nc + 1)

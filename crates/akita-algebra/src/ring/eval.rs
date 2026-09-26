@@ -3,8 +3,10 @@
 use super::CyclotomicRing;
 use crate::fft::field_pow;
 use akita_error::AkitaError;
+#[cfg(test)]
+use jolt_field::ExtField;
 use jolt_field::Unreduced;
-use jolt_field::{ExtField, Field, MulBaseUnreduced, Zero};
+use jolt_field::{Field, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
@@ -78,8 +80,11 @@ pub fn eval_ring_at<F: Field, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &
 /// # Panics
 ///
 /// Panics in debug builds if `alpha_pows.len() != D`.
-#[inline]
-pub fn eval_ring_at_pows<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
+#[cfg(test)]
+pub(crate) fn eval_ring_at_pows<F, E, const D: usize>(
+    r: &CyclotomicRing<F, D>,
+    alpha_pows: &[E],
+) -> E
 where
     F: Field,
     E: Field + ExtField<F>,
@@ -91,15 +96,15 @@ where
 /// Evaluate a flat ring element (raw coefficients at a runtime ring
 /// dimension) against precomputed powers of `alpha`.
 ///
-/// This is the runtime-dimension form of [`eval_ring_at_pows`]: the ring
+/// This is the runtime-dimension form of `eval_ring_at_pows`: the ring
 /// dimension is `alpha_pows.len()` and `coeffs` must hold exactly one ring
 /// element of that dimension.
 ///
 /// # Panics
 ///
 /// Panics in debug builds if `coeffs.len() != alpha_pows.len()`.
-#[inline]
-pub fn eval_flat_ring_at_pows<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+#[cfg(test)]
+pub(crate) fn eval_flat_ring_at_pows<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
 where
     F: Field,
     E: Field + ExtField<F>,
@@ -113,7 +118,7 @@ where
         })
 }
 
-/// Fast (deferred-reduction) counterpart of [`eval_flat_ring_at_pows`].
+/// Fast (deferred-reduction) counterpart of `eval_flat_ring_at_pows`.
 ///
 /// This is the runtime-dimension form of [`eval_ring_at_pows_fast`].
 ///
@@ -134,15 +139,15 @@ where
     <E as Unreduced>::reduce_product(accum)
 }
 
-/// Fast (deferred-reduction) counterpart of [`eval_ring_at_pows`].
+/// Fast (deferred-reduction) counterpart of `eval_ring_at_pows`.
 ///
-/// Same signature and result as [`eval_ring_at_pows`], but accumulates all `D`
+/// Same signature and result as `eval_ring_at_pows`, but accumulates all `D`
 /// widening `E × F` products into a single [`Unreduced::Product`] and
 /// reduces **once** instead of reducing after every coefficient. On a 128-bit
 /// prime the modular reduction is a large fraction of each multiply, so this
 /// turns ~`D` reductions into one.
 ///
-/// Bit-identical to [`eval_ring_at_pows`] as long as the running product-sum
+/// Bit-identical to `eval_ring_at_pows` as long as the running product-sum
 /// stays within the accumulator's carry headroom. For `Fp128` each `u128`
 /// accumulator limb holds a 64-bit product word, so the sum of up to ~`2^64`
 /// products is exact — `D ≈ 64` is trivially within bounds (validated by

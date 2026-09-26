@@ -36,6 +36,7 @@ impl IndexedXofPrefix {
 }
 
 /// SHAKE256 with the same padding and squeeze path as indexed challenge draws.
+#[cfg(any(test, feature = "labinius-challenges"))]
 pub(crate) fn shake256(input: &[u8], output: &mut [u8]) {
     let mut state = [0u64; 25];
     let mut chunks = input.chunks_exact(SHAKE256_RATE);
