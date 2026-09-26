@@ -148,7 +148,7 @@ mod tests {
             let pi = prime_i.p.to_i64();
             for (j, prime_j) in primes[..i].iter().enumerate() {
                 let pj = prime_j.p.to_i64();
-                let g = garner.gamma[i][j] as i64;
+                let g = garner.gamma()[i][j] as i64;
                 assert_eq!(
                     (pj * g) % pi,
                     1,

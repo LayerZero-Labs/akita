@@ -101,7 +101,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
             let mut ntt_d = CyclotomicCrtNtt::<W, K, D>::zero();
             if pointwise_dot_batch_size > 1 {
                 let mut transformed =
-                    vec![vec![ntt_d.clone(); pointwise_dot_batch_size]; num_live_blocks];
+                    vec![(vec![ntt_d.clone(); pointwise_dot_batch_size], 0usize,); num_live_blocks];
                 for batch_start in (start..end).step_by(pointwise_dot_batch_size) {
                     let batch_end = (batch_start + pointwise_dot_batch_size).min(end);
                     // Keep one matrix sub-tile hot while applying it to every
@@ -142,23 +142,23 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                         continue;
                     }
 
-                    for (digits_ntt, block) in transformed.iter_mut().zip(blocks) {
-                        let live = block.get(batch_start..batch_end.min(block.len()));
-                        for (slot, digit) in digits_ntt.iter_mut().zip(live.unwrap_or_default()) {
+                    for ((digits_ntt, live), &block) in transformed.iter_mut().zip(blocks) {
+                        *live = batch_end.min(block.len()).saturating_sub(batch_start);
+                        for (slot, digit) in digits_ntt
+                            .iter_mut()
+                            .zip(&block[batch_start.min(block.len())..][..*live])
+                        {
                             slot.assign_i8_with_lut(digit, params, &lut);
                         }
                     }
                     for (row_idx, mat_row) in ntt_mat.iter().enumerate() {
-                        for (block_idx, (digits_ntt, block)) in
-                            transformed.iter().zip(blocks).enumerate()
-                        {
-                            let live = batch_end.min(block.len()).saturating_sub(batch_start);
-                            if live == 0 {
+                        for (block_idx, (digits_ntt, live)) in transformed.iter().enumerate() {
+                            if *live == 0 {
                                 continue;
                             }
                             accs[block_idx][row_idx].add_assign_pointwise_dot(
-                                &mat_row[batch_start..batch_start + live],
-                                &digits_ntt[..live],
+                                &mat_row[batch_start..batch_start + *live],
+                                &digits_ntt[..*live],
                                 params,
                             );
                         }
