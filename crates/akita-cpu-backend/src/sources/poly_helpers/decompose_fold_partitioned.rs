@@ -268,9 +268,8 @@ impl<const D: usize> FoldSource<D> for PackedDigits<'_> {
         scratch: &'a mut Self::Scratch,
     ) -> Self::Planes<'a> {
         debug_assert_eq!(num_digits, 1);
-        *scratch = self
-            .digits
-            .decode_array::<D>(ring_idx * D)
+        self.digits
+            .decode_range(ring_idx * D, scratch)
             .expect("validated packed recursive ring");
         scratch
     }
