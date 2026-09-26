@@ -643,6 +643,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     ///
     /// # Panics
     /// If either slice or the workspace has a length different from this domain.
+    #[cfg(feature = "labinius-trinomial")]
     pub fn forward_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
@@ -654,6 +655,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     ///
     /// # Panics
     /// If either slice or the workspace has a length different from this domain.
+    #[cfg(feature = "labinius-trinomial")]
     pub fn inverse_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
         assert_eq!(input.len(), self.n);
         assert_eq!(output.len(), self.n);
