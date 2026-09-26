@@ -21,10 +21,10 @@
 //!   into challenge-scaled copies of the two-round quad fold. The last prefix
 //!   round writes the folded witness for the ordinary suffix path.
 
+use super::prefix_cache::Stage2PrefixCache;
 use super::wide_mass::WideMass;
 use super::*;
 use crate::opaque::sumcheck::relation_range_image::evaluation_trace::PreparedLaneWeights;
-use crate::opaque::sumcheck::two_round_prefix::Stage2PrefixCache;
 use crate::opaque::sumcheck::{add_assign_all, parallel_tasks, sum_partials};
 use akita_algebra::eq_poly::EqPolynomial;
 

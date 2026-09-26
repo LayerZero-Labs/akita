@@ -280,6 +280,7 @@ mod lane_product;
 mod lifecycle;
 mod norm;
 use norm::{CompactNorm, FieldNorm, ProductNorm};
+mod prefix_cache;
 mod prepared_linear_lane;
 mod quotient_prefix;
 mod round_flow;

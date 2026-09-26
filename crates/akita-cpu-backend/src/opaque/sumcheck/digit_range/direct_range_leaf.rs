@@ -40,11 +40,11 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
+use self::prefix_cache::{build_stage1_prefix_cache, Stage1PrefixCache};
 use super::range_poly::{
     LinearSum, OctetClassTerms, RangePoly, TaylorSums, MAX_DIRECT_RANGE_COEFFICIENTS,
 };
 use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
-use crate::opaque::sumcheck::two_round_prefix::{build_stage1_prefix_cache, Stage1PrefixCache};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver};
@@ -162,6 +162,7 @@ pub struct LowBasisRangeCheckProver<E: Field> {
 
 mod live_prefix;
 mod octet_prefix;
+mod prefix_cache;
 mod rounds;
 mod state;
 
