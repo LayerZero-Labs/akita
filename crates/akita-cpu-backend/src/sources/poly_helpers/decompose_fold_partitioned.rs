@@ -125,99 +125,154 @@ fn position_tile_len(num_positions_per_block: usize) -> usize {
         .max(1)
 }
 
-enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
-    Predecomposed {
-        digit_planes: &'a [[i8; D]],
-        num_rings: usize,
-        digit_abs_bound: u64,
-    },
-    LiveRings {
-        coeffs: &'a [CyclotomicRing<F, D>],
-        params: &'a BalancedDecomposePow2Params<F>,
-    },
-    PackedTight {
-        digits: PackedSignedDigitView<'a>,
-        num_rings: usize,
-        digit_abs_bound: u64,
-    },
+/// Source preparation is monomorphized per witness representation. The
+/// associated scratch type makes the source/scratch pairing a type invariant.
+trait FoldSource<const D: usize>: Sync {
+    type Scratch;
+    type Planes<'a>: DigitPlaneSet<D>
+    where
+        Self: 'a;
+
+    fn num_rings(&self) -> usize;
+    fn digit_abs_bound(&self) -> u64;
+    fn scratch(&self, num_digits: usize) -> Self::Scratch;
+    fn digit_planes<'a>(
+        &'a self,
+        ring_idx: usize,
+        num_digits: usize,
+        scratch: &'a mut Self::Scratch,
+    ) -> Self::Planes<'a>;
 }
 
-enum DigitScratch<const D: usize> {
-    None,
-    I8(Vec<[i8; D]>),
-    I16(Vec<[i16; D]>),
-    Packed([i8; D]),
+struct CachedDigits<'a, const D: usize> {
+    digit_planes: &'a [[i8; D]],
+    num_rings: usize,
+    digit_abs_bound: u64,
 }
 
-impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
+impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
+    type Scratch = ();
+    type Planes<'a>
+        = DigitPlanes<'a, D>
+    where
+        Self: 'a;
+
     fn num_rings(&self) -> usize {
-        match self {
-            Self::Predecomposed { num_rings, .. } => *num_rings,
-            Self::LiveRings { coeffs, .. } => coeffs.len(),
-            Self::PackedTight { num_rings, .. } => *num_rings,
-        }
+        self.num_rings
     }
 
     fn digit_abs_bound(&self) -> u64 {
-        match self {
-            Self::Predecomposed {
-                digit_abs_bound, ..
-            } => *digit_abs_bound,
-            Self::LiveRings { params, .. } => {
-                akita_types::balanced_signed_digit_abs_bound(params.log_basis())
-                    .expect("decompose-fold parameters must use a validated signed-digit basis")
-            }
-            Self::PackedTight {
-                digit_abs_bound, ..
-            } => *digit_abs_bound,
-        }
+        self.digit_abs_bound
     }
 
-    fn digit_scratch(&self, num_digits: usize) -> DigitScratch<D> {
-        match self {
-            Self::LiveRings { params, .. } => {
-                match SignedDigitKernel::for_log_basis(params.log_basis())
-                    .expect("decompose-fold parameters must use a validated signed-digit basis")
-                {
-                    SignedDigitKernel::I8 => DigitScratch::I8(vec![[0i8; D]; num_digits]),
-                    SignedDigitKernel::I16 => DigitScratch::I16(vec![[0i16; D]; num_digits]),
-                }
-            }
-            Self::PackedTight { .. } => DigitScratch::Packed([0i8; D]),
-            Self::Predecomposed { .. } => DigitScratch::None,
-        }
-    }
+    fn scratch(&self, _num_digits: usize) {}
 
-    /// Resolve the source once per ring. Cached planes are borrowed directly;
-    /// live and packed sources reuse the tile's scratch across rings.
-    fn digit_planes<'s>(
-        &'s self,
+    #[inline]
+    fn digit_planes<'a>(
+        &'a self,
         ring_idx: usize,
         num_digits: usize,
-        scratch: &'s mut DigitScratch<D>,
-    ) -> DigitPlanes<'s, D> {
-        match (self, scratch) {
-            (Self::Predecomposed { digit_planes, .. }, DigitScratch::None) => {
-                let start = ring_idx * num_digits;
-                DigitPlanes::I8(&digit_planes[start..start + num_digits])
-            }
-            (Self::LiveRings { coeffs, params }, DigitScratch::I8(planes)) => {
-                coeffs[ring_idx].balanced_decompose_pow2_i8_into_with_params(planes, params);
+        _scratch: &'a mut (),
+    ) -> Self::Planes<'a> {
+        let start = ring_idx * num_digits;
+        DigitPlanes::I8(&self.digit_planes[start..start + num_digits])
+    }
+}
+
+struct LiveRings<'a, F: Field + CanonicalEncoding, const D: usize> {
+    coeffs: &'a [CyclotomicRing<F, D>],
+    params: &'a BalancedDecomposePow2Params<F>,
+}
+
+enum LiveDigitScratch<const D: usize> {
+    I8(Vec<[i8; D]>),
+    I16(Vec<[i16; D]>),
+}
+
+impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'_, F, D> {
+    type Scratch = LiveDigitScratch<D>;
+    type Planes<'a>
+        = DigitPlanes<'a, D>
+    where
+        Self: 'a;
+
+    fn num_rings(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    fn digit_abs_bound(&self) -> u64 {
+        akita_types::balanced_signed_digit_abs_bound(self.params.log_basis())
+            .expect("decompose-fold parameters must use a validated signed-digit basis")
+    }
+
+    fn scratch(&self, num_digits: usize) -> Self::Scratch {
+        match SignedDigitKernel::for_log_basis(self.params.log_basis())
+            .expect("decompose-fold parameters must use a validated signed-digit basis")
+        {
+            SignedDigitKernel::I8 => LiveDigitScratch::I8(vec![[0i8; D]; num_digits]),
+            SignedDigitKernel::I16 => LiveDigitScratch::I16(vec![[0i16; D]; num_digits]),
+        }
+    }
+
+    #[inline]
+    fn digit_planes<'a>(
+        &'a self,
+        ring_idx: usize,
+        _num_digits: usize,
+        scratch: &'a mut Self::Scratch,
+    ) -> Self::Planes<'a> {
+        match scratch {
+            LiveDigitScratch::I8(planes) => {
+                self.coeffs[ring_idx]
+                    .balanced_decompose_pow2_i8_into_with_params(planes, self.params);
                 DigitPlanes::I8(planes)
             }
-            (Self::LiveRings { coeffs, params }, DigitScratch::I16(planes)) => {
-                coeffs[ring_idx].balanced_decompose_pow2_i16_into(planes, params);
+            LiveDigitScratch::I16(planes) => {
+                self.coeffs[ring_idx].balanced_decompose_pow2_i16_into(planes, self.params);
                 DigitPlanes::I16(planes)
             }
-            (Self::PackedTight { digits, .. }, DigitScratch::Packed(plane)) => {
-                debug_assert_eq!(num_digits, 1);
-                *plane = digits
-                    .decode_array::<D>(ring_idx * D)
-                    .expect("validated packed recursive ring");
-                DigitPlanes::I8(std::slice::from_ref(plane))
-            }
-            _ => unreachable!("source and tile scratch must match"),
         }
+    }
+}
+
+struct PackedDigits<'a> {
+    digits: PackedSignedDigitView<'a>,
+    num_rings: usize,
+    digit_abs_bound: u64,
+}
+
+impl<const D: usize> FoldSource<D> for PackedDigits<'_> {
+    type Scratch = [i8; D];
+    type Planes<'a>
+        = &'a [i8; D]
+    where
+        Self: 'a;
+
+    fn num_rings(&self) -> usize {
+        self.num_rings
+    }
+
+    fn digit_abs_bound(&self) -> u64 {
+        self.digit_abs_bound
+    }
+
+    fn scratch(&self, _num_digits: usize) -> Self::Scratch {
+        [0i8; D]
+    }
+
+    #[inline]
+    fn digit_planes<'a>(
+        &'a self,
+        ring_idx: usize,
+        num_digits: usize,
+        scratch: &'a mut Self::Scratch,
+    ) -> Self::Planes<'a> {
+        debug_assert_eq!(num_digits, 1);
+        *scratch = self
+            .digits
+            .decode_array::<D>(ring_idx * D)
+            .expect("validated packed recursive ring");
+        scratch
     }
 }
 
@@ -227,7 +282,69 @@ enum DigitPlanes<'a, const D: usize> {
     I16(&'a [[i16; D]]),
 }
 
-impl<const D: usize> DigitPlanes<'_, D> {
+trait DigitPlaneSet<const D: usize> {
+    fn accumulate_wide(
+        self,
+        acc: &mut [[i32; D]],
+        challenge: &SparseChallenge,
+        plan: &ChallengePlan<D>,
+    );
+    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge);
+    fn accumulate_chunked_narrow(
+        self,
+        narrow: &mut [[i16; D]],
+        wide: &mut [[i32; D]],
+        challenge: &SparseChallenge,
+        term_ranges: &[Range<usize>],
+    );
+}
+
+impl<const D: usize> DigitPlaneSet<D> for &[i8; D] {
+    #[inline]
+    fn accumulate_wide(
+        self,
+        acc: &mut [[i32; D]],
+        challenge: &SparseChallenge,
+        plan: &ChallengePlan<D>,
+    ) {
+        match plan {
+            ChallengePlan::Rotated(rotated) => {
+                accumulate_rotated_digit_plane(self, rotated.as_ref(), &mut acc[0])
+            }
+            ChallengePlan::WidePm1(pm1) => {
+                sparse_mul_acc_pm1(self, &pm1.positive, &pm1.negative, &mut acc[0])
+            }
+            ChallengePlan::WideGeneric => sparse_mul_acc(self, challenge, &mut acc[0]),
+            _ => unreachable!("wide accumulation requires a wide plan"),
+        }
+    }
+
+    #[inline]
+    fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
+        sparse_mul_acc_narrow(self, challenge, &mut acc[0]);
+    }
+
+    #[inline]
+    fn accumulate_chunked_narrow(
+        self,
+        narrow: &mut [[i16; D]],
+        wide: &mut [[i32; D]],
+        challenge: &SparseChallenge,
+        term_ranges: &[Range<usize>],
+    ) {
+        for term_range in term_ranges {
+            sparse_mul_acc_narrow_terms(
+                self,
+                &challenge.positions[term_range.clone()],
+                &challenge.coeffs[term_range.clone()],
+                &mut narrow[0],
+            );
+            flush_narrow_accumulator(narrow, wide);
+        }
+    }
+}
+
+impl<const D: usize> DigitPlaneSet<D> for DigitPlanes<'_, D> {
     fn accumulate_wide(
         self,
         acc: &mut [[i32; D]],
@@ -266,6 +383,7 @@ impl<const D: usize> DigitPlanes<'_, D> {
         }
     }
 
+    #[inline(always)]
     fn accumulate_narrow(self, acc: &mut [[i16; D]], challenge: &SparseChallenge) {
         match self {
             Self::I8(planes) => {
@@ -319,8 +437,8 @@ fn flush_narrow_accumulator<const D: usize>(narrow: &mut [[i16; D]], wide: &mut 
     }
 }
 
-fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
-    source: ElementFoldSource<'_, F, D>,
+fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
+    source: S,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
     num_digits: usize,
@@ -355,7 +473,7 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_scratch = source.digit_scratch(num_digits);
+            let mut digit_scratch = source.scratch(num_digits);
             let mut narrow_acc = uses_narrow_accumulation.then(|| vec![[0i16; D]; acc.len()]);
             let mut narrow_bound = 0u64;
 
@@ -456,10 +574,7 @@ fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usi
 }
 
 /// Element-partitioned accumulation for predecomposed dense digit caches.
-pub(crate) fn cached_digit_decompose_fold_partitioned<
-    F: Field + CanonicalEncoding,
-    const D: usize,
->(
+pub(crate) fn cached_digit_decompose_fold_partitioned<const D: usize>(
     digit_planes: &[[i8; D]],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -470,8 +585,8 @@ pub(crate) fn cached_digit_decompose_fold_partitioned<
     let digit_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
         .expect("cached decompose-fold basis must be validated")
         .min(u64::from(i8::MIN.unsigned_abs()));
-    element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::Predecomposed {
+    element_partitioned_decompose_fold(
+        CachedDigits {
             digit_planes,
             num_rings,
             digit_abs_bound,
@@ -489,8 +604,8 @@ pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, co
     num_positions_per_block: usize,
     params: &BalancedDecomposePow2Params<F>,
 ) -> Vec<[i32; D]> {
-    element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::LiveRings { coeffs, params },
+    element_partitioned_decompose_fold(
+        LiveRings { coeffs, params },
         challenges,
         num_positions_per_block,
         params.levels(),
@@ -498,7 +613,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, co
 }
 
 /// Position-partitioned accumulation over a packed tight recursive witness.
-pub(crate) fn packed_tight_digit_fold_partitioned<F: Field + CanonicalEncoding, const D: usize>(
+pub(crate) fn packed_tight_digit_fold_partitioned<const D: usize>(
     digits: PackedSignedDigitView<'_>,
     num_rings: usize,
     challenges: &[SparseChallenge],
@@ -510,8 +625,8 @@ pub(crate) fn packed_tight_digit_fold_partitioned<F: Field + CanonicalEncoding, 
             .negative_abs_max()
             .max(digits.bounds().positive_max()),
     );
-    element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::PackedTight {
+    element_partitioned_decompose_fold(
+        PackedDigits {
             digits,
             num_rings,
             digit_abs_bound,

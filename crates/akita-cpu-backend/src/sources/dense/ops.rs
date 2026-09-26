@@ -46,7 +46,7 @@ where
             .map(|range| {
                 let ring_start = range.start * num_positions_per_block;
                 let ring_end = (range.end * num_positions_per_block).min(coeffs.len());
-                let coefficients = cached_digit_decompose_fold_partitioned::<F, D>(
+                let coefficients = cached_digit_decompose_fold_partitioned::<D>(
                     &planes[ring_start.min(coeffs.len()) * num_digits..ring_end * num_digits],
                     &challenges[range.clone()],
                     num_positions_per_block,
@@ -149,7 +149,7 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<F, D>(
+                cached_digit_decompose_fold_partitioned::<D>(
                     digit_planes,
                     challenges,
                     num_positions_per_block,

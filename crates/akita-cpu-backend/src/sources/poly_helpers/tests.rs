@@ -49,7 +49,7 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
     for (ring, planes) in rings.iter().zip(digit_planes.chunks_exact_mut(num_digits)) {
         ring.balanced_decompose_pow2_i8_into_with_params(planes, &params);
     }
-    let cached = cached_digit_decompose_fold_partitioned::<F, D>(
+    let cached = cached_digit_decompose_fold_partitioned::<D>(
         &digit_planes,
         &challenges,
         POSITIONS,
@@ -111,8 +111,8 @@ fn all_fold_sources_share_rotated_narrow_and_chunked_results() {
     let params = BalancedDecomposePow2Params::new(1, 8);
     let live = balanced_ring_decompose_fold_partitioned(&rings, &challenges, POSITIONS, &params);
     let cached =
-        cached_digit_decompose_fold_partitioned::<F, D>(&planes, &challenges, POSITIONS, 1, 8);
-    let packed = packed_tight_digit_fold_partitioned::<F, D>(
+        cached_digit_decompose_fold_partitioned::<D>(&planes, &challenges, POSITIONS, 1, 8);
+    let packed = packed_tight_digit_fold_partitioned::<D>(
         packed.view(),
         rings.len(),
         &challenges,
