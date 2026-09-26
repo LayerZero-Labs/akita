@@ -14,7 +14,8 @@ use crate::opaque::OperationBinding;
 use crate::opaque::{CpuBackend, OpaqueStage3Kernel, Stage3Request};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
-use akita_algebra::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
@@ -33,13 +34,12 @@ pub struct CpuStage3Session<F: Field, E: Field> {
     lease: crate::opaque::ScopeLease,
     setup: RectangularSetupProductTerm<F, E>,
     round: usize,
-    pending: Option<UniPoly<E>>,
+    pending: Option<UnivariatePoly<E>>,
     claim: E,
 }
 
-impl<F, E, Cfg> OpaqueStage3Kernel<F, E> for CpuBackend<Cfg>
+impl<F, E> OpaqueStage3Kernel<F, E> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + AkitaSerialize + 'static,
     E: Field
         + Ring
@@ -123,7 +123,7 @@ where
         session: &mut Self::Stage3SessionHandle,
         round: usize,
         claim: E,
-    ) -> Result<UniPoly<E>, AkitaError> {
+    ) -> Result<UnivariatePoly<E>, AkitaError> {
         self.validate_leased_binding(&session.binding, &session.lease)?;
         if round != session.round
             || round >= session.setup.num_rounds()
@@ -154,7 +154,7 @@ where
         let polynomial = session.pending.take().ok_or_else(|| {
             AkitaError::InvalidInput("Stage 3 challenge has no pending round".into())
         })?;
-        session.claim = polynomial.evaluate(&challenge);
+        session.claim = polynomial.evaluate(challenge);
         session.setup.ingest_challenge(round, challenge);
         session.round += 1;
         Ok(())

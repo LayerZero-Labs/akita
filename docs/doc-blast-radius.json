@@ -45,16 +45,6 @@
       ]
     },
     {
-      "id": "witness-polyops",
-      "description": "Shared witness/polynomial view vocabulary",
-      "code": ["crates/akita-witness/**"],
-      "consider_updating": [
-        "book/src/how/architecture.md",
-        "book/src/how/proving/sumcheck-stages.md",
-        "specs/archive/2026-Q3/akita-polyops-cutover.md"
-      ]
-    },
-    {
       "id": "sis-security",
       "description": "SIS floors, norm bounds, challenge sampling",
       "code": ["crates/akita-types/src/sis/**", "crates/akita-challenges/**"],
@@ -110,12 +100,15 @@
       "description": "Setup expansion and Ajtai commitment",
       "code": [
         "crates/akita-setup/**",
-        "crates/akita-cpu-backend/src/backend/commitment/**",
-        "crates/akita-cpu-backend/src/backend/**"
+        "crates/akita-cpu-backend/src/commitment/**",
+        "crates/akita-cpu-backend/src/opaque/**",
+        "crates/akita-prover/src/backend/**"
       ],
       "consider_updating": [
         "book/src/how/commitment.md",
         "book/src/usage/commitment-api.md",
+        "book/src/usage/setup-runtime.md",
+        "specs/family-agnostic-cpu-backend.md",
         "specs/setup-*.md"
       ]
     },

@@ -2,9 +2,9 @@ use super::*;
 use crate::opaque::{ProofContext, ProofScope};
 use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
 
-fn proof_scope<Cfg: akita_config::CommitmentConfig>(
-    backend: &CpuBackend<Cfg>,
-) -> ProofScope<'_, CpuBackend<Cfg>> {
+fn proof_scope<B: jolt_field::Field, E>(
+    backend: &CpuBackend<B, E>,
+) -> ProofScope<'_, CpuBackend<B, E>> {
     let scope = backend.owner().begin_test_scope(vec![1]).unwrap();
     ProofScope::admitted(
         backend,
@@ -13,7 +13,7 @@ fn proof_scope<Cfg: akita_config::CommitmentConfig>(
 }
 
 fn session(
-    backend: &CpuBackend,
+    backend: &CpuBackend<F, F>,
     proof: &crate::opaque::CpuProofSessionHandle,
 ) -> CpuStage3Session<F, F> {
     let setup = RectangularSetupProductTerm::new(
@@ -47,7 +47,7 @@ fn session(
 
 #[test]
 fn stage3_enforces_round_bind_and_completion_order() {
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let scope = proof_scope(&backend);
     assert!(backend
         .finish_stage3(session(&backend, scope.session()))
@@ -82,7 +82,7 @@ fn stage3_enforces_round_bind_and_completion_order() {
         assert!(backend
             .bind_stage3_challenge(&mut state, round, challenge)
             .is_err());
-        claim = polynomial.evaluate(&challenge);
+        claim = polynomial.evaluate(challenge);
     }
     assert!(backend
         .stage3_round_polynomial(&mut state, 2, claim)
@@ -101,8 +101,8 @@ fn stage3_enforces_round_bind_and_completion_order() {
 
 #[test]
 fn stage3_scopes_are_independent_and_owner_bound() {
-    let backend = CpuBackend::for_arithmetic_tests();
-    let foreign = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let foreign = CpuBackend::<F, F>::for_arithmetic_tests();
     let first = proof_scope(&backend);
     let second = proof_scope(&backend);
     let mut a = session(&backend, first.session());
@@ -120,8 +120,8 @@ fn stage3_scopes_are_independent_and_owner_bound() {
 fn stage3_retains_setup_across_cache_eviction() {
     use crate::opaque::ComputeBackendSetup;
     type Base = jolt_field::Prime64Offset59;
-    type Config = akita_config::proof_optimized::fp64::OneHot;
-    type Extension = <Config as akita_config::CommitmentConfig>::ExtField;
+    type Extension =
+        <akita_config::proof_optimized::fp64::OneHot as akita_config::CommitmentConfig>::ExtField;
     let setup = crate::AkitaProverSetup::<Base>::generate_with_capacity(
         2,
         1,
@@ -132,7 +132,7 @@ fn stage3_retains_setup_across_cache_eviction() {
     .unwrap();
     let expected = setup.expanded.shared_matrix().as_field_slice()[..4].to_vec();
     let allocation = std::sync::Arc::downgrade(&setup.expanded);
-    let backend = CpuBackend::<Config>::for_test_setup(setup.expanded.clone()).unwrap();
+    let backend = CpuBackend::<Base, Extension>::new(setup.expanded.clone()).unwrap();
     let scope = proof_scope(&backend);
     let product = RectangularSetupProductTerm::new(
         SetupProductSource::Expanded(setup.expanded.clone()),

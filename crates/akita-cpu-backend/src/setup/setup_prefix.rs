@@ -8,7 +8,7 @@ use crate::commitment::{
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId};
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -33,8 +33,7 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     commitment_profile.validate_setup_prefix_geometry(id.natural_len)?;
     let n_prefix = id.n_prefix()?;
     let ring_dimension = commitment_profile.inner.matrix.ring_dimension();
-    let committed_n_prefix = 1usize
-        .checked_shl(commitment_profile.group.num_vars() as u32)
+    let committed_n_prefix = checked::pow2(commitment_profile.group.num_vars())
         .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
     if committed_n_prefix != n_prefix || !n_prefix.is_multiple_of(ring_dimension) {
         return Err(AkitaError::InvalidSetup(
@@ -191,8 +190,8 @@ mod tests {
 
     type MissingExportExecutor<'a> = (
         CommitmentExecutor<'a, F, ResidentStatePolicy>,
-        Arc<CpuInnerCommitOperation<'a, F>>,
-        Arc<CpuCompressionOperation<'a, F>>,
+        Arc<CpuInnerCommitOperation<'a, F, F>>,
+        Arc<CpuCompressionOperation<'a, F, F>>,
     );
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
@@ -309,7 +308,7 @@ mod tests {
 
     fn portable_executor<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, PortableStatePolicy> {
         CommitmentExecutor::cpu(
@@ -324,7 +323,7 @@ mod tests {
 
     fn resident_executor<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> CommitmentExecutor<'a, F, ResidentStatePolicy> {
         CommitmentExecutor::cpu(
@@ -339,7 +338,7 @@ mod tests {
 
     fn executor_without_portable_export<'a>(
         setup: &'a AkitaProverSetup<F>,
-        backend: &'a CpuBackend,
+        backend: &'a CpuBackend<F, F>,
         prepared: &'a crate::opaque::CpuPreparedSetup<F>,
     ) -> MissingExportExecutor<'a> {
         struct MissingExportRoute;
@@ -452,7 +451,7 @@ mod tests {
         assert!(available_field_len >= natural_len);
         assert!(available_field_len < n_prefix);
 
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
@@ -482,7 +481,7 @@ mod tests {
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let prefix_params =
@@ -524,7 +523,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let portable = commit_setup_prefix(
             &setup.expanded,
@@ -565,7 +564,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let (executor, _inner, _compression) =
             executor_without_portable_export(&setup, &backend, &prepared);
@@ -592,7 +591,7 @@ mod tests {
             commitment_profile: prefix_params.profile,
         };
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = resident_executor(&setup, &backend, &prepared);
         let source = DensePoly::from_field_evals(
@@ -663,7 +662,7 @@ mod tests {
         );
 
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let executor = portable_executor(&setup, &backend, &prepared);
         let id = SetupPrefixSlotId {

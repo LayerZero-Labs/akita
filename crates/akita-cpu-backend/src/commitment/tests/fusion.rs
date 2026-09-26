@@ -40,19 +40,19 @@ enum FusedEvent {
 }
 
 struct RecordingFused<'a> {
-    inner: Arc<CpuInnerCommitOperation<'a, F>>,
-    outer: CpuOuterCommitOperation<'a, F>,
+    inner: Arc<CpuInnerCommitOperation<'a, F, F>>,
+    outer: CpuOuterCommitOperation<'a, F, F>,
     events: Arc<Mutex<Vec<FusedEvent>>>,
     attempts_per_call: Arc<AtomicUsize>,
 }
 
 struct RecordingInner<'a> {
-    operation: Arc<CpuInnerCommitOperation<'a, F>>,
+    operation: Arc<CpuInnerCommitOperation<'a, F, F>>,
     calls: Arc<AtomicUsize>,
 }
 
 struct CountingResources<'a> {
-    inner: PreparedCommitmentResources<'a, F, CpuBackend>,
+    inner: PreparedCommitmentResources<'a, F, CpuBackend<F, F>>,
     ensures: Arc<AtomicUsize>,
     routes: Arc<Mutex<Vec<CommitmentNttRoute>>>,
     folds: Arc<Mutex<Vec<usize>>>,
@@ -89,7 +89,7 @@ impl CommitmentResourceControl<F> for CountingResources<'_> {
 }
 
 fn counting_resources<'a>(
-    backend: &'a CpuBackend,
+    backend: &'a CpuBackend<F, F>,
     prepared: &'a CpuPreparedSetup<F>,
     expanded: &'a akita_types::AkitaExpandedSetup<F>,
     ensures: Arc<AtomicUsize>,
@@ -213,7 +213,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let standard_types = vec![PolynomialType::Dense(DenseType::Coefficients)];
     let split = CommitmentExecutor::cpu(
@@ -419,7 +419,7 @@ fn explicitly_selected_fused_route_has_one_submission_and_cpu_parity() {
         .prover_state()
         .inner_relation_material(plan.inner(), sources.len())
         .unwrap();
-    TerminalTFieldsMessage::from_row(&frozen.rows()[0]).unwrap();
+    TerminalTFieldsMessage::from_row(&frozen.rows()[0]);
     assert_eq!(
         actual.prover_state().retained_bytes().unwrap(),
         retained_before_freeze
@@ -545,7 +545,7 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let inner = Arc::new(CpuInnerCommitOperation::new(&backend, &prepared));
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -662,7 +662,7 @@ fn fused_only_executor_needs_no_split_registration_or_inner_exporter() {
                 inner.owner().clone(),
                 context,
                 CommitmentRequestCapabilities::split::<InnerOnlyContext>(
-                    BackendKindId::of::<CpuBackend>("inner-only").unwrap(),
+                    BackendKindId::of::<CpuBackend<F, F>>("inner-only").unwrap(),
                     vec![PolynomialType::Dense(DenseType::Coefficients)],
                 ),
                 StageDimensionCapabilities::cpu_role::<F>(akita_types::RingRole::Inner),

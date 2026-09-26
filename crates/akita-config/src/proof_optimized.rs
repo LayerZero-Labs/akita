@@ -7,7 +7,7 @@ use super::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
     setup_matrix_field_elements_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaExpandedSetup, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
+    AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout,
 };
 use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
@@ -63,19 +63,6 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
-}
-
-/// Extract setup-level params from a `FoldSchedule`.
-///
-pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<CommittedGroupParams> {
-    std::iter::once(schedule.root.params.clone())
-        .chain(
-            schedule
-                .recursive_folds
-                .iter()
-                .map(|fold| fold.params.clone()),
-        )
-        .collect()
 }
 
 /// Reject a concrete schedule whose exact matrix footprint exceeds setup.

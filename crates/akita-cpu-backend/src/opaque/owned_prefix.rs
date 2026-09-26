@@ -2,11 +2,11 @@
 use super::owned::{CommitmentHandle, CommittedSource, OwnedPolynomials};
 use crate::commitment::{CommitmentExecutor, DenseType, PolynomialType, PortableStatePolicy};
 use crate::{CpuBackend, DensePoly};
-use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{Commitment, FpExtEncoding, SetupPrefixSlotId};
+use akita_types::sis::{CommittedSourceClass, CommittedSourceContract};
+use akita_types::{Commitment, DecompositionParams, FpExtEncoding, SetupPrefixSlotId};
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
@@ -23,15 +23,11 @@ pub(super) struct CachedSetupPrefix<F: Field> {
     source: Arc<OwnedPolynomials<DensePoly<F>>>,
 }
 
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
-    fn setup_prefix_source<F>(
+impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
+    fn setup_prefix_source(
         &self,
         id: &SetupPrefixSlotId,
-    ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError>
-    where
-        Cfg: CommitmentConfig<Field = F>,
-        F: Field + CanonicalEncoding + 'static,
-    {
+    ) -> Result<Arc<OwnedPolynomials<DensePoly<F>>>, AkitaError> {
         let prepared = self.prepared()?;
         let coefficients = prepared
             .expanded
@@ -55,13 +51,12 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     /// an artifact during setup and import it immediately before proving, so a
     /// second derivation in `import_setup_prefixes` would put setup work on the
     /// timed prover path.
-    fn setup_prefix_material<F>(
+    fn setup_prefix_material(
         &self,
         id: &SetupPrefixSlotId,
     ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
     where
-        Cfg: CommitmentConfig<Field = F>,
-        F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
+        F: Valid + Unreduced + WithCommitAccumulator,
     {
         let prepared = self.prepared()?;
         let validated =
@@ -87,14 +82,10 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     }
 
     /// Adopt material already committed by a CPU backend in this process.
-    fn cache_validated_setup_prefix<F>(
+    fn cache_validated_setup_prefix(
         &self,
         artifact: &crate::commitment::SetupPrefixSlot<F>,
-    ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
-    where
-        Cfg: CommitmentConfig<Field = F>,
-        F: Field + CanonicalEncoding + 'static,
-    {
+    ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError> {
         let prepared = self.prepared()?;
         crate::setup::setup_prefix::validate_setup_prefix_commitment(
             &prepared.expanded,
@@ -108,72 +99,20 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         })
     }
 
-    fn issue_setup_prefix_handle<F, E>(
-        &self,
-        id: &SetupPrefixSlotId,
-        cached: Arc<CachedSetupPrefix<F>>,
-    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
-    where
-        Cfg: CommitmentConfig<Field = F, ExtField = E>,
-        F: Field
-            + CanonicalEncoding
-            + AkitaSerialize
-            + Valid
-            + Ring
-            + Unreduced
-            + WithCommitAccumulator
-            + 'static,
-        F::Wide: From<F> + AdditiveGroup,
-        E: ExtField<F>
-            + FpExtEncoding<F>
-            + MulBaseUnreduced<F>
-            + Unreduced
-            + Fold
-            + AkitaSerialize
-            + 'static,
-    {
-        let artifact = &cached.artifact;
-        let public_commitment = artifact
-            .commitment
-            .rows
-            .first()
-            .ok_or(AkitaError::InvalidProof)?
-            .clone();
-        let committed = Arc::new(CommittedSource {
-            commitment_id: self.owner().next_operation_id()?,
-            source: cached.source.clone(),
-            metadata: akita_prover::SourceMetadata::try_new(
-                1,
-                id.commitment_profile.group.num_vars(),
-            )?,
-            parameters: id.commitment_profile,
-            public: Commitment::new(public_commitment),
-            retained: artifact.hint.clone(),
-        });
-        Ok(PreparedSetupPrefix {
-            public: artifact.verifier_slot(),
-            commitment_handle: CommitmentHandle {
-                owner: self.owner_id(),
-                committed,
-            },
-        })
-    }
-
     /// Build portable setup-prefix artifacts for application-managed persistence.
-    pub fn export_setup_prefixes<F>(
+    pub fn export_setup_prefixes(
         &self,
         ids: &[SetupPrefixSlotId],
     ) -> Result<crate::commitment::SetupPrefixProverRegistry<F>, AkitaError>
     where
-        Cfg: CommitmentConfig<Field = F>,
-        F: Field + CanonicalEncoding + Valid + Unreduced + WithCommitAccumulator + 'static,
+        F: Valid + Unreduced + WithCommitAccumulator,
     {
         let prepared = self.prepared()?;
         let mut artifacts = crate::commitment::SetupPrefixProverRegistry::new(
             prepared.expanded.descriptor().setup_seed.clone(),
         );
         for id in ids {
-            let mut artifact = self.setup_prefix_material::<F>(id)?.artifact.clone();
+            let mut artifact = self.setup_prefix_material(id)?.artifact.clone();
             // Portable public rows take their dimension from the frozen profile,
             // matching their canonical serialized representation.
             artifact.commitment.rows = artifact
@@ -187,36 +126,81 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         artifacts.mark_backend_validated();
         Ok(artifacts)
     }
+}
 
-    /// Prepare an exact public setup prefix as a reusable commitment.
-    pub fn prepare_setup_prefix<F, E>(
+impl<F, E> CpuBackend<F, E>
+where
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + Valid
+        + Ring
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + MulBaseUnreduced<F>
+        + Unreduced
+        + Fold
+        + AkitaSerialize
+        + 'static,
+{
+    fn issue_setup_prefix_handle(
         &self,
         id: &SetupPrefixSlotId,
-    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E, Cfg>>, AkitaError>
-    where
-        Cfg: CommitmentConfig<Field = F, ExtField = E>,
-        F: Field
-            + CanonicalEncoding
-            + AkitaSerialize
-            + Valid
-            + Ring
-            + Unreduced
-            + WithCommitAccumulator
-            + 'static,
-        F::Wide: From<F> + AdditiveGroup,
-        E: ExtField<F>
-            + FpExtEncoding<F>
-            + MulBaseUnreduced<F>
-            + Unreduced
-            + Fold
-            + AkitaSerialize
-            + 'static,
-    {
+        cached: Arc<CachedSetupPrefix<F>>,
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
+        let artifact = &cached.artifact;
+        let public_commitment = artifact
+            .commitment
+            .rows
+            .first()
+            .ok_or(AkitaError::InvalidProof)?
+            .clone();
+        // Setup prefixes are public uniform field elements, planned as
+        // full-width balanced digits rather than under any family's contract.
+        let profile = &id.commitment_profile;
+        let producer_contract = CommittedSourceContract::try_new(
+            CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: profile.inner.digits.log_basis,
+                log_commit_bound: profile.inner.matrix.sis_modulus_profile().field_bits(),
+                log_open_bound: None,
+            },
+        )?;
+        let committed = Arc::new(CommittedSource {
+            commitment_id: self.owner().next_operation_id()?,
+            source: cached.source.clone(),
+            metadata: akita_prover::SourceMetadata::try_new(
+                1,
+                id.commitment_profile.group.num_vars(),
+            )?,
+            parameters: id.commitment_profile,
+            producer_contract,
+            public: Commitment::new(public_commitment),
+            retained: artifact.hint.clone(),
+        });
+        Ok(PreparedSetupPrefix {
+            public: artifact.verifier_slot(),
+            commitment_handle: CommitmentHandle {
+                owner: self.owner_id(),
+                committed,
+            },
+        })
+    }
+
+    /// Prepare an exact public setup prefix as a reusable commitment.
+    pub fn prepare_setup_prefix(
+        &self,
+        id: &SetupPrefixSlotId,
+    ) -> Result<PreparedSetupPrefix<F, CommitmentHandle<F, E>>, AkitaError> {
         // The commitment and the prefix coefficients are a pure function of the
         // owned setup and the slot id, so derive them at most once per backend.
         // Only the per-proof operation identity below is minted fresh, keeping
         // handle lineage exactly as it was when every call re-derived.
-        let cached = self.setup_prefix_material::<F>(id)?;
+        let cached = self.setup_prefix_material(id)?;
 
         self.issue_setup_prefix_handle(id, cached)
     }
@@ -228,28 +212,9 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     #[allow(clippy::type_complexity)] // Retain the concrete backend handle family in the public result.
     pub fn import_setup_prefixes(
         &self,
-        artifacts: &crate::commitment::SetupPrefixProverRegistry<Cfg::Field>,
+        artifacts: &crate::commitment::SetupPrefixProverRegistry<F>,
         required_ids: &[SetupPrefixSlotId],
-    ) -> Result<
-        SetupPrefixProverRegistry<Cfg::Field, CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>>,
-        AkitaError,
-    >
-    where
-        Cfg::Field: CanonicalEncoding
-            + AkitaSerialize
-            + Valid
-            + Ring
-            + Unreduced
-            + WithCommitAccumulator
-            + 'static,
-        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        Cfg::ExtField: FpExtEncoding<Cfg::Field>
-            + MulBaseUnreduced<Cfg::Field>
-            + Unreduced
-            + Fold
-            + AkitaSerialize
-            + 'static,
-    {
+    ) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError> {
         let prepared = self.prepared()?;
         if artifacts.setup_seed() != &prepared.expanded.descriptor().setup_seed {
             return Err(AkitaError::InvalidSetup(
@@ -268,7 +233,7 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
                 let cached = self.cache_validated_setup_prefix(artifact)?;
                 self.issue_setup_prefix_handle(id, cached)?
             } else {
-                self.prepare_setup_prefix::<Cfg::Field, Cfg::ExtField>(id)?
+                self.prepare_setup_prefix(id)?
             };
             if slot.public.id != artifact.id
                 || slot.public.commitment.rows.len() != artifact.commitment.rows.len()
@@ -315,7 +280,7 @@ mod tests {
                 let capacity =
                     akita_config::SetupRequirements::from_catalog::<Cfg>(&catalog, NV, 1)
                         .unwrap()
-                        .matrix_capacity;
+                        .matrix_capacity();
                 let setup =
                     crate::AkitaProverSetup::<F>::generate_with_capacity(NV, 1, capacity).unwrap();
                 let row = catalog
@@ -331,17 +296,17 @@ mod tests {
                 let id = akita_types::scheduled_setup_prefix(n_prefix, prefix)
                     .slot_id()
                     .unwrap();
-                let first = CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
+                let first = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
                 for offset in 1..=32 {
                     let mut invalid = id.clone();
                     invalid.natural_len = invalid.natural_len.checked_add(offset).unwrap();
                     assert!(first
-                        .export_setup_prefixes::<F>(std::slice::from_ref(&invalid))
+                        .export_setup_prefixes(std::slice::from_ref(&invalid))
                         .is_err());
                 }
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 0);
                 let artifacts = first
-                    .export_setup_prefixes::<F>(std::slice::from_ref(&id))
+                    .export_setup_prefixes(std::slice::from_ref(&id))
                     .unwrap();
                 assert_eq!(first.setup_prefix_cache_len().unwrap(), 1);
                 assert!(artifacts.is_backend_validated());
@@ -366,7 +331,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(decoded, artifacts);
                 assert!(!decoded.is_backend_validated());
-                let second = CpuBackend::<Cfg>::new(setup.expanded.clone(), &catalog).unwrap();
+                let second = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
                 let imported_first = first
                     .import_setup_prefixes(&decoded, std::slice::from_ref(&id))
                     .unwrap();

@@ -129,9 +129,8 @@ impl<F: Field> crate::commitment::CommitmentSource<F> for RecursiveCommitSource<
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueWitnessCommitKernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueWitnessCommitKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize

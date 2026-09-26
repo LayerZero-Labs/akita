@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 mod frontier;
 mod level_search;
@@ -185,9 +186,8 @@ impl RecursiveCandidateContext<'_, '_> {
         {
             return Ok(None);
         }
-        let num_positions_per_block = 1usize
-            .checked_shl((reduced_vars - block_index_bits) as u32)
-            .ok_or_else(|| {
+        let num_positions_per_block =
+            checked::pow2(reduced_vars - block_index_bits).ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
             })?;
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
@@ -761,7 +761,7 @@ pub(crate) fn derive_terminal_candidates(
     };
     let retain_setup_frontier = matches!(
         request.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     );
     let modeled = if retain_setup_frontier {
         all_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?

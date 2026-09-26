@@ -509,11 +509,8 @@ impl NttExecutionRequirements {
 /// routing extents. Retained requests are joined only when ring dimension and
 /// transform domain match, before any relation kernel can build a smaller
 /// prefix independently.
-pub(crate) fn warm_relation_ntt_cache<
-    F: jolt_field::Field + jolt_field::CanonicalEncoding,
-    Cfg: akita_config::CommitmentConfig,
->(
-    backend: &CpuBackend<Cfg>,
+pub(crate) fn warm_relation_ntt_cache<F: jolt_field::Field + jolt_field::CanonicalEncoding, E>(
+    backend: &CpuBackend<F, E>,
     prepared: &CpuPreparedSetup<F>,
     level: &CommittedGroupParams,
 ) -> Result<(), AkitaError> {
@@ -533,9 +530,9 @@ pub(crate) fn warm_relation_ntt_cache<
 /// descending extent, makes every covering request a hit.
 pub(crate) fn warm_joined_ntt_requirements<
     F: jolt_field::Field + jolt_field::CanonicalEncoding,
-    Cfg: akita_config::CommitmentConfig,
+    E,
 >(
-    backend: &CpuBackend<Cfg>,
+    backend: &CpuBackend<F, E>,
     prepared: &CpuPreparedSetup<F>,
     planned: &NttExecutionRequirements,
 ) -> Result<(), AkitaError> {
