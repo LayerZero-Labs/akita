@@ -17,12 +17,14 @@ pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: Field, E: Field> 
 }
 
 /// Packing-specific E and quotient events over the checked flat witness domain.
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CoefficientPackingRelationEvents<E: Field> {
     pub(super) events: Vec<RelationWeightEvent<E>>,
+    #[cfg(test)]
     pub(super) alpha_powers: Arc<[E]>,
+    #[cfg(test)]
     pub(super) relation_coefficient_block_len: usize,
+    #[cfg(test)]
     pub(super) physical_field_len: usize,
 }
 
@@ -405,7 +407,6 @@ impl<E: Field> CoefficientPackingStage2Terms<E> {
 pub struct CoefficientPackingGroupSemantics<E: Field> {
     pub(super) group_index: usize,
     pub(super) geometry: SubringCoefficientPackingGeometry,
-    #[cfg(test)]
     pub(super) relation_events: CoefficientPackingRelationEvents<E>,
     pub(super) stage2_terms: CoefficientPackingStage2Terms<E>,
 }
@@ -456,6 +457,12 @@ impl<E: Field> CoefficientPackingGroupSemantics<E> {
     #[must_use]
     pub(super) const fn relation_events(&self) -> &CoefficientPackingRelationEvents<E> {
         &self.relation_events
+    }
+
+    /// Relation events prepared with these exact Stage 2 terms.
+    #[must_use]
+    pub fn relation_weight_events(&self) -> &[RelationWeightEvent<E>] {
+        &self.relation_events.events
     }
 
     #[must_use]

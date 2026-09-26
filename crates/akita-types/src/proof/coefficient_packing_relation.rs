@@ -34,7 +34,6 @@ struct RelationEventDomain {
 }
 
 use expanded::CoefficientPackingGroupSemanticInputs;
-#[cfg(test)]
 use expanded::CoefficientPackingRelationEvents;
 pub use expanded::{
     CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
@@ -687,11 +686,13 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    #[cfg(test)]
     let relation_events = CoefficientPackingRelationEvents {
         events: coefficient_packing_relation_events(&validated)?,
+        #[cfg(test)]
         alpha_powers: validated.alpha_powers.clone().into(),
+        #[cfg(test)]
         relation_coefficient_block_len: validated.coefficient_block,
+        #[cfg(test)]
         physical_field_len: validated.physical_field_len,
     };
     let ValidatedCoefficientPackingGroup {
@@ -929,7 +930,6 @@ where
     Ok(CoefficientPackingGroupSemantics {
         group_index: inputs.group_index,
         geometry,
-        #[cfg(test)]
         relation_events,
         stage2_terms: CoefficientPackingStage2Terms {
             direct_opening_source,
@@ -1045,9 +1045,8 @@ where
     Ok(groups)
 }
 
-/// Prepare the Stage 2 terms of all packing groups for one exact fold
-/// authority. Their relation-weight events are built separately by
-/// [`coefficient_packing_relation_events`].
+/// Prepare joined relation-weight events and Stage 2 terms for all packing
+/// groups from one validated fold authority.
 pub fn prepare_coefficient_packing_batch_semantics<F, E>(
     inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
 ) -> Result<CoefficientPackingBatchSemantics<E>, AkitaError>

@@ -401,7 +401,10 @@ where
                 )?
             }
             crate::opaque::Stage2OpeningDescription::CoefficientPacking(terms) => {
-                let mut terms = terms.into_iter();
+                let mut terms = terms
+                    .into_groups()
+                    .into_iter()
+                    .map(|group| group.into_parts().2);
                 let mut prepared =
                     relation_range_image::PreparedProverLinearTerms::from_coefficient_packing(
                         terms.next().ok_or(AkitaError::InvalidProof)?,

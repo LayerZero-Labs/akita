@@ -291,16 +291,20 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
     let domain = fixture.relation_plan.digit_witness_domain();
     let opening_ring_dim = fixture.params.role_dims().d_d();
     let alpha = E::from_u64(17);
+    // Packing weights must use the batch that also supplies the Stage 2 terms,
+    // even if the separately supplied relation coefficients differ.
+    let unrelated_coefficients = vec![E::from_u64(23); fixture.claim_coefficients.len()];
     let deferred = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::DeferredClaim,
         instance: &fixture.relation,
         alpha,
         level_params: &fixture.params,
         relation_row_point: &fixture.tau1,
-        claim_coefficients: &fixture.claim_coefficients,
+        claim_coefficients: &unrelated_coefficients,
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: Some(&fixture.batch),
         opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
@@ -377,6 +381,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: Some(&fixture.batch),
         opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
@@ -405,6 +410,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
+        packing_semantics: None,
         opening_points: OpeningFamily::EvaluationTrace(()),
     })
     .is_err());

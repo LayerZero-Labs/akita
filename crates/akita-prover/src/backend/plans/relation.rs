@@ -79,7 +79,8 @@ pub enum Stage2OpeningDescription<'a, E: Field> {
         trace: EvaluationTraceDescription<'a, E>,
         output_scale: E,
     },
-    CoefficientPacking(Vec<akita_types::CoefficientPackingStage2Terms<E>>),
+    /// One ring-switch authority for both relation weights and linear terms.
+    CoefficientPacking(akita_types::CoefficientPackingBatchSemantics<E>),
 }
 
 /// Validated public inputs for constructing a backend-owned Stage 2 session.
