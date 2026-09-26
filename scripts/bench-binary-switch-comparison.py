@@ -48,7 +48,7 @@ name = "akita-switch-comparison"
 version = "0.0.0"
 edition = "2021"
 [dependencies]
-akita-algebra = {{ path = {json.dumps(str(root / 'crates/akita-algebra'))} }}
+akita-algebra = {{ path = {json.dumps(str(root / 'crates/akita-algebra'))}, features = ["labinius-binary"] }}
 labinius = {{ path = {json.dumps(str(reference / 'crates/pcs'))} }}
 [profile.release]
 opt-level = 3
