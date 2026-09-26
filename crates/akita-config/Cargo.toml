@@ -41,6 +41,7 @@ akita-types = { version = "0.1.0", path = "../akita-types", default-features = f
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
+serde_json = "1"
 
 [lints]
 workspace = true
