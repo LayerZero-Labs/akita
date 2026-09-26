@@ -30,7 +30,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         };
         if use_prefix_x_round || use_sparse_x_y_round {
             let range_image = range_image.as_slice();
-            let precomputation = &self.polynomial_precomputation;
+            let precomputation = &self.range_poly;
             let sums = self.compute_round_live_prefix(range_image.len().div_ceil(2), |_| {
                 move |pair, weight, sums| {
                     let left = range_image[2 * pair];
@@ -38,16 +38,14 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         .get(2 * pair + 1)
                         .copied()
                         .unwrap_or_else(E::zero);
-                    accumulate_entry_terms(sums, precomputation, left, right - left, weight);
+                    precomputation.accumulate_entry_terms(sums, left, right - left, weight);
                 }
             });
             precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
         } else {
-            compute_range_round_polynomial_from_range_image(
-                &self.split_eq,
-                &self.polynomial_precomputation,
-                |j| (range_image[2 * j], range_image[2 * j + 1]),
-            )
+            compute_range_round_polynomial_from_range_image(&self.split_eq, &self.range_poly, |j| {
+                (range_image[2 * j], range_image[2 * j + 1])
+            })
         }
     }
 }
@@ -139,22 +137,4 @@ impl<E: Field + Ring + Unreduced + Fold> LowBasisRangeCheckProver<E> {
             }
         };
     }
-}
-
-#[cfg(test)]
-pub(crate) fn pad_compact_witness(
-    digit_witness_prefix: &[i8],
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
-) -> Vec<i8> {
-    let x_len = 1usize << col_bits;
-    let y_len = 1usize << ring_bits;
-    let mut padded = vec![0i8; x_len * y_len];
-    for x in 0..live_x_cols {
-        let offset = x * y_len;
-        padded[offset..offset + y_len]
-            .copy_from_slice(&digit_witness_prefix[offset..offset + y_len]);
-    }
-    padded
 }

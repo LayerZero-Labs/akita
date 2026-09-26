@@ -157,7 +157,7 @@ fn stage1_round0_matches_dense_reference() {
         let compact_range_image = build_compact_range_image(&compact_digit_witness);
         let reference = compute_range_round_polynomial_from_range_image(
             &prover.split_eq,
-            &prover.polynomial_precomputation,
+            &prover.range_poly,
             |j| {
                 (
                     F::from_i64(i64::from(compact_range_image[2 * j])),
@@ -382,7 +382,7 @@ fn assert_rounds_match_dense_reference(
         .collect();
     reference.resize(1usize << num_vars, F::zero());
     let mut reference_eq = GruenSplitEq::new(&tau0).unwrap();
-    let precomputation = RangePolynomialPrecomputation::new(basis);
+    let precomputation = RangePoly::new(basis);
     let shape = format!(
         "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
     );
@@ -458,4 +458,29 @@ fn stage1_rounds_match_dense_reference() {
             }
         }
     }
+}
+
+fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
+    digit_witness
+        .iter()
+        .copied()
+        .map(range_image_from_digit)
+        .collect()
+}
+
+pub(crate) fn pad_compact_witness(
+    digit_witness_prefix: &[i8],
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+) -> Vec<i8> {
+    let x_len = 1usize << col_bits;
+    let y_len = 1usize << ring_bits;
+    let mut padded = vec![0i8; x_len * y_len];
+    for x in 0..live_x_cols {
+        let offset = x * y_len;
+        padded[offset..offset + y_len]
+            .copy_from_slice(&digit_witness_prefix[offset..offset + y_len]);
+    }
+    padded
 }

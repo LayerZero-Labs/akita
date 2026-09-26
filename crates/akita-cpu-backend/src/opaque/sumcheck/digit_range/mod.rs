@@ -21,6 +21,7 @@ mod compact_digit_source;
 pub(crate) mod direct_range_leaf;
 pub(crate) mod exact_prefix;
 mod range_class_tables;
+pub(crate) mod range_poly;
 mod round_accumulation;
 mod session;
 

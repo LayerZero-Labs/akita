@@ -40,10 +40,11 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
-use crate::opaque::sumcheck::two_round_prefix::{
-    build_stage1_prefix_cache, range_polynomial_eval, Stage1PrefixCache,
+use super::range_poly::{
+    LinearSum, OctetClassTerms, RangePoly, TaylorSums, MAX_DIRECT_RANGE_COEFFICIENTS,
 };
+use crate::opaque::sumcheck::fold_prefix_pair_with_zero_padding;
+use crate::opaque::sumcheck::two_round_prefix::{build_stage1_prefix_cache, Stage1PrefixCache};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver};
@@ -56,126 +57,14 @@ use std::ops::Range;
 
 use crate::sources::packed_digits::PackedSignedDigits;
 
-/// Nonconstant round coefficients `q_1..q_d` of the range polynomial. The
-/// eq-factored driver recovers `q_0` from the running claim, so no kernel
-/// computes it.
-const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 4;
-
-/// What the first of a round's per-pair sums holds; every later sum is a
-/// Taylor term divided by its integer factor.
-#[derive(Clone, Copy)]
-enum LinearSum {
-    /// The linear Taylor term, divided by its factor like the others.
-    Taylor,
-    /// `Q(right) - Q(left)`, the sum of all nonconstant coefficients, which
-    /// table-driven rounds read without computing the linear term.
-    RangeDifference,
-}
-
-#[derive(Clone)]
-struct RangePolynomialPrecomputation {
-    degree_q: usize,
-}
-
-impl RangePolynomialPrecomputation {
-    fn new(basis: usize) -> Self {
-        assert!(
-            matches!(basis, 4 | 8),
-            "direct range prover requires basis 4 or 8"
-        );
-        Self {
-            degree_q: basis / 2,
-        }
-    }
-
-    /// Number of nonconstant round coefficients each pair contributes.
-    fn num_coefficients(&self) -> usize {
-        self.degree_q
-    }
-
-    /// Integer factor of each nonconstant Taylor coefficient of
-    /// `Q(left + X * delta)`, which the per-pair kernels leave out and
-    /// [`round_poly_from_sums`](Self::round_poly_from_sums) applies once.
-    fn taylor_factors(&self) -> &'static [u64] {
-        match self.degree_q {
-            2 => &[2, 1],
-            4 => &[4, 6, 4, 1],
-            _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
-        }
-    }
-
-    /// Reduce a round's accumulated per-pair sums into its nonconstant
-    /// coefficients.
-    fn round_poly_from_sums<E: Field + Ring + Unreduced>(
-        &self,
-        sums: &TaylorSums<E>,
-        linear: LinearSum,
-    ) -> OmittedConstantPoly<E> {
-        let mut coefficients: Vec<E> = sums
-            .iter()
-            .zip(self.taylor_factors())
-            .map(|(&sum, &factor)| E::from_u64(factor) * E::reduce_product(sum))
-            .collect();
-        if let LinearSum::RangeDifference = linear {
-            let higher: E = coefficients[1..].iter().copied().sum();
-            coefficients[0] = E::reduce_product(sums[0]) - higher;
-        }
-        OmittedConstantPoly::new(coefficients)
-    }
-}
-
-/// Nonconstant Taylor sums of a round, before
-/// [`RangePolynomialPrecomputation::round_poly_from_sums`] scales them.
-type TaylorSums<E> = [<E as Unreduced>::Product; MAX_DIRECT_RANGE_COEFFICIENTS];
-
-/// Add `weight` times the nonconstant Taylor terms of `Q(left + X * delta)`,
-/// each divided by its integer factor from
-/// [`RangePolynomialPrecomputation::taylor_factors`], to `sums`.
-///
-/// With `b = left - 5`, the quartic range polynomial is
-/// `Q = b^4 - 42 b^2 - 64 b + 105`, so its terms at `left` are
-/// `4((b^2 - 21) b - 16) delta`, `6(b^2 - 7) delta^2`, `4 b delta^3` and
-/// `delta^4`. Every term carries a power of `delta`, so the weight rides on
-/// the powers `weight * delta^k`: five multiplications, one squaring and four
-/// unreduced products. The quadratic terms are `2(left - 1) delta` and
-/// `delta^2`.
-#[inline(always)]
-fn accumulate_entry_terms<E: Field + Ring + Unreduced>(
-    sums: &mut TaylorSums<E>,
-    precomp: &RangePolynomialPrecomputation,
-    left_range_image: E,
-    range_image_delta: E,
-    weight: E,
-) {
-    let weighted_delta = weight * range_image_delta;
-    match precomp.degree_q {
-        2 => {
-            sums[0] += (left_range_image - E::one()).mul_unreduced(weighted_delta);
-            sums[1] += range_image_delta.mul_unreduced(weighted_delta);
-        }
-        4 => {
-            let shifted = left_range_image - E::from_u64(5);
-            let shifted_squared = shifted.square();
-            let weighted_delta_squared = weighted_delta * range_image_delta;
-            let weighted_delta_cubed = weighted_delta_squared * range_image_delta;
-            sums[0] += ((shifted_squared - E::from_u64(21)) * shifted - E::from_u64(16))
-                .mul_unreduced(weighted_delta);
-            sums[1] += (shifted_squared - E::from_u64(7)).mul_unreduced(weighted_delta_squared);
-            sums[2] += shifted.mul_unreduced(weighted_delta_cubed);
-            sums[3] += range_image_delta.mul_unreduced(weighted_delta_cubed);
-        }
-        _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
-    }
-}
-
 fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
-    polynomial_precomputation: &RangePolynomialPrecomputation,
+    range_poly: &RangePoly,
     range_image_pair: impl Fn(usize) -> (E, E) + Sync,
 ) -> OmittedConstantPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
-    let num_coeffs_q = polynomial_precomputation.num_coefficients();
+    let num_coeffs_q = range_poly.num_coefficients();
 
     let sums = cfg_fold_reduce!(
         0..e_second.len(),
@@ -185,9 +74,8 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let (left_range_image, right_range_image) =
                     range_image_pair(j_high * num_first + j_low);
-                accumulate_entry_terms(
+                range_poly.accumulate_entry_terms(
                     &mut inner_accum,
-                    polynomial_precomputation,
                     left_range_image,
                     right_range_image - left_range_image,
                     e_in,
@@ -207,7 +95,7 @@ fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
             a
         }
     );
-    polynomial_precomputation.round_poly_from_sums(&sums, LinearSum::Taylor)
+    range_poly.round_poly_from_sums(&sums, LinearSum::Taylor)
 }
 
 enum LowBasisRangeImageStorage<E: Field> {
@@ -221,15 +109,6 @@ fn range_image_from_digit(w: i8) -> i16 {
     let range_image = w * (w + 1);
     debug_assert!(range_image >= 0);
     range_image as i16
-}
-
-#[cfg(test)]
-fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
-    digit_witness
-        .iter()
-        .copied()
-        .map(range_image_from_digit)
-        .collect()
 }
 
 /// Compact-table state for rounds 0 through 3, which bind the three digit
@@ -246,7 +125,7 @@ struct DirectRangePrefixState<E: Field> {
     /// The folded value of each quad class after round 1.
     quad_values: Vec<E>,
     /// The round-3 terms of each octet class after round 2.
-    octet_terms: Vec<octet_prefix::OctetClassTerms<E>>,
+    octet_terms: Vec<OctetClassTerms<E>>,
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
@@ -259,7 +138,7 @@ struct DirectRangePrefixState<E: Field> {
 pub struct LowBasisRangeCheckProver<E: Field> {
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
-    polynomial_precomputation: RangePolynomialPrecomputation,
+    range_poly: RangePoly,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -278,7 +157,7 @@ mod state;
 #[cfg(test)]
 mod reference_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
-pub(crate) use rounds::pad_compact_witness;
+pub(crate) use tests::pad_compact_witness;

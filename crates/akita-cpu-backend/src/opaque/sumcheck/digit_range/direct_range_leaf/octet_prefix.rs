@@ -242,58 +242,21 @@ fn folded_quad_values<E: Field + Ring>(class_bits: usize, r0: E, r1: E) -> Vec<E
         .collect()
 }
 
-/// Round-3 terms of one octet class.
-///
-/// With `value` the class's folded value after round 2 and
-/// `shifted = value - 5`, a pair with this class on the left and difference
-/// `delta` has quartic Taylor terms `(shifted^2 - 7) delta^2`,
-/// `shifted delta^3` and `delta^4`, before their integer factors. Quadratic
-/// checks use neither `shifted` nor `second`.
-#[derive(Clone, Copy)]
-pub(super) struct OctetClassTerms<E> {
-    value: E,
-    shifted: E,
-    /// `shifted^2 - 7`.
-    second: E,
-}
-
 /// Round-3 terms of every octet class after round 2.
-fn octet_class_terms<E: Field + Ring>(quad_values: &[E], r2: E) -> Vec<OctetClassTerms<E>> {
+fn octet_class_terms<E: Field + Ring>(
+    poly: &RangePoly,
+    quad_values: &[E],
+    r2: E,
+) -> Vec<OctetClassTerms<E>> {
     let quad_mask = quad_values.len() - 1;
     let quad_bits = quad_values.len().trailing_zeros();
     cfg_into_iter!(0..quad_values.len() * quad_values.len())
         .map(|octet| {
             let left = quad_values[octet & quad_mask];
             let value = left + r2 * (quad_values[octet >> quad_bits] - left);
-            let shifted = value - E::from_u64(5);
-            OctetClassTerms {
-                value,
-                shifted,
-                second: shifted.square() - E::from_u64(7),
-            }
+            poly.class_terms(value)
         })
         .collect()
-}
-
-/// Add `weight` times the round-3 terms of one octet pair above the linear one.
-#[inline(always)]
-fn accumulate_octet_pair_terms<E: Field + Ring + Unreduced>(
-    sums: &mut TaylorSums<E>,
-    degree_q: usize,
-    left: &OctetClassTerms<E>,
-    right: &OctetClassTerms<E>,
-    weight: E,
-) {
-    let delta = right.value - left.value;
-    let delta_squared = delta.square();
-    if degree_q == 2 {
-        sums[1] += delta_squared.mul_unreduced(weight);
-    } else {
-        let weighted_delta_squared = weight * delta_squared;
-        sums[1] += left.second.mul_unreduced(weighted_delta_squared);
-        sums[2] += (left.shifted * delta).mul_unreduced(weighted_delta_squared);
-        sums[3] += delta_squared.mul_unreduced(weighted_delta_squared);
-    }
 }
 
 /// Round-3 linear sum `sum eq(pair) (Q(right) - Q(left))`, gathered per octet
@@ -301,7 +264,7 @@ fn accumulate_octet_pair_terms<E: Field + Ring + Unreduced>(
 fn octet_range_difference<E: Field + Ring + Unreduced>(
     terms: &[OctetClassTerms<E>],
     pair_class_weights: &[[E; 2]],
-    basis: usize,
+    range_poly: &RangePoly,
 ) -> E::Product {
     cfg_fold_reduce!(
         0..terms.len(),
@@ -309,7 +272,9 @@ fn octet_range_difference<E: Field + Ring + Unreduced>(
         |mut sum, class| {
             let [even, odd] = pair_class_weights[class];
             if even != odd {
-                sum += range_polynomial_eval(terms[class].value, basis).mul_unreduced(odd - even);
+                sum += range_poly
+                    .eval(terms[class].value)
+                    .mul_unreduced(odd - even);
             }
             sum
         },
@@ -398,25 +363,27 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 let source = self.compact_range_image();
                 let terms = prefix.octet_terms.as_slice();
                 let class_bits = class_bits(self.basis);
-                let degree_q = self.polynomial_precomputation.num_coefficients();
+                let precomputation = &self.range_poly;
                 let reader = OctetClassReader::new(source, class_bits);
                 let mut sums = self.compute_round_live_prefix(source.len().div_ceil(16), |pairs| {
                     let start = pairs.start;
                     let classes = reader.classes(2 * start..2 * pairs.end);
                     move |pair, weight, sums| {
                         let local = 2 * (pair - start);
-                        accumulate_octet_pair_terms(
+                        precomputation.accumulate_octet_pair_terms(
                             sums,
-                            degree_q,
                             &terms[usize::from(classes[local])],
                             &terms[usize::from(classes[local + 1])],
                             weight,
                         );
                     }
                 });
-                sums[0] =
-                    octet_range_difference(terms, &prefix.octet_pair_class_weights, self.basis);
-                self.polynomial_precomputation
+                sums[0] = octet_range_difference(
+                    terms,
+                    &prefix.octet_pair_class_weights,
+                    &self.range_poly,
+                );
+                self.range_poly
                     .round_poly_from_sums(&sums, LinearSum::RangeDifference)
             }
             _ => unreachable!("octet prefix covers rounds 0 through 3"),
@@ -431,7 +398,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let quad_values = prefix.quad_values.as_slice();
         let quad_mask = quad_values.len() - 1;
         let quad_bits = quad_values.len().trailing_zeros();
-        let precomputation = &self.polynomial_precomputation;
+        let precomputation = &self.range_poly;
         let chunk_accumulators: Vec<_> =
             cfg_chunks!(prefix.octet_class_weights, ROUND2_CLASS_CHUNK)
                 .enumerate()
@@ -443,9 +410,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         }
                         let class = chunk * ROUND2_CLASS_CHUNK + offset;
                         let left = quad_values[class & quad_mask];
-                        accumulate_entry_terms(
+                        precomputation.accumulate_entry_terms(
                             &mut accumulator,
-                            precomputation,
                             left,
                             quad_values[class >> quad_bits] - left,
                             weight,
@@ -481,7 +447,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             }
             2 => {
                 let prefix = self.initial_round_prefix.as_mut().expect("octet prefix");
-                prefix.octet_terms = octet_class_terms(&prefix.quad_values, r);
+                prefix.octet_terms = octet_class_terms(&self.range_poly, &prefix.quad_values, r);
             }
             3 => {
                 let source = self.compact_range_image();

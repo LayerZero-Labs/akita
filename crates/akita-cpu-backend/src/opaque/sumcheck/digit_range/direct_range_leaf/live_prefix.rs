@@ -64,7 +64,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
-        let num_coeffs_q = self.polynomial_precomputation.num_coefficients();
+        let num_coeffs_q = self.range_poly.num_coefficients();
         let tile_accumulators: Vec<_> = cfg_into_iter!(0..live_pairs.div_ceil(tile_pairs))
             .map(|tile| {
                 let tile_start = tile * tile_pairs;
@@ -101,7 +101,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let block_size = e_first.len().min(live_pairs);
         let tile_pairs = single_row_tile_pairs(block_size);
-        let precomputation = &self.polynomial_precomputation;
+        let precomputation = &self.range_poly;
         let num_coeffs_q = precomputation.num_coefficients();
         let mut out = vec![E::zero(); next_live];
         let tile_accumulators: Vec<_> = cfg_chunks_mut!(out, 2 * tile_pairs)
@@ -128,7 +128,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         } else {
                             E::zero()
                         };
-                        accumulate_entry_terms(sums, precomputation, left, right - left, weight);
+                        precomputation.accumulate_entry_terms(sums, left, right - left, weight);
                     },
                 )
             })

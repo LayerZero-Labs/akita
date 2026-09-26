@@ -1,16 +1,241 @@
 use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
+use crate::opaque::sumcheck::digit_range::range_poly::RangePoly;
 use crate::opaque::LowBasisRangeCheckProver;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::EqFactoredSumcheckInstanceProver;
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::{Field, One, Prime128Offset275, Ring, Zero};
+use jolt_field::{Field, One, Prime128Offset275, Ring, Unreduced, Zero};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrefixPoint<E: Field> {
+    Finite(E),
+    Infinity,
+}
+
+fn stage1_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 4] {
+    [
+        PrefixPoint::Finite(E::one()),
+        PrefixPoint::Finite(E::zero() - E::one()),
+        PrefixPoint::Finite(E::from_u64(2)),
+        PrefixPoint::Infinity,
+    ]
+}
+
+fn stage1_full_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 5] {
+    [
+        PrefixPoint::Finite(E::zero()),
+        PrefixPoint::Finite(E::one()),
+        PrefixPoint::Finite(E::zero() - E::one()),
+        PrefixPoint::Finite(E::from_u64(2)),
+        PrefixPoint::Infinity,
+    ]
+}
+
+fn stage2_reduced_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 2] {
+    [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
+}
+
+fn stage2_full_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 3] {
+    [
+        PrefixPoint::Finite(E::zero()),
+        PrefixPoint::Finite(E::one()),
+        PrefixPoint::Infinity,
+    ]
+}
+
+#[inline]
+fn bilinear_coeffs_from_quad<E: Field>(quad: [E; 4]) -> [E; 4] {
+    let [t00, t10, t01, t11] = quad;
+    [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
+}
+
+#[inline]
+fn bilinear_eval<E: Field>(quad: [E; 4], x: E, y: E) -> E {
+    let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
+    a + x * (b + y * d) + y * c
+}
+
+#[inline]
+fn bilinear_eval_on_prefix_points<E: Field>(
+    quad: [E; 4],
+    x: PrefixPoint<E>,
+    y: PrefixPoint<E>,
+) -> E {
+    let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
+    match (x, y) {
+        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => a + x * (b + y * d) + y * c,
+        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => b + y * d,
+        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => c + x * d,
+        (PrefixPoint::Infinity, PrefixPoint::Infinity) => d,
+    }
+}
+
+#[inline]
+fn stage1_local_norm_eval<E: Field + Ring>(
+    s_quad: [E; 4],
+    x: PrefixPoint<E>,
+    y: PrefixPoint<E>,
+    b: usize,
+) -> E {
+    RangePoly::new(b).eval(bilinear_eval_on_prefix_points(s_quad, x, y))
+}
+
+#[inline]
+fn stage1_local_norm_raw_eval<E: Field + Ring>(
+    s_quad: [E; 4],
+    x: PrefixPoint<E>,
+    y: PrefixPoint<E>,
+    b: usize,
+) -> E {
+    let [_, bx, cy, dxy] = bilinear_coeffs_from_quad(s_quad);
+    let degree = RangePoly::new(b).num_coefficients();
+    let pow = |base: E| {
+        let mut out = E::one();
+        for _ in 0..degree {
+            out *= base;
+        }
+        out
+    };
+
+    match (x, y) {
+        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
+            RangePoly::new(b).eval(bilinear_eval(s_quad, x, y))
+        }
+        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
+        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
+        (PrefixPoint::Infinity, PrefixPoint::Infinity) => pow(dxy),
+    }
+}
+
+#[inline]
+fn stage2_local_norm_candidate_eval<E: Field>(
+    w_quad: [E; 4],
+    x: PrefixPoint<E>,
+    y: PrefixPoint<E>,
+) -> E {
+    let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
+    w_eval * (w_eval + E::one())
+}
+
+#[inline]
+fn stage2_local_norm_raw_eval<E: Field>(w_quad: [E; 4], x: PrefixPoint<E>, y: PrefixPoint<E>) -> E {
+    let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
+    match (x, y) {
+        (PrefixPoint::Finite(_), PrefixPoint::Finite(_)) => w_eval * (w_eval + E::one()),
+        _ => w_eval * w_eval,
+    }
+}
+
+/// Build the stage-1 first-two-round prefix grid from the compact witness by
+/// summing the round-2 equality weight of every quad into its quad class.
+///
+/// `w_compact` is the flat live prefix of the witness table and `tau0` the
+/// stage-1 point in binding order.
+fn build_stage1_prefix_grid_from_m_compact<E: Field + Ring + Unreduced>(
+    w_compact: &[i8],
+    tau0: &[E],
+    b: usize,
+) -> Stage1PrefixGrid<E> {
+    let class_bits = b / 4;
+    let quad_weights =
+        EqPolynomial::evals(&tau0[2..]).expect("stage-1 prefix dimensions are prevalidated");
+    let mut quad_class_weights = vec![E::zero(); 1usize << (4 * class_bits)];
+    for (quad, digits) in w_compact.chunks(4).enumerate() {
+        let class = digits
+            .iter()
+            .enumerate()
+            .fold(0usize, |class, (offset, &w)| {
+                class | (usize::from((w ^ (w >> 7)) as u8) << (class_bits * offset))
+            });
+        quad_class_weights[class] += quad_weights[quad];
+    }
+    build_stage1_prefix_grid(&quad_class_weights, b)
+}
+
+fn stage1_storage_vector_from_quad<E: Field + Ring>(quad: [E; 4], b: usize) -> Vec<E> {
+    let points = stage1_full_prefix_points::<E>();
+    let mut out = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
+    for x_idx in 0..5 {
+        for y_idx in 0..5 {
+            if stage1_is_boolean_corner(x_idx, y_idx) {
+                continue;
+            }
+            out.push(stage1_local_norm_raw_eval(
+                quad,
+                points[x_idx],
+                points[y_idx],
+                b,
+            ));
+        }
+    }
+    out
+}
+
+fn reconstruct_stage1_round0_poly<E: Field + Ring>(
+    cache: &Stage1PrefixCache<E>,
+) -> UnivariatePoly<E> {
+    if let Some((x_row_coeffs, tau0, tau1)) = cache.b4_test_data() {
+        let q_x = add_quadratic_coeffs(
+            scale_quadratic_coeffs(x_row_coeffs[0], E::one() - tau1),
+            scale_quadratic_coeffs(x_row_coeffs[1], tau1),
+        );
+        return UnivariatePoly::new(mul_linear_by_quadratic_coeffs(tau0, q_x).to_vec());
+    }
+
+    let (full_grid, tau0, tau1) = cache
+        .b8_test_data()
+        .expect("cache must contain one stage-1 basis");
+    let l1_at_0 = E::one() - tau1;
+    let l1_at_1 = tau1;
+    let evals: Vec<E> = (0..=5u64)
+        .map(|x_raw| {
+            let x = E::from_u64(x_raw);
+            let q_x0 = eval_stage1_biquartic_from_full_grid(full_grid, x, E::zero());
+            let q_x1 = eval_stage1_biquartic_from_full_grid(full_grid, x, E::one());
+            linear_eq_eval(tau0, x) * (l1_at_0 * q_x0 + l1_at_1 * q_x1)
+        })
+        .collect();
+    let mut polynomial = UnivariatePoly::from_evals(&evals);
+    polynomial.trim_trailing_zeros();
+    polynomial
+}
+
+fn reconstruct_stage1_round1_poly<E: Field + Ring>(
+    cache: &Stage1PrefixCache<E>,
+    r0: E,
+) -> UnivariatePoly<E> {
+    if let Some((x_row_coeffs, tau0, tau1)) = cache.b4_test_data() {
+        let y_values: [E; 3] =
+            std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(x_row_coeffs[y_idx], r0));
+        let q_y = quadratic_coeffs_from_01_inf(y_values[0], y_values[1], y_values[2]);
+        let round0_eq = linear_eq_eval(tau0, r0);
+        let coeffs = mul_linear_by_quadratic_coeffs(tau1, q_y).map(|coeff| round0_eq * coeff);
+        return UnivariatePoly::new(coeffs.to_vec());
+    }
+
+    let (full_grid, tau0, tau1) = cache
+        .b8_test_data()
+        .expect("cache must contain one stage-1 basis");
+    let l0_at_r0 = linear_eq_eval(tau0, r0);
+    let evals: Vec<E> = (0..=5u64)
+        .map(|y_raw| {
+            let y = E::from_u64(y_raw);
+            l0_at_r0
+                * linear_eq_eval(tau1, y)
+                * eval_stage1_biquartic_from_full_grid(full_grid, r0, y)
+        })
+        .collect();
+    let mut polynomial = UnivariatePoly::from_evals(&evals);
+    polynomial.trim_trailing_zeros();
+    polynomial
+}
 
 fn packed(witness: &[i8]) -> crate::sources::packed_digits::PackedSignedDigits {
     crate::sources::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
@@ -106,7 +331,7 @@ fn tensor_values<E: Field, const NX: usize, const NY: usize>(
 fn stage1_norm_round_values(s_quad: [F; 4], tau0: F, tau1: F, r0: F, b: usize) -> Vec<F> {
     let l0 = |x: F| tau0 * x + (F::one() - tau0) * (F::one() - x);
     let l1 = |y: F| tau1 * y + (F::one() - tau1) * (F::one() - y);
-    let q = |x: F, y: F| range_polynomial_eval(bilinear_eval(s_quad, x, y), b);
+    let q = |x: F, y: F| RangePoly::new(b).eval(bilinear_eval(s_quad, x, y));
 
     let mut out = Vec::new();
     for x in 0..=5u64 {
@@ -470,8 +695,8 @@ fn stage1_storage_domain_matches_local_round_messages() {
                     round0.trim_trailing_zeros();
                     let mut round1 = UnivariatePoly::from_evals(&round_values[6..]);
                     round1.trim_trailing_zeros();
-                    assert_eq!(cache.reconstruct_round0_poly(), round0);
-                    assert_eq!(cache.reconstruct_round1_poly(r0), round1);
+                    assert_eq!(reconstruct_stage1_round0_poly(&cache), round0);
+                    assert_eq!(reconstruct_stage1_round1_poly(&cache, r0), round1);
                 }
             }
         }

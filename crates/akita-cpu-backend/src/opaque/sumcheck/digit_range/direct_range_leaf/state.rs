@@ -85,7 +85,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         Ok(Self {
             range_image,
             split_eq: GruenSplitEq::new(tau0)?,
-            polynomial_precomputation: RangePolynomialPrecomputation::new(basis),
+            range_poly: RangePoly::new(basis),
             live_x_cols,
             col_bits,
             num_vars,

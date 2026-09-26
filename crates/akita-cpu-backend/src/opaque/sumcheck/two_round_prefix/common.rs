@@ -1,13 +1,7 @@
+use crate::opaque::sumcheck::digit_range::range_poly::RangePoly;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Ring};
 use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PrefixPoint<E: Field> {
-    Finite(E),
-    Infinity,
-}
 
 /// Number of cached evaluations in the stage-1 `b = 4` two-round-prefix grid
 /// after omitting the four Boolean corners from `{0,1,Infinity}^2`.
@@ -62,20 +56,12 @@ pub(crate) const fn pow_i64(mut base: i64, mut exp: usize) -> i64 {
     out
 }
 
-pub(crate) const fn stage1_b8_range_check_from_s(s: i64) -> i64 {
-    s * (s - 2) * (s - 6) * (s - 12)
-}
-
-pub(crate) const fn stage1_b4_range_check_from_s(s: i64) -> i64 {
-    s * (s - 2)
-}
-
 pub(crate) const fn stage1_b4_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, y: i64) -> i64 {
     let [_, bx, cy, dxy] = lookup_bilinear_coeffs_from_quad(s_quad);
     let x_is_inf = x == LOOKUP_PREFIX_INF;
     let y_is_inf = y == LOOKUP_PREFIX_INF;
     if !x_is_inf && !y_is_inf {
-        stage1_b4_range_check_from_s(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
+        RangePoly::new(4).eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
     } else if x_is_inf && !y_is_inf {
         let linear = bx + y * dxy;
         linear * linear
@@ -92,13 +78,13 @@ pub(crate) const fn stage1_b8_local_norm_raw_eval_i64(s_quad: [i64; 4], x: i64, 
     let x_is_inf = x == LOOKUP_PREFIX_INF;
     let y_is_inf = y == LOOKUP_PREFIX_INF;
     if !x_is_inf && !y_is_inf {
-        stage1_b8_range_check_from_s(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
+        RangePoly::new(8).eval_i64(lookup_bilinear_eval_on_prefix_points(s_quad, x, y))
     } else if x_is_inf && !y_is_inf {
-        pow_i64(bx + y * dxy, 4)
+        pow_i64(bx + y * dxy, RangePoly::new(8).num_coefficients())
     } else if !x_is_inf && y_is_inf {
-        pow_i64(cy + x * dxy, 4)
+        pow_i64(cy + x * dxy, RangePoly::new(8).num_coefficients())
     } else {
-        pow_i64(dxy, 4)
+        pow_i64(dxy, RangePoly::new(8).num_coefficients())
     }
 }
 
@@ -356,146 +342,6 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: Field + Ring>(
     OmittedConstantPoly::from_q_coefficients(q_coeffs)
 }
 
-/// Proposed reduced stage-2 domain `{1, Infinity}`.
-#[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 2] {
-    [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
-}
-
-/// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
-#[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 3] {
-    [
-        PrefixPoint::Finite(E::zero()),
-        PrefixPoint::Finite(E::one()),
-        PrefixPoint::Infinity,
-    ]
-}
-
-/// Return the bilinear coefficients for a quad ordered as `[t00, t10, t01, t11]`.
-#[inline]
-#[cfg(test)]
-pub(crate) fn bilinear_coeffs_from_quad<E: Field>(quad: [E; 4]) -> [E; 4] {
-    let [t00, t10, t01, t11] = quad;
-    [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
-}
-
-/// Evaluate the bilinear multilinear extension of a quad at ordinary field
-/// points `(x, y)`.
-#[inline]
-#[cfg(test)]
-pub(crate) fn bilinear_eval<E: Field>(quad: [E; 4], x: E, y: E) -> E {
-    let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
-    a + x * (b + y * d) + y * c
-}
-
-/// Evaluate a quad on a small domain where `Infinity` means "leading
-/// coefficient in that coordinate".
-#[inline]
-#[cfg(test)]
-pub(crate) fn bilinear_eval_on_prefix_points<E: Field>(
-    quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-) -> E {
-    let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
-    match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => a + x * (b + y * d) + y * c,
-        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => b + y * d,
-        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => c + x * d,
-        (PrefixPoint::Infinity, PrefixPoint::Infinity) => d,
-    }
-}
-
-/// The balanced-digit range polynomial `prod_{k < b/2} (x - k(k+1))`, which
-/// the prefix lookup tables tabulate.
-pub(crate) fn range_polynomial_eval<E: Field + Ring>(range_image: E, b: usize) -> E {
-    (0..b / 2).fold(E::one(), |value, k| {
-        let k = k as i64;
-        value * (range_image - E::from_i64(k * (k + 1)))
-    })
-}
-
-/// Evaluate the stage-1 candidate storage contribution used by the original
-/// `{1, -1, 2, Infinity}^2` proposal.
-#[inline]
-#[cfg(test)]
-pub(crate) fn stage1_local_norm_eval<E: Field + Ring>(
-    s_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-    b: usize,
-) -> E {
-    range_polynomial_eval(bilinear_eval_on_prefix_points(s_quad, x, y), b)
-}
-
-/// Evaluate the raw stage-1 full-domain polynomial on
-/// `{0, 1, -1, 2, Infinity}^2`.
-///
-/// At `Infinity`, we take the leading coefficient in that coordinate of the
-/// composed range-check polynomial `range_check(s(X, Y))`, rather than first
-/// evaluating `s` at `Infinity` and then applying the range check.
-#[inline]
-#[cfg(test)]
-pub(crate) fn stage1_local_norm_raw_eval<E: Field + Ring>(
-    s_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-    b: usize,
-) -> E {
-    let [_, bx, cy, dxy] = bilinear_coeffs_from_quad(s_quad);
-    let degree = b / 2;
-    let pow = |base: E| {
-        let mut out = E::one();
-        for _ in 0..degree {
-            out *= base;
-        }
-        out
-    };
-
-    match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
-            range_polynomial_eval(bilinear_eval(s_quad, x, y), b)
-        }
-        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
-        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
-        (PrefixPoint::Infinity, PrefixPoint::Infinity) => pow(dxy),
-    }
-}
-
-/// Evaluate the stage-2 local norm candidate used by the proposed reduced
-/// `{1, Infinity}^2` storage: evaluate the bilinear witness first, then apply
-/// `w (w + 1)`.
-#[inline]
-#[cfg(test)]
-pub(crate) fn stage2_local_norm_candidate_eval<E: Field>(
-    w_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-) -> E {
-    let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
-    w_eval * (w_eval + E::one())
-}
-
-/// Evaluate the raw degree-`(2,2)` stage-2 norm polynomial on the safe full
-/// `{0, 1, Infinity}^2` fallback domain.
-///
-/// At `Infinity`, we take the leading coefficient in that coordinate of
-/// `w(X, Y) * (w(X, Y) + 1)`, so the linear `+w` term drops out.
-#[inline]
-#[cfg(test)]
-pub(crate) fn stage2_local_norm_raw_eval<E: Field>(
-    w_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
-) -> E {
-    let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
-    match (x, y) {
-        (PrefixPoint::Finite(_), PrefixPoint::Finite(_)) => w_eval * (w_eval + E::one()),
-        _ => w_eval * w_eval,
-    }
-}
-
 #[inline]
 pub(crate) fn quadratic_coeffs_from_01_inf<E: Field>(at_zero: E, at_one: E, at_inf: E) -> [E; 3] {
     [at_zero, at_one - at_zero - at_inf, at_inf]
@@ -519,12 +365,6 @@ pub(crate) fn scale_quadratic_coeffs<E: Field>(coeffs: [E; 3], scale: E) -> [E; 
 #[inline]
 pub(crate) fn add_quadratic_coeffs<E: Field>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
     [lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2]]
-}
-
-#[inline]
-#[cfg(test)]
-pub(crate) fn coeff_array_to_poly<E: Field, const N: usize>(coeffs: [E; N]) -> UnivariatePoly<E> {
-    UnivariatePoly::new(coeffs.to_vec())
 }
 
 #[inline]

@@ -40,6 +40,5 @@ mod stage2;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use common::range_polynomial_eval;
 pub(crate) use stage1::{build_stage1_prefix_cache, Stage1PrefixCache};
 pub(crate) use stage2::Stage2PrefixCache;
