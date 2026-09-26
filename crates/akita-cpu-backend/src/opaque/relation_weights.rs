@@ -67,7 +67,7 @@ pub(crate) struct RelationLaneWeightInputs<'a, F: Field, E: Field> {
 }
 
 mod lane_weights;
-use lane_weights::LaneWindow;
+use lane_weights::{lane_windows_mut, LaneWindow};
 pub(crate) use lane_weights::{RelationLaneWeights, RelationWeightFactorization};
 pub(crate) use reduced_dense::build_reduced_dense_relation_weights;
 
@@ -574,22 +574,11 @@ where
                     ));
                 }
             };
-            let ranges =
-                group_plan.et_block_ranges(&compilation.witness_layout, ET_BLOCKS_PER_TASK)?;
-            let mut extents = Vec::with_capacity(2 * ranges.len());
-            for range in &ranges {
-                let [e, t] = group_plan.et_extents(range)?;
-                extents.push(e);
-                extents.push(t);
-            }
-            let mut windows = weights.windows_mut(&extents)?.into_iter();
-            let tasks = ranges
-                .into_iter()
-                .map(|range| match (windows.next(), windows.next()) {
-                    (Some(e_lanes), Some(t_lanes)) => Ok((range, e_lanes, t_lanes)),
-                    _ => Err(AkitaError::InvalidProof),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let tasks = group_plan.et_scatter_tasks(
+                &compilation.witness_layout,
+                weights.lanes_mut(),
+                relation_coefficient_block_len,
+            )?;
             cfg_into_iter!(tasks).try_for_each(|(range, e_lanes, t_lanes)| {
                 let mut sink = LiftedEtSink {
                     e_lanes,
@@ -647,25 +636,21 @@ where
             Some(values) => LiftedZSetup::Matrix(values),
             None => LiftedZSetup::Deferred,
         };
-        let ranges =
-            group_plan.z_position_ranges(&compilation.witness_layout, Z_POSITIONS_PER_TASK)?;
-        let extents = ranges
-            .iter()
-            .map(|range| group_plan.z_extent(range))
-            .collect::<Result<Vec<_>, _>>()?;
-        let windows = weights.windows_mut(&extents)?;
-        cfg_into_iter!(ranges)
-            .zip(windows)
-            .try_for_each(|(range, lanes)| {
-                let mut sink = LiftedZSink {
-                    lanes,
-                    plan: group_plan,
-                    opening_evaluations: &opening_evaluations,
-                    lane_alpha_powers: &lane_alpha_powers,
-                    setup,
-                };
-                compile_z_position_range(group_plan, &range, &mut sink)
-            })?;
+        let tasks = group_plan.z_scatter_tasks(
+            &compilation.witness_layout,
+            weights.lanes_mut(),
+            relation_coefficient_block_len,
+        )?;
+        cfg_into_iter!(tasks).try_for_each(|(range, lanes)| {
+            let mut sink = LiftedZSink {
+                lanes,
+                plan: group_plan,
+                opening_evaluations: &opening_evaluations,
+                lane_alpha_powers: &lane_alpha_powers,
+                setup,
+            };
+            compile_z_position_range(group_plan, &range, &mut sink)
+        })?;
     }
     let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.open().digits.log_basis)
         .into_iter()

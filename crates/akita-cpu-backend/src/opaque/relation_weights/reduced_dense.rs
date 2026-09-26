@@ -53,7 +53,7 @@ where
 {
     fn add_scaled(
         &self,
-        destination: &mut DenseWindow<'_, E>,
+        destination: &mut LaneWindow<'_, E>,
         physical_start: usize,
         position: usize,
         scale: E,
@@ -120,14 +120,8 @@ where
     }
 }
 
-/// Dense weights of one physical coefficient extent.
-struct DenseWindow<'a, E> {
-    weights: &'a mut [E],
-    first: usize,
-}
-
 fn add_scaled_kernel<E: Field>(
-    destination: &mut DenseWindow<'_, E>,
+    destination: &mut LaneWindow<'_, E>,
     physical_start: usize,
     kernel: &[E],
     scale: E,
@@ -135,14 +129,7 @@ fn add_scaled_kernel<E: Field>(
     if scale.is_zero() {
         return Ok(());
     }
-    let destination = physical_start
-        .checked_sub(destination.first)
-        .and_then(|start| {
-            destination
-                .weights
-                .get_mut(start..start.checked_add(kernel.len())?)
-        })
-        .ok_or(AkitaError::InvalidProof)?;
+    let destination = destination.lanes_mut(physical_start, kernel.len())?;
     if scale == E::one() {
         for (weight, &coefficient) in destination.iter_mut().zip(kernel) {
             *weight += coefficient;
@@ -160,8 +147,8 @@ fn add_scaled_kernel<E: Field>(
 }
 
 struct ReducedEtSink<'w, 'a, E> {
-    e_weights: DenseWindow<'w, E>,
-    t_weights: DenseWindow<'w, E>,
+    e_weights: LaneWindow<'w, E>,
+    t_weights: LaneWindow<'w, E>,
     plan: &'a compiler::RelationWeightGroupPlan<E>,
     challenge_kernels: &'a [Vec<E>],
     d_setup_kernels: &'a SetupColumnValues<E>,
@@ -230,7 +217,7 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, '_, E> {
 }
 
 struct ReducedZSink<'w, 'a, F, E> {
-    weights: DenseWindow<'w, E>,
+    weights: LaneWindow<'w, E>,
     opening_kernels: &'a PositionMultiplierKernels<'a, F, E>,
     a_setup_kernels: &'a SetupColumnValues<E>,
 }
@@ -343,27 +330,7 @@ where
 
         {
             let _span = tracing::info_span!("reduced_et_scatter").entered();
-            let ranges =
-                group_plan.et_block_ranges(&compilation.witness_layout, ET_BLOCKS_PER_TASK)?;
-            let extents = ranges
-                .iter()
-                .map(|range| group_plan.et_extents(range))
-                .collect::<Result<Vec<_>, _>>()?;
-            let flat_extents = extents.as_flattened();
-            let mut windows = split_disjoint_mut(&mut dense, flat_extents)?
-                .into_iter()
-                .zip(flat_extents)
-                .map(|(weights, extent)| DenseWindow {
-                    weights,
-                    first: extent.start,
-                });
-            let tasks = ranges
-                .into_iter()
-                .map(|range| match (windows.next(), windows.next()) {
-                    (Some(e_weights), Some(t_weights)) => Ok((range, e_weights, t_weights)),
-                    _ => Err(AkitaError::InvalidProof),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let tasks = group_plan.et_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
             cfg_into_iter!(tasks).try_for_each(|(range, e_weights, t_weights)| {
                 let mut sink = ReducedEtSink {
                     e_weights,
@@ -400,27 +367,15 @@ where
         };
         {
             let _span = tracing::info_span!("reduced_z_scatter").entered();
-            let ranges =
-                group_plan.z_position_ranges(&compilation.witness_layout, Z_POSITIONS_PER_TASK)?;
-            let extents = ranges
-                .iter()
-                .map(|range| group_plan.z_extent(range))
-                .collect::<Result<Vec<_>, _>>()?;
-            let windows = split_disjoint_mut(&mut dense, &extents)?;
-            cfg_into_iter!(ranges)
-                .zip(windows)
-                .zip(extents)
-                .try_for_each(|((range, weights), extent)| {
-                    let mut sink = ReducedZSink {
-                        weights: DenseWindow {
-                            weights,
-                            first: extent.start,
-                        },
-                        opening_kernels: &opening_kernels,
-                        a_setup_kernels: &a_setup_kernels,
-                    };
-                    compile_z_position_range(group_plan, &range, &mut sink)
-                })?;
+            let tasks = group_plan.z_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
+            cfg_into_iter!(tasks).try_for_each(|(range, weights)| {
+                let mut sink = ReducedZSink {
+                    weights,
+                    opening_kernels: &opening_kernels,
+                    a_setup_kernels: &a_setup_kernels,
+                };
+                compile_z_position_range(group_plan, &range, &mut sink)
+            })?;
         }
     }
 

@@ -624,6 +624,9 @@ pub(super) struct EtBlockRange<'a> {
     blocks: Range<usize>,
 }
 
+/// One E/T scatter task: a block range with its E and T windows.
+pub(super) type EtScatterTask<'l, 'w, E> = (EtBlockRange<'l>, LaneWindow<'w, E>, LaneWindow<'w, E>);
+
 /// Consecutive positions of one witness unit.
 pub(super) struct ZPositionRange<'a> {
     unit: &'a WitnessUnitLayout,
@@ -633,7 +636,7 @@ pub(super) struct ZPositionRange<'a> {
 impl<E: Field> RelationWeightGroupPlan<E> {
     /// Every `(claim, block)` of this group, in ranges of at most
     /// `max_blocks` blocks that share an owning unit.
-    pub(super) fn et_block_ranges<'a>(
+    fn et_block_ranges<'a>(
         &self,
         witness_layout: &'a WitnessLayout,
         max_blocks: usize,
@@ -666,7 +669,7 @@ impl<E: Field> RelationWeightGroupPlan<E> {
 
     /// Every position of every unit of this group, in ranges of at most
     /// `max_positions` positions.
-    pub(super) fn z_position_ranges<'a>(
+    fn z_position_ranges<'a>(
         &self,
         witness_layout: &'a WitnessLayout,
         max_positions: usize,
@@ -695,10 +698,7 @@ impl<E: Field> RelationWeightGroupPlan<E> {
     /// `range`.
     ///
     /// Sinks reject any address outside these extents.
-    pub(super) fn et_extents(
-        &self,
-        range: &EtBlockRange<'_>,
-    ) -> Result<[Range<usize>; 2], AkitaError> {
+    fn et_extents(&self, range: &EtBlockRange<'_>) -> Result<[Range<usize>; 2], AkitaError> {
         let last_block = range.blocks.end.checked_sub(1);
         let e = match (
             last_block,
@@ -762,7 +762,7 @@ impl<E: Field> RelationWeightGroupPlan<E> {
     /// Physical Z coefficients from the first to the last address of `range`.
     ///
     /// Sinks reject any address outside this extent.
-    pub(super) fn z_extent(&self, range: &ZPositionRange<'_>) -> Result<Range<usize>, AkitaError> {
+    fn z_extent(&self, range: &ZPositionRange<'_>) -> Result<Range<usize>, AkitaError> {
         match (
             range.positions.end.checked_sub(1),
             self.witness.depth_witness.checked_sub(1),
@@ -789,6 +789,48 @@ impl<E: Field> RelationWeightGroupPlan<E> {
             }
             _ => Ok(0..0),
         }
+    }
+
+    /// E/T scatter tasks over `lanes`, a table of `lane_len`-coefficient
+    /// lanes: every range of `ET_BLOCKS_PER_TASK` blocks with the windows over
+    /// its E and T extents.
+    pub(super) fn et_scatter_tasks<'l, 'w>(
+        &self,
+        witness_layout: &'l WitnessLayout,
+        lanes: &'w mut [E],
+        lane_len: usize,
+    ) -> Result<Vec<EtScatterTask<'l, 'w, E>>, AkitaError> {
+        let ranges = self.et_block_ranges(witness_layout, ET_BLOCKS_PER_TASK)?;
+        let extents = ranges
+            .iter()
+            .map(|range| self.et_extents(range))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut windows = lane_windows_mut(lanes, extents.as_flattened(), lane_len)?.into_iter();
+        ranges
+            .into_iter()
+            .map(|range| match (windows.next(), windows.next()) {
+                (Some(e), Some(t)) => Ok((range, e, t)),
+                _ => Err(AkitaError::InvalidProof),
+            })
+            .collect()
+    }
+
+    /// Z scatter tasks over `lanes`, a table of `lane_len`-coefficient lanes:
+    /// every range of `Z_POSITIONS_PER_TASK` positions with the window over
+    /// its Z extent.
+    pub(super) fn z_scatter_tasks<'l, 'w>(
+        &self,
+        witness_layout: &'l WitnessLayout,
+        lanes: &'w mut [E],
+        lane_len: usize,
+    ) -> Result<Vec<(ZPositionRange<'l>, LaneWindow<'w, E>)>, AkitaError> {
+        let ranges = self.z_position_ranges(witness_layout, Z_POSITIONS_PER_TASK)?;
+        let extents = ranges
+            .iter()
+            .map(|range| self.z_extent(range))
+            .collect::<Result<Vec<_>, _>>()?;
+        let windows = lane_windows_mut(lanes, &extents, lane_len)?;
+        Ok(ranges.into_iter().zip(windows).collect())
     }
 }
 

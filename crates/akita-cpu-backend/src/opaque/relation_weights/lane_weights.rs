@@ -154,32 +154,9 @@ impl<E: Field> RelationLaneWeights<E> {
         .ok_or_else(unaligned_event)
     }
 
-    /// Disjoint windows over the aligned physical coefficient `extents`, in
-    /// the order of `extents`. An empty extent has an empty window.
-    pub(super) fn windows_mut(
-        &mut self,
-        extents: &[Range<usize>],
-    ) -> Result<Vec<LaneWindow<'_, E>>, AkitaError> {
-        let lane_ranges = extents
-            .iter()
-            .map(|extent| {
-                if extent.is_empty() {
-                    Ok(0..0)
-                } else {
-                    self.lane_range(extent.start, extent.len())
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let relation_coefficient_block_len = self.relation_coefficient_block_len;
-        Ok(split_disjoint_mut(&mut self.lanes, &lane_ranges)?
-            .into_iter()
-            .zip(lane_ranges)
-            .map(|(lanes, range)| LaneWindow {
-                lanes,
-                first_lane: range.start,
-                relation_coefficient_block_len,
-            })
-            .collect())
+    /// Accumulated lanes, for scatter windows.
+    pub(super) fn lanes_mut(&mut self) -> &mut [E] {
+        &mut self.lanes
     }
 
     pub(super) fn push(
@@ -245,7 +222,37 @@ impl<E: Field> RelationLaneWeights<E> {
     }
 }
 
-/// Mutable lanes of one aligned physical coefficient extent.
+/// Disjoint windows of `lanes`, a table of `lane_len`-coefficient lanes, over
+/// the aligned physical coefficient `extents`, in the order of `extents`. An
+/// empty extent has an empty window.
+pub(super) fn lane_windows_mut<'a, E>(
+    lanes: &'a mut [E],
+    extents: &[Range<usize>],
+    lane_len: usize,
+) -> Result<Vec<LaneWindow<'a, E>>, AkitaError> {
+    let lane_ranges = extents
+        .iter()
+        .map(|extent| {
+            if extent.is_empty() {
+                Ok(0..0)
+            } else {
+                aligned_lane_range(extent.start, extent.len(), lane_len).ok_or_else(unaligned_event)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(split_disjoint_mut(lanes, &lane_ranges)?
+        .into_iter()
+        .zip(lane_ranges)
+        .map(|(lanes, range)| LaneWindow {
+            lanes,
+            first_lane: range.start,
+            relation_coefficient_block_len: lane_len,
+        })
+        .collect())
+}
+
+/// Mutable lanes of one aligned physical coefficient extent. A dense
+/// coefficient table is the one-coefficient-lane case.
 pub(super) struct LaneWindow<'a, E> {
     lanes: &'a mut [E],
     first_lane: usize,
