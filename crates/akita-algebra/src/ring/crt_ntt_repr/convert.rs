@@ -238,6 +238,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .map(|value| value.unsigned_abs())
             .max()
             .unwrap_or(0);
+        let coefficient_limbs = params
+            .primes
+            .iter()
+            .any(|prime| max_abs > u128::from((prime.p.to_i64() / 2).unsigned_abs()))
+            .then(|| centered_coeffs.map(balanced_limbs));
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs
             .iter_mut()
@@ -250,8 +255,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
             } else {
                 let reducer = CenteredMontReducer::new(*prime);
-                for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                    *dst = reducer.reduce_limbs(balanced_limbs(*centered));
+                for (dst, split) in limb.iter_mut().zip(
+                    coefficient_limbs
+                        .as_ref()
+                        .expect("wide prime requires precomputed coefficient limbs"),
+                ) {
+                    *dst = reducer.reduce_limbs(*split);
                 }
             }
             forward_ntt(limb, *prime, tw, params.kernel_plan);
