@@ -636,6 +636,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     }
 
     /// Allocation-free forward transform for crate-internal composite plans.
+    #[cfg(feature = "labinius-trinomial")]
     pub(crate) fn forward_into(
         &self,
         input: &[F],
@@ -649,6 +650,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     }
 
     /// Allocation-free inverse transform for crate-internal composite plans.
+    #[cfg(feature = "labinius-trinomial")]
     pub(crate) fn inverse_into(
         &self,
         input: &[F],
