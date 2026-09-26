@@ -320,42 +320,6 @@ fn neon_centered_i8_to_mont_i32_matches_scalar() {
 }
 
 #[test]
-fn neon_centered_i16_to_mont_i32_matches_scalar() {
-    let prime = NttPrime::compute(TEST_PRIME_I32);
-    let coefficients = [
-        i16::MIN,
-        -30_000,
-        -129,
-        -1,
-        0,
-        1,
-        127,
-        30_000,
-        i16::MAX,
-        -17,
-        42,
-        -2048,
-        4096,
-    ];
-    let expected =
-        coefficients.map(|coefficient| prime.from_canonical(i32::from(coefficient)).raw());
-    let mut actual = [0i32; 13];
-
-    unsafe {
-        centered_i16_to_mont_i32(
-            actual.as_mut_ptr(),
-            coefficients.as_ptr(),
-            coefficients.len(),
-            prime.p,
-            prime.pinv,
-            prime.montsq,
-        );
-    }
-
-    assert_eq!(actual, expected);
-}
-
-#[test]
 fn neon_centered_i16_to_mont_i16_matches_scalar() {
     let prime = NttPrime::compute(TEST_PRIME_I16);
     let coefficients = [

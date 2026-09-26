@@ -85,6 +85,7 @@ fn work_identifiers_track_semantics_but_not_progress_output() {
 }
 
 #[test]
+#[cfg(feature = "labinius-sis")]
 fn explicit_staged_origins_do_not_become_production_coverage() {
     let origin = InfinityWidthOrigin {
         modulus_profile: AkitaModulusProfileId::Q64Offset23703,

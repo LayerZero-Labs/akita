@@ -202,7 +202,7 @@ Regenerate the staged artifact with bounded parallelism:
 
 ```bash
 RAYON_NUM_THREADS=2 cargo run --release -p akita-sis-estimator \
-  --features parallel --example labinius_infinity_width_table
+  --features parallel,labinius-sis --example labinius_infinity_width_table
 ```
 
 The result is

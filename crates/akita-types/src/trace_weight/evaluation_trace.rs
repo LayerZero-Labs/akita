@@ -84,11 +84,6 @@ impl<E: Field> EvaluationTraceGroupParameters<E> {
     }
 
     #[must_use]
-    pub fn block_opening_point(&self) -> &[E] {
-        &self.block_opening_point
-    }
-
-    #[must_use]
     pub fn shared_block_opening_point(&self) -> Arc<[E]> {
         Arc::clone(&self.block_opening_point)
     }
@@ -119,30 +114,9 @@ impl<E: Field> EvaluationTraceGroupParameters<E> {
     }
 
     #[must_use]
-    pub fn inner_trace(&self) -> &[E] {
-        &self.inner_trace
-    }
-
-    #[must_use]
     pub fn shared_inner_trace(&self) -> Arc<[E]> {
         Arc::clone(&self.inner_trace)
     }
-}
-
-/// Apply one uniform reduction scale to normalized evaluation-trace coefficients.
-pub fn scale_evaluation_trace_claim_coefficients<E: Field>(
-    claim_coefficients: &[E],
-    uniform_scale: E,
-) -> Result<Vec<E>, AkitaError> {
-    if claim_coefficients.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "evaluation trace requires a claim coefficient".into(),
-        ));
-    }
-    Ok(claim_coefficients
-        .iter()
-        .map(|&coefficient| coefficient * uniform_scale)
-        .collect())
 }
 
 /// Checked common inputs from which prover and verifier build separate
@@ -289,7 +263,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{basis_weights, block_rings_at_opening, embed_ring_subfield_vector};
+    use crate::{
+        basis_weights, basis_weights_prefix, embed_ring_subfield_scalar, embed_ring_subfield_vector,
+    };
     use jolt_field::{Ext2, Field, Fp32, FpExt4, FpExt8};
     use rand::{rngs::StdRng, SeedableRng};
 
@@ -297,6 +273,27 @@ mod tests {
     type Extension2 = Ext2<BaseField>;
     type Extension4 = FpExt4<BaseField>;
     type Extension8 = FpExt8<BaseField>;
+
+    /// Embed `eq(block_open, j)` as a ring element for each live block index `j`.
+    fn block_rings_at_opening<E, const D: usize>(
+        fold_open: &[E],
+        num_live_blocks: usize,
+    ) -> Vec<CyclotomicRing<BaseField, D>>
+    where
+        E: FpExtEncoding<BaseField> + Field,
+    {
+        basis_weights_prefix(fold_open, BasisMode::Lagrange, num_live_blocks)
+            .unwrap()
+            .into_iter()
+            .map(|weight| {
+                embed_ring_subfield_scalar::<BaseField, E, D>(
+                    weight,
+                    AkitaError::InvalidInput("block weight does not embed".into()),
+                )
+                .unwrap()
+            })
+            .collect()
+    }
 
     fn assert_extension_trace_factorization<E, const D: usize>(seed: u64)
     where
@@ -314,9 +311,7 @@ mod tests {
             .unwrap();
             let block_point: Vec<E> = (0..2).map(|_| E::random(&mut rng)).collect();
             let block_weights = basis_weights(&block_point, BasisMode::Lagrange).unwrap();
-            let block_rings =
-                block_rings_at_opening::<BaseField, E, D>(&block_point, block_weights.len())
-                    .unwrap();
+            let block_rings = block_rings_at_opening::<E, D>(&block_point, block_weights.len());
             let inner_trace = trace_open_ring_row::<BaseField, E, D>(
                 &CyclotomicRing::one(),
                 &packed_inner,

@@ -1,3 +1,5 @@
+#![cfg(feature = "labinius-sis")]
+
 use akita_sis_estimator::{
     width_table::{validate_infinity_width_rows, InfinityWidthRow},
     AkitaModulusProfileId, SisSecurityPolicy,

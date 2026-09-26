@@ -17,18 +17,6 @@ impl CommittedGroupParams {
         self.fold_challenge_config().l1_norm()
     }
 
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
-    #[inline]
-    pub fn challenge_infinity_norm(&self) -> usize {
-        self.fold_challenge_config().infinity_norm() as usize
-    }
-
-    /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
-    #[inline]
-    pub fn challenge_l2_sq_max(&self) -> u128 {
-        self.fold_challenge_config().challenge_l2_sq_max()
-    }
-
     /// Fold-challenge coefficient count `inner_width · D`.
     #[inline]
     pub fn num_fold_coeffs(&self) -> u128 {
@@ -171,30 +159,5 @@ impl CommittedGroupParams {
     #[inline]
     pub fn inner_width(&self) -> usize {
         self.inner().matrix.input_width()
-    }
-
-    /// Exact live source ring elements in one claim.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] on overflow.
-    pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
-        self.validate_block_geometry()?;
-        Ok(self.blocks().live_ring_elements_per_claim)
-    }
-
-    /// Total flat field-element count (`n_ring_elems * d_a`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] on overflow.
-    pub fn flat_field_len(&self) -> Result<usize, AkitaError> {
-        let n_ring_elems = self.n_ring_elems()?;
-        n_ring_elems.checked_mul(self.d_a()).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "n_ring_elems={n_ring_elems} * d_a={} overflows usize",
-                self.d_a(),
-            ))
-        })
     }
 }

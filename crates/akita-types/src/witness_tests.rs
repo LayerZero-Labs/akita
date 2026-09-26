@@ -28,9 +28,7 @@ fn d64_production_uses_multi_chunk() {
 fn multi_chunk_profile_grid_roundtrip() {
     for (index, profile) in MultiChunkProfileId::ALL.into_iter().enumerate() {
         assert_eq!(profile.index(), index);
-        assert_eq!(MultiChunkProfileId::from_index(index), profile);
         let cfg = ChunkedWitnessCfg::from_profile(profile);
-        assert_eq!(cfg.profile_id(), Some(profile));
         cfg.validate().expect("grid profile is valid");
     }
 }
@@ -124,18 +122,6 @@ fn balanced_chunks_are_exact_and_contiguous() {
         assert_eq!(span.range().len(), span.map().padded_digit_count());
         assert_eq!(support[map_index].start, span.range().start);
         assert_eq!(support[map_index].end, layer.h_span().range().end);
-        assert_eq!(
-            layout
-                .f_compression_coefficient_index(0, map_index, 1, 2)
-                .expect("F address"),
-            span.range().start + span.map().ring_dimension() + 2
-        );
-        assert_eq!(
-            layout
-                .h_compression_coefficient_index(map_index, 1, 2)
-                .expect("H address"),
-            layer.h_span().range().start + layer.h_span().map().ring_dimension() + 2
-        );
         let f_quotient_rows = layer
             .f_quotient_rows()
             .expect("quotient-lift compression rows");
@@ -335,4 +321,34 @@ fn validate_rejects_invalid_configs() {
         .validate()
         .expect("power-of-two chunk counts validate");
     }
+}
+
+#[test]
+fn units_for_group_filters_by_group_in_any_order() {
+    let geometry = RelationRowGeometry::native(64).unwrap();
+    let unit = |group_index: usize, start: usize| {
+        WitnessUnitLayout::new_for_test(
+            group_index,
+            0,
+            0,
+            1,
+            start..start + 1,
+            start + 1..start + 2,
+            geometry,
+            start + 2..start + 3,
+        )
+    };
+    // Canonical layouts put the final group first. Group 0 first with a
+    // second group present must still select by group index.
+    let layout = WitnessLayout::new_for_test(vec![unit(0, 0), unit(1, 3)], Vec::new(), 1);
+    let groups = |group_index| {
+        layout
+            .units_for_group(group_index)
+            .unwrap()
+            .map(WitnessUnitLayout::group_index)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(groups(0), vec![0]);
+    assert_eq!(groups(1), vec![1]);
+    assert!(layout.units_for_group(2).is_err());
 }

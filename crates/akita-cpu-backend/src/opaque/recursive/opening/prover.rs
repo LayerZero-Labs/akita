@@ -1,4 +1,5 @@
 use super::*;
+use jolt_poly::UnivariatePoly;
 
 /// Prover state for a degree-two extension-opening reduction sumcheck.
 ///
@@ -49,39 +50,6 @@ impl<E: Field> ExtensionOpeningReductionProver<E> {
         })
     }
 
-    /// Construct a single-term prover from dense transformed-witness and
-    /// transparent-factor Boolean-hypercube evaluation tables.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the tables do not have the same nonzero power-of-two
-    /// length.
-    pub fn from_dense_tables(
-        witness_evals: Vec<E>,
-        factor_evals: Vec<E>,
-    ) -> Result<Self, AkitaError> {
-        let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
-        let term = ExtensionOpeningReductionTerm::new(witness_evals, E::one());
-        let group = ExtensionOpeningReductionGroup::new(vec![term], factor_evals)?;
-        Self::new(vec![group], input_claim)
-    }
-
-    /// Compute the input sum represented by a set of groups.
-    ///
-    /// This is useful for tests and standalone callers that do not already
-    /// have an independently derived input claim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any group has malformed witness/factor tables.
-    pub fn input_claim_from_groups(
-        groups: &[ExtensionOpeningReductionGroup<E>],
-    ) -> Result<E, AkitaError> {
-        groups.iter().try_fold(E::zero(), |acc, group| {
-            group.claim().map(|claim| acc + claim)
-        })
-    }
-
     /// Number of sumcheck rounds for this prover instance.
     pub fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -99,20 +67,6 @@ impl<E: Field> ExtensionOpeningReductionProver<E> {
             Some(out)
         })
     }
-
-    /// Final folded `(witness(rho), factor(rho))` for a single-term prover.
-    ///
-    /// Returns `None` for multi-term provers or before all challenges have been
-    /// ingested.
-    pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
-        match self.groups.as_slice() {
-            [group] => match group.final_terms()?.as_slice() {
-                [(_, witness, factor)] => Some((*witness, *factor)),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 }
 
 impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<E> {
@@ -128,7 +82,7 @@ impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpening
         self.input_claim
     }
 
-    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
+    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UnivariatePoly<E> {
         let expected_len = 1usize << (self.num_rounds - round);
         let mut constant = E::zero();
         let mut quadratic = E::zero();
@@ -139,7 +93,7 @@ impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpening
         }
 
         let linear = previous_claim - constant - constant - quadratic;
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
+        UnivariatePoly::new(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {

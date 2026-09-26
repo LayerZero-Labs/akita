@@ -7,9 +7,9 @@ use akita_error::AkitaError;
 use jolt_field::{Field, Ring};
 
 use crate::{
-    CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
-    InnerCommitSecurityRoute, OpeningClaimsLayout, PhysicalL2NormProofShape,
-    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, WitnessLayout,
+    CommittedGroupParams, DigitRangePlan, FlatBooleanDomain, InnerCommitSecurityRoute,
+    OpeningClaimsLayout, PhysicalL2NormProofShape, RelationAddressGeometry, RelationRowFamily,
+    RelationWitnessGeometry, WitnessLayout,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -588,12 +588,6 @@ impl RelationRangeImagePlan {
         &self.witness_layout
     }
 
-    /// Nested inner/outer/opening ring dimensions.
-    #[must_use]
-    pub fn role_dims(&self) -> CommitmentRingDims {
-        self.relation_address_geometry.role_dims()
-    }
-
     /// Groups in authenticated root processing order.
     #[must_use]
     pub fn groups(&self) -> &[RelationRangeImageGroupPlan] {
@@ -644,8 +638,9 @@ impl RelationRangeImagePlan {
 mod tests {
     use super::*;
     use crate::{
-        dyadic_block_ranges, CommitmentSliceCount, PolynomialGroupLayout, RelationGroupRows,
-        RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout, WitnessUnitLayout,
+        dyadic_block_ranges, CommitmentRingDims, CommitmentSliceCount, PolynomialGroupLayout,
+        RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
+        WitnessUnitLayout,
     };
     use jolt_field::Prime128OffsetA7F7;
 
@@ -824,7 +819,6 @@ mod tests {
                             basis,
                         );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
-                        assert_eq!(plan.role_dims(), role_dims);
                         let geometry = plan.relation_address_geometry();
                         assert_eq!(geometry.relation_coefficient_block_len(), role_dims.d_d());
                         assert_eq!(

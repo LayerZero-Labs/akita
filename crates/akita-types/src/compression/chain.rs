@@ -246,15 +246,6 @@ impl CompressionChainPlan {
         self.maps.last().map_or(0, |map| map.output_coefficients())
     }
 
-    /// Total persistent packed stage-witness bytes.
-    pub fn packed_witness_bytes(&self) -> Result<usize, AkitaError> {
-        self.maps.iter().try_fold(0usize, |total, map| {
-            total.checked_add(map.packed_digit_bytes()).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression packed witness bytes overflow".into())
-            })
-        })
-    }
-
     /// Equivalent persistent bytes for an `i8` digit representation.
     pub fn unpacked_witness_bytes(&self) -> Result<usize, AkitaError> {
         self.maps.iter().try_fold(0usize, |total, map| {

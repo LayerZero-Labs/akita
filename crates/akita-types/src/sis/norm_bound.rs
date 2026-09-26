@@ -64,6 +64,7 @@ pub fn weak_binding_inf_norm(challenge_l1_norm: u128, z_inf_norm: u128) -> Optio
 /// source-comparison ledgers, so table pricing and verifier admission can share
 /// one implementation.
 #[must_use]
+#[cfg(feature = "labinius-sis")]
 pub fn source_comparison_inf_norm(
     left_numerator_bound: u128,
     left_slack_operator_bound: u128,
@@ -313,6 +314,7 @@ impl FoldWitnessNorms {
     }
 
     /// Witness L1 norm `||s||_1 = nonzeros · ||s||_inf`.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub fn l1_norm(&self) -> u128 {
@@ -337,6 +339,7 @@ impl FoldWitnessNorms {
     /// Sparse-binary witness with at most one nonzero per logical chunk.
     ///
     /// `||s||_inf = 1` and `||s||_1 = ceil(D / K)`.
+    #[cfg(test)]
     #[inline]
     pub fn sparse_binary(ring_dimension: usize, chunk_size: usize) -> Result<Self, AkitaError> {
         if chunk_size == 0 || !chunk_size.is_power_of_two() {
@@ -441,6 +444,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "labinius-sis")]
     fn mixed_source_comparison_uses_each_slack_once() {
         assert_eq!(source_comparison_inf_norm(11, 7, 13, 5), Some(146));
         assert_eq!(source_comparison_inf_norm(u128::MAX, 2, 1, 1), None);

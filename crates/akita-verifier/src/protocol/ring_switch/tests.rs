@@ -163,11 +163,10 @@ fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixtu
         .relation_point_variable_count())
         .map(|index| MixedF::from_u64(211 + index as u64))
         .collect::<Vec<_>>();
-    let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<MixedF>(
+    let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<MixedF>(
         &evaluator, &point, alpha,
     )
     .unwrap();
-    prepared.materialize_setup().unwrap();
     let setup_field_len = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
@@ -279,7 +278,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 }
 
 #[test]
-fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
+fn prepared_relation_accepts_exact_deferred_setup_claim() {
     let MixedRelationFixture {
         evaluator,
         setup,
@@ -292,41 +291,47 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .setup_contribution_fold_gadget::<MixedF>()
         .unwrap()
         .unwrap();
-    let mut direct_plan = evaluator
-        .setup_contribution_plan::<MixedF>(
-            PreparedRelationAddress::new(address_point).unwrap(),
-            Some(&fold_gadget),
-        )
-        .unwrap();
-    direct_plan
-        .materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
-            alpha,
-        ))
-        .unwrap();
-    assert!(direct_plan
-        .materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
-            MixedF::from_u64(11),
-        ))
-        .is_err());
-    let setup_claim = direct_plan.evaluate_direct::<MixedF>(&setup).unwrap();
-
-    let direct = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator, &point, &setup, alpha,
+    let direct_plan = || {
+        evaluator
+            .setup_contribution_plan::<MixedF>(
+                PreparedRelationAddress::new(address_point).unwrap(),
+                Some(&fold_gadget),
+            )
+            .unwrap()
+    };
+    let scan = crate::DirectScan::new(
+        direct_plan(),
+        crate::PreparedCoefficientFunctional::lifted_power(alpha),
     )
     .unwrap();
-    let deferred = super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
-        MixedF,
-        MixedF,
-    >(&evaluator, &point, &setup, alpha, setup_claim)
-    .unwrap();
+    let setup_claim = scan.evaluate_direct::<MixedF>(&setup).unwrap();
+
+    let direct = evaluator
+        .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
+        .unwrap();
+    let deferred = evaluator
+        .eval_flat_at_point_with_deferred_setup::<MixedF>(&point, alpha, setup_claim)
+        .unwrap();
     assert_eq!(deferred, direct);
 
-    let claim_delta = MixedF::from_u64(17);
-    let changed = super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
-        MixedF,
-        MixedF,
-    >(&evaluator, &point, &setup, alpha, setup_claim + claim_delta)
+    // A setup claim scanned under another alpha must not stand in for the
+    // exact claim on the deferred path.
+    let wrong_alpha_scan = crate::DirectScan::new(
+        direct_plan(),
+        crate::PreparedCoefficientFunctional::lifted_power(MixedF::from_u64(11)),
+    )
     .unwrap();
+    let wrong_alpha_claim = wrong_alpha_scan.evaluate_direct::<MixedF>(&setup).unwrap();
+    assert_ne!(wrong_alpha_claim, setup_claim);
+    let wrong_deferred = evaluator
+        .eval_flat_at_point_with_deferred_setup::<MixedF>(&point, alpha, wrong_alpha_claim)
+        .unwrap();
+    assert_ne!(wrong_deferred, direct);
+
+    let claim_delta = MixedF::from_u64(17);
+    let changed = evaluator
+        .eval_flat_at_point_with_deferred_setup::<MixedF>(&point, alpha, setup_claim + claim_delta)
+        .unwrap();
     let coefficient_point =
         &point[..relation_address_geometry.relation_coefficient_variable_count()];
     let common_alpha = akita_sumcheck::multilinear_eval(
@@ -338,15 +343,6 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     )
     .unwrap();
     assert_eq!(changed, direct + common_alpha * claim_delta);
-
-    let cached = evaluator
-        .take_cached_setup_contribution_plan(address_point)
-        .unwrap()
-        .expect("mixed deferred evaluation must cache its Stage-3 plan");
-    assert!(
-        cached.group_column_eq_slices(0).is_none(),
-        "deferred relation evaluation should cache spans without prepared columns"
-    );
 }
 
 #[test]
@@ -364,14 +360,15 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .setup_contribution_fold_gadget::<MixedF>()
         .unwrap()
         .unwrap();
-    let mut plan = evaluator
+    let plan = evaluator
         .setup_contribution_plan::<MixedF>(
             PreparedRelationAddress::new(address_point).unwrap(),
             Some(&fold_gadget),
         )
         .unwrap();
-    plan.materialize_direct_scan(
-        akita_types::PreparedCoefficientFunctional::reduced_evaluation(
+    let scan = crate::DirectScan::new(
+        plan,
+        crate::PreparedCoefficientFunctional::reduced_evaluation(
             alpha,
             coefficient_point,
             geometry,
@@ -386,7 +383,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .iter()
         .try_fold(MixedF::zero(), |sum, group| {
             Ok::<_, AkitaError>(
-                sum + plan.evaluate_reduced_structured_group::<MixedF>(
+                sum + scan.evaluate_reduced_structured_group::<MixedF>(
                     group.group_id,
                     &group.multipliers.challenges,
                     &group.multipliers.opening,
@@ -394,11 +391,10 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             )
         })
         .unwrap();
-    let expected = structured + plan.evaluate_direct::<MixedF>(&setup).unwrap();
-    let got = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator, &point, &setup, alpha,
-    )
-    .unwrap();
+    let expected = structured + scan.evaluate_direct::<MixedF>(&setup).unwrap();
+    let got = evaluator
+        .eval_flat_at_point::<MixedF>(&point, &setup, alpha)
+        .unwrap();
     assert_eq!(got, expected);
 
     let common_alpha = akita_sumcheck::multilinear_eval(
@@ -408,42 +404,21 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
     .unwrap();
     assert_ne!(common_alpha, MixedF::one());
     assert_ne!(got, common_alpha * expected);
-    assert!(
-        super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
-            MixedF,
-            MixedF,
-        >(
-            &evaluator,
-            &point,
-            &setup,
-            alpha,
-            MixedF::one(),
-        )
-        .is_err()
-    );
-    assert!(evaluator
-        .take_cached_setup_contribution_plan(address_point)
-        .unwrap()
-        .is_none());
+    assert!(matches!(
+        evaluator.eval_flat_at_point_with_deferred_setup::<MixedF>(&point, alpha, MixedF::one()),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 
     let mut mismatched = evaluator.clone();
     mismatched.flat_context.level_params.ring_relation_mode =
         akita_types::RingRelationMode::QuotientLift;
-    assert!(
-        super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-            &mismatched,
-            &point,
-            &setup,
-            alpha,
-        )
-        .is_err()
-    );
+    assert!(mismatched
+        .eval_flat_at_point::<MixedF>(&point, &setup, alpha,)
+        .is_err());
 
     for malformed in [&point[..point.len() - 1], &[MixedF::one(); 128][..]] {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-                &evaluator, malformed, &setup, alpha,
-            )
+            evaluator.eval_flat_at_point::<MixedF>(malformed, &setup, alpha)
         }));
         assert!(outcome.is_ok(), "malformed verifier input must not panic");
         assert!(outcome.unwrap().is_err());

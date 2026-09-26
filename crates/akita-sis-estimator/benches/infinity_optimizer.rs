@@ -1,6 +1,8 @@
+#[cfg(feature = "labinius-sis")]
+use akita_sis_estimator::labinius_width_table::certified_max_width;
 use akita_sis_estimator::{
-    estimate, labinius_width_table::certified_max_width, scalar_sis_from_ring,
-    width_table::InfinityWidthProfile, AkitaModulusProfileId, EstimateConfig,
+    estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
+    EstimateConfig,
 };
 use std::hint::black_box;
 
@@ -91,6 +93,7 @@ fn bench_infinity_optimizer(c: &mut Criterion) {
         }
     }
     group.finish();
+    #[cfg(feature = "labinius-sis")]
     c.bench_function(
         "sis_infinity_optimizer/labinius_certified_lookup",
         |bench| {
@@ -124,6 +127,7 @@ fn configure_group<M: criterion::measurement::Measurement>(
 }
 
 fn load_cases() -> Vec<InfinityCase> {
+    #[cfg(feature = "labinius-sis")]
     if CaseSet::from_env() == CaseSet::Labinius {
         return labinius_cases();
     }
@@ -145,6 +149,7 @@ enum CaseSet {
     Representative,
     ExhaustiveCi,
     AllTrusted,
+    #[cfg(feature = "labinius-sis")]
     Labinius,
 }
 
@@ -154,6 +159,7 @@ impl CaseSet {
             Ok("representative") | Err(_) => Self::Representative,
             Ok("exhaustive-ci") => Self::ExhaustiveCi,
             Ok("all-trusted") => Self::AllTrusted,
+            #[cfg(feature = "labinius-sis")]
             Ok("labinius") => Self::Labinius,
             Ok(value) => panic!(
                 "{CASE_SET_ENV} must be one of representative, exhaustive-ci, all-trusted, labinius; got {value:?}"
@@ -296,7 +302,9 @@ fn load_cases_csv(path: &Path, case_set: CaseSet) -> Vec<InfinityCase> {
 
 fn case_set_includes(case_set: CaseSet, case: &InfinityCase) -> bool {
     match case_set {
-        CaseSet::Representative | CaseSet::AllTrusted | CaseSet::Labinius => true,
+        CaseSet::Representative | CaseSet::AllTrusted => true,
+        #[cfg(feature = "labinius-sis")]
+        CaseSet::Labinius => true,
         CaseSet::ExhaustiveCi => {
             let m = case.column_count();
             m <= 512 || (m <= 1024 && case.coeff_linf_bound == 255)
@@ -322,6 +330,7 @@ fn representative_cases(cases: Vec<InfinityCase>) -> Vec<InfinityCase> {
         .collect()
 }
 
+#[cfg(feature = "labinius-sis")]
 fn labinius_cases() -> Vec<InfinityCase> {
     vec![
         InfinityCase {
@@ -392,6 +401,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
+        #[cfg(feature = "labinius-sis")]
         AkitaModulusProfileId::Q64Offset23703 => "q64-labinius",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
     }

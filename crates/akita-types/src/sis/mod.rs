@@ -32,6 +32,7 @@ mod generated_l2_sis_table;
 mod generated_sis_table;
 pub mod honest_fold_policy;
 mod l2_table;
+#[cfg(feature = "labinius-sis")]
 pub mod labinius;
 pub mod norm_bound;
 mod onehot_source;
@@ -53,9 +54,8 @@ pub use coverage::{
 pub use decomposition_digits::{
     balanced_digit_abs_max, balanced_digit_interval_diameter, balanced_digit_representable_bounds,
     checked_balanced_digit_representable_bounds, compute_num_digits_field_width,
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_for_bound, num_digits_for_linf_cap, num_digits_inner, num_digits_inner_for_bound,
-    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
+    decomposed_s_block_ring_count, num_digits_for_bound, num_digits_for_linf_cap, num_digits_inner,
+    num_digits_inner_for_bound, num_digits_open, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
@@ -67,13 +67,15 @@ pub use l2_table::{
 };
 #[cfg(test)]
 pub(crate) use norm_bound::fold_witness_beta_inf;
+#[cfg(feature = "labinius-sis")]
+pub use norm_bound::source_comparison_inf_norm;
 pub use norm_bound::{
     certified_terminal_response_linf_cap, checked_centered_l2_sq, fold_witness_linf_cap,
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,
     role_a_collision_inf_norm_for_response_bound,
     role_a_collision_inf_norm_for_response_difference, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, source_comparison_inf_norm,
-    weak_binding_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
 };

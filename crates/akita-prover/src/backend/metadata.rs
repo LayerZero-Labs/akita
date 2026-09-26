@@ -1,5 +1,6 @@
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_poly::{OmittedConstantPoly, UnivariatePoly};
 
 /// Public, coefficient-free description of an accepted fold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,7 +180,7 @@ where
     fn terminal_message(
         &self,
         material: &M,
-    ) -> Result<crate::backend::TerminalTFieldsMessage, AkitaError>;
+    ) -> Result<crate::backend::TerminalTFieldsMessage<F>, AkitaError>;
 
     fn consume_terminal_row(&self, material: M) -> Result<akita_types::RingVec<F>, AkitaError>;
 }
@@ -200,8 +201,8 @@ pub enum Stage1Transition {
 
 #[derive(Clone)]
 pub enum Stage1RoundPolynomial<E: Field> {
-    EqFactored(akita_sumcheck::EqFactoredUniPoly<E>),
-    Standard(akita_algebra::uni_poly::UniPoly<E>),
+    EqFactored(OmittedConstantPoly<E>),
+    Standard(UnivariatePoly<E>),
 }
 
 pub enum Stage1PublicTransition<E: Field> {
