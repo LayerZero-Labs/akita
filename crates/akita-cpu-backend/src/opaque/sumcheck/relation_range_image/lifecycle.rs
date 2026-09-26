@@ -28,7 +28,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         live_lanes: usize,
         lane_bits: usize,
         coefficient_bits: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        E: 'static,
+    {
         let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         Self::new(
             E::one(),
@@ -67,7 +70,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         linear_terms: PreparedProverLinearTerms<E>,
         linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        E: 'static,
+    {
         let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;

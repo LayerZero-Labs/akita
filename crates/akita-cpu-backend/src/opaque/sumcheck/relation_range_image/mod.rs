@@ -195,33 +195,26 @@ fn stage2_eq_block(
     (j_high, blk_end)
 }
 
-/// Sum of field products that delays reduction when the field's product
-/// accumulator is exact.
+/// Sum of field products reduced once.
+///
+/// Every field's product accumulator reduces a sum of fewer than `2^61`
+/// widening products exactly (`Fp128` slots hold `2^64 - 1`), far more terms
+/// than a round sums.
 #[derive(Clone, Copy)]
-struct ProductSum<E: Unreduced> {
-    exact: E::Product,
-    plain: E,
-}
+struct ProductSum<E: Unreduced>(E::Product);
 
 impl<E: Unreduced> ProductSum<E> {
     fn zero() -> Self {
-        Self {
-            exact: E::Product::zero(),
-            plain: E::zero(),
-        }
+        Self(E::Product::zero())
     }
 
     #[inline(always)]
     fn add(&mut self, left: E, right: E) {
-        if E::SUM_IS_EXACT {
-            self.exact += left.mul_unreduced(right);
-        } else {
-            self.plain += left * right;
-        }
+        self.0 += left.mul_unreduced(right);
     }
 
     fn finish(self) -> E {
-        E::reduce_product(self.exact) + self.plain
+        E::reduce_product(self.0)
     }
 }
 
@@ -297,6 +290,7 @@ mod prepared_linear_lane;
 mod quotient_prefix;
 mod round_flow;
 mod weight_oracle;
+mod wide_mass;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
 #[allow(unused_imports)]

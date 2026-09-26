@@ -21,6 +21,7 @@
 //!   into challenge-scaled copies of the two-round quad fold. The last prefix
 //!   round writes the folded witness for the ordinary suffix path.
 
+use super::wide_mass::WideMass;
 use super::*;
 use crate::opaque::sumcheck::relation_range_image::evaluation_trace::PreparedLaneWeights;
 use crate::opaque::sumcheck::two_round_prefix::Stage2PrefixCache;
@@ -32,6 +33,9 @@ const _: () = assert!(MAX_PREFIX_ROUNDS >= 2 && MAX_PREFIX_ROUNDS <= 7);
 
 /// Minimum lanes per parallel scan task.
 const MIN_SCAN_TASK_LANES: usize = 256;
+
+/// Lanes the scan decodes and adds to the relation masses together.
+const SCAN_CHUNK_LANES: usize = 256;
 
 /// Minimum folded-witness pairs per parallel lookup-round task.
 const MIN_LOOKUP_TASK_PAIRS: usize = 1 << 12;
@@ -83,93 +87,6 @@ fn quad_class<const DIGIT_BITS: usize>(quad: [i8; 4]) -> u16 {
     ((pairs | (pairs >> (16 - 2 * DIGIT_BITS))) & ((1 << (4 * DIGIT_BITS)) - 1)) as u16
 }
 
-/// Largest digit basis the engine serves.
-const MAX_DIGIT_BASIS: usize = 8;
-
-/// Signed-digit multiples of field elements, accumulated in wide lanes.
-///
-/// Slots are grouped into blocks that always receive a whole row of digits at
-/// once. A block is reduced before any of its `i32` lanes can overflow.
-struct WideMass<E: Field + Unreduced> {
-    wide: Vec<E::Wide>,
-    reduced: Vec<E>,
-    pending: Vec<usize>,
-    block_len: usize,
-    max_pending: usize,
-    /// Digits lie in `[-half, half)`.
-    half: usize,
-}
-
-impl<E: Field + Unreduced> WideMass<E> {
-    fn new(block_count: usize, block_len: usize, max_pending: usize, b: usize) -> Self {
-        debug_assert!(b.is_power_of_two() && (2..=MAX_DIGIT_BASIS).contains(&b));
-        Self {
-            wide: vec![E::Wide::zero(); block_count * block_len],
-            reduced: vec![E::zero(); block_count * block_len],
-            pending: vec![0; block_count],
-            block_len,
-            max_pending,
-            half: b / 2,
-        }
-    }
-
-    /// Add `factor * digits[i]` to slot `i` of block `block`.
-    #[inline]
-    fn add_row(&mut self, block: usize, factor: E, digits: &[i8]) {
-        if self.pending[block] == self.max_pending {
-            self.flush(block);
-        }
-        self.pending[block] += 1;
-        let start = block * self.block_len;
-        let masses = &mut self.wide[start..start + self.block_len];
-        if cfg!(target_arch = "aarch64") {
-            // NEON multiplies `i32` lanes natively.
-            for (mass, &digit) in masses.iter_mut().zip(digits) {
-                *mass += factor.scale_wide(i32::from(digit));
-            }
-            return;
-        }
-        // Without a vector `i32` multiply (baseline x86-64 has none) every lane
-        // would be scaled in scalar, so build the row's digit multiples of
-        // `factor` by lane-wise additions and add one per digit.
-        let half = self.half;
-        let base = E::Wide::from(factor);
-        let mut multiples = [E::Wide::zero(); MAX_DIGIT_BASIS];
-        for offset in 1..=half {
-            if half + offset < 2 * half {
-                multiples[half + offset] = multiples[half + offset - 1] + base;
-            }
-            multiples[half - offset] = multiples[half + 1 - offset] - base;
-        }
-        for (mass, &digit) in masses.iter_mut().zip(digits) {
-            debug_assert!((-(half as i16)..half as i16).contains(&i16::from(digit)));
-            let index = (i16::from(digit) + half as i16) as usize & (MAX_DIGIT_BASIS - 1);
-            *mass += multiples[index];
-        }
-    }
-
-    fn flush(&mut self, block: usize) {
-        let slots = block * self.block_len..(block + 1) * self.block_len;
-        for (reduced, wide) in self.reduced[slots.clone()]
-            .iter_mut()
-            .zip(&mut self.wide[slots])
-        {
-            *reduced += E::reduce_wide(*wide);
-            *wide = E::Wide::zero();
-        }
-        self.pending[block] = 0;
-    }
-
-    fn finish(mut self) -> Vec<E> {
-        for block in 0..self.pending.len() {
-            if self.pending[block] != 0 {
-                self.flush(block);
-            }
-        }
-        self.reduced
-    }
-}
-
 struct ScanLayout<'a, E: Field> {
     witness: PackedSignedDigitView<'a>,
     lane_weights: &'a [E],
@@ -187,7 +104,6 @@ struct ScanLayout<'a, E: Field> {
     delta_code: &'a [i32],
     delta_offset: i32,
     delta_count: usize,
-    max_wide_adds: usize,
 }
 
 struct ScanTotals<E: Field> {
@@ -215,13 +131,72 @@ impl<E: Field> ScanTotals<E> {
     }
 }
 
+/// Source-mass rows of one scan chunk, grouped by mass block.
+struct BlockRows<E> {
+    /// `(block, factor, row)` in visit order.
+    visits: Vec<(usize, E, u32)>,
+    /// Per-block row count; zero outside [`add_to`](Self::add_to).
+    counts: Vec<usize>,
+    /// Blocks with at least one row, in first-visit order.
+    touched: Vec<usize>,
+    grouped: Vec<(E, u32)>,
+}
+
+impl<E: Field + Unreduced + 'static> BlockRows<E> {
+    fn new(block_count: usize) -> Self {
+        Self {
+            visits: Vec::new(),
+            counts: vec![0; block_count],
+            touched: Vec::new(),
+            grouped: Vec::new(),
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, block: usize, factor: E, row: u32) {
+        if self.counts[block] == 0 {
+            self.touched.push(block);
+        }
+        self.counts[block] += 1;
+        self.visits.push((block, factor, row));
+    }
+
+    /// Add every row to its block of `mass`, one call per block, and clear.
+    fn add_to(&mut self, mass: &mut WideMass<E>, digits: &[i8]) {
+        // Counting sort: `counts` becomes each block's write cursor.
+        let mut start = 0;
+        for &block in &self.touched {
+            let count = self.counts[block];
+            self.counts[block] = start;
+            start += count;
+        }
+        self.grouped.clear();
+        self.grouped.resize(self.visits.len(), (E::zero(), 0));
+        for &(block, factor, row) in &self.visits {
+            self.grouped[self.counts[block]] = (factor, row);
+            self.counts[block] += 1;
+        }
+        let mut start = 0;
+        for &block in &self.touched {
+            let end = self.counts[block];
+            for rows in self.grouped[start..end].chunks(mass.max_rows()) {
+                mass.add_rows(block, rows, digits);
+            }
+            self.counts[block] = 0;
+            start = end;
+        }
+        self.visits.clear();
+        self.touched.clear();
+    }
+}
+
 /// Scan the lanes whose quad classes `classes` receives.
 ///
 /// With at least eight coefficients per lane, the round-2 pair of a quad is the
 /// adjacent quad in the same lane, so even and odd quads get separate
 /// histograms. With four coefficients the pair crosses lanes; only the mixed
 /// histogram for the first two rounds exists, and the engine stops at round 1.
-fn scan_lanes<E: Field + Unreduced, const DIGIT_BITS: usize>(
+fn scan_lanes<E: Field + Unreduced + 'static, const DIGIT_BITS: usize>(
     layout: &ScanLayout<'_, E>,
     first_lane: usize,
     classes: &mut [u16],
@@ -233,14 +208,12 @@ fn scan_lanes<E: Field + Unreduced, const DIGIT_BITS: usize>(
     let low_bits = layout.eq_low.len().trailing_zeros();
     let one_minus_tau2 = E::one() - layout.tau2;
 
-    let mut digits = vec![0i8; coeff_count];
-    let mut alpha_mass = WideMass::<E>::new(1, coeff_count, layout.max_wide_adds, layout.b);
-    let mut source_mass = WideMass::<E>::new(
-        layout.source_block_count,
-        coeff_count,
-        layout.max_wide_adds,
-        layout.b,
-    );
+    let mut alpha_mass = WideMass::<E>::new(1, coeff_count, layout.b);
+    let mut source_mass = WideMass::<E>::new(layout.source_block_count, coeff_count, layout.b);
+    let chunk_lanes = SCAN_CHUNK_LANES.min(alpha_mass.max_rows());
+    let mut digits = vec![0i8; chunk_lanes * coeff_count];
+    let mut alpha_rows = Vec::with_capacity(chunk_lanes);
+    let mut source_rows = BlockRows::new(layout.source_block_count);
     let mut even_histogram = vec![E::zero(); layout.class_count];
     let mut odd_histogram = if split_pairs {
         vec![E::zero(); layout.class_count]
@@ -249,54 +222,74 @@ fn scan_lanes<E: Field + Unreduced, const DIGIT_BITS: usize>(
     };
     let mut delta_histogram = vec![E::zero(); layout.delta_count];
 
-    for (local_lane, lane_classes) in classes.chunks_exact_mut(quads_per_lane).enumerate() {
-        let lane = first_lane + local_lane;
+    for (chunk, chunk_classes) in classes.chunks_mut(chunk_lanes * quads_per_lane).enumerate() {
+        let chunk_first = first_lane + chunk * chunk_lanes;
+        let lanes = chunk_classes.len() / quads_per_lane;
+        let digits = &mut digits[..lanes * coeff_count];
         layout
             .witness
-            .decode_range(lane * coeff_count, &mut digits)
-            .expect("compact prefix lane is in bounds");
+            .decode_range(chunk_first * coeff_count, digits)
+            .expect("compact prefix lanes are in bounds");
 
-        alpha_mass.add_row(0, layout.lane_weights[lane], &digits);
-        layout
-            .linear_terms
-            .for_each_source_term(lane, |factor, source_index, source_lane| {
-                source_mass.add_row(
-                    layout.source_blocks[source_index] + source_lane,
-                    factor,
-                    &digits,
-                );
-            });
-
-        for (class, &quad) in lane_classes.iter_mut().zip(digits.as_chunks::<4>().0) {
-            *class = quad_class::<DIGIT_BITS>(quad);
+        alpha_rows.clear();
+        alpha_rows.extend(
+            layout.lane_weights[chunk_first..chunk_first + lanes]
+                .iter()
+                .zip(0u32..)
+                .map(|(&weight, row)| (weight, row)),
+        );
+        alpha_mass.add_rows(0, &alpha_rows, digits);
+        for row in 0..lanes {
+            layout.linear_terms.for_each_source_term(
+                chunk_first + row,
+                |factor, source_index, source_lane| {
+                    source_rows.push(
+                        layout.source_blocks[source_index] + source_lane,
+                        factor,
+                        row as u32,
+                    );
+                },
+            );
         }
+        source_rows.add_to(&mut source_mass, digits);
 
-        if split_pairs {
-            let first_pair = lane * (quads_per_lane / 2);
-            for (pair_offset, pair) in lane_classes.chunks_exact(2).enumerate() {
-                let pair_index = first_pair + pair_offset;
-                let weight =
-                    layout.eq_low[pair_index & low_mask] * layout.eq_high[pair_index >> low_bits];
-                let (even, odd) = (usize::from(pair[0]), usize::from(pair[1]));
-                even_histogram[even] += weight;
-                odd_histogram[odd] += weight;
-                if !delta_histogram.is_empty() {
-                    let delta =
-                        layout.delta_code[odd] - layout.delta_code[even] + layout.delta_offset;
-                    delta_histogram[delta as usize] += weight;
-                }
+        for ((local_lane, lane_classes), lane_digits) in chunk_classes
+            .chunks_exact_mut(quads_per_lane)
+            .enumerate()
+            .zip(digits.chunks_exact(coeff_count))
+        {
+            let lane = chunk_first + local_lane;
+            for (class, &quad) in lane_classes.iter_mut().zip(lane_digits.as_chunks::<4>().0) {
+                *class = quad_class::<DIGIT_BITS>(quad);
             }
-        } else {
-            let pair_index = lane >> 1;
-            let side = if lane & 1 == 0 {
-                one_minus_tau2
+
+            if split_pairs {
+                let first_pair = lane * (quads_per_lane / 2);
+                for (pair_offset, pair) in lane_classes.chunks_exact(2).enumerate() {
+                    let pair_index = first_pair + pair_offset;
+                    let weight = layout.eq_low[pair_index & low_mask]
+                        * layout.eq_high[pair_index >> low_bits];
+                    let (even, odd) = (usize::from(pair[0]), usize::from(pair[1]));
+                    even_histogram[even] += weight;
+                    odd_histogram[odd] += weight;
+                    if !delta_histogram.is_empty() {
+                        let delta =
+                            layout.delta_code[odd] - layout.delta_code[even] + layout.delta_offset;
+                        delta_histogram[delta as usize] += weight;
+                    }
+                }
             } else {
-                layout.tau2
-            };
-            let weight = side
-                * layout.eq_low[pair_index & low_mask]
-                * layout.eq_high[pair_index >> low_bits];
-            even_histogram[usize::from(lane_classes[0])] += weight;
+                let pair_index = lane >> 1;
+                let side = if lane & 1 == 0 {
+                    one_minus_tau2
+                } else {
+                    layout.tau2
+                };
+                let weight = side
+                    * layout.eq_low[pair_index & low_mask]
+                    * layout.eq_high[pair_index >> low_bits];
+                even_histogram[usize::from(lane_classes[0])] += weight;
+            }
         }
     }
 
@@ -382,7 +375,10 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
         b: usize,
         live_lane_count: usize,
         coefficient_bits: usize,
-    ) -> Option<Self> {
+    ) -> Option<Self>
+    where
+        E: 'static,
+    {
         let digit_bits = match b {
             4 => 2,
             8 => 3,
@@ -447,7 +443,6 @@ impl<E: Field + Ring + Unreduced> CompactQuotientPrefix<E> {
             delta_code: &delta_code,
             delta_offset,
             delta_count: if serves_round2 { radix.pow(4) } else { 0 },
-            max_wide_adds: (i32::MAX as usize) / (usize::from(u16::MAX) * (b / 2)),
         };
 
         let task_lanes = live_lane_count
