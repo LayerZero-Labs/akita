@@ -250,10 +250,12 @@ fn run_test_value(seed: u64) -> u64 {
 /// Checks the cached, streamed, and (for Q128) base-plus-tail quotient routes
 /// against schoolbook products when zero columns split the lazy-dot runs.
 fn assert_fused_quotient_runs_match_schoolbook<F: Field + CanonicalEncoding, const D: usize>(
+    b_width: usize,
+    a_width: usize,
+    z_max_abs: u32,
     check_i16_tail: bool,
 ) {
-    let (n_b, n_a, b_width, a_width) = (3, 2, 23, 17);
-    let z_max_abs = 4_000u32;
+    let (n_b, n_a) = (3, 2);
     let total_len = (n_b * b_width).max(n_a * a_width);
     let flat_rows: Vec<CyclotomicRing<F, D>> = (0..total_len)
         .map(|idx| {
@@ -271,7 +273,9 @@ fn assert_fused_quotient_runs_match_schoolbook<F: Field + CanonicalEncoding, con
 
     let t_hat: Vec<[i8; D]> = (0..b_width)
         .map(|j| {
-            if j == 0 || j == 13 || j == 14 || j % 9 == 4 {
+            if (b_width > 100 && (j % 27 == 0 || j % 27 == 16))
+                || (b_width <= 100 && (j == 0 || j == 13 || j == 14 || j % 9 == 4))
+            {
                 [0; D]
             } else {
                 std::array::from_fn(|k| {
@@ -282,16 +286,49 @@ fn assert_fused_quotient_runs_match_schoolbook<F: Field + CanonicalEncoding, con
         .collect();
     let z_pre: Vec<[i32; D]> = (0..a_width)
         .map(|j| {
-            if j % 7 == 3 {
+            if (a_width > 100 && (j % 27 == 0 || j % 27 == 16)) || (a_width <= 100 && j % 7 == 3) {
                 [0; D]
             } else {
                 std::array::from_fn(|k| {
                     let raw = run_test_value((2 << 32) + (j * D + k) as u64);
-                    (raw % (2 * u64::from(z_max_abs) + 1)) as i32 - z_max_abs as i32
+                    (raw % 8_001) as i32 - 4_000
                 })
             }
         })
         .collect();
+
+    let (one_shot, t_chunk, z_chunk, tile_width, dot_batch) =
+        super::super::fused_quotients::fused_test_plan_route::<F, D>(
+            &t_hat, &z_pre, n_b, n_a, z_max_abs, 6,
+        );
+    assert!(one_shot, "fixture must use the production one-shot route");
+    assert!(t_chunk.is_some_and(|width| width >= b_width));
+    assert!(z_chunk.is_some_and(|width| width >= a_width));
+    if b_width > 100 {
+        assert!(
+            tile_width > dot_batch,
+            "fixture needs multi-column tile runs"
+        );
+        if dot_batch > 1 {
+            let mut lengths = Vec::new();
+            super::super::common::for_each_nonzero_column_run(
+                0..tile_width,
+                dot_batch,
+                |j| t_hat[j].iter().all(|&digit| digit == 0),
+                |run| lengths.push(run.len()),
+            );
+            assert!(
+                lengths.contains(&dot_batch),
+                "fixture needs a full dot batch"
+            );
+            assert!(
+                lengths.iter().any(|&len| len < dot_batch),
+                "fixture needs a partial dot batch"
+            );
+        }
+    } else {
+        assert_eq!(tile_width, 1, "small fixture exercises single-column tiles");
+    }
 
     let expected_b = (0..n_b)
         .map(|row| {
@@ -351,14 +388,89 @@ fn assert_fused_quotient_runs_match_schoolbook<F: Field + CanonicalEncoding, con
 
 #[test]
 fn fused_quotient_runs_match_schoolbook() {
-    assert_fused_quotient_runs_match_schoolbook::<Fp64<4294967197>, 64>(false);
-    assert_fused_quotient_runs_match_schoolbook::<Prime64Offset59, 64>(false);
-    assert_fused_quotient_runs_match_schoolbook::<Prime128Offset275, 32>(false);
-    assert_fused_quotient_runs_match_schoolbook::<Prime128Offset275, 64>(true);
+    assert_fused_quotient_runs_match_schoolbook::<Fp64<4294967197>, 64>(23, 17, 4_000, false);
+    assert_fused_quotient_runs_match_schoolbook::<Prime64Offset59, 64>(23, 17, 4_000, false);
+    assert_fused_quotient_runs_match_schoolbook::<Prime128Offset275, 32>(23, 17, 4_000, false);
+    assert_fused_quotient_runs_match_schoolbook::<Prime128Offset275, 64>(23, 17, 4_000, true);
 }
 
 #[test]
-fn fused_quotient_chunked_runs_match_schoolbook() {
+fn fused_quotient_multi_column_tiles_match_schoolbook() {
+    assert_fused_quotient_runs_match_schoolbook::<Prime64Offset59, 64>(257, 129, 4_000, false);
+}
+
+#[test]
+fn fused_reduced_profile_chunks_both_roles_at_zero_boundaries() {
+    use akita_algebra::ntt::tables::I16_TAIL_PRIME;
+    type F = Fp64<31>;
+    const D: usize = 32;
+    let (n_b, n_a, b_width, a_width) = (2, 2, 23, 17);
+    let params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+    let safe_width = params
+        .crt_capacity()
+        .max_safe_width::<F, D>(1)
+        .expect("single term fits");
+    assert!(safe_width > 1 && safe_width < a_width);
+    let flat: Vec<CyclotomicRing<F, D>> = (0..n_b * b_width)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                F::from_i64(((entry * 5 + k * 3) % 31) as i64)
+            }))
+        })
+        .collect();
+    let is_zero = |j: usize| j == safe_width || j == safe_width + 1 || j == 2 * safe_width;
+    let t_hat: Vec<[i8; D]> = (0..b_width)
+        .map(|j| {
+            if is_zero(j) {
+                [0; D]
+            } else {
+                std::array::from_fn(|k| if (j + k) % 3 == 0 { -1 } else { 0 })
+            }
+        })
+        .collect();
+    let z: Vec<[i32; D]> = (0..a_width)
+        .map(|j| {
+            if is_zero(j) {
+                [0; D]
+            } else {
+                std::array::from_fn(|k| if (j + k) % 3 == 0 { -1 } else { 1 })
+            }
+        })
+        .collect();
+    let expected_b: Vec<_> = (0..n_b)
+        .map(|row| {
+            (0..b_width).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
+                let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_i64(i64::from(t_hat[j][k]))
+                }));
+                acc += cyclic_product(&flat[row * b_width + j], &rhs);
+                acc
+            })
+        })
+        .collect();
+    let expected_a: Vec<_> = (0..n_a)
+        .map(|row| {
+            (0..a_width).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
+                let lhs = &flat[row * a_width + j];
+                let rhs = centered_i32_ring(&z[j]);
+                acc +=
+                    quotient_from_cyclic_and_negacyclic(&cyclic_product(lhs, &rhs), &(*lhs * rhs));
+                acc
+            })
+        })
+        .collect();
+    let (cached, streamed, t_chunk, z_chunk) =
+        super::super::fused_quotients::fused_test_reduced_profile(&flat, n_b, n_a, &t_hat, &z);
+    assert_eq!((t_chunk, z_chunk), (safe_width, safe_width));
+    assert!(t_chunk < b_width && z_chunk < a_width);
+    for actual in [cached, streamed] {
+        assert_eq!(actual.b_cyclic, expected_b);
+        assert_eq!(actual.a_quotients, expected_a);
+    }
+}
+
+#[test]
+fn fused_quotient_q128_wide_one_shot_runs_match_schoolbook() {
     type F = Prime128Offset275;
     const D: usize = 64;
     let (b_width, a_width) = (2_050, 20);
@@ -394,6 +506,14 @@ fn fused_quotient_chunked_runs_match_schoolbook() {
             }
         })
         .collect();
+
+    let (one_shot, t_chunk, z_chunk, _, _) = super::super::fused_quotients::fused_test_plan_route::<
+        F,
+        D,
+    >(&t_hat, &z_pre, 1, 1, 32_768, 6);
+    assert!(one_shot, "six-prime Q128 must use its one-shot route here");
+    assert!(t_chunk.is_some_and(|width| width >= b_width));
+    assert!(z_chunk.is_some_and(|width| width >= a_width));
 
     let digit = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let b_term = cyclic_product(&row, &digit);
