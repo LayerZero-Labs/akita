@@ -9,7 +9,6 @@ use akita_serialization::{
 };
 use jolt_field::{CanonicalEncoding, Field};
 
-use super::{checked_shape_len, checked_shape_sequence_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_max_quotient_for_cap, golomb_rice_zigzag_width,
@@ -18,6 +17,7 @@ use crate::golomb_rice::{
 use crate::layout::field_bytes;
 use crate::proof::RingVec;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
+use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::{CommittedGroupParams, TerminalFoldParams};
 
 /// Public segment geometry for a transparent terminal witness.

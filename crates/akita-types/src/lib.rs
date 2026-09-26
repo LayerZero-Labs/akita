@@ -42,6 +42,7 @@ pub mod trace_weight;
 mod transcript_grinding;
 #[path = "transcript_grinding/plan.rs"]
 mod transcript_grinding_plan;
+pub(crate) mod wire_limits;
 pub mod witness;
 
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
@@ -52,6 +53,9 @@ pub use compression::{
     COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
+pub use descriptor_bytes::{
+    digest_descriptor_bytes, DescriptorDigest, AKITA_INSTANCE_DESCRIPTOR_VERSION,
+};
 pub use extension_opening_reduction::{
     derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
     num_rounds_from_table_len, reduction_table_len, tensor_column_partials_from_base_evals,
@@ -71,9 +75,9 @@ pub use golomb_rice::{
     golomb_rice_values_within_cap, golomb_rice_zigzag_width,
 };
 pub use instance_descriptor::{
-    digest_descriptor_bytes, digest_effective_schedule, digest_serializable, setup_seed_digest,
-    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
-    SetupSection, TranscriptGrindingBinding,
+    digest_effective_schedule, digest_serializable, setup_seed_digest, AkitaInstanceDescriptor,
+    AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet, SetupSection,
+    TranscriptGrindingBinding,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, checked_opening_source_index,

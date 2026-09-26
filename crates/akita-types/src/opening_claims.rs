@@ -1,13 +1,10 @@
 //! Public opening claims and layout-only opening geometry.
 
-use crate::descriptor_bytes::push_usize;
-use crate::instance_descriptor::DescriptorDigest;
+use crate::descriptor_bytes::{blake2b_256, push_usize, DescriptorDigest};
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection};
 use akita_error::{checked, AkitaError};
-use blake2::digest::consts::U32;
-use blake2::{Blake2b, Digest};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 /// Per-group opening geometry.
@@ -569,14 +566,6 @@ where
         return Ok(vec![L::one()]);
     }
     grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
-}
-
-fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
-    type Blake2b256 = Blake2b<U32>;
-    let digest = Blake2b256::digest(bytes);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
 }
 
 #[cfg(test)]

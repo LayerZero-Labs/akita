@@ -1,5 +1,5 @@
 use super::*;
-use akita_serialization::Valid;
+use akita_serialization::{Valid, DEFAULT_MAX_SEQUENCE_LEN};
 use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;

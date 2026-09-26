@@ -1,4 +1,5 @@
 use super::*;
+use crate::wire_limits::{checked_shape_len, checked_shape_sequence_len};
 use crate::OpeningClaimsLayout;
 use akita_sumcheck::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 

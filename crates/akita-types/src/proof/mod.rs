@@ -126,7 +126,7 @@ pub use witness_emission::{emit_witness_e_planes, emit_witness_t_planes, Witness
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::uniform_sumcheck_shape;
@@ -134,31 +134,3 @@ use akita_sumcheck::uniform_sumcheck_shape;
 use jolt_field::CanonicalEncoding;
 use jolt_field::Field;
 use std::io::{Read, Write};
-
-pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
-
-pub(super) fn checked_shape_len(len: usize) -> Result<(), SerializationError> {
-    if len > DEFAULT_MAX_SEQUENCE_LEN {
-        return Err(SerializationError::LengthLimitExceeded {
-            len: u64::try_from(len).unwrap_or(u64::MAX),
-            max: DEFAULT_MAX_SEQUENCE_LEN,
-        });
-    }
-    Ok(())
-}
-
-pub(super) fn checked_shape_sequence_len(len: usize) -> Result<(), SerializationError> {
-    if len > MAX_PROOF_SHAPE_SEQUENCE_LEN {
-        return Err(SerializationError::LengthLimitExceeded {
-            len: u64::try_from(len).unwrap_or(u64::MAX),
-            max: MAX_PROOF_SHAPE_SEQUENCE_LEN,
-        });
-    }
-    Ok(())
-}
-
-pub(super) fn reserve_shape_len<T>(vec: &mut Vec<T>, len: usize) -> Result<(), SerializationError> {
-    checked_shape_len(len)?;
-    vec.try_reserve_exact(len)
-        .map_err(|_| SerializationError::InvalidData("shape-backed allocation failed".to_string()))
-}

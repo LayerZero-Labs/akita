@@ -498,7 +498,7 @@ where
             MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
         )?;
         let mut rows = Vec::new();
-        super::reserve_shape_len(&mut rows, row_count)?;
+        crate::wire_limits::reserve_shape_len(&mut rows, row_count)?;
         let mut total_coeffs = 0usize;
         for _ in 0..row_count {
             let coeff_count = read_limited_usize(
