@@ -2,13 +2,12 @@ use super::*;
 use akita_types::{
     CommitmentSliceGeometry, RelationQuotientLayout, RelationRangeImageGroupPlan,
     RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationMode, WitnessLayout,
-    WitnessUnitLayout,
 };
 
 pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {
     pub(super) plan: RelationWeightCompilationPlan<E>,
     pub(super) setup_sources: Option<RelationWeightSetupSources<'a, F>>,
-    pub(super) group_sources: Vec<RelationWeightGroupSources<'a, F>>,
+    group_sources: Vec<RelationWeightGroupSources<'a, F>>,
     pub(super) witness_layout: WitnessLayout,
     pub(super) relation_geometry: RelationWitnessGeometry,
     pub(super) row_families: Vec<RelationRowFamily>,
@@ -18,7 +17,7 @@ pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {
 }
 
 pub(super) struct RelationWeightGroupSources<'a, F: Field> {
-    pub(super) group_index: usize,
+    group_index: usize,
     pub(super) challenges: &'a akita_challenges::Challenges,
     pub(super) opening: OpeningFamily<&'a RingMultiplierOpeningPoint<F>, ()>,
 }
@@ -216,7 +215,7 @@ where
 pub(super) struct RelationWeightCompilationPlan<E> {
     pub(super) groups: Vec<RelationWeightGroupPlan<E>>,
     pub(super) d_row_weights: Vec<(usize, Vec<E>)>,
-    pub(super) d_column_count: usize,
+    d_column_count: usize,
 }
 
 pub(super) struct RelationWeightGroupPlan<E> {
@@ -278,7 +277,7 @@ struct RelationWeightCompilationInputs<'a, E> {
 }
 
 impl<E: Field> RelationWeightCompilationPlan<E> {
-    pub(super) fn new<F>(
+    fn new<F>(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
         relation_plan: &RelationRangeImagePlan,
@@ -521,7 +520,7 @@ pub(super) struct RelationWeightGroupSetupSources<'a, F: Field> {
 }
 
 impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
-    pub(super) fn new<E: Field>(
+    fn new<E: Field>(
         setup: &'a AkitaExpandedSetup<F>,
         lp: &CommittedGroupParams,
         compilation: &RelationWeightCompilationPlan<E>,
@@ -583,386 +582,4 @@ impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
             .find(|group| group.group_index == group_index)
             .ok_or(AkitaError::InvalidProof)
     }
-}
-
-pub(super) trait EtWeightSink<E> {
-    fn add_e(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError>;
-
-    fn add_t(
-        &mut self,
-        physical_start: usize,
-        challenge_index: usize,
-        role_subcolumn: usize,
-        slice_index: usize,
-        setup_column: usize,
-        constraint_scale: E,
-    ) -> Result<(), AkitaError>;
-}
-
-pub(super) trait ZWeightSink<E> {
-    fn add_z(
-        &mut self,
-        physical_start: usize,
-        position: usize,
-        setup_column: usize,
-        constraint_scale: E,
-        setup_scale: E,
-    ) -> Result<(), AkitaError>;
-}
-
-/// Consecutive blocks of one witness unit under one claim.
-pub(super) struct EtBlockRange<'a> {
-    unit: &'a WitnessUnitLayout,
-    claim: usize,
-    blocks: Range<usize>,
-}
-
-/// One E/T scatter task: a block range with its E and T windows.
-pub(super) type EtScatterTask<'l, 'w, E> = (EtBlockRange<'l>, LaneWindow<'w, E>, LaneWindow<'w, E>);
-
-/// Consecutive positions of one witness unit.
-pub(super) struct ZPositionRange<'a> {
-    unit: &'a WitnessUnitLayout,
-    positions: Range<usize>,
-}
-
-impl<E: Field> RelationWeightGroupPlan<E> {
-    /// Every `(claim, block)` of this group, in ranges of at most
-    /// `max_blocks` blocks that share an owning unit.
-    fn et_block_ranges<'a>(
-        &self,
-        witness_layout: &'a WitnessLayout,
-        max_blocks: usize,
-    ) -> Result<Vec<EtBlockRange<'a>>, AkitaError> {
-        if max_blocks == 0 || self.rows.a_row_weights.len() != self.witness.n_a {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut ranges: Vec<EtBlockRange<'a>> = Vec::new();
-        for claim in 0..self.witness.num_claims {
-            for block in 0..self.witness.num_live_blocks {
-                let unit = witness_layout.unit_for_block(self.group_index, block)?;
-                match ranges.last_mut() {
-                    Some(range)
-                        if range.claim == claim
-                            && std::ptr::eq(range.unit, unit)
-                            && range.blocks.len() < max_blocks =>
-                    {
-                        range.blocks.end = block + 1;
-                    }
-                    _ => ranges.push(EtBlockRange {
-                        unit,
-                        claim,
-                        blocks: block..block + 1,
-                    }),
-                }
-            }
-        }
-        Ok(ranges)
-    }
-
-    /// Every position of every unit of this group, in ranges of at most
-    /// `max_positions` positions.
-    fn z_position_ranges<'a>(
-        &self,
-        witness_layout: &'a WitnessLayout,
-        max_positions: usize,
-    ) -> Result<Vec<ZPositionRange<'a>>, AkitaError> {
-        if max_positions == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        let mut ranges = Vec::new();
-        for unit in witness_layout.units_for_group(self.group_index)? {
-            let mut start = 0;
-            while start < self.witness.num_positions {
-                let end = start
-                    .saturating_add(max_positions)
-                    .min(self.witness.num_positions);
-                ranges.push(ZPositionRange {
-                    unit,
-                    positions: start..end,
-                });
-                start = end;
-            }
-        }
-        Ok(ranges)
-    }
-
-    /// Physical E and T coefficients from the first to the last address of
-    /// `range`.
-    ///
-    /// Sinks reject any address outside these extents.
-    fn et_extents(&self, range: &EtBlockRange<'_>) -> Result<[Range<usize>; 2], AkitaError> {
-        let last_block = range.blocks.end.checked_sub(1);
-        let e = match (
-            last_block,
-            self.roles.d_subcolumns.checked_sub(1),
-            self.witness.depth_open.checked_sub(1),
-        ) {
-            (Some(last_block), Some(last_subcolumn), Some(last_digit)) => {
-                let e_index = |block, subcolumn, digit| {
-                    range.unit.e_coefficient_index(
-                        self.roles.d_d,
-                        self.witness.num_claims,
-                        self.witness.depth_open,
-                        range.claim,
-                        block,
-                        subcolumn,
-                        digit,
-                        0,
-                    )
-                };
-                address_extent(
-                    e_index(range.blocks.start, 0, 0)?,
-                    e_index(last_block, last_subcolumn, last_digit)?,
-                    self.roles.d_d,
-                )?
-            }
-            _ => 0..0,
-        };
-        let t = match (
-            last_block,
-            self.witness.n_a.checked_sub(1),
-            self.roles.b_subcolumns.checked_sub(1),
-            self.witness.depth_commit.checked_sub(1),
-        ) {
-            (Some(last_block), Some(last_row), Some(last_subcolumn), Some(last_digit)) => {
-                let t_index = |block, a_row, subcolumn, digit| {
-                    range.unit.t_coefficient_index(
-                        self.roles.d_a,
-                        self.roles.d_b,
-                        self.witness.num_claims,
-                        self.witness.n_a,
-                        self.witness.depth_commit,
-                        range.claim,
-                        block,
-                        a_row,
-                        subcolumn,
-                        digit,
-                        0,
-                    )
-                };
-                address_extent(
-                    t_index(range.blocks.start, 0, 0, 0)?,
-                    t_index(last_block, last_row, last_subcolumn, last_digit)?,
-                    self.roles.d_b,
-                )?
-            }
-            _ => 0..0,
-        };
-        Ok([e, t])
-    }
-
-    /// Physical Z coefficients from the first to the last address of `range`.
-    ///
-    /// Sinks reject any address outside this extent.
-    fn z_extent(&self, range: &ZPositionRange<'_>) -> Result<Range<usize>, AkitaError> {
-        match (
-            range.positions.end.checked_sub(1),
-            self.witness.depth_witness.checked_sub(1),
-            self.witness.depth_fold.checked_sub(1),
-        ) {
-            (Some(last_position), Some(last_witness_digit), Some(last_fold_digit)) => {
-                let z_index = |position, witness_digit, fold_digit| {
-                    range.unit.z_coefficient_index(
-                        self.roles.d_a,
-                        self.witness.num_positions,
-                        self.witness.depth_witness,
-                        self.witness.depth_fold,
-                        position,
-                        witness_digit,
-                        fold_digit,
-                        0,
-                    )
-                };
-                address_extent(
-                    z_index(range.positions.start, 0, 0)?,
-                    z_index(last_position, last_witness_digit, last_fold_digit)?,
-                    self.roles.d_a,
-                )
-            }
-            _ => Ok(0..0),
-        }
-    }
-
-    /// E/T scatter tasks over `lanes`, a table of `lane_len`-coefficient
-    /// lanes: every range of `ET_BLOCKS_PER_TASK` blocks with the windows over
-    /// its E and T extents.
-    pub(super) fn et_scatter_tasks<'l, 'w>(
-        &self,
-        witness_layout: &'l WitnessLayout,
-        lanes: &'w mut [E],
-        lane_len: usize,
-    ) -> Result<Vec<EtScatterTask<'l, 'w, E>>, AkitaError> {
-        let ranges = self.et_block_ranges(witness_layout, ET_BLOCKS_PER_TASK)?;
-        let extents = ranges
-            .iter()
-            .map(|range| self.et_extents(range))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut windows = lane_windows_mut(lanes, extents.as_flattened(), lane_len)?.into_iter();
-        ranges
-            .into_iter()
-            .map(|range| match (windows.next(), windows.next()) {
-                (Some(e), Some(t)) => Ok((range, e, t)),
-                _ => Err(AkitaError::InvalidProof),
-            })
-            .collect()
-    }
-
-    /// Z scatter tasks over `lanes`, a table of `lane_len`-coefficient lanes:
-    /// every range of `Z_POSITIONS_PER_TASK` positions with the window over
-    /// its Z extent.
-    pub(super) fn z_scatter_tasks<'l, 'w>(
-        &self,
-        witness_layout: &'l WitnessLayout,
-        lanes: &'w mut [E],
-        lane_len: usize,
-    ) -> Result<Vec<(ZPositionRange<'l>, LaneWindow<'w, E>)>, AkitaError> {
-        let ranges = self.z_position_ranges(witness_layout, Z_POSITIONS_PER_TASK)?;
-        let extents = ranges
-            .iter()
-            .map(|range| self.z_extent(range))
-            .collect::<Result<Vec<_>, _>>()?;
-        let windows = lane_windows_mut(lanes, &extents, lane_len)?;
-        Ok(ranges.into_iter().zip(windows).collect())
-    }
-}
-
-/// Coefficients from `first` through the `width` coefficients at `last`.
-fn address_extent(first: usize, last: usize, width: usize) -> Result<Range<usize>, AkitaError> {
-    last.checked_add(width)
-        .filter(|_| first <= last)
-        .map(|end| first..end)
-        .ok_or(AkitaError::InvalidProof)
-}
-
-pub(super) fn compile_et_block_range<E: Field>(
-    plan: &RelationWeightGroupPlan<E>,
-    range: &EtBlockRange<'_>,
-    sink: &mut impl EtWeightSink<E>,
-) -> Result<(), AkitaError> {
-    let (unit, claim) = (range.unit, range.claim);
-    for block in range.blocks.clone() {
-        let challenge_index = claim
-            .checked_mul(plan.witness.num_live_blocks)
-            .and_then(|base| base.checked_add(block))
-            .ok_or(AkitaError::InvalidProof)?;
-        let (slice_index, slice_block) = plan.witness.slice_geometry.block_coordinates(block)?;
-        for (digit, &gadget) in plan.gadgets.opening_gadget.iter().enumerate() {
-            let constraint_scale = plan.rows.consistency_weight * gadget;
-            for role_subcolumn in 0..plan.roles.d_subcolumns {
-                let physical_start = unit.e_coefficient_index(
-                    plan.roles.d_d,
-                    plan.witness.num_claims,
-                    plan.witness.depth_open,
-                    claim,
-                    block,
-                    role_subcolumn,
-                    digit,
-                    0,
-                )?;
-                let setup_column = challenge_index
-                    .checked_mul(plan.roles.d_subcolumns)
-                    .and_then(|base| base.checked_add(role_subcolumn))
-                    .and_then(|base| base.checked_mul(plan.witness.depth_open))
-                    .and_then(|base| base.checked_add(digit))
-                    .ok_or(AkitaError::InvalidProof)?;
-                sink.add_e(
-                    physical_start,
-                    challenge_index,
-                    role_subcolumn,
-                    setup_column,
-                    constraint_scale,
-                )?;
-            }
-        }
-        let block_claim = plan
-            .witness
-            .slice_geometry
-            .max_blocks_per_slice()
-            .checked_mul(claim)
-            .and_then(|base| base.checked_add(slice_block))
-            .ok_or(AkitaError::InvalidProof)?;
-        for (a_row, &a_row_weight) in plan.rows.a_row_weights.iter().enumerate() {
-            let row_block_claim = plan
-                .witness
-                .n_a
-                .checked_mul(block_claim)
-                .and_then(|base| base.checked_add(a_row))
-                .ok_or(AkitaError::InvalidProof)?;
-            for (digit, &gadget) in plan.gadgets.commitment_gadget.iter().enumerate() {
-                let constraint_scale = a_row_weight * gadget;
-                for role_subcolumn in 0..plan.roles.b_subcolumns {
-                    let setup_column = row_block_claim
-                        .checked_mul(plan.roles.b_subcolumns)
-                        .and_then(|base| base.checked_add(role_subcolumn))
-                        .and_then(|base| base.checked_mul(plan.witness.depth_commit))
-                        .and_then(|base| base.checked_add(digit))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let physical_start = unit.t_coefficient_index(
-                        plan.roles.d_a,
-                        plan.roles.d_b,
-                        plan.witness.num_claims,
-                        plan.witness.n_a,
-                        plan.witness.depth_commit,
-                        claim,
-                        block,
-                        a_row,
-                        role_subcolumn,
-                        digit,
-                        0,
-                    )?;
-                    sink.add_t(
-                        physical_start,
-                        challenge_index,
-                        role_subcolumn,
-                        slice_index,
-                        setup_column,
-                        constraint_scale,
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn compile_z_position_range<E: Field>(
-    plan: &RelationWeightGroupPlan<E>,
-    range: &ZPositionRange<'_>,
-    sink: &mut impl ZWeightSink<E>,
-) -> Result<(), AkitaError> {
-    for position in range.positions.clone() {
-        for (witness_digit, &witness_scale) in plan.gadgets.witness_gadget.iter().enumerate() {
-            let setup_column = position
-                .checked_mul(plan.witness.depth_witness)
-                .and_then(|base| base.checked_add(witness_digit))
-                .ok_or(AkitaError::InvalidProof)?;
-            for (fold_digit, &fold_scale) in plan.gadgets.fold_gadget.iter().enumerate() {
-                sink.add_z(
-                    range.unit.z_coefficient_index(
-                        plan.roles.d_a,
-                        plan.witness.num_positions,
-                        plan.witness.depth_witness,
-                        plan.witness.depth_fold,
-                        position,
-                        witness_digit,
-                        fold_digit,
-                        0,
-                    )?,
-                    position,
-                    setup_column,
-                    -(plan.rows.consistency_weight * witness_scale * fold_scale),
-                    -fold_scale,
-                )?;
-            }
-        }
-    }
-    Ok(())
 }

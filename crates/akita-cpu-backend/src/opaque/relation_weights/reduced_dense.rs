@@ -331,17 +331,23 @@ where
         {
             let _span = tracing::info_span!("reduced_et_scatter").entered();
             let tasks = group_plan.et_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
-            cfg_into_iter!(tasks).try_for_each(|(range, e_weights, t_weights)| {
-                let mut sink = ReducedEtSink {
-                    e_weights,
-                    t_weights,
-                    plan: group_plan,
-                    challenge_kernels: &challenge_kernels,
-                    d_setup_kernels: &d_setup_kernels,
-                    b_setup_kernels: &b_setup_kernels,
-                };
-                compile_et_block_range(group_plan, &range, &mut sink)
-            })?;
+            cfg_into_iter!(tasks).try_for_each(
+                |schedule::EtScatterTask {
+                     range,
+                     e: e_weights,
+                     t: t_weights,
+                 }| {
+                    let mut sink = ReducedEtSink {
+                        e_weights,
+                        t_weights,
+                        plan: group_plan,
+                        challenge_kernels: &challenge_kernels,
+                        d_setup_kernels: &d_setup_kernels,
+                        b_setup_kernels: &b_setup_kernels,
+                    };
+                    compile_et_block_range(group_plan, &range, &mut sink)
+                },
+            )?;
         }
         drop(challenge_kernels);
         drop(d_setup_kernels);
@@ -368,14 +374,16 @@ where
         {
             let _span = tracing::info_span!("reduced_z_scatter").entered();
             let tasks = group_plan.z_scatter_tasks(&compilation.witness_layout, &mut dense, 1)?;
-            cfg_into_iter!(tasks).try_for_each(|(range, weights)| {
-                let mut sink = ReducedZSink {
-                    weights,
-                    opening_kernels: &opening_kernels,
-                    a_setup_kernels: &a_setup_kernels,
-                };
-                compile_z_position_range(group_plan, &range, &mut sink)
-            })?;
+            cfg_into_iter!(tasks).try_for_each(
+                |schedule::ZScatterTask { range, z: weights }| {
+                    let mut sink = ReducedZSink {
+                        weights,
+                        opening_kernels: &opening_kernels,
+                        a_setup_kernels: &a_setup_kernels,
+                    };
+                    compile_z_position_range(group_plan, &range, &mut sink)
+                },
+            )?;
         }
     }
 
