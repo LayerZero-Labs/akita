@@ -66,11 +66,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let converter = CenteredI16NttConverter::new(params, rhs);
         let mut accumulators = vec![Self::zero(); num_rows];
         if !params.uses_lazy_i32_dot() {
+            let mut transformed = Self::zero();
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = converter.transform(digits);
+                converter.transform_into(digits, &mut transformed);
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
@@ -83,46 +84,74 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
 
         const BATCH: usize = I32_LAZY_DOT_BATCH;
-        let mut transformed = Vec::with_capacity(BATCH);
+        let mut transformed = vec![Self::zero(); BATCH.min(num_cols)];
         for batch_start in (0..num_cols).step_by(BATCH) {
             let batch_end = (batch_start + BATCH).min(num_cols);
-            transformed.clear();
-            for digits in &rhs[batch_start..batch_end] {
+            let width = batch_end - batch_start;
+            let mut dense = 0;
+            for (digits, slot) in rhs[batch_start..batch_end].iter().zip(&mut transformed) {
                 if digits.iter().all(|&digit| digit == 0) {
                     break;
                 }
-                let transformed_rhs = converter.transform(digits);
-                transformed.push(transformed_rhs);
+                converter.transform_into(digits, slot);
+                dense += 1;
             }
 
-            if transformed.len() == batch_end - batch_start {
+            if dense == width {
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     accumulator.add_assign_pointwise_dot(
                         &row[batch_start..batch_end],
-                        &transformed,
+                        &transformed[..width],
                         params,
                     );
                 }
                 continue;
             }
             // Preserve the zero-ring fast path when a batch is not fully dense.
+            let scratch = &mut transformed[0];
             for (offset, digits) in rhs[batch_start..batch_end].iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = converter.transform(digits);
+                converter.transform_into(digits, scratch);
                 let column = batch_start + offset;
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
                         AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
                     })?;
-                    accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
+                    accumulator.add_assign_pointwise_mul(matrix_entry, scratch, params);
                 }
             }
         }
         Ok(accumulators)
+    }
+
+    /// Hint the CPU to load every cache line of `self` into L1.
+    ///
+    /// Batched kernels that read prepared matrix entries only after a burst
+    /// of transform work call this before that work, so the loads overlap it.
+    /// The hint has no architectural effect. It is emitted only on x86: Apple
+    /// cores already prefetch these streams, and explicit `prfm` hints
+    /// measured slower there.
+    #[inline(always)]
+    pub fn prefetch(&self) {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::{_mm_prefetch, _MM_HINT_T0};
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            const LINE: usize = 64;
+
+            let base = self.limbs.as_ptr().cast::<i8>();
+            for offset in (0..size_of::<Self>()).step_by(LINE) {
+                // SAFETY: `offset` stays inside `self`, and a prefetch hint
+                // never faults or writes memory.
+                unsafe { _mm_prefetch::<_MM_HINT_T0>(base.add(offset)) };
+            }
+        }
     }
 
     /// Accumulate a short pointwise dot product in CRT+NTT domain.
@@ -321,7 +350,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
         for k in 0..K {
             for (dst, digit) in scratch.iter_mut().zip(digits) {
-                lut.fill_negacyclic_limb(k, digit, params, dst);
+                lut.fill_ntt_limb::<false, D>(k, digit, params, dst);
             }
             let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                 digits
@@ -392,7 +421,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
             for (k, scratch_limb) in scratch.iter_mut().enumerate() {
-                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
+                lut.fill_ntt_limb::<false, D>(k, digits, params, scratch_limb);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {

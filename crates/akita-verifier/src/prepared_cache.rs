@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use akita_error::AkitaError;
 use akita_types::{
     build_riscv64_scalar_q128_cache_artifact, decode_riscv64_scalar_q128_cache, dispatch_for_field,
-    prepare_ntt_cache, setup_seed_digest, AkitaVerifierSetup, FoldSchedule, NttCacheMode,
+    prepare_joined_exact_ntt_cache, setup_seed_digest, AkitaVerifierSetup, FoldSchedule,
     PreparedNttCache, PreparedVerifierNttCacheBinding, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalEncoding, Field};
@@ -108,12 +108,10 @@ impl TerminalNttCache {
                         .expanded()
                         .shared_matrix()
                         .ring_view::<D>(1, requirement.prefix_len)?;
-                    let prepared = prepare_ntt_cache(
+                    let prepared = prepare_joined_exact_ntt_cache(
                         matrix,
-                        NttCacheMode::ExactNegacyclic {
-                            width: requirement.width,
-                            rhs_abs_bound: TERMINAL_I16_ABS_BOUND,
-                        },
+                        requirement.width,
+                        TERMINAL_I16_ABS_BOUND,
                     )?;
                     Ok::<_, AkitaError>(TerminalNttEntry {
                         requirement,
