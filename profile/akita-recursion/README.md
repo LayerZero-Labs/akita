@@ -1,8 +1,8 @@
 # `akita-recursion` — Akita verifier inside Jolt
 
 Runs the Akita PCS verifier inside a Jolt zkVM guest program and reports
-per-phase cycle counts (`deserialize_input`, `install_terminal_cache`,
-`transcript_init`, `akita_verify`). End-to-end this also produces a SNARK of the verifier
+per-phase cycle counts (`deserialize_input`, `prepare_verifier`,
+`akita_verify`). End-to-end this also produces a SNARK of the verifier
 execution and confirms Jolt accepts it.
 
 This directory is a **standalone Cargo sub-workspace** (it's excluded
@@ -73,8 +73,7 @@ Expected output shape (rerun `--trace-only` for current recursive numbers):
 
 ```
 "deserialize_input": … (dominated by expanded verifier-setup decode)
-"install_terminal_cache": …
-"transcript_init":   …
+"prepare_verifier":  …
 "akita_verify":      …
 trace length: …
 trace done
@@ -169,17 +168,15 @@ overrides for those values.
    through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) declares one function
    per case. Its private `integration` module validates the external catalog,
-   decodes the inner blob, installs any
-   program-bound cache, constructs the statement and transcript, invokes
-   `akita_verifier::batched_verify`, and maps the result to the documented
-   status code. No schedule row or artifact payload is compiled into the guest.
-   The integration calls the verifier directly,
-   bypassing `AkitaCommitmentScheme::batched_verify`, which would otherwise
-   call `Instant::now()` (the Jolt runtime doesn't implement
-   `clock_gettime`, and the guest aborts there). Four
-   `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
-   input decoding, prepared cache installation, transcript initialization,
-   and the verifier kernel.
+   decodes the inner blob, builds an `AkitaVerifier` for the selected row with
+   `AkitaVerifier::for_selection` (installing any program-bound cache),
+   constructs the statement, invokes `AkitaVerifier::batched_verify`, and maps
+   the result to the documented status code. No schedule row or artifact
+   payload is compiled into the guest. The integration uses `akita-verifier`
+   directly rather than `akita-pcs`, so the guest links no prover code and
+   reads no clock (the Jolt runtime doesn't implement `clock_gettime`). Three
+   `start_cycle_tracking` / `end_cycle_tracking` pairs wrap input decoding,
+   verifier preparation, and statement construction plus verification.
    The guest constructs an unbound verifier transcript and the verifier binds
    the canonical instance descriptor; it must not use a prover-side placeholder
    transcript, because Spongefish prover state may ask for entropy that the Jolt
@@ -231,8 +228,8 @@ word width, exercise both load paths, and include the largest canonical value.
 ## Prepared terminal cache
 
 The canonical verifier setup stores field coefficients. It does not serialize
-an architecture-specific NTT representation. Native applications can keep the
-existing in-memory cache warm across calls.
+an architecture-specific NTT representation. A native `AkitaVerifier` prepares
+its terminal matrices once at construction and reuses them for every proof.
 
 The Jolt guest cannot preserve memory between separate program executions. The
 host therefore derives one target cache before compiling the guest. The cache
@@ -249,18 +246,20 @@ The fixed header binds all of the following values:
 The build script includes the complete cache file in the guest ELF. Jolt's
 program identity therefore commits to its bytes. The guest checks the header,
 the exact payload length, every residue range, and the setup and schedule
-identities before installing it. A mismatch returns status code `1`.
+identities, and that the geometry matches the selected row, before installing
+it. A mismatch returns status code `1`.
 
-The public installation API is named
-`install_trusted_prepared_verifier_ntt_cache` because the header cannot prove
-that the transformed payload came from the named setup seed. The recursion
+`AkitaVerifier::for_selection` documents the supplied cache as trusted because
+the header cannot prove that the transformed payload came from the named setup
+seed. The recursion
 host establishes that provenance by deriving the cache from a strictly decoded
 setup and verifying the proof through the decoded cache before it starts Jolt.
 Code that loads an external cache must provide an equivalent trusted setup
 installation boundary.
 
 If no prepared cache path is present at build time, the generated static value
-is `None`. The guest then uses the ordinary portable warming path. This keeps
+is `None`. `AkitaVerifier::for_selection` then prepares the terminal matrix from
+the decoded setup. This keeps
 plain guest builds functional and lets other architectures use their own
 derived representation later.
 

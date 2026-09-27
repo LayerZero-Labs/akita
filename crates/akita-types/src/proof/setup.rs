@@ -137,24 +137,13 @@ pub struct AkitaExpandedSetup<F: Field> {
 ///     setup.prefix_slots = other.prefix_slots;
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaVerifierSetup<F: Field> {
     /// Expanded matrix stage used for verification.
     expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     prefix_slots: SetupPrefixVerifierRegistry<F>,
-    /// Locally derived, negacyclic-only matrix prefixes for direct verifier checks.
-    /// This performance cache is neither serialized nor part of setup identity.
-    verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
 }
-
-impl<F: Field> PartialEq for AkitaVerifierSetup<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
-    }
-}
-
-impl<F: Field> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: Field> AkitaVerifierSetup<F> {
     /// Borrow the immutable expanded matrix stage.
@@ -185,79 +174,7 @@ impl<F: Field> AkitaVerifierSetup<F> {
         Ok(Self {
             expanded,
             prefix_slots,
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         })
-    }
-
-    /// In-memory byte footprint of verifier NTT prefixes materialized so far.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the cache lock was poisoned.
-    pub fn verifier_ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
-        self.verifier_ntt.cache_bytes()
-    }
-}
-
-impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
-    /// Install a prepared scalar Q128 cache whose bytes have trusted provenance.
-    ///
-    /// The artifact format checks its setup and schedule identities, target
-    /// representation, geometry, lengths, and residue ranges. It cannot prove
-    /// that the transformed payload was derived from the named setup seed.
-    /// Callers must bind the bytes to trusted setup provisioning or to the
-    /// verifier program identity before calling this method.
-    pub fn install_trusted_prepared_verifier_ntt_cache(
-        &self,
-        artifact: &[u8],
-        schedule_row_digest: crate::ScheduleRowDigest,
-    ) -> Result<(), AkitaError> {
-        let metadata = crate::prepared_verifier_ntt_cache_metadata(artifact)?;
-        let setup_seed_digest = crate::setup_seed_digest(&self.expanded.descriptor.setup_seed)
-            .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
-        let expected_binding = crate::PreparedVerifierNttCacheBinding {
-            setup_seed_digest,
-            schedule_row_digest,
-            setup_field_elements: self.expanded.descriptor.num_field_elements,
-        };
-        crate::dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            metadata.ring_dimension,
-            |D| {
-                let (decoded_metadata, prepared) =
-                    crate::ntt_cache::decode_riscv64_scalar_q128_cache::<F, D>(
-                        artifact,
-                        expected_binding,
-                    )?;
-                self.verifier_ntt
-                    .install_trusted(decoded_metadata, prepared)
-            }
-        )
-    }
-
-    /// Return an exact or covering negacyclic prefix, preparing it on demand.
-    pub fn prepared_verifier_ntt_prefix<const D: usize>(
-        &self,
-        num_ring_elements: usize,
-        tail_num_ring_elements: usize,
-        width: usize,
-        rhs_abs_bound: u64,
-    ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
-        let key = crate::NttCacheKey {
-            ring_d: D,
-            num_ring_elements,
-            domain: crate::NttTransformDomain::Negacyclic,
-        };
-        self.verifier_ntt.prepare::<F, D>(
-            &self.expanded,
-            key,
-            tail_num_ring_elements,
-            crate::NttCacheMode::ExactNegacyclic {
-                width,
-                rhs_abs_bound,
-            },
-        )
     }
 }
 
@@ -840,7 +757,6 @@ mod tests {
                 ),
             ),
             prefix_slots,
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -904,7 +820,6 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -929,7 +844,6 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(setup_seed),
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();

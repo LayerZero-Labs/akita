@@ -77,24 +77,31 @@ fn native_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .expect("prove");
 
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"hardening/proptest/native",
-            verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules()),
-            basis_mode,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"hardening/proptest/native",
+                verify_input::<DenseCfg>(
+                    &opening_point,
+                    &openings,
+                    &commitment,
+                    scheme.schedules(),
+                ),
+                basis_mode,
+            )
+        })
         .expect("verify");
     let mut trailing = proof.clone();
     trailing.push(0);
     assert!(scheme
-        .batched_verify(
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| verifier.batched_verify(
             &trailing,
-            &verifier_setup,
             b"hardening/proptest/native",
             verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules(),),
-            basis_mode,
-        )
+            basis_mode
+        ))
         .is_err());
 }
 

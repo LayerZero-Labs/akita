@@ -106,8 +106,9 @@ pub use native_stage3::{
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
-    centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_ifma52,
-    ntt_cache_requires_exactness_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
+    centered_quotient_requires_i16_tail_for_field, decode_riscv64_scalar_q128_cache,
+    dense_i8_commit_prefers_exact_ifma52, ntt_cache_requires_exactness_tail,
+    prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
     prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
     select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
     NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
