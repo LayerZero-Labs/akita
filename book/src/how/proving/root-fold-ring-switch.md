@@ -369,8 +369,11 @@ quotient checked by the verifier.
   witness and proof state.
 - `crates/akita-cpu-backend/src/opaque/witness_build/coefficient_packing.rs` forms packed
   partials and the packing quotient.
-- `crates/akita-types/src/layout/subring_packing_geometry.rs` defines and
-  validates the packing geometry.
+- `crates/akita-cpu-backend/src/arithmetic/coefficient_packing_fold.rs` holds
+  the packing map, the direct partial and scalar-opening formulas, and the
+  subring-challenge fold products.
+- `crates/akita-types/src/layout/subring_packing_geometry.rs` defines and validates
+  the packing geometry.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs` validates the
   packing groups and expands the prover's Stage-2 packing relation.
 - `crates/akita-verifier/src/coefficient_packing_relation/` builds the

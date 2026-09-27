@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
 use akita_types::{BasisMode, FpExtEncoding};
-use akita_verifier::batched_verify;
+use akita_verifier::AkitaVerifier;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
 
@@ -77,20 +77,17 @@ where
     };
     end_cycle_tracking("deserialize_input");
 
-    if let Some(cache) = PROGRAM_BOUND_VERIFIER_CACHE {
-        start_cycle_tracking("install_terminal_cache");
-        let installed = decoded
-            .verifier_setup
-            .install_trusted_prepared_verifier_ntt_cache(
-                cache,
-                decoded.schedule_selection.row_digest,
-            )
-            .is_ok();
-        end_cycle_tracking("install_terminal_cache");
-        if !installed {
-            return GuestStatus::InputRejected.code();
-        }
-    }
+    start_cycle_tracking("prepare_verifier");
+    let verifier = AkitaVerifier::for_selection(
+        decoded.verifier_setup.clone(),
+        schedules,
+        decoded.schedule_selection,
+        PROGRAM_BOUND_VERIFIER_CACHE,
+    );
+    end_cycle_tracking("prepare_verifier");
+    let Ok(verifier) = verifier else {
+        return GuestStatus::InputRejected.code();
+    };
 
     start_cycle_tracking("akita_verify");
     let statement = match decoded.verifier_statement() {
@@ -100,10 +97,8 @@ where
             return GuestStatus::InputRejected.code();
         }
     };
-    let result = batched_verify::<Cfg>(
+    let result = verifier.batched_verify(
         &decoded.proof,
-        &decoded.verifier_setup,
-        &schedules,
         &decoded.transcript_domain,
         statement,
         BasisMode::Lagrange,

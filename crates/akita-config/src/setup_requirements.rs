@@ -3,8 +3,7 @@
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
-    setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey, FoldSchedule, SetupMatrixCapacity,
-    SetupPrefixSlotId,
+    setup_matrix_capacity_for_schedule, FoldSchedule, SetupMatrixCapacity, SetupPrefixSlotId,
 };
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
@@ -130,21 +129,16 @@ impl<F> SetupRequirements<F> {
                     )?);
                 }
             }
-
-            let key = AkitaScheduleLookupKey {
-                final_group: row.profiles().final_group.group,
-                precommitteds: row.profiles().precommitteds.clone(),
-            };
-            if key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-                scan.observe_schedule(row.schedule())?;
-                if Cfg::recursive_setup_planning() {
-                    prefix_slot_ids.extend(
-                        crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
-                            row.schedule(),
-                            &key.opening_layout()?,
-                        )?,
-                    );
-                }
+        }
+        for row in catalog.rows_within_setup_capacity(max_num_vars, max_num_batched_polys)? {
+            scan.observe_schedule(row.schedule())?;
+            if Cfg::recursive_setup_planning() {
+                prefix_slot_ids.extend(
+                    crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
+                        row.schedule(),
+                        &row.profiles().opening_layout()?,
+                    )?,
+                );
             }
         }
         Ok(Self {

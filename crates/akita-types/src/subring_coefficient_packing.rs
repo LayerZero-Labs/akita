@@ -1,4 +1,4 @@
-//! Subring coefficient packing opening points and partial folds.
+//! Subring coefficient packing opening points.
 //!
 //! The checked packing geometry lives in `layout/subring_packing_geometry.rs`.
 
@@ -10,21 +10,6 @@ use jolt_field::{Ring, Zero};
 
 use crate::layout::subring_packing_geometry::SubringCoefficientPackingGeometry;
 use crate::{basis_weights, basis_weights_prefix, BasisMode};
-
-mod fold;
-
-#[cfg(any(test, feature = "test-support"))]
-pub use fold::coefficient_packing_partials;
-pub use fold::{
-    coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
-    CoefficientPackingFoldProduct,
-};
-
-#[cfg(test)]
-use fold::{
-    coefficient_packing_map, embed_subring_challenge_in_a_ring,
-    multiply_a_ring_by_subring_challenge,
-};
 
 /// Canonical opening-point split for subring coefficient packing.
 ///
@@ -211,10 +196,6 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
         &self.live_block_weights
     }
 }
-
-#[cfg(test)]
-#[path = "subring_coefficient_packing_reference_tests.rs"]
-mod reference_tests;
 
 #[cfg(test)]
 mod tests {

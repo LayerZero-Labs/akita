@@ -139,13 +139,15 @@ fn shared_commitment_supports_concurrent_deterministic_proofs_after_rejected_req
             .unwrap()])
             .unwrap();
             scheme
-                .batched_verify(
-                    &proof,
-                    &scheme.setup_verifier(&setup).unwrap(),
-                    DOMAIN,
-                    GroupBatchStatement::new(selection, public).unwrap(),
-                    BasisMode::Lagrange,
-                )
+                .verifier(scheme.setup_verifier(&setup).unwrap().clone())
+                .and_then(|verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        DOMAIN,
+                        GroupBatchStatement::new(selection, public).unwrap(),
+                        BasisMode::Lagrange,
+                    )
+                })
                 .unwrap();
             proof
         };
