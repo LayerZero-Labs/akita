@@ -55,8 +55,11 @@ pub fn grouped_witness_body_coefficients(
             "witness group has malformed dimensions".into(),
         ));
     }
-    let opening_geometry =
-        crate::proof::relation::opening_row_geometry(params, source_encoding, extension_degree)?;
+    let opening_geometry = crate::layout::relation_rhs_layout::opening_row_geometry(
+        params,
+        source_encoding,
+        extension_degree,
+    )?;
     let mut total = 0usize;
     for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
         let (z_len, e_len, t_len) = witness_unit_lengths(
@@ -138,9 +141,9 @@ pub struct WitnessQuotientRowLayout {
 }
 
 impl WitnessUnitLayout {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_for_test(
+    pub fn new_for_test(
         group_index: usize,
         chunk_index: usize,
         global_block_start: usize,
@@ -352,8 +355,8 @@ impl WitnessUnitLayout {
 }
 
 impl WitnessQuotientRowLayout {
-    #[cfg(test)]
-    pub(crate) fn new_for_test(geometry: RelationRowGeometry, range: Range<usize>) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(geometry: RelationRowGeometry, range: Range<usize>) -> Self {
         Self { geometry, range }
     }
 
@@ -420,8 +423,8 @@ impl CompressionWitnessLayerLayout {
 }
 
 impl WitnessLayout {
-    #[cfg(test)]
-    pub(crate) fn new_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(
         units: Vec<WitnessUnitLayout>,
         r_rows: Vec<WitnessQuotientRowLayout>,
         quotient_depth: usize,
@@ -764,23 +767,14 @@ impl WitnessLayout {
         &self,
         group_index: usize,
     ) -> Result<impl Iterator<Item = &WitnessUnitLayout> + Clone, AkitaError> {
-        let single_group = self.units.first().is_some_and(|unit| unit.group_index == 0);
-        if (single_group && group_index != 0)
-            || (!single_group
-                && !self
-                    .units
-                    .iter()
-                    .any(|unit| unit.group_index == group_index))
-        {
+        let units = self
+            .units
+            .iter()
+            .filter(move |unit| unit.group_index == group_index);
+        if units.clone().next().is_none() {
             return Err(AkitaError::InvalidSetup("witness group is missing".into()));
         }
-        let empty = self.units[..0].iter();
-        let (direct, filtered) = if single_group {
-            (self.units.iter(), empty)
-        } else {
-            (empty, self.units.iter())
-        };
-        Ok(direct.chain(filtered.filter(move |unit| unit.group_index == group_index)))
+        Ok(units)
     }
 
     pub fn unit_for_block(

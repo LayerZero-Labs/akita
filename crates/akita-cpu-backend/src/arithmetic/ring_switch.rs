@@ -1,7 +1,7 @@
 use super::{CpuBackend, CpuPreparedSetup};
 use crate::arithmetic::requirements::NttOperationCluster;
 use crate::kernels::linear::{
-    centered_quotient_rows_with_i16_tail, digit_relation_matrix_extent,
+    centered_quotient_rows_with_i16_tail, centered_rows_abs_bound, digit_relation_matrix_extent,
     digit_relation_rows_cached_prover_bounds, digit_relation_rows_streamed_prover_bounds,
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
     fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedQuotientRows,
@@ -13,15 +13,6 @@ use crate::opaque::RingSwitchRelationView;
 use akita_error::AkitaError;
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
 use jolt_field::{CanonicalEncoding, Field};
-
-fn centered_rhs_abs_bound<const D: usize>(rows: &[[i32; D]], claimed: u32) -> u64 {
-    rows.iter()
-        .flat_map(|row| row.iter())
-        .map(|value| u64::from(value.unsigned_abs()))
-        .max()
-        .unwrap_or(0)
-        .max(u64::from(claimed))
-}
 
 fn validate_role_shape(role: &str, rows: usize, width: usize) -> Result<(), AkitaError> {
     if rows != 0 && width == 0 {
@@ -70,9 +61,9 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
         let negacyclic_requirement =
             NttCacheKey::from_matrix_shape(D, plan.n_a, z.len(), NttTransformDomain::Negacyclic)?;
         prepared.with_shared_ntt::<D, _>(negacyclic_requirement, |negacyclic_ntt| {
-            if centered_quotient_requires_i16_tail_for_field::<F, D>(centered_rhs_abs_bound(
-                z, z_inf_norm,
-            ))? {
+            if centered_quotient_requires_i16_tail_for_field::<F, D>(
+                centered_rows_abs_bound(z, z.len()).max(u64::from(z_inf_norm)),
+            )? {
                 let tail_requirement = NttCacheKey::from_matrix_shape(
                     D,
                     plan.n_a,
@@ -119,12 +110,8 @@ fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
     })
 }
 
-pub(crate) fn relation_b_a_rows<
-    F: Field + CanonicalEncoding,
-    Cfg: akita_config::CommitmentConfig,
-    const D: usize,
->(
-    backend: &CpuBackend<Cfg>,
+pub(crate) fn relation_b_a_rows<F: Field + CanonicalEncoding, E, const D: usize>(
+    backend: &CpuBackend<F, E>,
     prepared: &CpuPreparedSetup<F>,
     t_hat: &[[i8; D]],
     z: &[[i32; D]],
@@ -156,10 +143,9 @@ pub(crate) fn relation_b_a_rows<
     )
 }
 
-impl<F, Cfg, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D>
-    for CpuBackend<Cfg>
+impl<F, E, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D>
+    for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn relation_rows(

@@ -92,7 +92,7 @@ fn automatic_scratch_fits_large_blocks() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let sources = [poly.commitment_source()];
     let witnesses =
@@ -136,7 +136,7 @@ fn every_stored_index_width_reaches_the_same_commitment_sweep() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let positions = (0usize..8)
         .map(|chunk| (!chunk.is_multiple_of(3)).then_some((chunk * 7) % K))

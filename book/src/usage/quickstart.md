@@ -58,10 +58,7 @@ let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
 )?;
 let setup = scheme.setup_prover(NUM_VARS, 1)?;
-let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
 
 The prepared backend holds reproducible compute state such as transformed
@@ -77,6 +74,7 @@ and no earlier groups.
 ```rust
 let source = backend.import_source(vec![polynomial])?;
 let commit_output = backend.commit(
+    scheme.schedules(),
     &source,
     GroupContext::scheduler_without_precommitted_groups(),
 )?;
@@ -157,7 +155,7 @@ and the selected schedule row. It does not receive the polynomial or private
 prover state.
 
 ```rust
-let verifier_setup = scheme.setup_verifier(&setup)?;
+let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
 let verifier_claims = OpeningClaims::from_groups(vec![
     PolynomialGroupClaims::new(
         point,
@@ -167,13 +165,7 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-scheme.batched_verify(
-    &proof_bytes,
-    &verifier_setup,
-    TRANSCRIPT_DOMAIN,
-    statement,
-    BasisMode::Lagrange,
-)?;
+verifier.batched_verify(&proof_bytes, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 ```
 
 Akita constructs fresh native prover and verifier states and binds the complete

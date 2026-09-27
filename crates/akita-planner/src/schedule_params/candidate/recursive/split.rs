@@ -108,7 +108,7 @@ pub(super) fn recursive_witness_body_lower_bound(
         return None;
     }
     let p = input.reduced_vars.checked_sub(input.r)?;
-    let num_positions_per_block = 1usize.checked_shl(p as u32)?;
+    let num_positions_per_block = checked::pow2(p)?;
     let num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
 
     let e_hat = num_live_blocks.checked_mul(input.delta_open)?;
@@ -133,7 +133,7 @@ pub(in super::super) fn recursive_split_lower_bound(
 ) -> Option<usize> {
     let physical_width_floor = recursive_witness_body_lower_bound(input)?;
     let p = input.reduced_vars.checked_sub(input.r)?;
-    let num_positions_per_block = 1usize.checked_shl(p as u32)?;
+    let num_positions_per_block = checked::pow2(p)?;
     let num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
     physical_width_floor
         .checked_add(num_live_blocks)?

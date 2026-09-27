@@ -1077,8 +1077,7 @@ fn committed_group_for_extractor(num_vars: usize) -> CommittedGroup<F> {
 
 #[test]
 fn ordered_group_profile_extractor_rejects_empty_input() {
-    let groups: [&CommittedGroup<F>; 0] = [];
-    let error = CommittedGroupBatchProfile::from_ordered_groups(groups)
+    let error = CommittedGroupBatchProfile::from_profiles(Vec::new())
         .expect_err("empty group sequence must reject");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
 }
@@ -1086,7 +1085,7 @@ fn ordered_group_profile_extractor_rejects_empty_input() {
 #[test]
 fn ordered_group_profile_extractor_handles_a_group_without_precommitted_groups() {
     let final_group = committed_group_for_extractor(12);
-    let batch = CommittedGroupBatchProfile::from_ordered_groups([&final_group])
+    let batch = CommittedGroupBatchProfile::from_profiles(vec![*final_group.profile()])
         .expect("profile without precommitted groups");
     assert!(batch.precommitteds.is_empty());
     assert_eq!(batch.final_group, *final_group.profile());
@@ -1097,8 +1096,12 @@ fn ordered_group_profile_extractor_preserves_prefix_order() {
     let first = committed_group_for_extractor(12);
     let second = committed_group_for_extractor(13);
     let final_group = committed_group_for_extractor(14);
-    let batch = CommittedGroupBatchProfile::from_ordered_groups([&first, &second, &final_group])
-        .expect("ordered grouped profile");
+    let batch = CommittedGroupBatchProfile::from_profiles(vec![
+        *first.profile(),
+        *second.profile(),
+        *final_group.profile(),
+    ])
+    .expect("ordered grouped profile");
     assert_eq!(
         batch.precommitteds,
         vec![*first.profile(), *second.profile()]
@@ -1108,12 +1111,6 @@ fn ordered_group_profile_extractor_preserves_prefix_order() {
 
 #[test]
 fn precommitted_group_profiles_reject_an_empty_prefix() {
-    let empty: [&CommittedGroup<F>; 0] = [];
-    assert!(matches!(
-        PrecommittedGroupProfiles::from_ordered_groups(empty)
-            .expect_err("empty prefix must reject"),
-        AkitaError::InvalidInput(_)
-    ));
     assert!(matches!(
         PrecommittedGroupProfiles::from_profiles(Vec::new()).expect_err("empty prefix must reject"),
         AkitaError::InvalidInput(_)
@@ -1125,7 +1122,8 @@ fn precommitted_group_profiles_preserve_caller_order() {
     let first = committed_group_for_extractor(12);
     let second = committed_group_for_extractor(13);
     let prefix =
-        PrecommittedGroupProfiles::from_ordered_groups([&first, &second]).expect("nonempty prefix");
+        PrecommittedGroupProfiles::from_profiles(vec![*first.profile(), *second.profile()])
+            .expect("nonempty prefix");
     assert_eq!(
         prefix.as_slice(),
         &[*first.profile(), *second.profile()][..]

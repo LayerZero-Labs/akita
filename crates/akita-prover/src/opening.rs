@@ -21,11 +21,12 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         if claims.num_groups() != handles.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let profile = CommittedGroupBatchProfile::from_ordered_groups(
+        let profile = CommittedGroupBatchProfile::from_profiles(
             claims
                 .groups()
                 .iter()
-                .map(PolynomialGroupClaims::commitment),
+                .map(|group| *group.commitment().profile())
+                .collect(),
         )?;
         let selection = schedules.resolve_profiles(&profile)?.selection();
         let opening_layout = claims.committed_layout()?;
@@ -46,6 +47,15 @@ impl<'a, E: Clone, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
                     "commitment handle shape differs from statement".into(),
                 ));
             }
+        }
+        // The proving catalog plans its final group under `Cfg`'s contract.
+        // Precommitted producers are not recorded in the row, so planning
+        // code compares those handles against its own producer declarations.
+        let final_handle = handles.last().ok_or(AkitaError::InvalidProof)?;
+        if final_handle.producer_contract() != Cfg::committed_source_contract()? {
+            return Err(AkitaError::InvalidInput(
+                "final group was committed under a different producer contract".into(),
+            ));
         }
         let groups = claims
             .groups()

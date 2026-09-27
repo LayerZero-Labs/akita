@@ -3,26 +3,28 @@ use super::*;
 use std::sync::Arc;
 
 /// Checked inputs for one coefficient-packing group's shared relation semantics.
-pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: Field, E: Field> {
-    pub level_params: &'a CommittedGroupParams,
-    pub opening_batch: &'a OpeningClaimsLayout,
-    pub relation_plan: &'a RelationRangeImagePlan,
-    pub relation: &'a RingRelationInstance<F>,
+pub(super) struct CoefficientPackingGroupSemanticInputs<'authority, 'output, F: Field, E: Field> {
+    pub level_params: &'authority CommittedGroupParams,
+    pub opening_batch: &'authority OpeningClaimsLayout,
+    pub relation_plan: &'authority RelationRangeImagePlan,
+    pub relation: &'authority RingRelationInstance<F>,
     pub group_index: usize,
-    pub prepared_point: &'a PreparedSubringCoefficientPackingPoint<E>,
+    pub prepared_point: &'output PreparedSubringCoefficientPackingPoint<E>,
     pub alpha: E,
-    pub tau1: &'a [E],
+    pub tau1: &'authority [E],
     /// Global claim coefficients in authenticated opening-batch order.
-    pub claim_coefficients: &'a [E],
+    pub claim_coefficients: &'output [E],
 }
 
 /// Packing-specific E and quotient events over the checked flat witness domain.
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CoefficientPackingRelationEvents<E: Field> {
     pub(super) events: Vec<RelationWeightEvent<E>>,
+    #[cfg(test)]
     pub(super) alpha_powers: Arc<[E]>,
+    #[cfg(test)]
     pub(super) relation_coefficient_block_len: usize,
+    #[cfg(test)]
     pub(super) physical_field_len: usize,
 }
 
@@ -141,307 +143,69 @@ impl<E: Field> CoefficientPackingRelationEvents<E> {
                     Ok(acc + event.scalar() * alpha_eval * equality.eval(physical / block))
                 })
         };
-        if work < 1024 {
-            (0..self.events.len()).fold(Ok(E::zero()), evaluate_event)
-        } else {
-            cfg_fold_reduce!(
-                0..self.events.len(),
-                || Ok(E::zero()),
-                evaluate_event,
-                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-            )
-        }
+        (0..self.events.len()).fold(Ok(E::zero()), evaluate_event)
     }
 }
 
-/// Shared source selected by one structured Stage 2 term.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CoefficientPackingStage2Source {
-    DirectOpening,
-    PackingZ,
-}
-
-/// One checked source-to-witness segment for a structured Stage 2 term.
+/// One group's checked coefficient-packing relation semantics and canonical
+/// factors from which a compute backend can prepare its own execution plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingStage2Segment {
-    pub(super) physical_coefficients: Range<usize>,
-    pub(super) source_coefficients: Range<usize>,
-}
-
-impl CoefficientPackingStage2Segment {
-    #[must_use]
-    pub fn physical_coefficients(&self) -> Range<usize> {
-        self.physical_coefficients.clone()
-    }
-
-    #[must_use]
-    pub fn source_coefficients(&self) -> Range<usize> {
-        self.source_coefficients.clone()
-    }
-}
-
-/// One scalar-times-source structured Stage 2 contribution.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingStage2Term<E: Field> {
-    pub(super) source: CoefficientPackingStage2Source,
-    pub(super) factor: E,
-    pub(super) segments: Range<usize>,
-}
-
-impl<E: Field> CoefficientPackingStage2Term<E> {
-    #[must_use]
-    pub const fn source(&self) -> CoefficientPackingStage2Source {
-        self.source
-    }
-
-    #[must_use]
-    pub const fn factor(&self) -> E {
-        self.factor
-    }
-
-    #[must_use]
-    pub fn segments(&self) -> Range<usize> {
-        self.segments.clone()
-    }
-}
-
-/// Direct-opening and packing-Z structured terms for one group.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingStage2Terms<E: Field> {
-    pub(super) direct_opening_source: Vec<E>,
-    pub(super) packing_z_source: Vec<E>,
-    pub(super) segments: Vec<CoefficientPackingStage2Segment>,
-    pub(super) terms: Vec<CoefficientPackingStage2Term<E>>,
-    pub(super) physical_field_len: usize,
-    pub(super) relation_coefficient_block_len: usize,
-    pub(super) group_claim_range: Range<usize>,
-    pub(super) scalar_claim_weight: E,
-}
-
-impl<E: Field> CoefficientPackingStage2Terms<E> {
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn direct_opening_source(&self) -> &[E] {
-        &self.direct_opening_source
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn packing_z_source(&self) -> &[E] {
-        &self.packing_z_source
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn segments(&self) -> &[CoefficientPackingStage2Segment] {
-        &self.segments
-    }
-
-    #[must_use]
-    pub fn terms(&self) -> &[CoefficientPackingStage2Term<E>] {
-        &self.terms
-    }
-
-    #[must_use]
-    pub const fn physical_field_len(&self) -> usize {
-        self.physical_field_len
-    }
-
-    #[must_use]
-    pub fn group_claim_range(&self) -> Range<usize> {
-        self.group_claim_range.clone()
-    }
-
-    #[must_use]
-    pub const fn scalar_claim_weight(&self) -> E {
-        self.scalar_claim_weight
-    }
-
-    #[must_use]
-    pub const fn relation_coefficient_block_len(&self) -> usize {
-        self.relation_coefficient_block_len
-    }
-
-    #[must_use]
-    pub fn into_linear_parts(
-        self,
-    ) -> (
-        [Vec<E>; 2],
-        Vec<CoefficientPackingStage2Segment>,
-        Vec<CoefficientPackingStage2Term<E>>,
-    ) {
-        (
-            [self.direct_opening_source, self.packing_z_source],
-            self.segments,
-            self.terms,
-        )
-    }
-
-    /// Evaluate the structured direct-opening and packing-Z terms at one flat
-    /// witness point without materializing a witness-sized weight table.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        let point_variables = u32::try_from(point.len())
-            .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
-        let expected = 1usize
-            .checked_shl(point_variables)
-            .ok_or_else(|| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
-        let padded_field_len = self
-            .physical_field_len
-            .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("packing field domain overflow".into()))?;
-        if expected != padded_field_len {
-            return Err(AkitaError::InvalidSize {
-                expected: padded_field_len.trailing_zeros() as usize,
-                actual: point.len(),
-            });
-        }
-        let block = self.relation_coefficient_block_len;
-        let low_variables = block.trailing_zeros() as usize;
-        let equality =
-            OffsetEqWindow::new(point.get(low_variables..).ok_or(AkitaError::InvalidProof)?)?;
-        let mut work = 0usize;
-        for term in &self.terms {
-            for segment in self
-                .segments
-                .get(term.segments())
-                .ok_or(AkitaError::InvalidProof)?
-            {
-                work = work
-                    .checked_add(segment.physical_coefficients().len() / block)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("packing Stage 2 work overflow".into())
-                    })?;
-            }
-        }
-        if work > MAX_COMPACT_STRIDE_TERMS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: work,
-            });
-        }
-        let evaluate_source = |source: &[E]| -> Result<Vec<E>, AkitaError> {
-            if !source.len().is_multiple_of(block) {
-                return Err(AkitaError::InvalidProof);
-            }
-            let block_count = source.len() / block;
-            let mut cache = Vec::new();
-            cache.try_reserve_exact(block_count).map_err(|_| {
-                AkitaError::InvalidInput("packing source cache allocation failed".into())
-            })?;
-            for source_block in 0..block_count {
-                let source_start = source_block.checked_mul(block).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
-                })?;
-                let source_end = source_start.checked_add(block).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
-                })?;
-                cache.push(multilinear_eval(
-                    source
-                        .get(source_start..source_end)
-                        .ok_or(AkitaError::InvalidProof)?,
-                    &point[..low_variables],
-                )?);
-            }
-            Ok(cache)
-        };
-        let direct_opening_cache = evaluate_source(self.direct_opening_source())?;
-        let packing_z_cache = evaluate_source(self.packing_z_source())?;
-        let evaluate_term = |sum: Result<E, AkitaError>, term_index: usize| {
-            let sum = sum?;
-            let term = self.terms.get(term_index).ok_or(AkitaError::InvalidProof)?;
-            let source_cache = match term.source() {
-                CoefficientPackingStage2Source::DirectOpening => &direct_opening_cache,
-                CoefficientPackingStage2Source::PackingZ => &packing_z_cache,
-            };
-            let segments = self
-                .segments
-                .get(term.segments())
-                .ok_or(AkitaError::InvalidProof)?;
-            segments.iter().try_fold(sum, |term_sum, segment| {
-                let physical = segment.physical_coefficients();
-                let source_range = segment.source_coefficients();
-                if physical.len() != source_range.len()
-                    || !physical.start.is_multiple_of(block)
-                    || !physical.len().is_multiple_of(block)
-                    || !source_range.start.is_multiple_of(block)
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                (0..physical.len())
-                    .step_by(block)
-                    .try_fold(term_sum, |acc, offset| {
-                        let physical_index =
-                            physical.start.checked_add(offset).ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing Stage 2 address overflow".into())
-                            })?;
-                        let source_index =
-                            source_range.start.checked_add(offset).ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
-                            })?;
-                        let source_value = *source_cache
-                            .get(source_index / block)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        Ok(acc
-                            + term.factor() * source_value * equality.eval(physical_index / block))
-                    })
-            })
-        };
-        if work < 1024 {
-            (0..self.terms.len()).fold(Ok(E::zero()), evaluate_term)
-        } else {
-            cfg_fold_reduce!(
-                0..self.terms.len(),
-                || Ok(E::zero()),
-                evaluate_term,
-                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-            )
-        }
-    }
-}
-
-/// One group's joined coefficient-packing relation semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingGroupSemantics<E: Field> {
+pub struct CoefficientPackingGroupSemantics<'a, E: Field> {
     pub(super) group_index: usize,
     pub(super) geometry: SubringCoefficientPackingGeometry,
-    #[cfg(test)]
     pub(super) relation_events: CoefficientPackingRelationEvents<E>,
-    pub(super) stage2_terms: CoefficientPackingStage2Terms<E>,
+    pub(super) witness_units: Vec<WitnessUnitLayout>,
+    pub(super) prepared_point: &'a PreparedSubringCoefficientPackingPoint<E>,
+    pub(super) group_claim_range: Range<usize>,
+    pub(super) group_claim_coefficients: &'a [E],
+    pub(super) scalar_claim_weight: E,
+    pub(super) consistency_weight: E,
+    pub(super) d_d: usize,
+    pub(super) num_digits_open: usize,
+    pub(super) num_digits_inner: usize,
+    pub(super) num_digits_fold: usize,
+    pub(super) num_positions_per_block: usize,
+    pub(super) physical_field_len: usize,
+    pub(super) relation_coefficient_block_len: usize,
+    pub(super) alpha_powers: Vec<E>,
+    pub(super) basis: Vec<E>,
+    pub(super) opening_gadget: Vec<E>,
+    pub(super) witness_gadget: Vec<E>,
+    pub(super) fold_gadget: Vec<E>,
 }
 
 /// Exact authority used to prepare every packing group in one fold.
-pub struct CoefficientPackingBatchSemanticInputs<'a, F: Field, E: Field> {
-    pub level_params: &'a CommittedGroupParams,
-    pub opening_batch: &'a OpeningClaimsLayout,
-    pub relation_plan: &'a RelationRangeImagePlan,
-    pub relation: &'a RingRelationInstance<F>,
+pub struct CoefficientPackingBatchSemanticInputs<'authority, 'output, 'points, F: Field, E: Field> {
+    pub level_params: &'authority CommittedGroupParams,
+    pub opening_batch: &'authority OpeningClaimsLayout,
+    pub relation_plan: &'authority RelationRangeImagePlan,
+    pub relation: &'authority RingRelationInstance<F>,
     /// Prepared public points keyed by authenticated group index.
-    pub prepared_points: &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)],
+    pub prepared_points: &'points [(usize, &'output PreparedSubringCoefficientPackingPoint<E>)],
     pub alpha: E,
-    pub tau1: &'a [E],
-    pub claim_coefficients: &'a [E],
+    pub tau1: &'authority [E],
+    pub claim_coefficients: &'output [E],
 }
 
 /// Checked packing semantics for every packing group in one exact relation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingBatchSemantics<E: Field> {
-    pub(super) groups: Vec<CoefficientPackingGroupSemantics<E>>,
+pub struct CoefficientPackingBatchSemantics<'a, E: Field> {
+    pub(super) groups: Vec<CoefficientPackingGroupSemantics<'a, E>>,
 }
 
-impl<E: Field> CoefficientPackingBatchSemantics<E> {
+impl<'a, E: Field> CoefficientPackingBatchSemantics<'a, E> {
     #[must_use]
-    pub fn groups(&self) -> &[CoefficientPackingGroupSemantics<E>] {
+    pub fn groups(&self) -> &[CoefficientPackingGroupSemantics<'a, E>] {
         &self.groups
     }
 
     #[must_use]
-    pub fn into_groups(self) -> Vec<CoefficientPackingGroupSemantics<E>> {
+    pub fn into_groups(self) -> Vec<CoefficientPackingGroupSemantics<'a, E>> {
         self.groups
     }
 }
 
-impl<E: Field> CoefficientPackingGroupSemantics<E> {
+impl<'a, E: Field> CoefficientPackingGroupSemantics<'a, E> {
     #[must_use]
     pub const fn group_index(&self) -> usize {
         self.group_index
@@ -458,19 +222,99 @@ impl<E: Field> CoefficientPackingGroupSemantics<E> {
         &self.relation_events
     }
 
+    /// Relation events prepared from this group's validated packing authority.
     #[must_use]
-    pub const fn stage2_terms(&self) -> &CoefficientPackingStage2Terms<E> {
-        &self.stage2_terms
+    pub fn relation_weight_events(&self) -> &[RelationWeightEvent<E>] {
+        &self.relation_events.events
     }
 
     #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        usize,
-        SubringCoefficientPackingGeometry,
-        CoefficientPackingStage2Terms<E>,
-    ) {
-        (self.group_index, self.geometry, self.stage2_terms)
+    pub fn witness_units(&self) -> &[WitnessUnitLayout] {
+        &self.witness_units
+    }
+
+    #[must_use]
+    pub const fn prepared_point(&self) -> &'a PreparedSubringCoefficientPackingPoint<E> {
+        self.prepared_point
+    }
+
+    #[must_use]
+    pub fn group_claim_range(&self) -> Range<usize> {
+        self.group_claim_range.clone()
+    }
+
+    #[must_use]
+    pub fn group_claim_coefficients(&self) -> &'a [E] {
+        self.group_claim_coefficients
+    }
+
+    #[must_use]
+    pub const fn scalar_claim_weight(&self) -> E {
+        self.scalar_claim_weight
+    }
+
+    #[must_use]
+    pub const fn consistency_weight(&self) -> E {
+        self.consistency_weight
+    }
+
+    #[must_use]
+    pub const fn d_d(&self) -> usize {
+        self.d_d
+    }
+
+    #[must_use]
+    pub const fn num_digits_open(&self) -> usize {
+        self.num_digits_open
+    }
+
+    #[must_use]
+    pub const fn num_digits_inner(&self) -> usize {
+        self.num_digits_inner
+    }
+
+    #[must_use]
+    pub const fn num_digits_fold(&self) -> usize {
+        self.num_digits_fold
+    }
+
+    #[must_use]
+    pub const fn num_positions_per_block(&self) -> usize {
+        self.num_positions_per_block
+    }
+
+    #[must_use]
+    pub const fn physical_field_len(&self) -> usize {
+        self.physical_field_len
+    }
+
+    #[must_use]
+    pub const fn relation_coefficient_block_len(&self) -> usize {
+        self.relation_coefficient_block_len
+    }
+
+    #[must_use]
+    pub fn alpha_powers(&self) -> &[E] {
+        &self.alpha_powers
+    }
+
+    #[must_use]
+    pub fn basis(&self) -> &[E] {
+        &self.basis
+    }
+
+    #[must_use]
+    pub fn opening_gadget(&self) -> &[E] {
+        &self.opening_gadget
+    }
+
+    #[must_use]
+    pub fn witness_gadget(&self) -> &[E] {
+        &self.witness_gadget
+    }
+
+    #[must_use]
+    pub fn fold_gadget(&self) -> &[E] {
+        &self.fold_gadget
     }
 }

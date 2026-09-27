@@ -22,22 +22,13 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-fn materialize_schedule_setup_prefix_slots<Cfg>(
-    setup: &mut AkitaProverSetup<Cfg::Field>,
-    backend: &CpuBackend<Cfg>,
+fn materialize_schedule_setup_prefix_slots<F, E>(
+    setup: &mut AkitaProverSetup<F>,
+    backend: &CpuBackend<F, E>,
     schedule: &FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    Cfg: CommitmentConfig,
-    Cfg::Field: Field
-        + CanonicalEncoding
-        + akita_serialization::AkitaSerialize
-        + Ring
-        + Unreduced
-        + WithCommitAccumulator
-        + Valid
-        + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
     let ids = schedule
         .recursive_folds
@@ -46,7 +37,7 @@ where
         .map(|prefix| prefix.slot_id().expect("setup prefix group"))
         .filter(|id| setup.prefix_slots.get(id).is_none())
         .collect::<Vec<_>>();
-    let artifacts = backend.export_setup_prefixes::<Cfg::Field>(&ids)?;
+    let artifacts = backend.export_setup_prefixes(&ids)?;
     for (_, slot) in artifacts.iter() {
         setup.prefix_slots.insert(slot.clone())?;
     }
@@ -215,8 +206,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend =
-            CpuBackend::<ProofCfg>::new(setup.expanded.clone(), proof_scheme.schedules()).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         materialize_schedule_setup_prefix_slots(&mut setup, &backend, &schedule)
             .expect("materialize schedule setup-prefix slots");
         let required_prefix_ids =
@@ -270,6 +260,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 private_handle: hint,
             } = backend
                 .commit(
+                    proof_scheme.schedules(),
                     &source,
                     akita_cpu_backend::GroupContext::explicit(&pre_descriptor),
                 )
@@ -292,9 +283,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .iter()
             .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
-        let precommitteds =
-            akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-                .expect("nonempty precommitted groups");
+        let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+            pre_commitments
+                .iter()
+                .map(|group| *group.profile())
+                .collect(),
+        )
+        .expect("nonempty precommitted groups");
         let source = backend
             .import_source(final_polys)
             .expect("import final sources");
@@ -303,6 +298,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             private_handle: final_hint,
         } = backend
             .commit(
+                proof_scheme.schedules(),
                 &source,
                 akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
             )
@@ -435,20 +431,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("verifier statement")
     };
-    let verify = |statement| {
-        proof_scheme.batched_verify(
-            &proof,
-            &verifier_setup,
-            b"profile",
-            statement,
-            BasisMode::Lagrange,
-        )
-    };
+    let verifier = proof_scheme
+        .verifier(verifier_setup.clone())
+        .expect("verifier for the profile setup");
+    let verify =
+        |statement| verifier.batched_verify(&proof, b"profile", statement, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
-    report_verifier_ntt_cache_size(
-        label,
-        verifier_setup
-            .verifier_ntt_cache_bytes()
-            .expect("verifier NTT cache metrics"),
-    );
+    report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

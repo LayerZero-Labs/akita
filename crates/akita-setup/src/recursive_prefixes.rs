@@ -1,4 +1,3 @@
-use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_error::AkitaError;
 use akita_serialization::Valid;
@@ -22,19 +21,21 @@ pub(crate) fn validate_prefix_registry_complete<F: Field>(
     Ok(())
 }
 
-pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
+/// Export the required setup-prefix commitments into `setup`.
+///
+/// Prefix commitments depend only on the setup and the slot ids. The exporting
+/// backend's extension parameter never enters them, so the base field fills it.
+pub(crate) fn populate_required_setup_prefix_slots<F>(
     setup: &mut AkitaProverSetup<F>,
-    schedules: &TrustedScheduleCatalog<Cfg>,
     required_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
-    Cfg: CommitmentConfig<Field = F>,
 {
     if required_ids.is_empty() {
         return Ok(());
     }
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), schedules)?;
+    let backend = CpuBackend::<F, F>::new(setup.expanded.clone())?;
     setup.prefix_slots = backend.export_setup_prefixes(required_ids)?;
     validate_prefix_registry_complete(&setup.prefix_slots, required_ids)?;
     tracing::info!(

@@ -63,11 +63,7 @@ where
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute prefix slots"
         );
-        let stack = CpuBackend::<RecursiveCommitmentConfig<BaseCfg>>::new(
-            setup.expanded.clone(),
-            scheme.schedules(),
-        )
-        .expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
@@ -77,6 +73,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(final_polys.clone()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -123,13 +120,15 @@ where
         .expect("verifier group")])
         .expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                transcript_domain,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    transcript_domain,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .expect("recursive direct verify");
     });
 }
@@ -159,8 +158,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -168,6 +166,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -191,13 +190,15 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
     }
 }
@@ -217,8 +218,7 @@ where
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = scheme.setup_prover(nv, 1).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_cpu_backend::CommitOutput {
@@ -226,6 +226,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -249,13 +250,15 @@ where
 
         let openings = [expected_opening];
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
     }
 }
@@ -270,8 +273,7 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
@@ -283,6 +285,7 @@ where
             private_handle: pre_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![pre_poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -299,6 +302,7 @@ where
             private_handle: final_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack
                     .import_source(vec![final_poly.clone()])
                     .expect("source"),
@@ -372,13 +376,15 @@ where
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| {
                 panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });
@@ -394,8 +400,7 @@ where
     let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     for &final_nv in final_nvs {
         let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let stack =
-            CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
         let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
@@ -404,6 +409,7 @@ where
             private_handle: pre_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(vec![pre_poly.clone()]).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -417,6 +423,7 @@ where
             private_handle: final_hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack
                     .import_source(vec![final_poly.clone()])
                     .expect("source"),
@@ -471,13 +478,15 @@ where
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                label,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    label,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .unwrap_or_else(|e| {
                 panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
             });

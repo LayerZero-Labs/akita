@@ -23,6 +23,7 @@ use jolt_field::Ring;
 
 type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
+type E = <Cfg as CommitmentConfig>::ExtField;
 // The folded-only protocol requires at least two folds. `nv=8` was a
 // root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
@@ -125,12 +126,12 @@ fn run_custom_commit_source_contract() {
 
     let setup_envelope =
         akita_config::SetupRequirements::from_catalog::<Cfg>(&schedules, CONTRACT_NUM_VARS, 1)
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
     let expanded = setup.expanded.as_ref();
-    let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), &schedules).unwrap();
+    let backend = CpuBackend::<F, E>::new(setup.expanded.clone()).unwrap();
     let prepared = backend.prepare_setup(&setup).expect("prepared");
     let portable_executor = CommitmentExecutor::cpu(
         &backend,

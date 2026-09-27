@@ -76,7 +76,7 @@ impl FoldGroups {
         self.preceding().get(index)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn preceding_group_mut(
         &mut self,
         index: usize,

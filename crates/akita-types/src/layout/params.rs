@@ -9,11 +9,12 @@ use akita_error::AkitaError;
 use jolt_field::CanonicalEncoding;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::layout::ring_dims::CommitmentRingDims;
-use crate::opening_claims::OpeningClaimsLayout;
-use crate::proof::{
-    CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
+use crate::layout::opening_layout::OpeningClaimsLayout;
+use crate::layout::relation_address::{
+    CompressionRelationAddressGeometry, RelationAddressGeometry,
 };
+use crate::layout::relation_layout::RelationRowFamily;
+use crate::layout::ring_dims::CommitmentRingDims;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
@@ -67,7 +68,7 @@ mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 use groups::FoldGroups;
 pub use precommitted::{
-    opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, OpeningFamily, OpeningMethod,
+    opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, OpeningMethod,
     PrecommittedGroupAdmissionPolicy,
 };
 
@@ -200,8 +201,8 @@ impl CommittedGroupParams {
         self.groups.precommitted()
     }
 
-    #[cfg(test)]
-    pub(crate) fn preceding_group_mut_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn preceding_group_mut_for_test(
         &mut self,
         group_index: usize,
     ) -> Option<&mut GroupOpenPhaseParams> {

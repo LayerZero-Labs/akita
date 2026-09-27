@@ -29,12 +29,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scheme = load_workspace_scheme::<Config>()?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
-    let backend = Arc::new(CpuBackend::<Config>::new(
-        setup.expanded.clone(),
-        scheme.schedules(),
-    )?);
+    let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let source = backend.import_source(vec![polynomial])?;
     let commit_output = backend.commit(
+        scheme.schedules(),
         &source,
         GroupContext::scheduler_without_precommitted_groups(),
     )?;
@@ -59,20 +57,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BasisMode::Lagrange,
     )?;
 
-    let verifier_setup = scheme.setup_verifier(&setup)?;
+    let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
     let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
         vec![evaluation],
         &commit_output.committed_group,
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
-    scheme.batched_verify(
-        &proof,
-        &verifier_setup,
-        TRANSCRIPT_DOMAIN,
-        statement,
-        BasisMode::Lagrange,
-    )?;
+    verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)?;
 
     println!("Akita proof verified");
     Ok(())

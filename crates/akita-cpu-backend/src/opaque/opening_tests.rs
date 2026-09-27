@@ -12,48 +12,7 @@ use std::sync::Arc;
 type F = Prime128OffsetA7F7;
 type E = Ext2<F>;
 
-#[derive(Clone)]
-struct ExtensionTestConfig;
-
-impl akita_config::CommitmentConfig for ExtensionTestConfig {
-    type Field = F;
-    type ExtField = E;
-
-    const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
-        <OneHot as akita_config::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
-
-    fn decomposition() -> DecompositionParams {
-        <OneHot as akita_config::CommitmentConfig>::decomposition()
-    }
-
-    fn ring_challenge_config(
-        d: usize,
-    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        <OneHot as akita_config::CommitmentConfig>::ring_challenge_config(d)
-    }
-
-    fn sis_modulus_profile() -> SisModulusProfileId {
-        <OneHot as akita_config::CommitmentConfig>::sis_modulus_profile()
-    }
-
-    fn opening_basis_range() -> (u32, u32) {
-        <OneHot as akita_config::CommitmentConfig>::opening_basis_range()
-    }
-
-    fn inner_basis_range() -> (u32, u32) {
-        <OneHot as akita_config::CommitmentConfig>::inner_basis_range()
-    }
-
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
-        <OneHot as akita_config::CommitmentConfig>::committed_source_class()
-    }
-
-    fn schedule_family_name() -> &'static str {
-        "test_fp128_extension"
-    }
-}
-
-type CpuBackend = GenericCpuBackend<ExtensionTestConfig>;
+type CpuBackend = GenericCpuBackend<F, E>;
 
 fn backend() -> CpuBackend {
     let setup = crate::AkitaProverSetup::<F>::generate_with_capacity(
@@ -64,7 +23,7 @@ fn backend() -> CpuBackend {
         },
     )
     .unwrap();
-    CpuBackend::for_test_setup(setup.expanded.clone()).unwrap()
+    CpuBackend::new(setup.expanded.clone()).unwrap()
 }
 struct TestProof {
     session: crate::opaque::CpuProofSessionHandle,
@@ -144,7 +103,7 @@ fn prove_eor(
     groups: &[EorGroupRequest<
         '_,
         E,
-        super::CommitmentHandle<F, E, ExtensionTestConfig>,
+        super::CommitmentHandle<F, E>,
         crate::opaque::CpuWitnessHandle,
     >],
     grinding: &mut NativeProverGrinding<'_>,
@@ -423,11 +382,11 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                     FlatMatrix::from_flat_data(matrix),
                 ),
             );
-            let backend = CpuBackend::for_test_setup(expanded).unwrap();
+            let backend = CpuBackend::new(expanded).unwrap();
             let proof = proof(&backend);
             let context = &proof.context;
             let prefix = backend
-                .prepare_setup_prefix::<F, E>(&SetupPrefixSlotId {
+                .prepare_setup_prefix(&SetupPrefixSlotId {
                     natural_len: 400,
                     commitment_profile: profile,
                 })
@@ -711,7 +670,7 @@ fn aggregate_eor_rejects_wrong_owner_and_invalid_round_progression() {
         point: &point,
         ring_dimension: 64,
     }];
-    let other = CpuBackend::for_test_setup(backend.prepared().unwrap().expanded.clone()).unwrap();
+    let other = CpuBackend::new(backend.prepared().unwrap().expanded.clone()).unwrap();
     assert!(<CpuBackend as OpaqueEorKernel<F, E>>::prepare_eor(
         &other,
         &proof.session,
@@ -778,13 +737,13 @@ fn diagnostics_validate_independent_proof_lifetimes() {
     let b = proof(&backend);
     let first = witness(&backend, &a.session, &a.context, vec![-3, 2, 0, 1]);
     let second = witness(&backend, &b.session, &b.context, vec![1, 0, 2, -1]);
-    assert_eq!(backend.witness_source_l2_sq::<F>(&first).unwrap(), Some(14));
-    assert_eq!(backend.witness_source_l2_sq::<F>(&second).unwrap(), Some(6));
+    assert_eq!(backend.witness_source_l2_sq(&first).unwrap(), Some(14));
+    assert_eq!(backend.witness_source_l2_sq(&second).unwrap(), Some(6));
     backend.finish_scope(&a.session).unwrap();
-    assert!(backend.witness_source_l2_sq::<F>(&first).is_err());
-    assert_eq!(backend.witness_source_l2_sq::<F>(&second).unwrap(), Some(6));
+    assert!(backend.witness_source_l2_sq(&first).is_err());
+    assert_eq!(backend.witness_source_l2_sq(&second).unwrap(), Some(6));
     drop(b.session);
-    assert!(backend.witness_source_l2_sq::<F>(&second).is_err());
+    assert!(backend.witness_source_l2_sq(&second).is_err());
 }
 
 #[test]

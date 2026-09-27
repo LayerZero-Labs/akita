@@ -7,9 +7,8 @@ use akita_error::AkitaError;
 use akita_types::{NttCacheKey, NttTransformDomain};
 use jolt_field::{CanonicalEncoding, Field};
 
-impl<F, Cfg> DigitRowsComputeBackend<F> for CpuBackend<Cfg>
+impl<F, E> DigitRowsComputeBackend<F> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     fn digit_rows<const D: usize>(

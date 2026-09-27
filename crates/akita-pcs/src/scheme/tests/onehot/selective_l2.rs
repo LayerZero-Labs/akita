@@ -37,14 +37,14 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         .collect();
 
     let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
-    let stack =
-        CpuBackend::<L2Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -76,13 +76,16 @@ fn selective_l2_proof_rejects_transcript_mutations_inner() {
         )
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
-        scheme.batched_verify(
-            candidate,
-            &verifier_setup,
-            TRANSCRIPT_LABEL,
-            selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
-            BasisMode::Lagrange,
-        )
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    candidate,
+                    TRANSCRIPT_LABEL,
+                    selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
+                    BasisMode::Lagrange,
+                )
+            })
     };
     verify(&proof).expect("valid L2 proof");
 

@@ -66,9 +66,8 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let stack = CpuBackend::<ProtocolCfg>::with_ring_switch_cache_limit(
+    let stack = CpuBackend::with_ring_switch_cache_limit(
         setup.expanded.clone(),
-        scheme.schedules(),
         max_cached_ring_switch_elements,
     )
     .expect("cached backend");
@@ -94,6 +93,7 @@ where
             private_handle: hint,
         } = stack
             .commit(
+                scheme.schedules(),
                 &stack.import_source(polys.to_vec()).expect("source"),
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -159,14 +159,19 @@ where
             )
         })
         .collect();
-    let precommitteds =
-        akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-            .expect("nonempty precommitted groups");
+    let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .expect("nonempty precommitted groups");
     let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(final_polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
@@ -271,13 +276,15 @@ where
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/multi-group-unequal",
-            GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/multi-group-unequal",
+                GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("multi-group verify");
 
     if check_group_binding {
@@ -299,14 +306,14 @@ where
         .expect("swapped verifier claims");
         assert!(
             scheme
-                .batched_verify(
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
-                    &verifier_setup,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "swapped group commitments must reject"
         );
@@ -322,14 +329,14 @@ where
         .expect("tampered verifier claims");
         assert!(
             scheme
-                .batched_verify(
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
-                    &verifier_setup,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "tampered group opening must reject"
         );

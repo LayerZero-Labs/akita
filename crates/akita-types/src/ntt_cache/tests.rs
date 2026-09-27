@@ -2,7 +2,6 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use core::mem::size_of;
 use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 fn flat_zeros<F: Field, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
     crate::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
@@ -18,117 +17,6 @@ fn prefix_requirements_join_by_maximum_in_one_dimension() {
     let other_dimension =
         NttPrefixRequirement::from_matrix_shape(128, 1, 1).expect("other dimension");
     assert!(short.join(other_dimension).is_err());
-}
-
-#[test]
-fn verifier_cache_key_binds_exact_plan_requirement() {
-    let strong = VerifierNttCacheKey {
-        ring_d: 64,
-        width: 8,
-        rhs_abs_bound: 1 << 15,
-    };
-    let weak = VerifierNttCacheKey {
-        ring_d: 64,
-        width: 16,
-        rhs_abs_bound: 3,
-    };
-    assert_ne!(strong, weak);
-    assert_eq!(strong, strong);
-}
-
-#[test]
-fn verifier_cache_preserves_strong_entry_across_weaker_growth() {
-    const D: usize = 64;
-    let ring_count = 32;
-    let matrix = (0..ring_count)
-        .map(|ring| {
-            CyclotomicRing::<Prime128Offset275, D>::from_coefficients(std::array::from_fn(
-                |coefficient| Prime128Offset275::from_u64((ring * D + coefficient + 1) as u64),
-            ))
-        })
-        .collect::<Vec<_>>();
-    let expanded = crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        crate::AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: ring_count * D,
-            setup_seed: [0u8; 32].into(),
-        },
-        crate::FlatMatrix::from_ring_slice(&matrix),
-    );
-    let cache = VerifierNttCache::default();
-    let strong_mode = NttCacheMode::ExactNegacyclic {
-        width: 8,
-        rhs_abs_bound: 1 << 15,
-    };
-    let strong_tail = usize::from(
-        ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(8, 1 << 15)
-            .expect("strong exactness requirement"),
-    ) * 8;
-    let strong = cache
-        .prepare::<Prime128Offset275, D>(
-            &expanded,
-            NttCacheKey {
-                ring_d: D,
-                num_ring_elements: 8,
-                domain: NttTransformDomain::Negacyclic,
-            },
-            strong_tail,
-            strong_mode,
-        )
-        .expect("strong small prefix");
-
-    let weak_tail = usize::from(
-        ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(16, 1)
-            .expect("weak exactness requirement"),
-    ) * 16;
-    cache
-        .prepare::<Prime128Offset275, D>(
-            &expanded,
-            NttCacheKey {
-                ring_d: D,
-                num_ring_elements: ring_count,
-                domain: NttTransformDomain::Negacyclic,
-            },
-            weak_tail,
-            NttCacheMode::ExactNegacyclic {
-                width: 16,
-                rhs_abs_bound: 1,
-            },
-        )
-        .expect("weak large prefix");
-
-    let strong_again = cache
-        .prepare::<Prime128Offset275, D>(
-            &expanded,
-            NttCacheKey {
-                ring_d: D,
-                num_ring_elements: 8,
-                domain: NttTransformDomain::Negacyclic,
-            },
-            strong_tail,
-            strong_mode,
-        )
-        .expect("strong entry remains available");
-    assert!(Arc::ptr_eq(&strong, &strong_again));
-    assert_eq!(cache.slots.lock().expect("cache slots").len(), 2);
-
-    let rhs = vec![[1i16; D]; 8];
-    let cached_output = strong_again
-        .mat_vec_i16::<Prime128Offset275>(3, 1, &rhs)
-        .expect("cached strong plan computes");
-    let uncached = prepare_ntt_cache(
-        expanded
-            .shared_matrix()
-            .ring_view::<D>(1, 8)
-            .expect("uncached matrix view"),
-        strong_mode,
-    )
-    .expect("uncached strong plan");
-    let uncached_output = uncached
-        .mat_vec_i16::<Prime128Offset275>(3, 1, &rhs)
-        .expect("uncached strong plan computes");
-    assert_eq!(cached_output, uncached_output);
 }
 
 #[test]
@@ -178,16 +66,14 @@ fn prepare_materializes_exactly_the_requested_layout() {
             rhs_abs_bound: 1 << 15,
         },
     )
-    .expect("tail negacyclic");
+    .expect("limb negacyclic");
+    // Two q128 rows are cheaper as balanced limb rows under two CRT primes:
+    // four 33-bit limbs of two i32 residues, or two 65-bit limbs of two IFMA52
+    // residues. Both store 32 bytes per matrix coefficient.
+    assert!(q128_exact.uses_limb_split());
     assert!(!q128_exact.has_cyclic());
-    assert_eq!(q128_exact.has_exactness_tail(), ifma52_cache_enabled::<D>());
-    let bytes_per_ring = if ifma52_cache_enabled::<D>() {
-        IFMA52_PRIMES.len() * size_of::<u64>()
-            + usize::from(q128_exact.has_exactness_tail()) * size_of::<i32>()
-    } else {
-        Q128_NUM_PRIMES * size_of::<i32>()
-    };
-    assert_eq!(q128_exact.cache_bytes(), 10 * D * bytes_per_ring);
+    assert!(!q128_exact.has_exactness_tail());
+    assert_eq!(q128_exact.cache_bytes(), 10 * D * 32);
 }
 
 #[test]
@@ -484,20 +370,39 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
         })
         .collect::<Vec<_>>();
     let flat = crate::FlatMatrix::from_ring_slice(&matrix);
+    let view = || flat.ring_view::<D>(ROWS, COLS).expect("matrix view");
     let cache = prepare_ntt_cache(
-        flat.ring_view::<D>(ROWS, COLS).expect("matrix view"),
+        view(),
         NttCacheMode::ExactNegacyclic {
             width: COLS,
             rhs_abs_bound: 1 << 15,
         },
     )
     .expect("exact cache");
+    // The field-sized plan is the one verifier caches keep.
+    let base_plan = base_exact_cache_plan::<F, D>(
+        select_crt_ntt_params::<F, D>().expect("CRT params"),
+        COLS,
+        1 << 15,
+    )
+    .expect("base plan")
+    .expect("base capacity");
+    let base = prepare_exact_ntt_cache(view(), None, base_plan).expect("base cache");
     if ifma52_cache_enabled::<D>() {
+        assert!(base.uses_ifma52());
+        // At most 155 bits here, within base plus the 14-bit tail.
+        assert!(base.has_exactness_tail());
+        assert_eq!(
+            base.cache_bytes(),
+            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i16>())
+        );
+        // Two 65-bit limbs under two IFMA primes.
         assert!(cache.uses_ifma52());
-        assert!(cache.has_exactness_tail());
+        assert!(cache.uses_limb_split());
+        assert!(!cache.has_exactness_tail());
         assert_eq!(
             cache.cache_bytes(),
-            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i32>())
+            ROWS * 2 * COLS * D * 2 * size_of::<u64>()
         );
     }
     let rhs = (0..COLS)
@@ -514,6 +419,10 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     let actual = cache
         .mat_vec_i16::<F>(16, ROWS, &rhs)
         .expect("exact matvec");
+    assert_eq!(
+        base.mat_vec_i16::<F>(16, ROWS, &rhs).expect("base matvec"),
+        actual
+    );
     let expected = matrix
         .chunks_exact(COLS)
         .map(|row| {
@@ -616,44 +525,4 @@ fn signed_i16_cache_checks_shape_and_digit_class() {
         short.mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D], [0; D]]),
         Err(AkitaError::InvalidSetup(_))
     ));
-}
-
-#[test]
-fn erased_cache_mismatches_return_errors_without_panicking() {
-    const D: usize = 64;
-    let flat = flat_zeros::<Prime32Offset99, D>(1);
-    let cache = Arc::new(
-        prepare_ntt_cache(
-            flat.ring_view::<D>(1, 1).expect("matrix view"),
-            NttCacheMode::ExactNegacyclic {
-                width: 1,
-                rhs_abs_bound: 1 << 7,
-            },
-        )
-        .expect("cache"),
-    );
-    let bytes = cache.cache_bytes();
-    let wrong_degree = Arc::new(ErasedVerifierNttCache {
-        ring_d: D,
-        base_prefix_len: 1,
-        tail_prefix_len: 0,
-        cache_bytes: bytes,
-        cache: Arc::clone(&cache) as Arc<dyn Any + Send + Sync>,
-    });
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        downcast_verifier_cache::<32>(wrong_degree)
-    }));
-    assert!(matches!(result, Ok(Err(AkitaError::InvalidSetup(_)))));
-
-    let wrong_type = Arc::new(ErasedVerifierNttCache {
-        ring_d: D,
-        base_prefix_len: 1,
-        tail_prefix_len: 0,
-        cache_bytes: 0,
-        cache: Arc::new(17usize),
-    });
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        downcast_verifier_cache::<D>(wrong_type)
-    }));
-    assert!(matches!(result, Ok(Err(AkitaError::InvalidSetup(_)))));
 }

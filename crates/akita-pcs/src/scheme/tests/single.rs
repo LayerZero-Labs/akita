@@ -43,25 +43,29 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
             let commitments = [commitment];
             let openings = [opening];
             scheme
-                .batched_verify(
-                    &proof,
-                    &verifier_setup,
-                    b"test/prove",
-                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
-                    BasisMode::Lagrange,
-                )
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        b"test/prove",
+                        verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                        BasisMode::Lagrange,
+                    )
+                })
                 .expect("production verifier must replay the reduced-relation suffix");
 
             let mutation = proof.len() * 3 / 4;
             proof[mutation] ^= 1;
             scheme
-                .batched_verify(
-                    &proof,
-                    &verifier_setup,
-                    b"test/prove",
-                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
-                    BasisMode::Lagrange,
-                )
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        b"test/prove",
+                        verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                        BasisMode::Lagrange,
+                    )
+                })
                 .expect_err("production verifier must reject a tampered reduced stage2 proof");
         })
         .expect("reduced-relation test thread")
@@ -79,8 +83,7 @@ fn verify_rejects_wrong_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
@@ -88,6 +91,7 @@ fn verify_rejects_wrong_opening() {
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -120,18 +124,21 @@ fn verify_rejects_wrong_opening() {
 
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
-    let result = scheme.batched_verify(
-        &proof,
-        &verifier_setup,
-        b"test/prove",
-        verifier_claims(
-            &scheme,
-            &opening_point[..],
-            &wrong_openings[..],
-            &commitments[0],
-        ),
-        BasisMode::Lagrange,
-    );
+    let result = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(
+                    &scheme,
+                    &opening_point[..],
+                    &wrong_openings[..],
+                    &commitments[0],
+                ),
+                BasisMode::Lagrange,
+            )
+        });
 
     assert!(
         result.is_err(),
@@ -156,13 +163,14 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
     let (poly, evals) = make_dense_poly(num_vars);
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly]).unwrap(),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -191,65 +199,116 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         )
         .expect("native proof");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/prove",
-            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("native verification");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/prove",
-            verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("native verification must bind the claimed opening");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/different-session",
-            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/different-session",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("native verification must bind the session");
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("the statement must fit the setup's batch capacity");
+    assert_eq!(
+        error,
+        AkitaError::InvalidSize {
+            expected: 1,
+            actual: 2
+        },
+        "a malformed statement keeps its own error"
+    );
+    let short_point = &opening_point[..opening_point.len() - 1];
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &[],
+                b"test/prove",
+                verifier_claims(&scheme, short_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("a claim point shorter than its commitment profile must reject");
+    assert_eq!(
+        error,
+        AkitaError::InvalidInput(
+            "claim group shape does not match its commitment profile".to_string()
+        ),
+        "the statement shape must be checked before proof bytes"
+    );
     let mut truncated = proof.clone();
     truncated.pop().expect("nonempty native proof");
     scheme
-        .batched_verify(
-            &truncated,
-            &verifier_setup,
-            b"test/prove",
-            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &truncated,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("truncated native proof must reject");
     let mut trailing = proof.clone();
     trailing.push(0);
     scheme
-        .batched_verify(
-            &trailing,
-            &verifier_setup,
-            b"test/prove",
-            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &trailing,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("trailing native proof bytes must reject");
     let mut mutated = proof;
     let middle = mutated.len() / 2;
     mutated[middle] ^= 1;
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        scheme.batched_verify(
-            &mutated,
-            &verifier_setup,
-            b"test/prove",
-            verifier_claims(&scheme, &opening_point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &mutated,
+                    b"test/prove",
+                    verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                    BasisMode::Lagrange,
+                )
+            })
     }));
     assert!(matches!(outcome, Ok(Err(_))));
 }

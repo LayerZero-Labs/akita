@@ -5,7 +5,7 @@
 //! mathematical contract can be tested independently of the prover API.
 
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::Valid;
 use jolt_field::{Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 
@@ -600,8 +600,7 @@ where
     F: Field + Ring,
     E: FpExtEncoding<F>,
 {
-    let ring_len = 1usize
-        .checked_shl(ring_bits as u32)
+    let ring_len = checked::pow2(ring_bits)
         .ok_or_else(|| AkitaError::InvalidInput("trace-open row length overflow".to_string()))?;
     let trace_partner = packed_inner_point.sigma_m1();
     let mut trace_product = CyclotomicRing::zero();

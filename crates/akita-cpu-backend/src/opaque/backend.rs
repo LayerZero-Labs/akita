@@ -8,6 +8,8 @@ use akita_error::AkitaError;
 use akita_prover::backend::ProofContext;
 use akita_serialization::Valid;
 use akita_types::{AkitaExpandedSetup, FoldSchedule, OpeningClaimsLayout, SetupPrefixSlotId};
+use core::marker::PhantomData;
+use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -133,17 +135,22 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
 
 /// Reusable owner of CPU setup resources and independent proof scopes.
 ///
+/// The backend is typed by its base field `F` and extension field `E` only.
+/// It stores no schedule catalog: commitment takes the producer family's
+/// catalog as an argument, and proof admission takes the consumer's catalog,
+/// so one backend can commit groups from several schedule families that share
+/// `F` and `E`.
+///
 /// Prepared-opening handles are linear protocol capabilities and cannot be
 /// cloned, even though their immutable backing allocations may be shared
 /// internally.
 ///
 /// ```compile_fail
-/// use akita_config::proof_optimized::fp128;
 /// use akita_cpu_backend::CpuBackend;
 /// use akita_prover::ProverHandleFamily;
 /// use jolt_field::Prime128OffsetA7F7;
 ///
-/// type Opening = <CpuBackend<fp128::Dense> as ProverHandleFamily<
+/// type Opening = <CpuBackend<Prime128OffsetA7F7, Prime128OffsetA7F7> as ProverHandleFamily<
 ///     Prime128OffsetA7F7,
 ///     Prime128OffsetA7F7,
 /// >>::PreparedOpeningHandle;
@@ -151,20 +158,20 @@ impl<T: Send + Sync> SetupPrefixCache<T> {
 /// fn require_clone<T: Clone>() {}
 /// require_clone::<Opening>();
 /// ```
-pub struct CpuBackend<Cfg: CommitmentConfig = akita_config::proof_optimized::fp128::OneHot> {
+pub struct CpuBackend<F: Field, E> {
     identity: Arc<BackendIdentity>,
-    prepared: Option<CpuPreparedSetup<Cfg::Field>>,
-    schedules: Option<TrustedScheduleCatalog<Cfg>>,
+    prepared: Option<CpuPreparedSetup<F>>,
     max_cached_ring_switch_elements: usize,
     /// Derived setup-prefix material, memoized for the life of this backend.
     ///
     /// A prefix commitment is a pure function of the owned setup and the slot
     /// id, both of which are fixed here, so deriving it more than once is
     /// wasted work.
-    setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<Cfg::Field>>,
+    setup_prefix_cache: SetupPrefixCache<CachedSetupPrefix<F>>,
+    extension: PhantomData<fn() -> E>,
 }
 
-impl<Cfg: CommitmentConfig> core::fmt::Debug for CpuBackend<Cfg> {
+impl<F: Field, E> core::fmt::Debug for CpuBackend<F, E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CpuBackend")
             .field("backend_id", &self.identity.backend_id())
@@ -172,20 +179,16 @@ impl<Cfg: CommitmentConfig> core::fmt::Debug for CpuBackend<Cfg> {
     }
 }
 
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
+impl<F: Field, E> CpuBackend<F, E> {
     /// Default maximum cached extent for a ring-switch NTT operation.
     pub const DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS: usize = 1 << 21;
 
-    /// Own a setup and its immutable trusted configuration.
-    pub fn new(
-        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
-        schedules: &TrustedScheduleCatalog<Cfg>,
-    ) -> Result<Self, AkitaError> {
-        Self::with_ring_switch_cache_limit(
-            expanded,
-            schedules,
-            Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-        )
+    /// Own a setup.
+    pub fn new(expanded: Arc<AkitaExpandedSetup<F>>) -> Result<Self, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
+        Self::with_ring_switch_cache_limit(expanded, Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS)
     }
 
     /// Create a CPU backend with a ring-switch cache limit.
@@ -193,10 +196,12 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
     /// Zero streams every supported operation; `usize::MAX` retains all of
     /// them. Commitment scratch is sized automatically for each operation.
     pub fn with_ring_switch_cache_limit(
-        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
-        schedules: &TrustedScheduleCatalog<Cfg>,
+        expanded: Arc<AkitaExpandedSetup<F>>,
         max_cached_ring_switch_elements: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
         expanded
             .descriptor
             .check()
@@ -206,9 +211,9 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         Ok(Self {
             identity: BackendIdentity::new(digest)?,
             prepared: Some(CpuPreparedSetup::new(expanded)),
-            schedules: Some(schedules.clone()),
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
+            extension: PhantomData,
         })
     }
 
@@ -217,9 +222,9 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         &self,
         id: &SetupPrefixSlotId,
         derive: Derive,
-    ) -> Result<Arc<CachedSetupPrefix<Cfg::Field>>, AkitaError>
+    ) -> Result<Arc<CachedSetupPrefix<F>>, AkitaError>
     where
-        Derive: FnOnce() -> Result<CachedSetupPrefix<Cfg::Field>, AkitaError>,
+        Derive: FnOnce() -> Result<CachedSetupPrefix<F>, AkitaError>,
     {
         self.setup_prefix_cache.memoized(id, derive)
     }
@@ -229,31 +234,29 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         self.setup_prefix_cache.len()
     }
 
-    pub(crate) fn schedules(&self) -> Result<&TrustedScheduleCatalog<Cfg>, AkitaError> {
-        self.schedules
-            .as_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("test backend has no schedule catalog".into()))
-    }
-
-    pub(crate) fn validate_proof_configuration(
-        &self,
+    /// Require the proof schedule to be a row of `schedules` and validate the
+    /// opening layout against that row.
+    pub(crate) fn validate_proof_configuration<Cfg>(
+        schedules: &TrustedScheduleCatalog<Cfg>,
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
-    ) -> Result<(), AkitaError> {
-        let row = self
-            .schedules()?
+    ) -> Result<(), AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
+        let row = schedules
             .catalog()
             .rows()
             .find(|row| row.schedule() == plan)
             .ok_or_else(|| {
                 AkitaError::UnsupportedSchedule(
-                    "proof schedule is absent from the backend's trusted catalog".into(),
+                    "proof schedule is absent from the trusted catalog".into(),
                 )
             })?;
         row.validate_opening_layout(layout)
     }
 
-    pub(crate) fn prepared(&self) -> Result<&CpuPreparedSetup<Cfg::Field>, AkitaError> {
+    pub(crate) fn prepared(&self) -> Result<&CpuPreparedSetup<F>, AkitaError> {
         self.prepared
             .as_ref()
             .ok_or_else(|| AkitaError::InvalidSetup("test backend has no owned setup".into()))
@@ -332,7 +335,10 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
         Ok(next)
     }
     /// Release idle shared setup transforms. Active operations retain their resources.
-    pub fn trim_caches(&self) -> Result<usize, AkitaError> {
+    pub fn trim_caches(&self) -> Result<usize, AkitaError>
+    where
+        F: CanonicalEncoding,
+    {
         #[cfg(test)]
         if self.prepared.is_none() {
             return Ok(0);
@@ -365,8 +371,9 @@ impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
 }
 
 #[cfg(test)]
-impl CpuBackend {
-    /// Unit-test arithmetic route. It cannot import sources or admit proofs.
+impl<F: Field, E> CpuBackend<F, E> {
+    /// Unit-test arithmetic route. It owns no setup, so it cannot import
+    /// sources or admit proofs.
     pub(crate) fn for_arithmetic_tests() -> Self {
         Self::with_test_ring_switch_cache_limit(Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS)
             .expect("valid arithmetic fixture")
@@ -377,30 +384,9 @@ impl CpuBackend {
         Ok(Self {
             identity: BackendIdentity::new([0; 32])?,
             prepared: None,
-            schedules: None,
             max_cached_ring_switch_elements,
             setup_prefix_cache: SetupPrefixCache::default(),
-        })
-    }
-}
-
-#[cfg(test)]
-impl<Cfg: CommitmentConfig> CpuBackend<Cfg> {
-    pub(crate) fn for_test_setup(
-        expanded: Arc<AkitaExpandedSetup<Cfg::Field>>,
-    ) -> Result<Self, AkitaError> {
-        expanded
-            .descriptor
-            .check()
-            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        let digest = akita_types::setup_seed_digest(&expanded.descriptor.setup_seed)
-            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        Ok(Self {
-            identity: BackendIdentity::new(digest)?,
-            prepared: Some(CpuPreparedSetup::new(expanded)),
-            schedules: None,
-            max_cached_ring_switch_elements: Self::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
-            setup_prefix_cache: SetupPrefixCache::default(),
+            extension: PhantomData,
         })
     }
 }

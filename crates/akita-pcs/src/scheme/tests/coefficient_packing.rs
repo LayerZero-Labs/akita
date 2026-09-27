@@ -185,22 +185,22 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .slot_id()
                 .expect("setup prefix group");
             let prefix_backend =
-                CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+                CpuBackend::<PackingField, PackingExt>::new(setup.expanded.clone()).unwrap();
             let artifacts = prefix_backend
-                .export_setup_prefixes::<PackingField>(std::slice::from_ref(&setup_prefix))
+                .export_setup_prefixes(std::slice::from_ref(&setup_prefix))
                 .unwrap();
             setup
                 .prefix_slots
                 .insert(artifacts.get(&setup_prefix).unwrap().clone())
                 .unwrap();
-            let stack = CpuBackend::<PackingCfg>::new(setup.expanded.clone(), scheme.schedules())
-                .expect("backend");
+            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_cpu_backend::CommitOutput {
                 committed_group,
                 private_handle: hint,
             } = stack
                 .commit(
+                    scheme.schedules(),
                     &stack
                         .import_source(vec![polynomial.clone()])
                         .expect("source"),
@@ -252,7 +252,10 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                 scheme
-                    .batched_verify(proof.as_slice(), &verifier_setup, label, statement, basis)
+                    .verifier(verifier_setup.clone())
+                    .and_then(|verifier| {
+                        verifier.batched_verify(proof.as_slice(), label, statement, basis)
+                    })
                     .unwrap();
 
                 if basis == BasisMode::Lagrange {
@@ -268,13 +271,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                     assert!(scheme
-                        .batched_verify(
+                        .verifier(verifier_setup.clone())
+                        .and_then(|verifier| verifier.batched_verify(
                             malformed.as_slice(),
-                            &verifier_setup,
                             label,
                             statement,
-                            basis,
-                        )
+                            basis
+                        ))
                         .is_err());
 
                     macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {

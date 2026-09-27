@@ -41,11 +41,10 @@ where
     SubringCoefficientPackingPartials::new(point.geometry(), point.num_live_blocks(), coordinates)
 }
 
-impl<F, E, Cfg, const D: usize>
+impl<F, E, const D: usize>
     SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
-    for CpuBackend<Cfg>
+    for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {

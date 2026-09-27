@@ -1,4 +1,5 @@
 use super::*;
+use crate::wire_limits::reserve_shape_len;
 use akita_error::checked;
 
 /// D-erased storage for a sequence of ring elements as raw field-element
@@ -635,7 +636,7 @@ impl AkitaDeserialize for DigitBlocks {
             SerializationError::InvalidData("digit block length overflow".to_string())
         })?;
         let mut digits = Vec::new();
-        super::reserve_shape_len(&mut digits, total_digits)?;
+        reserve_shape_len(&mut digits, total_digits)?;
         for _ in 0..total_digits {
             digits.push(i8::deserialize_with_mode(
                 &mut reader,

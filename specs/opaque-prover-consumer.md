@@ -253,9 +253,11 @@ where
 ```
 
 This is one logical handle family. Its implementation may route commitment,
-opening, tensor, and ring-switch work internally. A single reusable `CpuBackend`
-owns configuration and private resources; generic proving does not compose
-physical routes. Cross-owner reuse requires an explicit validated import.
+opening, tensor, and ring-switch work internally. A single reusable `CpuBackend<F, E>`
+owns the prepared setup and private resources and receives each operation's
+schedule catalog as an argument
+([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)); generic
+proving does not compose physical routes. Cross-owner reuse requires an explicit validated import.
 
 ## Proof-scoped ownership
 

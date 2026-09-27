@@ -125,8 +125,7 @@ where
     );
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -160,12 +159,15 @@ where
                 num_field_elements: verifier_capacity.num_field_elements - 1,
             })
             .expect("construct undersized verifier fixture");
-        akita_config::ensure_verifier_schedule_fits_setup(
-            undersized.expanded().as_ref(),
-            &schedule,
-            &opening_layout,
-        )
-        .expect_err("one-field-short verifier setup must reject");
+        assert!(
+            !akita_config::verifier_schedule_fits_setup(
+                undersized.expanded().as_ref(),
+                &schedule,
+                &opening_layout,
+            )
+            .expect("fit check"),
+            "one-field-short verifier setup must not fit"
+        );
     }
 
     let akita_cpu_backend::CommitOutput {
@@ -173,6 +175,7 @@ where
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -200,18 +203,20 @@ where
         )
         .expect("prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
 }
 
@@ -256,8 +261,7 @@ where
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup_source = scheme
         .setup_prover(setup_nv + 1, setup_polys + 1)
         .expect("larger verifier materialization");
@@ -291,6 +295,7 @@ where
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -318,18 +323,20 @@ where
         )
         .expect("prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("verify");
 
     assert!(
@@ -339,36 +346,40 @@ where
     let mut tampered = proof.clone();
     *tampered.last_mut().expect("nonempty proof") ^= 1;
     scheme
-        .batched_verify(
-            &tampered,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &tampered,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("tampering the terminal response must be rejected");
 
     let mut wrong_binding = proof.clone();
     let binding_probe = wrong_binding.len() / 2;
     wrong_binding[binding_probe] ^= 1;
     scheme
-        .batched_verify(
-            &wrong_binding,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &wrong_binding,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect_err("schedule/proof binding mismatch must reject without panic");
 }
 
@@ -422,8 +433,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
@@ -431,6 +441,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -456,18 +467,20 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         )
         .expect("batched prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("batched verify");
 }
 
@@ -525,8 +538,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = scheme.setup_prover(setup_nv, setup_polys).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
@@ -534,6 +546,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(polys.to_vec()).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -559,18 +572,20 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         )
         .expect("batched onehot prove");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            session,
-            verify_input::<Cfg>(
-                &pt[..],
-                opening_groups[0],
-                &commitments[0],
-                scheme.schedules(),
-            ),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                session,
+                verify_input::<Cfg>(
+                    &pt[..],
+                    opening_groups[0],
+                    &commitments[0],
+                    scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("batched onehot verify");
 }
 

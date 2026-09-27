@@ -7,9 +7,9 @@ use akita_prover::{ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
-    SetupMatrixCapacity,
+    BasisMode, FoldSchedule, FpExtEncoding, OpeningClaimsLayout, SetupMatrixCapacity,
 };
+use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
@@ -68,11 +68,12 @@ where
     where
         Cfg::Field: AkitaDeserialize<Context = ()> + WithCommitAccumulator,
     {
-        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+        let requirements = akita_config::SetupRequirements::from_catalog::<Cfg>(
             &self.schedules,
             max_num_vars,
             max_num_batched_polys,
-        )
+        )?;
+        akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
     }
 
     /// Derive a verifier setup that preserves the prover's full matrix prefix.
@@ -129,10 +130,10 @@ where
         opening: SelectedProverOpeningData<
             'a,
             Cfg::ExtField,
-            CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
             Cfg::Field,
         >,
-        backend: &CpuBackend<Cfg>,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
         session: &[u8],
         basis: BasisMode,
     ) -> Result<Vec<u8>, AkitaError>
@@ -140,10 +141,10 @@ where
         Cfg::Field: WithCommitAccumulator + 'static,
         Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        CpuBackend<Cfg>: ProverBackend<
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
             Cfg::Field,
             Cfg::ExtField,
-            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
         >,
     {
         let started = Instant::now();
@@ -154,7 +155,7 @@ where
         )?;
         let prefix_slots =
             backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
-        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg>>(
+        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg::Field, Cfg::ExtField>>(
             setup.expanded.descriptor(),
             &prefix_slots,
             &self.schedules,
@@ -171,31 +172,20 @@ where
         Ok(proof)
     }
 
-    /// Verify the canonical native Spongefish argument stream.
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    pub fn batched_verify(
+    /// Build a verifier for `setup` over this scheme's schedule catalog.
+    ///
+    /// The verifier admits every catalog row `setup` supports and prepares
+    /// their terminal matrices once; see [`AkitaVerifier::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
+    /// admitted row fails.
+    pub fn verifier(
         &self,
-        proof: &[u8],
-        setup: &AkitaVerifierSetup<Cfg::Field>,
-        session: &[u8],
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        basis: BasisMode,
-    ) -> Result<(), AkitaError> {
-        let started = Instant::now();
-        akita_verifier::batched_verify::<Cfg>(
-            proof,
-            setup,
-            &self.schedules,
-            session,
-            statement,
-            basis,
-        )?;
-        tracing::info!(
-            proof_bytes = proof.len(),
-            elapsed_s = started.elapsed().as_secs_f64(),
-            "akita batched verify complete"
-        );
-        Ok(())
+        setup: AkitaVerifierSetup<Cfg::Field>,
+    ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
+        AkitaVerifier::new(setup, self.schedules.clone())
     }
 
     /// Protocol identifier.

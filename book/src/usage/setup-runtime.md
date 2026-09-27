@@ -43,22 +43,54 @@ let setup = scheme.setup_prover(
 ```
 
 A larger covering setup can serve a smaller proof under the same public seed.
-The commitment and proof bind the public setup identity, not the amount of
+Of the setup, the commitment and proof bind only the seed, not the amount of
 matrix data that one prover happened to store.
 
 For a recursive configuration, setup construction also prepares the setup
 prefix commitments required by its supplied catalog. The host should build
 setup with the configuration that will produce the final proofs.
 
+## Share one setup across families
+
+Configurations with the same field can share one setup, and those that also
+share the extension field can share one backend. Compute each catalog's
+requirements at the same bound, combine them, and build the setup from the
+combined requirements:
+
+```rust
+let requirements = SetupRequirements::from_catalog::<DenseConfig>(
+    dense_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?
+.union(SetupRequirements::from_catalog::<OneHotConfig>(
+    onehot_scheme.schedules(),
+    max_num_vars,
+    max_total_batched_polys,
+)?)?;
+let setup = akita_pcs::new_prover_setup::<Field>(&requirements)?;
+```
+
+The combined setup uses the same public seed as each per-family setup, so a
+proof produced with it is byte-identical to one produced with the smaller
+per-family setup. The transcript's instance descriptor binds the field
+algebra, the family's decomposition and SIS profile, the setup seed, the
+selected schedule row, the grinding plan, and the call layout. It binds no
+provisioned capacity: neither the setup's variable and polynomial bounds nor
+its materialized matrix length. Commitments read the same seed-derived matrix
+prefix under either setup. Each commitment call uses its producer catalog.
+Each opening selects a row from, and is admitted against, its opening catalog.
+
+`SetupRequirements<F>` is tied to the field and has no public constructor
+other than `from_catalog` and `union`, so every requirement passed to
+`new_prover_setup` comes from validated catalog metadata.
+
 ## Prepare the compute backend
 
 The CPU backend turns public setup into reusable execution state.
 
 ```rust
-let backend = std::sync::Arc::new(CpuBackend::<Config>::new(
-    setup.expanded.clone(),
-    scheme.schedules(),
-)?);
+let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
 
 The prepared state starts with empty transform caches. Commitment and proving

@@ -23,7 +23,7 @@ fn setup_capacity(num_ring_elements: usize) -> SetupMatrixCapacity {
 
 pub(super) fn prepared() -> CpuPreparedSetup<F> {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .unwrap()
 }
@@ -32,15 +32,15 @@ pub(super) fn prepared() -> CpuPreparedSetup<F> {
 fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
     let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     let setup_b = AkitaProverSetup::<F>::generate_with_capacity(9, 1, setup_capacity(D)).unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup_a)
         .unwrap();
 
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .validate_prepared_setup(&prepared, setup_a.expanded.as_ref())
         .expect("matching setup");
     assert!(
-        CpuBackend::for_arithmetic_tests()
+        CpuBackend::<F, F>::for_arithmetic_tests()
             .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
             .is_err(),
         "prepared context must stay bound to the setup used to create it"
@@ -53,11 +53,11 @@ fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
     let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup_a)
         .unwrap();
 
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
         .expect("equivalent deterministic setup should validate");
 }
@@ -65,7 +65,7 @@ fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
 #[test]
 fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
     let prepared = prepared();
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .digit_rows::<D>(&prepared, 1, &[&[[1i8; D]]], 2)
         .expect("build exact NTT prefix");
     let profile = prepared.shared_ntt_profile(D).expect("profile");
@@ -81,7 +81,7 @@ fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
 #[test]
 fn prepare_setup_starts_with_empty_ntt_cache() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .expect("prepared");
     assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
@@ -91,7 +91,7 @@ fn prepare_setup_starts_with_empty_ntt_cache() {
 #[test]
 fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_setup(&setup)
         .expect("prepared");
     let partial_key = NttCacheKey {
@@ -99,7 +99,7 @@ fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
         num_ring_elements: 1,
         domain: NttTransformDomain::Negacyclic,
     };
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, partial_key)
         .expect("warm partial slot");
     assert!(prepared.shared_ntt_cache_bytes() > 0);
@@ -118,7 +118,7 @@ fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
 #[test]
 fn concurrent_same_key_ntt_warm_builds_once() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let prepared = CpuBackend::for_arithmetic_tests()
+    let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
         .prepare_expanded(setup.expanded.clone())
         .expect("empty prepared setup");
     let key = NttCacheKey {
@@ -131,13 +131,13 @@ fn concurrent_same_key_ntt_warm_builds_once() {
         for _ in 0..8 {
             let prepared = &prepared;
             scope.spawn(move || {
-                CpuBackend::for_arithmetic_tests()
+                CpuBackend::<F, F>::for_arithmetic_tests()
                     .ensure_ntt_slot(prepared, key)
                     .expect("warm shared NTT slot");
             });
         }
     });
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, key)
         .expect("repeated warm is a no-op");
 
@@ -153,7 +153,7 @@ fn larger_initialized_prefix_covers_smaller_request() {
         num_ring_elements: 8,
         domain: NttTransformDomain::Negacyclic,
     };
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, covering_key)
         .expect("warm covering prefix");
 
@@ -183,10 +183,10 @@ fn larger_request_replaces_smaller_cached_prefix() {
         num_ring_elements: 8,
         domain: NttTransformDomain::Negacyclic,
     };
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, small)
         .expect("warm small prefix");
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, large)
         .expect("grow to larger prefix");
 
@@ -209,13 +209,13 @@ fn failed_growth_retains_smaller_cached_prefix() {
         domain: NttTransformDomain::Negacyclic,
     };
 
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, small)
         .expect("warm small prefix");
-    assert!(CpuBackend::for_arithmetic_tests()
+    assert!(CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, oversized)
         .is_err());
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, small)
         .expect("failed growth must leave the smaller prefix usable");
 
@@ -231,7 +231,7 @@ fn concurrent_prefix_growth_retains_only_the_maximum() {
         for num_ring_elements in [2, 5, 3, 8, 4, 7] {
             let prepared = &prepared;
             scope.spawn(move || {
-                CpuBackend::for_arithmetic_tests()
+                CpuBackend::<F, F>::for_arithmetic_tests()
                     .ensure_ntt_slot(
                         prepared,
                         NttCacheKey {
@@ -268,11 +268,11 @@ fn failed_oversized_warm_does_not_cover_valid_request() {
         domain: NttTransformDomain::Negacyclic,
     };
 
-    assert!(CpuBackend::for_arithmetic_tests()
+    assert!(CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, oversized)
         .is_err());
     assert!(prepared.shared_ntt.lock().unwrap().is_empty());
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, valid)
         .expect("failed oversized warm must not poison a valid prefix");
 
@@ -297,17 +297,18 @@ fn concurrent_failed_growth_leaves_valid_prefix_recoverable() {
     };
 
     std::thread::scope(|scope| {
-        let failed = scope
-            .spawn(|| CpuBackend::for_arithmetic_tests().ensure_ntt_slot(&prepared, oversized));
-        let warmed =
-            scope.spawn(|| CpuBackend::for_arithmetic_tests().ensure_ntt_slot(&prepared, valid));
+        let failed = scope.spawn(|| {
+            CpuBackend::<F, F>::for_arithmetic_tests().ensure_ntt_slot(&prepared, oversized)
+        });
+        let warmed = scope
+            .spawn(|| CpuBackend::<F, F>::for_arithmetic_tests().ensure_ntt_slot(&prepared, valid));
         assert!(failed.join().expect("oversized warm thread").is_err());
         warmed
             .join()
             .expect("valid warm thread")
             .expect("valid warm must retry a failed covering entry");
     });
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .ensure_ntt_slot(&prepared, valid)
         .expect("valid prefix remains available after failed growth");
 
@@ -321,7 +322,7 @@ fn ring_switch_d_role_prepares_both_domains_at_exact_extent() {
     let prepared = prepared();
     let e_hat = vec![[1i8; D]; 5];
     let t_hat = vec![[1i8; D]; 3];
-    CpuBackend::for_arithmetic_tests()
+    CpuBackend::<F, F>::for_arithmetic_tests()
         .relation_rows(
             &prepared,
             RingSwitchRelationView {
@@ -357,7 +358,7 @@ fn cyclic_only_ring_switch_rows_do_not_prepare_negacyclic_state() {
     let prepared = prepared();
     let t_hat = vec![[1i8; D]; 3];
 
-    let rows = CpuBackend::for_arithmetic_tests()
+    let rows = CpuBackend::<F, F>::for_arithmetic_tests()
         .relation_rows(
             &prepared,
             RingSwitchRelationView {
@@ -432,7 +433,7 @@ fn relation_prewarm_joins_d_a_b_prefixes_before_kernel_execution() {
         setup_capacity(cyclic_extent.max(negacyclic_extent)),
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
 
     super::requirements::warm_relation_ntt_cache(&backend, &prepared, &params)

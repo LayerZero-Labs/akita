@@ -1,5 +1,6 @@
 //! External implementation fixture: the real entrypoint must require no CPU types.
 
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_prover::backend::*;
 use akita_types::*;
@@ -14,6 +15,17 @@ pub struct ExternalProofSession;
 impl CommitmentHandleMetadata for Handle {
     fn metadata(&self) -> SourceMetadata {
         SourceMetadata::try_new(1, 0).expect("fixture public shape")
+    }
+    fn producer_contract(&self) -> sis::CommittedSourceContract {
+        sis::CommittedSourceContract::try_new(
+            sis::CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 64,
+                log_open_bound: None,
+            },
+        )
+        .expect("fixture producer contract")
     }
 }
 impl AcceptedFoldHandle for Handle {
@@ -69,12 +81,16 @@ impl<F: Field + CanonicalEncoding, E: Field> TerminalCommitmentMaterialKernel<F,
 
 #[allow(unused_variables)]
 impl<F: Field + CanonicalEncoding, E: Field> ProofAdmission<F, E> for ExternalBackend<F, E> {
-    fn begin_proof(
+    fn begin_proof<Cfg>(
         &self,
         setup: &AkitaSetupDescriptor,
+        schedules: &TrustedScheduleCatalog<Cfg>,
         plan: &FoldSchedule,
         layout: &OpeningClaimsLayout,
-    ) -> Result<Self::ProofSessionHandle, AkitaError> {
+    ) -> Result<Self::ProofSessionHandle, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         Err(AkitaError::InvalidInput(
             "external fixture rejects this operation".into(),
         ))

@@ -22,12 +22,13 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
-    DigitRangePlan, OpeningClaimsLayout, PreparedCoefficientFunctional, PreparedRelationAddress,
-    RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationGroupOpening, RingRelationInstance, RingRelationMode, RingVec,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
+    DigitRangePlan, OpeningClaimsLayout, PreparedRelationAddress, RelationAddressGeometry,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening,
+    RingRelationInstance, RingRelationMode, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
-use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;
@@ -129,7 +130,7 @@ fn witness_relation_plan_is_initialized_once_from_canonical_relation() {
 
 fn reduced_group_witness(
     params: &CommittedGroupParams,
-    ctx: &OperationCtx<'_, ReducedF, CpuBackend>,
+    ctx: &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
 ) -> RingRelationGroupWitness<ReducedF> {
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
     let group_params = params
@@ -294,7 +295,7 @@ fn structured_reduced_evaluation(
     let fold_gadget = shared_setup_fold_gadget(params, opening_batch, &setup_groups)
         .expect("evaluation-trace fold gadget");
     let coefficient_bits = fixture.geometry.relation_coefficient_variable_count();
-    let mut setup_plan = SetupContributionPlan::prepare::<ReducedF>(
+    let setup_plan = SetupContributionPlan::prepare::<ReducedF>(
         params,
         opening_batch,
         1,
@@ -306,17 +307,17 @@ fn structured_reduced_evaluation(
         fixture.geometry,
     )
     .expect("setup contribution plan");
-    setup_plan
-        .materialize_direct_scan(
-            PreparedCoefficientFunctional::reduced_evaluation(
-                fixture.alpha,
-                &fixture.point[..coefficient_bits],
-                fixture.geometry,
-            )
-            .expect("reduced coefficient functional"),
+    let scan = DirectScan::new(
+        setup_plan,
+        PreparedCoefficientFunctional::reduced_evaluation(
+            fixture.alpha,
+            &fixture.point[..coefficient_bits],
+            fixture.geometry,
         )
-        .expect("reduced direct scan");
-    let structured = setup_plan
+        .expect("reduced coefficient functional"),
+    )
+    .expect("reduced direct scan");
+    let structured = scan
         .evaluate_reduced_structured_group::<ReducedF>(
             0,
             instance
@@ -346,7 +347,7 @@ fn structured_reduced_evaluation(
         ReducedF::zero()
     };
     structured
-        + setup_plan
+        + scan
             .evaluate_direct::<ReducedF>(setup)
             .expect("direct reduced setup evaluation")
         + compression
@@ -388,7 +389,13 @@ fn centered_i32_decompose_matches_ring_decompose() {
     type F = Prime128OffsetA7F7;
     const D: usize = 128;
 
-    let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);
+    let extremes = [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];
+    let centered = from_fn(|i| {
+        extremes
+            .get(i)
+            .copied()
+            .unwrap_or(((37 * i as i32 + 11) % 95) - 47)
+    });
     let ring =
         CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
 
@@ -397,16 +404,18 @@ fn centered_i32_decompose_matches_ring_decompose() {
         (10usize, 2u32),
         (5usize, 5u32),
         (4usize, 6u32),
+        (40usize, 1u32),
+        (5usize, 8u32),
+        (12usize, 3u32),
     ] {
         let mut got = vec![[0i8; D]; num_digits];
         balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
 
         let mut expected = vec![[0i8; D]; num_digits];
-        let q = (-F::one()).to_u128_checked().expect("u128 modulus") + 1;
         ring.balanced_decompose_pow2_i8_into_with_params(
             &mut expected,
             &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
-                num_digits, log_basis, q,
+                num_digits, log_basis,
             ),
         );
         assert_eq!(
@@ -418,7 +427,10 @@ fn centered_i32_decompose_matches_ring_decompose() {
 
 fn with_reduced_setup<R>(
     setup_coefficients: usize,
-    test: impl FnOnce(&OperationCtx<'_, ReducedF, CpuBackend>, &AkitaProverSetup<ReducedF>) -> R,
+    test: impl FnOnce(
+        &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
+        &AkitaProverSetup<ReducedF>,
+    ) -> R,
 ) -> R {
     let setup = AkitaProverSetup::<ReducedF>::generate_with_capacity(
         8,
@@ -428,7 +440,7 @@ fn with_reduced_setup<R>(
         },
     )
     .expect("prover setup");
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<ReducedF, ReducedF>::for_arithmetic_tests();
     let prepared = backend
         .prepare_expanded(setup.expanded.clone())
         .expect("prepared setup");
@@ -452,7 +464,7 @@ fn assert_reduced_compression_report(
 fn build_reduced_without_quotients(
     instance: &RingRelationInstance<ReducedF>,
     witness: RingRelationWitness<ReducedF>,
-    ctx: &OperationCtx<'_, ReducedF, CpuBackend>,
+    ctx: &OperationCtx<'_, ReducedF, CpuBackend<ReducedF, ReducedF>>,
     params: &CommittedGroupParams,
 ) -> crate::opaque::OpaqueRecursiveWitness {
     reset_multi_group_quotient_calls();

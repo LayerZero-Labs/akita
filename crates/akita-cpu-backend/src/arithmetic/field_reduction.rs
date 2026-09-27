@@ -1,5 +1,5 @@
 use crate::opaque::RecursiveWitnessFlat;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::pack_tensor_base_lift_i8_digits;
 use jolt_field::{ExtField, Field};
 
@@ -9,8 +9,7 @@ where
     E: ExtField<F>,
 {
     let split_bits = E::DEGREE.trailing_zeros() as usize;
-    let width = 1usize
-        .checked_shl(split_bits as u32)
+    let width = checked::pow2(split_bits)
         .ok_or_else(|| AkitaError::InvalidInput("tensor extension width overflow".to_string()))?;
     if width != E::DEGREE || !E::DEGREE.is_power_of_two() {
         return Err(AkitaError::InvalidInput(format!(

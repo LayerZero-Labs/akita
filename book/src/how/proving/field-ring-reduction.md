@@ -800,12 +800,15 @@ The implementation follows the same derivation in three stages:
    $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.
 
 The reference tests in
-[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
+[`coefficient_packing_fold_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/arithmetic/coefficient_packing_fold_tests.rs)
 compare the direct partial and scalar formulas with the flat factorization.
 The Stage-2 tests in
 [`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)
-compare the expanded prover terms with the verifier's compact evaluation and
-check that every extension-coordinate plane is bound.
+check the expanded prover terms and that every extension-coordinate plane is
+bound. The verifier tests in
+[`coefficient_packing_relation/tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/coefficient_packing_relation/tests.rs)
+compare the compact evaluation with dense oracles built from those expanded
+terms.
 
 ## Base-field polynomial at an extension-field point
 

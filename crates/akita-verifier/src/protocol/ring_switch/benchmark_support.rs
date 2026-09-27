@@ -30,18 +30,18 @@ pub struct PreparedRelationEvaluatorBenchmark<'a> {
 }
 
 impl RelationEvaluatorBenchmarkCase {
-    /// Prepare the production relation point and setup-contribution plan.
+    /// Prepare the production relation point, setup-contribution plan, and
+    /// direct setup scan (column weights and packed segments).
     pub fn prepare(&self) -> Result<PreparedRelationEvaluatorBenchmark<'_>, AkitaError> {
-        let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<
+        let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<
             Prime128OffsetA7F7,
         >(&self.evaluator, &self.point, self.alpha)?;
-        prepared.materialize_setup()?;
         Ok(PreparedRelationEvaluatorBenchmark { prepared })
     }
 }
 
 impl PreparedRelationEvaluatorBenchmark<'_> {
-    /// Materialize setup weights and scan the active setup exactly once.
+    /// Scan the active setup exactly once with the prepared direct scan.
     pub fn setup_scan(
         self,
         setup: &AkitaExpandedSetup<Prime128OffsetA7F7>,
@@ -49,7 +49,7 @@ impl PreparedRelationEvaluatorBenchmark<'_> {
         self.prepared.evaluate_setup::<Prime128OffsetA7F7>(setup)
     }
 
-    /// Materialize setup weights, then evaluate only the non-setup relation weight.
+    /// Evaluate only the non-setup relation weight.
     pub fn relation_weight(self) -> Result<Prime128OffsetA7F7, AkitaError> {
         self.prepared
             .evaluate_relation_weight::<Prime128OffsetA7F7>()
@@ -255,10 +255,9 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         .relation_point_variable_count())
         .map(|index| scalar(101 + index as u128))
         .collect::<Vec<_>>();
-    let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<F>(
+    let prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<F>(
         &evaluator, &point, alpha,
     )?;
-    prepared.materialize_setup()?;
     let setup_field_elements = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {

@@ -1,7 +1,6 @@
-use super::kernels::GroupSetupSegment;
 use crate::{
     CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
-    RelationAddressGeometry, SetupProjectionGeometry, WitnessLayout,
+    SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_error::AkitaError;
@@ -306,171 +305,42 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
-    pub(crate) setup_relation_address: PreparedRelationAddress<E>,
-    pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-    pub(crate) direct_scan_state: DirectScanState<E>,
 }
 
-/// Coefficient functional used by the one fused direct-setup traversal.
-///
-/// Lifted evaluation preserves the existing alpha-power factorization.
-/// Reduced evaluation instead contracts each native setup ring against the
-/// terminal residue kernel prepared from the exact Stage-2 coefficient point.
-/// The point contains only the common low coefficient coordinates; role-lane
-/// coordinates remain owned by the setup plan's checked relation tensors.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreparedCoefficientFunctional<E: Field> {
-    LiftedPower {
-        alpha: E,
-    },
-    ReducedEvaluation {
-        alpha: E,
-        coefficient_point: Arc<[E]>,
-    },
-}
-
-impl<E: Field> PreparedCoefficientFunctional<E> {
-    #[must_use]
-    pub const fn lifted_power(alpha: E) -> Self {
-        Self::LiftedPower { alpha }
-    }
-
-    pub fn reduced_evaluation(
-        alpha: E,
-        coefficient_point: &[E],
-        geometry: RelationAddressGeometry,
-    ) -> Result<Self, AkitaError> {
-        let expected = geometry.relation_coefficient_variable_count();
-        if coefficient_point.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: coefficient_point.len(),
-            });
-        }
-        Ok(Self::ReducedEvaluation {
-            alpha,
-            coefficient_point: coefficient_point.to_vec().into(),
-        })
-    }
-
-    #[must_use]
-    pub const fn alpha(&self) -> E {
-        match self {
-            Self::LiftedPower { alpha } | Self::ReducedEvaluation { alpha, .. } => *alpha,
-        }
-    }
-}
-
-pub(crate) struct ProjectedEqPairTensor<E: Field> {
-    pub(crate) ratio: usize,
-    pub(crate) families: Vec<EqPairTensorFamily<E>>,
-    pub(crate) state: ProjectedEqPairTensorState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProjectedEqPairTensorState {
-    Native,
-    RelationFactored,
-}
-
-impl<E: Field> SetupContributionPlan<E> {
-    /// Prepared D/B/A column equality slices for `group_id`.
-    ///
-    /// The D-role slice is laid out
-    /// `(claim, block, opening_subcolumn, opening_digit)`, the B-role slice
-    /// `(claim, block, A_row, outer_subcolumn, commit_digit)`, and the A-role
-    /// slice `(position, witness_digit)` after contraction over units and fold
-    /// digits. Subcolumn axes have length one for uniform roles.
-    /// Tests compare these slices against independent address oracles.
-    #[cfg(test)]
-    #[must_use]
-    pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
-        let group_index = self
-            .groups
-            .iter()
-            .position(|group| group.group_id == group_id)?;
-        self.direct_scan_state
-            .weights(group_index)
-            .map(DirectScanWeights::slices)
-    }
-}
-
-pub(crate) struct DirectScanWeights<E> {
-    pub(crate) e: Vec<E>,
-    pub(crate) t: Vec<E>,
-    pub(crate) z: Vec<E>,
-}
-
-impl<E> DirectScanWeights<E> {
-    #[cfg(test)]
-    pub(crate) fn slices(&self) -> (&[E], &[E], &[E]) {
-        (&self.e, &self.t, &self.z)
-    }
-}
-
-pub(crate) struct ReducedDirectScanWeights<E> {
-    pub(crate) weights: DirectScanWeights<E>,
-    pub(crate) roles: [ReducedRoleCoefficientState<E>; 3],
-}
-
-pub(crate) enum DirectScanState<E: Field> {
-    Unprepared,
-    Lifted {
-        alpha: E,
-        groups: Vec<DirectScanWeights<E>>,
-    },
-    Reduced {
-        alpha: E,
-        coefficient_point: Arc<[E]>,
-        groups: Vec<ReducedDirectScanWeights<E>>,
-    },
-}
-
-impl<E: Field> DirectScanState<E> {
-    pub(crate) fn weights(&self, group_index: usize) -> Option<&DirectScanWeights<E>> {
-        match self {
-            Self::Unprepared => None,
-            Self::Lifted { groups, .. } => groups.get(group_index),
-            Self::Reduced { groups, .. } => groups.get(group_index).map(|group| &group.weights),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct ReducedRoleCoefficientState<E> {
-    pub(crate) functional: Arc<[E]>,
-    pub(crate) equality: Arc<[E]>,
-}
-
+/// One logical B source feeding a [`PhysicalBWeightSegment`].
 #[derive(Clone, Copy)]
-pub(crate) struct PhysicalBWeightTerm<E> {
-    pub(super) logical_start: usize,
-    pub(super) row_weight: E,
+pub struct PhysicalBWeightTerm<E> {
+    /// First logical B column read by this term.
+    pub logical_start: usize,
+    /// Logical B row weight applied to every column of the term.
+    pub row_weight: E,
 }
 
+/// One contiguous physical B column run and its logical sources.
 #[derive(Clone)]
-pub(crate) struct PhysicalBWeightSegment<E> {
-    pub(super) physical_start: usize,
-    pub(super) len: usize,
-    pub(super) terms: Arc<[PhysicalBWeightTerm<E>]>,
+pub struct PhysicalBWeightSegment<E> {
+    /// First physical B ring index of the run.
+    pub physical_start: usize,
+    /// Number of physical B rings in the run.
+    pub len: usize,
+    /// Logical slices whose weights add onto this run.
+    pub terms: Arc<[PhysicalBWeightTerm<E>]>,
 }
 
 /// One canonical owner for the physical B matrix and its logical sliced image.
-pub(crate) struct PhysicalBSetupPlan<E: Field> {
+pub struct PhysicalBSetupPlan<E: Field> {
     pub(super) geometry: CommitmentSliceGeometry,
     pub(super) physical_rows: usize,
     pub(super) logical_row_weights: Arc<[E]>,
     pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
     pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> PhysicalBSetupPlan<E> {
-    pub(crate) fn new(
+    pub fn new(
         geometry: CommitmentSliceGeometry,
         physical_rows: usize,
         logical_row_weights: Arc<[E]>,
@@ -492,45 +362,56 @@ impl<E: Field> PhysicalBSetupPlan<E> {
             logical_row_weights,
             weight_segments: weight_segments.into(),
             relation_tensors: Vec::new(),
-            setup_tensors: Vec::new(),
         })
     }
 
-    pub(crate) fn logical_rows(&self) -> Result<usize, AkitaError> {
+    pub fn logical_rows(&self) -> Result<usize, AkitaError> {
         self.geometry.logical_output_rows(self.physical_rows)
     }
 
-    pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
+    pub const fn geometry(&self) -> &CommitmentSliceGeometry {
         &self.geometry
     }
 
-    pub(crate) const fn physical_rows(&self) -> usize {
+    pub const fn physical_rows(&self) -> usize {
         self.physical_rows
     }
 
-    pub(crate) fn logical_row_weights(&self) -> &[E] {
+    pub fn logical_row_weights(&self) -> &[E] {
         &self.logical_row_weights
     }
 
-    pub(super) fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
+    pub fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
         &self.weight_segments
     }
 
-    pub(crate) fn logical_input_width(&self) -> usize {
+    /// Relation-column tensors of the logical B role, one per active unit
+    /// and claim.
+    pub fn relation_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.relation_tensors
+    }
+
+    pub fn logical_input_width(&self) -> usize {
         self.geometry.logical_input_width()
     }
 
-    pub(crate) fn physical_input_width(&self) -> usize {
+    pub fn physical_input_width(&self) -> usize {
         self.geometry.physical_input_width()
     }
 
-    pub(crate) fn physical_footprint(&self) -> Result<usize, AkitaError> {
+    pub fn physical_footprint(&self) -> Result<usize, AkitaError> {
         self.geometry
             .physical_matrix_ring_elements(self.physical_rows)
     }
 }
 
-pub(crate) struct SetupContributionGroupPlan<E: Field> {
+/// Coefficient-functional-free per-group setup-contribution geometry and
+/// weights.
+///
+/// Built only by [`SetupContributionPlan::prepare`] (or the test-support
+/// fixture constructor); consumers read it through
+/// [`SetupContributionPlan::groups`].
+pub struct SetupContributionGroupPlan<E: Field> {
     pub(crate) group_id: usize,
     pub(crate) opening_method: crate::OpeningMethod,
     pub(crate) role_dims: CommitmentRingDims,
@@ -555,25 +436,265 @@ pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) physical_b: PhysicalBSetupPlan<E>,
-    pub(crate) required: usize,
-    pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    /// Exact non-empty block ranges used by the partitioned E and T roles.
-    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// The non-empty witness units of this group, in layout order. The E and
+    /// T roles are partitioned by them, and the verifier's Stage-3 B tensors
+    /// are rebuilt from them, so no second layout is ever consulted.
+    pub(crate) active_units: Arc<[crate::WitnessUnitLayout]>,
     /// All physical units, including empty chunks that retain replicated Z.
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct SetupUnitRange {
-    pub(crate) global_block_start: usize,
-    pub(crate) num_live_blocks: usize,
+#[cfg(any(test, feature = "test-support"))]
+impl<E: Field> SetupContributionGroupPlan<E> {
+    /// Minimal fixture group: evaluation-trace opening, uniform 64-dimensional
+    /// roles with unit ratios, no claims, live blocks, units or tensors.
+    #[must_use]
+    pub fn from_test_parts(
+        d_col_range: Range<usize>,
+        z_cols: usize,
+        n_a: usize,
+        physical_b: PhysicalBSetupPlan<E>,
+        a_row_weights: Arc<[E]>,
+    ) -> Self {
+        Self {
+            group_id: 0,
+            opening_method: crate::OpeningMethod::EvaluationTrace,
+            role_dims: CommitmentRingDims::uniform(64),
+            a_ratio: 1,
+            b_ratio: 1,
+            d_ratio: 1,
+            a_relation_ratio: 1,
+            b_relation_ratio: 1,
+            d_relation_ratio: 1,
+            opening_subcolumns: 1,
+            consistency_weight: E::one(),
+            num_claims: 0,
+            num_live_blocks: 0,
+            num_positions_per_block: z_cols,
+            depth_witness: 1,
+            depth_commit: 1,
+            depth_open: 1,
+            log_basis_inner: 1,
+            log_basis_outer: 1,
+            log_basis_open: 1,
+            d_col_range,
+            z_cols,
+            n_a,
+            physical_b,
+            a_row_weights,
+            fold_gadget: vec![E::one()].into(),
+            active_units: Vec::new().into(),
+            num_physical_units: 0,
+            d_tensors: Vec::new(),
+            a_tensors: Vec::new(),
+        }
+    }
+
+    /// Mutable A-row weights, for tests that perturb them.
+    pub fn a_row_weights_mut_for_test(&mut self) -> &mut [E] {
+        Arc::make_mut(&mut self.a_row_weights)
+    }
+
+    /// Overwrites the consistency-row weight, for tests that perturb it.
+    pub fn set_consistency_weight_for_test(&mut self, weight: E) {
+        self.consistency_weight = weight;
+    }
+
+    /// Mutable D, B and A role tensor families, for tests that perturb them.
+    pub fn role_tensors_mut_for_test(&mut self) -> [&mut [EqPairTensorFamily<E>]; 3] {
+        [
+            &mut self.d_tensors,
+            &mut self.physical_b.relation_tensors,
+            &mut self.a_tensors,
+        ]
+    }
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
+    /// Index of this group in the opening batch.
+    #[must_use]
+    pub const fn group_id(&self) -> usize {
+        self.group_id
+    }
+
+    /// Opening method of the consuming fold.
+    #[must_use]
+    pub const fn opening_method(&self) -> crate::OpeningMethod {
+        self.opening_method
+    }
+
+    /// Ring dimensions of the A, B and D roles.
+    #[must_use]
+    pub const fn role_dims(&self) -> CommitmentRingDims {
+        self.role_dims
+    }
+
+    /// `d_a` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn a_ratio(&self) -> usize {
+        self.a_ratio
+    }
+
+    /// `d_b` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn b_ratio(&self) -> usize {
+        self.b_ratio
+    }
+
+    /// `d_d` over the shared setup base ring dimension.
+    #[must_use]
+    pub const fn d_ratio(&self) -> usize {
+        self.d_ratio
+    }
+
+    /// `d_a` over the relation coefficient block length.
+    #[must_use]
+    pub const fn a_relation_ratio(&self) -> usize {
+        self.a_relation_ratio
+    }
+
+    /// `d_b` over the relation coefficient block length.
+    #[must_use]
+    pub const fn b_relation_ratio(&self) -> usize {
+        self.b_relation_ratio
+    }
+
+    /// `d_d` over the relation coefficient block length.
+    #[must_use]
+    pub const fn d_relation_ratio(&self) -> usize {
+        self.d_relation_ratio
+    }
+
+    /// D-role subcolumns per opening column.
+    #[must_use]
+    pub const fn opening_subcolumns(&self) -> usize {
+        self.opening_subcolumns
+    }
+
+    /// `eq(tau_1)` weight of this group's consistency row.
+    #[must_use]
+    pub const fn consistency_weight(&self) -> E {
+        self.consistency_weight
+    }
+
+    /// Number of opening claims in this group.
+    #[must_use]
+    pub const fn num_claims(&self) -> usize {
+        self.num_claims
+    }
+
+    /// Number of live witness blocks.
+    #[must_use]
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Positions per witness block.
+    #[must_use]
+    pub const fn num_positions_per_block(&self) -> usize {
+        self.num_positions_per_block
+    }
+
+    /// Inner (witness) gadget depth.
+    #[must_use]
+    pub const fn depth_witness(&self) -> usize {
+        self.depth_witness
+    }
+
+    /// Commitment gadget depth.
+    #[must_use]
+    pub const fn depth_commit(&self) -> usize {
+        self.depth_commit
+    }
+
+    /// Opening gadget depth.
+    #[must_use]
+    pub const fn depth_open(&self) -> usize {
+        self.depth_open
+    }
+
+    /// Inner decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_inner(&self) -> u32 {
+        self.log_basis_inner
+    }
+
+    /// Outer decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_outer(&self) -> u32 {
+        self.log_basis_outer
+    }
+
+    /// Opening decomposition log-basis.
+    #[must_use]
+    pub const fn log_basis_open(&self) -> u32 {
+        self.log_basis_open
+    }
+
+    /// Z columns: positions per block times the witness depth.
+    #[must_use]
+    pub const fn z_cols(&self) -> usize {
+        self.z_cols
+    }
+
+    /// Number of A rows of this group.
+    #[must_use]
+    pub const fn n_a(&self) -> usize {
+        self.n_a
+    }
+
+    /// All physical units, including empty chunks that retain replicated Z.
+    #[must_use]
+    pub const fn num_physical_units(&self) -> usize {
+        self.num_physical_units
+    }
+
+    /// This group's column range in the shared physical D matrix.
+    #[must_use]
+    pub fn d_col_range(&self) -> Range<usize> {
+        self.d_col_range.clone()
+    }
+
+    /// Physical B setup plan for this group.
+    #[must_use]
+    pub const fn physical_b(&self) -> &PhysicalBSetupPlan<E> {
+        &self.physical_b
+    }
+
+    /// `eq(tau_1)` weights of this group's A rows.
+    #[must_use]
+    pub fn a_row_weights(&self) -> &[E] {
+        &self.a_row_weights
+    }
+
+    /// The first `depth_fold` fold-gadget scalars, lifted to `E`.
+    #[must_use]
+    pub fn fold_gadget(&self) -> &[E] {
+        &self.fold_gadget
+    }
+
+    /// The non-empty witness units of this group, in layout order.
+    #[must_use]
+    pub fn active_units(&self) -> &[crate::WitnessUnitLayout] {
+        &self.active_units
+    }
+
+    /// D-role eq-pair tensor families.
+    #[must_use]
+    pub fn d_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.d_tensors
+    }
+
+    /// A-role eq-pair tensor families.
+    #[must_use]
+    pub fn a_tensors(&self) -> &[EqPairTensorFamily<E>] {
+        &self.a_tensors
+    }
+
     pub(crate) fn set_projection_ratios(
         &mut self,
         setup_base_ring_dim: usize,
