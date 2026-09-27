@@ -6,6 +6,8 @@
 
 mod accum;
 mod compact_fold;
+#[cfg(feature = "fault-injection")]
+pub mod fault_injection;
 mod native;
 mod single;
 mod traits;

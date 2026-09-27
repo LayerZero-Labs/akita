@@ -27,6 +27,21 @@ pub(crate) fn response_model_diagnostics_enabled() -> bool {
     }
 }
 
+/// Whether an installed fault-injection fault disables the consumer
+/// self-checks that would otherwise refuse to emit the faulty proof. Always
+/// `false` without the `fault-injection` feature.
+#[inline]
+pub(crate) fn fault_skips_self_checks() -> bool {
+    #[cfg(feature = "fault-injection")]
+    {
+        akita_prover::fault_injection::skips_self_checks()
+    }
+    #[cfg(not(feature = "fault-injection"))]
+    {
+        false
+    }
+}
+
 /// CPU reference state retained behind an accepted fold handle.
 pub struct CpuAcceptedFold<F: Field> {
     global: DecomposeFoldWitness,
@@ -48,6 +63,10 @@ pub struct CpuAcceptedTerminalFold<F: Field> {
     _field: PhantomData<F>,
 }
 
+/// Admitted terminal fold with its measured squared L2 norm, or the rejected
+/// response's measured squared L2 norm.
+type TerminalAdmission<F> = Result<(CpuAcceptedTerminalFold<F>, Option<u128>), Option<u128>>;
+
 pub(crate) type CpuAcceptedFoldHandle<F> = CpuAcceptedFold<F>;
 pub(crate) type CpuAcceptedTerminalFoldHandle<F> = CpuAcceptedTerminalFold<F>;
 
@@ -63,12 +82,14 @@ where
         self.binding.clone()
     }
 
+    /// Admit a terminal response, or return the rejected response's measured
+    /// squared L2 norm.
     fn admit<B: ComputeBackendSetup<F>, const D: usize>(
         _backend: &B,
         _prepared: Option<&B::PreparedSetup>,
         witness: DecomposeFoldWitness,
         plan: &ValidatedTerminalFoldProbePlan<'_>,
-    ) -> Result<Option<(Self, Option<u128>)>, AkitaError> {
+    ) -> Result<TerminalAdmission<F>, AkitaError> {
         let centered = witness.centered_coeffs_flat();
         if centered.len() != plan.coordinate_count() {
             return Err(AkitaError::InvalidSize {
@@ -76,14 +97,19 @@ where
                 actual: centered.len(),
             });
         }
-        if let Some(cap) = plan.linf_cap() {
-            if akita_types::golomb_rice_values_within_cap(centered, cap).is_err() {
-                return Ok(None);
-            }
-        } else if centered.iter().any(|value| i16::try_from(*value).is_err()) {
-            return Ok(None);
-        }
-        let observed_l2_sq = if plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled() {
+        // Under fault injection a rejected response may still be admitted; it
+        // then needs a zigzag width wide enough to encode it.
+        #[cfg(feature = "fault-injection")]
+        let bypass = akita_prover::fault_injection::admission_bypass_requested();
+        #[cfg(not(feature = "fault-injection"))]
+        let bypass = false;
+        let mut rejected = if let Some(cap) = plan.linf_cap() {
+            akita_types::golomb_rice_values_within_cap(centered, cap).is_err()
+        } else {
+            centered.iter().any(|value| i16::try_from(*value).is_err())
+        };
+        let measure_l2 = plan.l2_sq_cap().is_some() || response_model_diagnostics_enabled();
+        let observed_l2_sq = if measure_l2 && (!rejected || bypass) {
             let value = akita_types::sis::checked_centered_l2_sq(centered);
             if plan.l2_sq_cap().is_some() && value.is_none() {
                 return Err(AkitaError::InvalidInput(
@@ -91,20 +117,37 @@ where
                 ));
             }
             if value.is_some_and(|value| plan.l2_sq_cap().is_some_and(|cap| value > cap)) {
-                return Ok(None);
+                rejected = true;
             }
             value
+        } else if response_model_diagnostics_enabled() {
+            akita_types::sis::checked_centered_l2_sq(centered)
         } else {
             None
         };
-        let zigzag_width =
+        if rejected && !bypass {
+            return Ok(Err(observed_l2_sq));
+        }
+        let mut zigzag_width =
             akita_types::golomb_rice_zigzag_width(plan.linf_cap().unwrap_or(i16::MAX as u128));
+        if rejected {
+            zigzag_width = zigzag_width
+                .max(akita_types::golomb_rice_zigzag_width(u128::from(
+                    witness.centered_inf_norm(),
+                )))
+                .min(63);
+        }
         if akita_types::golomb_rice_total_wire_bits(centered, plan.rice_low_bits(), zigzag_width)?
             > plan.payload_bytes().saturating_mul(8)
         {
-            return Ok(None);
+            // The wire budget bounds the transcript message, so no fault skips it.
+            return Ok(Err(observed_l2_sq));
         }
-        Ok(Some((
+        #[cfg(feature = "fault-injection")]
+        if rejected {
+            akita_prover::fault_injection::record_bypassed_rejection();
+        }
+        Ok(Ok((
             Self {
                 witness,
                 ring_dimension: D,
@@ -129,14 +172,33 @@ where
                 "accepted terminal fold used with a different operation context".into(),
             ));
         }
-        let values = self
+        #[allow(unused_mut)]
+        let mut values = self
             .witness
             .centered_coeffs_flat()
             .iter()
             .map(|value| i64::from(*value))
             .collect::<Vec<_>>();
+        #[allow(unused_mut)]
+        let mut zigzag_width = self.zigzag_width;
+        #[cfg(feature = "fault-injection")]
+        if let Some(akita_prover::fault_injection::Fault::PerturbTerminalResponse {
+            index,
+            delta,
+        }) = akita_prover::fault_injection::active()
+        {
+            if let Some(value) = values.get_mut(index) {
+                *value += i64::from(delta);
+                zigzag_width = zigzag_width
+                    .max(akita_types::golomb_rice_zigzag_width(u128::from(
+                        value.unsigned_abs(),
+                    )))
+                    .min(63);
+                akita_prover::fault_injection::record_applied();
+            }
+        }
         let payload =
-            akita_types::golomb_rice_encode_vec(&values, self.rice_low_bits, self.zigzag_width)?;
+            akita_types::golomb_rice_encode_vec(&values, self.rice_low_bits, zigzag_width)?;
         if payload.len() > self.payload_bytes {
             return Err(AkitaError::InvalidInput(
                 "terminal response exceeds its scheduled payload budget".into(),
@@ -728,15 +790,26 @@ where
             "terminal fold backend returned chunk responses".into(),
         ));
     }
-    let Some((fold, observed_l2_sq)) =
-        CpuAcceptedTerminalFold::admit::<B, D>(backend, prepared, responses.global, plan)?
-    else {
-        return Ok(FoldProbeOutcome::Rejected);
+    #[cfg(feature = "response-model-diagnostics")]
+    let observed_linf = response_model_diagnostics_enabled()
+        .then(|| u128::from(responses.global.centered_inf_norm()));
+    let diagnostics = |observed_l2_sq| {
+        let diagnostics = FoldProbeDiagnostics::new(observed_l2_sq);
+        #[cfg(feature = "response-model-diagnostics")]
+        let diagnostics = diagnostics.with_observed_linf(observed_linf);
+        diagnostics
     };
-    Ok(FoldProbeOutcome::Accepted {
-        fold_handle: fold,
-        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
-    })
+    Ok(
+        match CpuAcceptedTerminalFold::admit::<B, D>(backend, prepared, responses.global, plan)? {
+            Ok((fold, observed_l2_sq)) => FoldProbeOutcome::Accepted {
+                fold_handle: fold,
+                diagnostics: diagnostics(observed_l2_sq),
+            },
+            Err(observed_l2_sq) => FoldProbeOutcome::Rejected {
+                diagnostics: diagnostics(observed_l2_sq),
+            },
+        },
+    )
 }
 
 pub(crate) fn cpu_fold_probe<S, F, B, const D: usize>(
@@ -767,27 +840,57 @@ where
         }
     };
     let responses = backend.decompose_fold_batch(prepared, source, batch_plan)?;
+    #[cfg(feature = "response-model-diagnostics")]
+    let measured = response_model_diagnostics_enabled().then(|| measure_fold_response(&responses));
+    #[cfg(not(feature = "response-model-diagnostics"))]
+    let measured: Option<(u128, Option<u128>)> = None;
+    let diagnostics = |observed_l2_sq: Option<u128>| {
+        let diagnostics = FoldProbeDiagnostics::new(observed_l2_sq);
+        #[cfg(feature = "response-model-diagnostics")]
+        let diagnostics = diagnostics.with_observed_linf(measured.map(|(linf, _)| linf));
+        diagnostics
+    };
+    // Under fault injection a rejected response may still be admitted. The
+    // witness builder then decomposes it into the scheduled digits with
+    // wraparound.
+    #[cfg(feature = "fault-injection")]
+    let bypass = akita_prover::fault_injection::admission_bypass_requested();
+    #[cfg(not(feature = "fault-injection"))]
+    let bypass = false;
+    let mut rejected = false;
     let mut observed_l2_sq = (plan.acceptance().response_l2_sq_cap().is_some()
         || response_model_diagnostics_enabled())
     .then_some(0);
     let chunks = match responses.chunks {
         None => {
-            if !admit_fold_response(&responses.global, plan, &mut observed_l2_sq)? {
-                return Ok(FoldProbeOutcome::Rejected);
-            }
+            rejected = !admit_fold_response(&responses.global, plan, &mut observed_l2_sq)?;
             None
         }
         Some(chunks) => {
             let mut centered = Vec::with_capacity(chunks.len());
             for chunk in chunks {
-                if !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
-                    return Ok(FoldProbeOutcome::Rejected);
+                if !rejected && !admit_fold_response(&chunk, plan, &mut observed_l2_sq)? {
+                    rejected = true;
+                    if !bypass {
+                        break;
+                    }
                 }
                 centered.push(chunk.into_centered_coeffs_flat());
             }
             Some(centered)
         }
     };
+    if rejected {
+        // Admission stops measuring at the first rejected unit.
+        observed_l2_sq = measured.map_or(observed_l2_sq, |(_, l2)| l2);
+        if !bypass {
+            return Ok(FoldProbeOutcome::Rejected {
+                diagnostics: diagnostics(observed_l2_sq),
+            });
+        }
+        #[cfg(feature = "fault-injection")]
+        akita_prover::fault_injection::record_bypassed_rejection();
+    }
     Ok(FoldProbeOutcome::Accepted {
         fold_handle: CpuAcceptedFold::new::<B, D>(
             backend,
@@ -796,7 +899,26 @@ where
             chunks,
             plan,
         )?,
-        diagnostics: FoldProbeDiagnostics::new(observed_l2_sq),
+        diagnostics: diagnostics(observed_l2_sq),
+    })
+}
+
+/// Largest centered magnitude and total squared L2 norm over the units the
+/// acceptance predicate checks: each chunk, or the global response.
+#[cfg(feature = "response-model-diagnostics")]
+fn measure_fold_response(responses: &CpuFoldResponses) -> (u128, Option<u128>) {
+    let units = responses
+        .chunks
+        .as_deref()
+        .unwrap_or(std::slice::from_ref(&responses.global));
+    units.iter().fold((0, Some(0)), |(linf, l2), unit| {
+        (
+            linf.max(u128::from(unit.centered_inf_norm())),
+            l2.and_then(|total| {
+                akita_types::sis::checked_centered_l2_sq(unit.centered_coeffs_flat())
+                    .and_then(|unit_l2| total.checked_add(unit_l2))
+            }),
+        )
     })
 }
 

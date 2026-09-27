@@ -14,6 +14,8 @@ pub struct FoldProbeDiagnostics {
     observed_l2_sq: Option<u128>,
     #[cfg(feature = "response-model-diagnostics")]
     source_l2_sq: Option<u128>,
+    #[cfg(feature = "response-model-diagnostics")]
+    observed_linf: Option<u128>,
 }
 
 impl FoldProbeDiagnostics {
@@ -22,6 +24,8 @@ impl FoldProbeDiagnostics {
             observed_l2_sq,
             #[cfg(feature = "response-model-diagnostics")]
             source_l2_sq: None,
+            #[cfg(feature = "response-model-diagnostics")]
+            observed_linf: None,
         }
     }
 
@@ -39,12 +43,30 @@ impl FoldProbeDiagnostics {
     pub const fn source_l2_sq(self) -> Option<u128> {
         self.source_l2_sq
     }
+
+    /// Record the largest centered response magnitude compared against the
+    /// acceptance bounds (the maximum over chunks for chunked responses).
+    #[cfg(feature = "response-model-diagnostics")]
+    pub const fn with_observed_linf(mut self, observed_linf: Option<u128>) -> Self {
+        self.observed_linf = observed_linf;
+        self
+    }
+
+    /// Largest centered response magnitude, when diagnostics measured it.
+    #[cfg(feature = "response-model-diagnostics")]
+    pub const fn observed_linf(self) -> Option<u128> {
+        self.observed_linf
+    }
 }
 
 /// Result of probing a private fold response.
 pub enum FoldProbeOutcome<FoldHandle> {
     /// Candidate response failed its public admission bounds.
-    Rejected,
+    Rejected {
+        /// Coefficient-free aggregates of the rejected response; populated
+        /// only when response-model diagnostics are enabled.
+        diagnostics: FoldProbeDiagnostics,
+    },
     /// Candidate response was accepted and retained by the consumer.
     Accepted {
         /// Linear handle for the accepted private response.

@@ -216,7 +216,7 @@ fn chunk_admission_precedes_cancelling_aggregation() {
         &plan,
     )
     .unwrap();
-    assert!(matches!(outcome, FoldProbeOutcome::Rejected));
+    assert!(matches!(outcome, FoldProbeOutcome::Rejected { .. }));
 }
 
 #[test]

@@ -339,7 +339,7 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             || active.step(self.product_index) != step
             || round != self.next_round
             || self.pending.is_some()
-            || previous_claim != self.claim
+            || (previous_claim != self.claim && !crate::opaque::fold::fault_skips_self_checks())
         {
             return Err(AkitaError::InvalidInput(
                 "Stage 1 step, round, or previous claim mismatch".into(),

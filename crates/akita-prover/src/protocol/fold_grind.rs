@@ -28,6 +28,138 @@ fn response_model_diagnostics_enabled() -> bool {
     )
 }
 
+/// Whether every group of every probed nonce is reported, so the grind keeps
+/// probing the remaining groups after one is rejected.
+#[inline]
+fn trace_every_probe() -> bool {
+    #[cfg(feature = "response-model-diagnostics")]
+    {
+        response_model_diagnostics_enabled()
+    }
+    #[cfg(not(feature = "response-model-diagnostics"))]
+    {
+        false
+    }
+}
+
+/// Public acceptance policy of one probed group, reported with each probe.
+#[cfg_attr(not(feature = "response-model-diagnostics"), allow(dead_code))]
+#[derive(Clone, Copy)]
+struct FoldProbeTrace {
+    level: u32,
+    group_index: usize,
+    terminal: bool,
+    linf_bound_negative: u128,
+    linf_bound_positive: u128,
+    response_l2_sq_cap: Option<u128>,
+    response_coeffs: usize,
+    log_basis_response: Option<u32>,
+    num_digits_response: Option<usize>,
+}
+
+impl FoldProbeTrace {
+    /// Report one probe outcome, accepted or rejected. `accepted` is the
+    /// honest acceptance predicate, even when a fault admitted the response.
+    #[cfg_attr(not(feature = "response-model-diagnostics"), allow(unused_variables))]
+    fn emit(&self, nonce: u32, accepted: bool, diagnostics: FoldProbeDiagnostics) {
+        #[cfg(feature = "response-model-diagnostics")]
+        if response_model_diagnostics_enabled() {
+            tracing::info!(
+                target: "akita_prover::protocol::fold_response_model",
+                level = self.level,
+                group_index = self.group_index,
+                nonce,
+                terminal = self.terminal,
+                accepted,
+                observed_linf = ?diagnostics.observed_linf(),
+                linf_bound_negative = self.linf_bound_negative,
+                linf_bound_positive = self.linf_bound_positive,
+                observed_l2_sq = ?diagnostics.observed_l2_sq(),
+                response_l2_sq_cap = ?self.response_l2_sq_cap,
+                response_coeffs = self.response_coeffs,
+                log_basis_response = ?self.log_basis_response,
+                num_digits_response = ?self.num_digits_response,
+                "fold probe"
+            );
+        }
+    }
+}
+
+/// Run one backend probe with the fault-injection admission bypass set to
+/// `bypass`. Also returns whether the backend admitted a response only
+/// because of that bypass.
+fn probe_with_admission_bypass<T>(
+    bypass: bool,
+    probe: impl FnOnce() -> Result<T, AkitaError>,
+) -> Result<(T, bool), AkitaError> {
+    #[cfg(feature = "fault-injection")]
+    {
+        let (value, bypassed) = crate::fault_injection::probe_with_admission_bypass(bypass, probe);
+        Ok((value?, bypassed))
+    }
+    #[cfg(not(feature = "fault-injection"))]
+    {
+        let _ = bypass;
+        Ok((probe()?, false))
+    }
+}
+
+/// Groups at `level` whose acceptance predicate the active fault skips:
+/// `Some(None)` for every group, `Some(Some(g))` for group `g` only.
+#[inline]
+fn accept_rejected_target(level: u32) -> Option<Option<usize>> {
+    #[cfg(feature = "fault-injection")]
+    {
+        crate::fault_injection::accept_rejected_target(level)
+    }
+    #[cfg(not(feature = "fault-injection"))]
+    {
+        let _ = level;
+        None
+    }
+}
+
+/// Outcome of one nonce in a grind that may carry an `AcceptRejectedNonce`
+/// fault.
+enum NonceProbe<T> {
+    Rejected,
+    /// Every group passed its acceptance predicate.
+    Accepted(T),
+    /// Every group was admitted, and a fault-selected group only because its
+    /// predicate was skipped.
+    FaultAccepted(T),
+}
+
+/// Commit the first nonce the grind accepts. While a fault targets this grind
+/// (`faulted`), only fault-accepted nonces qualify; the first honestly
+/// accepted nonce is kept as a fallback when none exists.
+fn first_accepted_nonce_with_fault<T>(
+    max_grind_attempts: u32,
+    faulted: bool,
+    mut probe: impl FnMut(u32) -> Result<NonceProbe<T>, AkitaError>,
+) -> Result<(u32, T), AkitaError> {
+    let mut fallback = None;
+    let selected = first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+        Ok(match probe(nonce)? {
+            NonceProbe::Rejected => None,
+            NonceProbe::Accepted(value) if faulted => {
+                fallback.get_or_insert((nonce, value));
+                None
+            }
+            NonceProbe::Accepted(value) => Some(value),
+            NonceProbe::FaultAccepted(value) => {
+                #[cfg(feature = "fault-injection")]
+                crate::fault_injection::record_applied();
+                Some(value)
+            }
+        })
+    });
+    match selected {
+        Ok(selected) => Ok(selected),
+        Err(error) => fallback.ok_or(error),
+    }
+}
+
 pub(crate) struct FoldGrindGroup<'group, G: ?Sized> {
     pub(crate) group_index: usize,
     pub(crate) opening: &'group G,
@@ -103,8 +235,25 @@ where
     };
     let point_indices = [0usize];
     let site = akita_types::GrindingSite::FoldResponse { level };
+    let (linf_bound_negative, linf_bound_positive) = linf_cap
+        .map_or((1u128 << 15, u128::from(i16::MAX.unsigned_abs())), |cap| {
+            (cap, cap)
+        });
+    let probe_trace = FoldProbeTrace {
+        level,
+        group_index: 0,
+        terminal: true,
+        linf_bound_negative,
+        linf_bound_positive,
+        response_l2_sq_cap,
+        response_coeffs: expected_group.z_coords,
+        log_basis_response: None,
+        num_digits_response: None,
+    };
+    let fault_target = accept_rejected_target(level);
+    let bypass = fault_target.is_some_and(|group| group.is_none_or(|group| group == 0));
     let (nonce, (fold_handle, challenges, encoding, diagnostics)) =
-        first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
+        first_accepted_nonce_with_fault(FOLD_RESPONSE_ATTEMPTS, bypass, |nonce| {
             let mut preview_state = grinding.preview_fold_response(site, nonce)?;
             let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
             let challenges = preview.draw_folding_challenges_with_rejection(
@@ -128,19 +277,33 @@ where
                 expected_group.z_rice_low_bits,
                 expected_group.z_payload_bytes,
             )?;
-            match <B as crate::backend::OpaqueTerminalFoldKernel<F, E>>::probe_terminal_fold(
-                backend, witness, &plan,
-            )? {
-                FoldProbeOutcome::Rejected => Ok(None),
+            let (outcome, bypassed) = probe_with_admission_bypass(bypass, || {
+                <B as crate::backend::OpaqueTerminalFoldKernel<F, E>>::probe_terminal_fold(
+                    backend, witness, &plan,
+                )
+            })?;
+            match outcome {
+                FoldProbeOutcome::Rejected { diagnostics } => {
+                    probe_trace.emit(nonce, false, diagnostics);
+                    Ok(NonceProbe::Rejected)
+                }
                 FoldProbeOutcome::Accepted {
                     fold_handle,
                     diagnostics,
-                } => Ok(Some((
-                    fold_handle,
-                    challenges,
-                    crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
-                    diagnostics,
-                ))),
+                } => {
+                    probe_trace.emit(nonce, !bypassed, diagnostics);
+                    let value = (
+                        fold_handle,
+                        challenges,
+                        crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
+                        diagnostics,
+                    );
+                    Ok(if bypassed {
+                        NonceProbe::FaultAccepted(value)
+                    } else {
+                        NonceProbe::Accepted(value)
+                    })
+                }
             }
         })?;
     grinding.commit_fold_response(site, nonce)?;
@@ -186,6 +349,8 @@ where
             conditional_mean_l2_sq = ?conditional_mean_l2_sq,
             response_l2_sq = ?diagnostics.observed_l2_sq(),
             response_l2_sq_cap = ?response_l2_sq_cap,
+            response_linf = ?diagnostics.observed_linf(),
+            response_linf_cap = ?linf_cap,
             "terminal fold response model sample"
         );
     }
@@ -243,9 +408,13 @@ where
         ));
     }
     let site = akita_types::GrindingSite::FoldResponse { level };
+    let trace_probes = trace_every_probe();
+    let fault_target = accept_rejected_target(level);
     let (nonce, mut candidate_outputs) =
-        first_jointly_accepted_nonce(max_grind_attempts, |nonce| {
+        first_accepted_nonce_with_fault(max_grind_attempts, fault_target.is_some(), |nonce| {
             let mut candidate_outputs = Vec::with_capacity(groups.len());
+            let mut jointly_accepted = true;
+            let mut fault_accepted = false;
             {
                 let mut preview_state = grinding.preview_fold_response(site, nonce)?;
                 let mut preview = NativePreviewFoldDraw::new(&mut preview_state);
@@ -271,44 +440,91 @@ where
                             FoldProbeGeometry::SparseChunked { chunk_ranges }
                         });
                     let context = opening_ctx.for_group(group.group_index);
-                    let outcome = akita_types::dispatch_for_field!(
-                        ProtocolDispatchSlot::Role(RingRole::Inner),
-                        F,
-                        group.params.inner_commit_matrix_params().ring_dimension(),
-                        |D| {
-                            let plan = ValidatedFoldProbePlan::new::<D>(
-                                challenges.ambient_a(),
-                                group.num_polynomials,
-                                group.params.num_live_blocks(),
-                                geometry,
-                                group.params.num_positions_per_block(),
-                                group.params.num_digits_inner(),
-                                group.params.log_basis_inner(),
-                                group.params.opening_method(),
-                                prepared_group.acceptance,
-                            )?;
-                            opening_ctx.backend().probe_opening_fold(
-                                context.proof_context(),
-                                group.opening,
-                                &plan,
-                            )
+                    let bypass = fault_target
+                        .is_some_and(|target| target.is_none_or(|g| g == group.group_index));
+                    let ring_dimension = group.params.inner_commit_matrix_params().ring_dimension();
+                    let (outcome, bypassed) = probe_with_admission_bypass(bypass, || {
+                        akita_types::dispatch_for_field!(
+                            ProtocolDispatchSlot::Role(RingRole::Inner),
+                            F,
+                            ring_dimension,
+                            |D| {
+                                let plan = ValidatedFoldProbePlan::new::<D>(
+                                    challenges.ambient_a(),
+                                    group.num_polynomials,
+                                    group.params.num_live_blocks(),
+                                    geometry,
+                                    group.params.num_positions_per_block(),
+                                    group.params.num_digits_inner(),
+                                    group.params.log_basis_inner(),
+                                    group.params.opening_method(),
+                                    prepared_group.acceptance,
+                                )?;
+                                opening_ctx.backend().probe_opening_fold(
+                                    context.proof_context(),
+                                    group.opening,
+                                    &plan,
+                                )
+                            }
+                        )
+                    })?;
+                    let probe_trace = || {
+                        let response_coeffs = group
+                            .params
+                            .num_positions_per_block()
+                            .checked_mul(group.params.num_digits_inner())
+                            .and_then(|rows| rows.checked_mul(ring_dimension))
+                            .and_then(|coeffs| {
+                                coeffs.checked_mul(ranges.as_ref().map_or(1, Vec::len))
+                            })
+                            .unwrap_or(usize::MAX);
+                        FoldProbeTrace {
+                            level,
+                            group_index: group.group_index,
+                            terminal: false,
+                            linf_bound_negative: prepared_group
+                                .acceptance
+                                .digit_negative_abs_bound(),
+                            linf_bound_positive: prepared_group.acceptance.digit_positive_bound(),
+                            response_l2_sq_cap: prepared_group.acceptance.response_l2_sq_cap(),
+                            response_coeffs,
+                            log_basis_response: Some(group.params.log_basis_open()),
+                            num_digits_response: Some(group.params.num_digits_fold()),
                         }
-                    )?;
-                    let output = match outcome {
-                        FoldProbeOutcome::Rejected => return Ok(None),
+                    };
+                    match outcome {
+                        FoldProbeOutcome::Rejected { diagnostics } => {
+                            if trace_probes {
+                                probe_trace().emit(nonce, false, diagnostics);
+                            } else {
+                                return Ok(NonceProbe::Rejected);
+                            }
+                            jointly_accepted = false;
+                        }
                         FoldProbeOutcome::Accepted {
                             fold_handle,
                             diagnostics,
-                        } => FoldProbeOutput {
-                            fold_handle,
-                            challenges,
-                            diagnostics,
-                        },
-                    };
-                    candidate_outputs.push(output);
+                        } => {
+                            if trace_probes {
+                                probe_trace().emit(nonce, !bypassed, diagnostics);
+                            }
+                            fault_accepted |= bypassed;
+                            candidate_outputs.push(FoldProbeOutput {
+                                fold_handle,
+                                challenges,
+                                diagnostics,
+                            });
+                        }
+                    }
                 }
             }
-            Ok(Some(candidate_outputs))
+            Ok(if !jointly_accepted {
+                NonceProbe::Rejected
+            } else if fault_accepted {
+                NonceProbe::FaultAccepted(candidate_outputs)
+            } else {
+                NonceProbe::Accepted(candidate_outputs)
+            })
         })?;
 
     grinding.commit_fold_response(site, nonce)?;
@@ -350,47 +566,44 @@ where
             );
             #[cfg(feature = "response-model-diagnostics")]
             if response_model_diagnostics_enabled() {
-                if let Some(response_l2_sq) = output.diagnostics.observed_l2_sq() {
-                    let challenge_config = group.params.fold_challenge_config();
-                    let source_l2_sq = output.diagnostics.source_l2_sq();
-                    let conditional_mean_l2_sq = source_l2_sq.and_then(|energy| {
-                        energy.checked_mul(challenge_config.challenge_l2_sq_max())
-                    });
-                    let metadata = output.fold_handle.metadata();
-                    let response_coeffs = metadata
-                        .response_coordinate_count()
-                        .checked_mul(metadata.num_chunks())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "fold diagnostic response size overflow".into(),
-                            )
-                        })?;
-                    tracing::info!(
-                        target: "akita_prover::protocol::fold_response_model",
-                        group_index = group.group_index,
-                        nonce,
-                        attempts = nonce + 1,
-                        ring_dimension = metadata.ring_dimension(),
-                        num_polynomials = group.num_polynomials,
-                        num_live_blocks = group.params.num_live_blocks(),
-                        num_positions_per_block = group.params.num_positions_per_block(),
-                        num_chunks = metadata.num_chunks(),
-                        response_coeffs,
-                        log_basis_inner = group.params.log_basis_inner(),
-                        num_digits_inner = group.params.num_digits_inner(),
-                        log_basis_response = group.params.log_basis_open(),
-                        num_digits_response = group.params.num_digits_fold(),
-                        challenge_weight = challenge_config.weight(),
-                        challenge_l1 = challenge_config.l1_norm(),
-                        challenge_l2_sq = challenge_config.challenge_l2_sq_max(),
-                        challenge_linf = challenge_config.infinity_norm(),
-                        source_l2_sq = ?source_l2_sq,
-                        conditional_mean_l2_sq = ?conditional_mean_l2_sq,
-                        response_l2_sq,
-                        response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap(),
-                        "fold response model sample"
-                    );
-                }
+                let challenge_config = group.params.fold_challenge_config();
+                let source_l2_sq = output.diagnostics.source_l2_sq();
+                let conditional_mean_l2_sq = source_l2_sq
+                    .and_then(|energy| energy.checked_mul(challenge_config.challenge_l2_sq_max()));
+                let metadata = output.fold_handle.metadata();
+                let response_coeffs = metadata
+                    .response_coordinate_count()
+                    .checked_mul(metadata.num_chunks())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("fold diagnostic response size overflow".into())
+                    })?;
+                tracing::info!(
+                    target: "akita_prover::protocol::fold_response_model",
+                    level,
+                    group_index = group.group_index,
+                    nonce,
+                    attempts = nonce + 1,
+                    ring_dimension = metadata.ring_dimension(),
+                    num_polynomials = group.num_polynomials,
+                    num_live_blocks = group.params.num_live_blocks(),
+                    num_positions_per_block = group.params.num_positions_per_block(),
+                    num_chunks = metadata.num_chunks(),
+                    response_coeffs,
+                    log_basis_inner = group.params.log_basis_inner(),
+                    num_digits_inner = group.params.num_digits_inner(),
+                    log_basis_response = group.params.log_basis_open(),
+                    num_digits_response = group.params.num_digits_fold(),
+                    challenge_weight = challenge_config.weight(),
+                    challenge_l1 = challenge_config.l1_norm(),
+                    challenge_l2_sq = challenge_config.challenge_l2_sq_max(),
+                    challenge_linf = challenge_config.infinity_norm(),
+                    source_l2_sq = ?source_l2_sq,
+                    conditional_mean_l2_sq = ?conditional_mean_l2_sq,
+                    response_l2_sq = ?output.diagnostics.observed_l2_sq(),
+                    response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap(),
+                    response_linf = ?output.diagnostics.observed_linf(),
+                    "fold response model sample"
+                );
             }
         }
     }
