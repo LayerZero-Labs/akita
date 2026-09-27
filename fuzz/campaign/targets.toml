@@ -175,6 +175,15 @@ timeout_s = 600
 rss_limit_mb = 8192
 malloc_limit_mb = 8192
 
+[target.pcs_faults]
+kind = "end_to_end"
+description = "Soundness vs cheating provers: one injected fault (admitted rejected nonce, witness digit, terminal response, norm claim) must be rejected"
+weight = 1.5
+max_len = 16384
+timeout_s = 900
+rss_limit_mb = 8192
+malloc_limit_mb = 8192
+
 [target.pcs_liveness]
 kind = "end_to_end"
 description = "Liveness: every catalog row under witnesses and opening points shaped to maximize recursive digit energy; fold-grind margins guide the search"

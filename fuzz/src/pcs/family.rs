@@ -35,6 +35,9 @@ pub enum Check {
     /// Completeness under adversarially shaped witnesses and opening points
     /// that concentrate recursive digit energy (see `crate::liveness`).
     Liveness,
+    /// Soundness against a cheating prover: one injected fault must be
+    /// rejected (see `pcs::faults`).
+    Fault,
 }
 
 /// Targeted changes applied after the honest baseline verifies.
@@ -1255,6 +1258,10 @@ impl<Cfg: PcsOps> Family for FamilyImpl<Cfg> {
             Check::Liveness => {
                 stats::count("liveness_shaped_proofs");
                 self.check_valid_baseline(&honest);
+            }
+            Check::Fault => {
+                self.check_valid_baseline(&honest);
+                self.check_fault(case, &honest, &mut control);
             }
         }
     }

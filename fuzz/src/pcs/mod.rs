@@ -9,6 +9,7 @@
 mod boundary;
 mod cache;
 mod family;
+mod faults;
 mod import;
 pub mod ops;
 mod registry;

@@ -37,6 +37,7 @@ pub const ALL: &[(&str, Target)] = &[
     ("pcs_reject", pcs::reject),
     ("pcs_parallel", pcs::parallel),
     ("pcs_liveness", pcs::liveness),
+    ("pcs_faults", pcs::faults),
     ("pcs_shared", pcs::shared),
     ("verifier_boundary", boundary::verifier),
     ("prover_boundary", boundary::prover),

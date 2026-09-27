@@ -51,6 +51,10 @@ pub fn parallel(data: &[u8]) {
     run(data, Selector::AnyDirect, Check::Parallel, 17);
 }
 
+pub fn faults(data: &[u8]) {
+    run(data, Selector::Any, Check::Fault, 18);
+}
+
 pub fn liveness(data: &[u8]) {
     run(data, Selector::Any, Check::Liveness, 20);
 }

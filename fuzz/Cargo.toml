@@ -34,7 +34,7 @@ akita-config = { path = "../crates/akita-config", default-features = false, feat
 akita-setup = { path = "../crates/akita-setup", default-features = false, features = ["transcript-blake2b"] }
 akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = ["transcript-blake2b"] }
 akita-error = { path = "../crates/akita-error" }
-akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b", "response-model-diagnostics"] }
+akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b", "response-model-diagnostics", "fault-injection"] }
 akita-prover = { path = "../crates/akita-prover", default-features = false, features = ["transcript-blake2b"] }
 akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = ["transcript-blake2b"] }
 akita-serialization = { path = "../crates/akita-serialization" }
@@ -140,6 +140,13 @@ bench = false
 [[bin]]
 name = "pcs_shared"
 path = "fuzz_targets/pcs_shared.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pcs_faults"
+path = "fuzz_targets/pcs_faults.rs"
 test = false
 doc = false
 bench = false

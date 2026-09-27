@@ -62,6 +62,8 @@ pub struct Sample {
     pub response: Option<u128>,
     pub cap: Option<u128>,
     pub conditional_mean: Option<u128>,
+    /// Per-probe reports (`fold probe`): the honest acceptance verdict.
+    pub accepted: Option<bool>,
     /// Every numeric field, for reports.
     pub fields: Vec<(&'static str, u128)>,
 }
@@ -71,6 +73,15 @@ impl Sample {
     pub fn margin(&self) -> Option<f64> {
         let (mean, cap) = (self.conditional_mean?, self.cap?);
         (cap > 0).then(|| mean as f64 * 40.0 / (cap as f64 * 39.0))
+    }
+
+    /// Per-probe L-infinity margin: observed largest centered coefficient
+    /// over the largest representable magnitude. Accepted probes are at most
+    /// 1.0; rejected ones usually above.
+    pub fn probe_margin(&self) -> Option<f64> {
+        let observed = self.field("observed_linf")?;
+        let bound = self.field("linf_bound_negative")?;
+        (bound > 0).then(|| observed as f64 / bound as f64)
     }
 
     fn field(&self, name: &str) -> Option<u128> {
@@ -156,6 +167,8 @@ pub struct Peak {
     pub max_attempts: u64,
     pub max_margin: f64,
     pub max_linf_margin: f64,
+    /// Largest, over multi-group probes, of the smallest group margin.
+    pub max_joint_margin: f64,
     pub worst: Option<Sample>,
 }
 
@@ -199,8 +212,10 @@ impl Visit for Visitor<'_> {
         self.number(field, Some(value));
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
-        if field.name() == "terminal" {
-            self.0.terminal = value;
+        match field.name() {
+            "terminal" => self.0.terminal = value,
+            "accepted" => self.0.accepted = Some(value),
+            _ => {}
         }
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
@@ -301,6 +316,10 @@ pub fn observe<T>(
     prove: impl FnOnce() -> Result<T, AkitaError>,
 ) -> Result<T, AkitaError> {
     install();
+    // A cheating-prover run violates these margins on purpose.
+    if akita_prover::fault_injection::active().is_some() {
+        return prove();
+    }
     let previous = CAPTURE.with(|capture| capture.replace(Some(Vec::new())));
     let result = prove();
     let samples = CAPTURE
@@ -329,9 +348,33 @@ fn tail(samples: &[Sample]) -> String {
 fn check(context: &str, samples: &[Sample]) {
     let log = std::env::var_os("AKITA_FUZZ_LIVENESS_LOG").is_some();
     let mut peak = Peak::default();
+    // Per-probe reports of multi-group grinds, keyed by (level, nonce):
+    // the smallest group margin measures how close every group is at once.
+    let mut joint: std::collections::BTreeMap<(u128, u128), (usize, f64)> = Default::default();
     for (index, sample) in samples.iter().enumerate() {
         if log {
             eprintln!("liveness: {context}: {sample}");
+        }
+        if let (Some(accepted), Some(margin)) = (sample.accepted, sample.probe_margin()) {
+            stats::count(if accepted {
+                "liveness_probe_accepted"
+            } else {
+                "liveness_probe_rejected"
+            });
+            if accepted {
+                assert!(
+                    margin <= 1.0,
+                    "liveness: {context}: probe reported accepted beyond its L-infinity bound: {sample}"
+                );
+                guide::linf(margin);
+                peak.max_linf_margin = peak.max_linf_margin.max(margin);
+            }
+            if let (Some(level), Some(nonce)) = (sample.field("level"), sample.field("nonce")) {
+                let entry = joint.entry((level, nonce)).or_insert((0, f64::INFINITY));
+                entry.0 += 1;
+                entry.1 = entry.1.min(margin);
+            }
+            continue;
         }
         // Witness-moment reports carry no fold outcome.
         let Some(attempts) = sample.attempts else {
@@ -395,12 +438,20 @@ fn check(context: &str, samples: &[Sample]) {
              limit 4096): {sample}"
         );
     }
+    for (groups, smallest) in joint.into_values() {
+        if groups > 1 {
+            stats::count("liveness_joint_probes");
+            guide::ratio(smallest);
+            peak.max_joint_margin = peak.max_joint_margin.max(smallest);
+        }
+    }
     if let Ok(mut global) = PEAK.lock() {
         let global = global.get_or_insert_with(Peak::default);
         global.folds += peak.folds;
         global.attempts_total += peak.attempts_total;
         global.max_attempts = global.max_attempts.max(peak.max_attempts);
         global.max_linf_margin = global.max_linf_margin.max(peak.max_linf_margin);
+        global.max_joint_margin = global.max_joint_margin.max(peak.max_joint_margin);
         if peak.max_margin > global.max_margin {
             global.max_margin = peak.max_margin;
             global.worst = peak.worst;
@@ -412,7 +463,7 @@ fn moments_before(samples: &[Sample], index: usize) -> String {
     samples[..index]
         .iter()
         .rev()
-        .find(|sample| sample.model && sample.attempts.is_none())
+        .find(|sample| sample.message.contains("source moments"))
         .map(|sample| format!("  {sample}"))
         .unwrap_or_else(|| "  (none reported)".into())
 }
