@@ -516,14 +516,15 @@ mod tests {
     type TestF = Fp32<251>;
 
     fn evaluation_batch_plan() -> akita_types::GrindingPlan {
+        let challenge_order = akita_types::ChallengeFieldOrder::from_full_capacity(128).unwrap();
         akita_types::GrindingPlan::new(
             vec![akita_types::GrindingRun::proof_of_work(
                 akita_types::GrindingSite::EvaluationBatch { level: 0 },
                 1,
-                128,
+                challenge_order,
             )
             .unwrap()],
-            128,
+            challenge_order,
         )
         .unwrap()
     }

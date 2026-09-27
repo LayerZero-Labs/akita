@@ -245,6 +245,11 @@ serve different purposes.
 
 ### Protected challenge queries
 
+For algebraic loss $L$ over the exact extension field $E$, the plan chooses
+the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$. The
+calculation uses integers and the actual prime power, including the deficit
+below a power of two.
+
 At a protected query with grinding target $g>0$, the prover searches a
 nonce whose accepted value must fit $g+7$ bits. Each attempt absorbs the
 canonical nonce, then produces a separate 32-byte predicate. Diagnostic
@@ -277,6 +282,26 @@ response bounds. This is separate from the proof-of-work predicate. The
 [PCS binding chapter](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces)
 explains why adversarial nonce trials must be included in random-oracle query
 accounting.
+
+### Public identities before the first challenge
+
+`akita_config::public_setup_identity` returns a 32-byte Blake2b-256 identity
+for the public verifier setup and its configuration. It includes the algebra,
+decomposition and security profile, seed and derivation tag, provisioning
+bounds, materialized matrix, and installed prefix commitments. Prepared caches
+are excluded. This identifies supplied public data; callers still establish
+its provenance when installing a key.
+
+`akita_config::public_schedule_identity` returns a separate 32-byte identity
+for the selected row, expanded fold schedule, and grinding plan derived for the
+opening layout and field. Callers can absorb both identities into their own
+transcript before its first challenge. These functions do not mutate Akita's
+transcript or replace its normal descriptor binding.
+
+The API documentation specifies the versioned domains, canonical component
+encodings, and length prefixes. Fixed digest vectors pin the encoding across
+runs; changes to public parameters change the identity. Schedule identities
+include the complete schedule and the field-grinding policy version.
 
 ## Integration and regression checks
 

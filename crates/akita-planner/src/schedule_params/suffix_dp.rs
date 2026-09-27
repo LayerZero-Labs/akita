@@ -104,7 +104,7 @@ impl ChildEdge<'_> {
             relation_geometry,
             self.opening_layout,
             successor,
-            self.policy.decomposition.field_bits(),
+            self.policy.transcript_grinding_order()?,
             self.policy.claim_ext_degree,
             self.level,
         )
@@ -154,7 +154,7 @@ impl PendingQueryEdge {
             payload.relation_geometry,
             &self.opening_layout,
             successor,
-            policy.decomposition.field_bits(),
+            policy.transcript_grinding_order()?,
             policy.claim_ext_degree,
             self.level,
         )

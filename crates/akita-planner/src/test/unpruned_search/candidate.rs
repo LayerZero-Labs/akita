@@ -258,7 +258,7 @@ pub(super) fn prepend_fold(
         relation_geometry,
         &opening_layout,
         successor,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,
@@ -334,7 +334,7 @@ pub(super) fn prepend_root(
         relation_geometry,
         &opening_layout,
         successor,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
         0,
     )?;

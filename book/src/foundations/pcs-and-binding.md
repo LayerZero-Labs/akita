@@ -223,6 +223,13 @@ nonce freedom would count the same work twice. Conversely, the bounded nonce
 field does not justify omitting adversarial trials from $Q$. An adversary
 can also vary earlier messages and start from other transcript prefixes.
 
+Sparse-fold soundness uses indexed-coordinate accounting: each coordinate is
+drawn from its own XOF stream on `(seed, coordinate index)`, with conditional
+error $1/|C| < 2^{-128}$ for its production challenge set $C$. An adversary pays
+one XOF evaluation per coordinate touched. The 12-bit response-nonce search
+is a completeness mechanism, every candidate remains an ordinary oracle query,
+and Akita adds no fold security proof-of-work.
+
 Honest search measures how often the response fits the scheduled cap.
 Under an independent-trial model with per-trial acceptance probability $p$,
 exhausting $N$ attempts has

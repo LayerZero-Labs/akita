@@ -280,6 +280,17 @@ impl PlannerPolicy {
                 AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
             })
     }
+
+    /// Exact challenge-field order used by transcript grinding plans.
+    pub fn transcript_grinding_order(
+        &self,
+    ) -> Result<akita_types::ChallengeFieldOrder, AkitaError> {
+        akita_types::ChallengeFieldOrder::from_field(
+            self.decomposition.field_bits(),
+            self.chal_ext_degree,
+            self.sis_modulus_profile.modulus(),
+        )
+    }
 }
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
@@ -543,7 +554,7 @@ pub fn candidate_grinding_cost(
     akita_types::transcript_grinding_cost_for_planner_candidate(
         &schedule,
         root_layout,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )
 }
@@ -706,7 +717,7 @@ fn expanded_schedule_proof_components(
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         &key.opening_layout()?,
-        field_bits,
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
     let fixed_bytes = total
@@ -800,7 +811,7 @@ pub fn materialize_candidate_schedule(
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         root_layout,
-        policy.decomposition.field_bits(),
+        policy.transcript_grinding_order()?,
         policy.claim_ext_degree,
     )?;
     if grinding_plan.total_nonce_bits() != cached_grinding_cost.total_nonce_bits

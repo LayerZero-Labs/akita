@@ -8,7 +8,7 @@
 | PR | [#448](https://github.com/LayerZero-Labs/akita/pull/448) |
 | Supersedes | Unmerged transcript grinding design at `5057456` |
 | Superseded-by | |
-| Book-chapter | |
+| Book-chapter | how/transcript.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described in
@@ -18,8 +18,8 @@ in all capitals.
 ## Summary
 
 Akita applies bounded transcript proof-of-work before Fiat--Shamir queries whose
-algebraic loss makes a bad challenge easier to find than the nominal 128-bit
-challenge-capacity convention permits. It also performs bounded fold-response
+algebraic loss makes a bad challenge easier to find than the exact 128-bit
+per-query target permits. It also performs bounded fold-response
 search so an honest folded witness satisfies the scheduled representation and
 norm bounds. These are distinct mechanisms with one public, schedule-derived
 `GrindingPlan` and one plan cursor.
@@ -39,13 +39,17 @@ exposing coordinatewise forks for the CWSS extraction argument.
 ## Security model
 
 For a challenge site with conditional bad fraction at most `L / |E|`, the plan
-assigns
+assigns the least nonnegative integer `g` satisfying
 
 ```text
-g = max(0, 128 + ceil(log2(L)) - C),
+L * 2^128 <= |E| * 2^g.
 ```
 
-where `C` is the nominal challenge capacity. A successful nonce requires a
+Here `|E| = p^e` is the exact cardinality of the extension field. All
+comparisons use integer arithmetic. In the supported field towers whose
+cardinality is just below `2^128`, a power-of-two loss needs one more bit
+than its binary logarithm. The
+modulus bit width alone is not a challenge-set cardinality. A successful nonce requires a
 separate 32-byte predicate whose first `g` low-order bits are zero. The prover
 searches at most `2^(g+7)` candidates. Production policy rejects `g > 25`, so
 the nonce width `g+7` always fits `u32`. Honest exhaustion is at most
@@ -149,6 +153,13 @@ small Fiat--Shamir challenge space and does not add 12 bits of soundness. Every
 candidate remains an adversarial random-oracle query in security accounting.
 
 ## Indexed sparse challenges
+
+Sparse-fold soundness is accounted per indexed coordinate stream. Each
+coordinate has its own XOF input `(seed, coordinate index)`, with conditional
+error `1/|C| < 2^-128` for the production challenge set `C`. An adversary pays
+one XOF evaluation per coordinate touched. The 12-bit response-nonce search
+remains a completeness mechanism: every candidate is an ordinary oracle query,
+and no fold security proof-of-work is added.
 
 For one group root and zero-based claim-major block coordinate `i`, the sampler
 uses exactly

@@ -211,7 +211,7 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
             relation_geometry,
             &layout,
             successor,
-            policy.decomposition.field_bits(),
+            policy.transcript_grinding_order().unwrap(),
             policy.claim_ext_degree,
             1,
         )
