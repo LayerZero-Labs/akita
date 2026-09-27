@@ -597,7 +597,6 @@ where
         {
             let block_events = unit
                 .global_block_range()
-                .into_iter()
                 .map(|global_block| {
                     let challenge_index = claim
                         .checked_mul(group_params.num_live_blocks())

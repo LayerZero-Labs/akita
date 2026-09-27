@@ -271,8 +271,7 @@ impl<E: Field> CpuCoefficientPackingTerms<E> {
                             AkitaError::InvalidSetup("packing-Z task position overflow".into())
                         })?;
                 let end_position = first_position
-                    .checked_add(PACKING_Z_POSITIONS_PER_TASK)
-                    .unwrap_or(usize::MAX)
+                    .saturating_add(PACKING_Z_POSITIONS_PER_TASK)
                     .min(position_weights.len());
                 let positions = first_position..end_position;
                 let task_len = positions
