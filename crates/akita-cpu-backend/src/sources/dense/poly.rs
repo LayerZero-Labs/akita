@@ -52,6 +52,9 @@ pub struct DensePoly<F: Field> {
     /// Flat centered-`i8` mirror of `coeffs` (same physical length and
     /// padding), present only when every live coefficient is small.
     pub(super) small_i8_coeffs: Option<Vec<i8>>,
+    // None disables signed-byte admission for fields of modulus <= 256.
+    // Otherwise scan the immutable mirror once, including physical zeros.
+    small_i8_bounds: OnceLock<Option<(i8, i8)>>,
     digit_cache: OnceLock<DenseDigitCache>,
 }
 
@@ -61,6 +64,7 @@ impl<F: Field + Clone> Clone for DensePoly<F> {
             num_vars: self.num_vars,
             coeffs: self.coeffs.clone(),
             small_i8_coeffs: self.small_i8_coeffs.clone(),
+            small_i8_bounds: self.small_i8_bounds.clone(),
             digit_cache: OnceLock::new(),
         }
     }
@@ -104,11 +108,53 @@ impl<F: Field> DensePoly<F> {
         num_digits: usize,
         log_basis: u32,
     ) -> Option<&[i8]> {
+        if !ring_dimension.is_power_of_two() {
+            return None;
+        }
+        if num_digits == 1 && is_i8_log_basis(log_basis) {
+            if let Some((min, max)) = self.small_i8_bounds() {
+                let half = 1i16 << (log_basis - 1);
+                if i16::from(min) >= -half && i16::from(max) < half {
+                    let len =
+                        checked::product([self.num_ring_elems_at(ring_dimension), ring_dimension])?;
+                    return self.small_i8_coeffs.as_deref()?.get(..len);
+                }
+            }
+        }
         let cache = self.digit_cache.get()?;
         (cache.ring_d == ring_dimension
             && cache.num_digits == num_digits
             && cache.log_basis == log_basis)
             .then_some(cache.planes.as_slice())
+    }
+
+    /// Extrema of the admitted centered mirror, extended to include zero.
+    pub(crate) fn small_i8_bounds(&self) -> Option<(i8, i8)> {
+        if let Some(bounds) = self.small_i8_bounds.get() {
+            return *bounds;
+        }
+        // Compute outside OnceLock initialization: Rayon work can reenter a
+        // concurrent request for this source while helping the current scan.
+        let bounds = self.small_i8_coeffs.as_deref().map(|bytes| {
+            let fold = |chunk: &[i8]| {
+                chunk.iter().fold((0i8, 0i8), |(min, max), &value| {
+                    (min.min(value), max.max(value))
+                })
+            };
+            #[cfg(feature = "parallel")]
+            {
+                bytes
+                    .par_chunks(16384)
+                    .map(fold)
+                    .reduce(|| (0, 0), |(a, b), (c, d)| (a.min(c), b.max(d)))
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                fold(bytes)
+            }
+        });
+        let _ = self.small_i8_bounds.set(bounds);
+        bounds
     }
 
     /// Ring-element count viewed at dimension `ring_d`.
@@ -147,18 +193,50 @@ impl<F: Field> DensePoly<F> {
         })?;
         Ok(as_ring_view::<F, D>(live))
     }
-
-    /// Live small-i8 mirror viewed as per-ring coefficient planes at `D`.
-    pub(super) fn small_i8_ring_coeffs<const D: usize>(&self) -> Option<&[[i8; D]]> {
-        let flat = self.small_i8_coeffs.as_deref()?;
-        let needed = self.num_ring_elems_at(D).checked_mul(D)?;
-        let (chunks, remainder) = flat.get(..needed)?.as_chunks::<D>();
-        debug_assert!(remainder.is_empty());
-        Some(chunks)
-    }
 }
 
 impl<F: Field + CanonicalEncoding> DensePoly<F> {
+    /// Pack signed-byte evaluations, retaining their exact centered mirror.
+    ///
+    /// Physical storage has the same zero padding as [`Self::from_field_evals`].
+    /// Fields of modulus at most 256 use canonical field construction because
+    /// not every signed byte is its own centered representative there.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `2^num_vars` does not fit `usize` or if the input
+    /// length differs from `2^num_vars`.
+    pub fn from_i8_evals(num_vars: usize, mut evals: Vec<i8>) -> Result<Self, AkitaError> {
+        let expected_len = checked::pow2(num_vars)
+            .ok_or_else(|| AkitaError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
+        if evals.len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: evals.len(),
+            });
+        }
+        let modulus = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
+        if modulus <= 256 {
+            let values: Vec<F> = evals.iter().map(|&v| F::from_i64(i64::from(v))).collect();
+            return Self::from_field_evals(num_vars, values);
+        }
+        let values: [F; 256] = std::array::from_fn(|i| F::from_i64(i64::from(i as u8 as i8)));
+        evals.resize(expected_len.max(MIN_FLAT_COEFF_LEN), 0);
+        let coeffs = cfg_iter!(evals)
+            .map(|&v| values[usize::from(v as u8)])
+            .collect();
+        Ok(Self {
+            num_vars,
+            coeffs: RingVec::from_coeffs(coeffs),
+            small_i8_coeffs: Some(evals),
+            small_i8_bounds: OnceLock::new(),
+            digit_cache: OnceLock::new(),
+        })
+    }
+
     /// Pack field-element evaluations into flat dense storage.
     ///
     /// At dimension `D` the first `α = log₂(D)` variables
@@ -220,6 +298,11 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             num_vars,
             coeffs: RingVec::from_coeffs(coeffs),
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
+            small_i8_bounds: if q > 256 {
+                OnceLock::new()
+            } else {
+                OnceLock::from(None)
+            },
             digit_cache: OnceLock::new(),
         })
     }
@@ -264,6 +347,14 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             num_vars: total.trailing_zeros() as usize,
             coeffs: RingVec::from_coeffs(flat),
             small_i8_coeffs,
+            small_i8_bounds: if (-F::one())
+                .to_u128_checked()
+                .is_some_and(|minus_one| minus_one >= 256)
+            {
+                OnceLock::new()
+            } else {
+                OnceLock::from(None)
+            },
             digit_cache: OnceLock::new(),
         })
     }
@@ -276,18 +367,16 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         if !is_i8_log_basis(log_basis) {
             return None;
         }
-        if let Some(cache) = self.digit_cache.get() {
+        if let Some(planes) = self.cached_digit_parts(D, num_digits, log_basis) {
+            let (chunks, remainder) = planes.as_chunks::<D>();
+            debug_assert!(remainder.is_empty());
+            return Some(chunks);
+        }
+        if self.digit_cache.get().is_some() {
             // A cache built at another dimension is not reused: returning
             // `None` falls back to the uncached path, exactly like a
             // too-large cache does. Under uniform-D this never triggers.
-            return (cache.ring_d == D
-                && cache.num_digits == num_digits
-                && cache.log_basis == log_basis)
-                .then(|| {
-                    let (chunks, remainder) = cache.planes.as_chunks::<D>();
-                    debug_assert!(remainder.is_empty());
-                    chunks
-                });
+            return None;
         }
 
         let num_rings = self.num_ring_elems_at(D);

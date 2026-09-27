@@ -164,30 +164,6 @@ where
 
         // The single-digit scratch is i8; wider bases need the checked i16 kernel below.
         if num_digits == 1 && log_basis <= akita_types::MAX_I8_LOG_BASIS {
-            if let Some(small_coeffs) = self.small_i8_ring_coeffs::<D>() {
-                let coeff_accum: Vec<[i32; D]> = {
-                    let _span =
-                        tracing::info_span!("dense_single_digit_cached_accumulate").entered();
-                    cfg_into_iter!(0..num_positions_per_block)
-                        .map(|elem_idx| {
-                            let mut z_local = [0i32; D];
-
-                            for (block_idx, c_i) in challenges.iter().enumerate() {
-                                let global_idx = block_idx * num_positions_per_block + elem_idx;
-                                if global_idx >= small_coeffs.len() {
-                                    continue;
-                                }
-                                sparse_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
-                            }
-
-                            z_local
-                        })
-                        .collect()
-                };
-
-                return DecomposeFoldWitness::from_centered_rows(coeff_accum);
-            }
-
             let coeff_accum: Vec<[i32; D]> = {
                 let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
                 cfg_into_iter!(0..num_positions_per_block)

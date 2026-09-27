@@ -103,6 +103,157 @@ fn dense_constructor_reuses_owned_evaluation_buffer() {
 }
 
 #[test]
+fn signed_constructor_preserves_every_byte_and_padding() {
+    fn check<Fld: jolt_field::Field + CanonicalEncoding>() {
+        let bytes = (u8::MIN..=u8::MAX).map(|v| v as i8).collect::<Vec<_>>();
+        let poly = DensePoly::<Fld>::from_i8_evals(8, bytes.clone()).unwrap();
+        for (&actual, &value) in poly.field_coeffs().iter().zip(&bytes) {
+            assert_eq!(actual, Fld::from_i64(i64::from(value)));
+        }
+        assert!(poly.field_coeffs()[256..].iter().all(|v| v.is_zero()));
+        for value in [i8::MIN, -1, 0, 1, i8::MAX] {
+            let single = DensePoly::<Fld>::from_i8_evals(0, vec![value]).unwrap();
+            assert_eq!(single.field_coeffs()[0], Fld::from_i64(i64::from(value)));
+            assert!(single.field_coeffs()[1..].iter().all(|v| v.is_zero()));
+        }
+    }
+    check::<F>();
+    check::<jolt_field::Prime64Offset59>();
+    check::<jolt_field::Prime32Offset99>();
+    check::<jolt_field::Fp64<251>>();
+    for num_vars in [usize::BITS as usize, usize::MAX] {
+        assert!(DensePoly::<F>::from_i8_evals(num_vars, vec![0]).is_err());
+    }
+    for len in [0, 1, 7, 9] {
+        assert!(matches!(
+            DensePoly::<F>::from_i8_evals(3, vec![0; len]),
+            Err(AkitaError::InvalidSize { expected: 8, actual }) if actual == len
+        ));
+    }
+}
+
+#[test]
+fn signed_digit_borrow_obeys_each_balanced_interval_and_ring_view() {
+    fn check<const D: usize>() {
+        for log_basis in 1..=8 {
+            let half = 1i16 << (log_basis - 1);
+            for value in [-half - 1, -half, -1, 0, half - 1, half] {
+                let Ok(value) = i8::try_from(value) else {
+                    continue;
+                };
+                let poly = DensePoly::<F>::from_i8_evals(3, vec![value; 8]).unwrap();
+                let admitted = i16::from(value) >= -half && i16::from(value) < half;
+                assert_eq!(poly.cached_digit_parts(D, 1, log_basis).is_some(), admitted);
+                assert!(poly.cached_digit_parts(D, 2, log_basis).is_none());
+                let planes = poly.digit_planes_for::<D>(1, log_basis).unwrap();
+                let expected = (i16::from(value) + half).rem_euclid(2 * half) - half;
+                for (index, &digit) in planes.as_flattened().iter().enumerate() {
+                    assert_eq!(i16::from(digit), if index < 8 { expected } else { 0 });
+                }
+                if admitted {
+                    assert_eq!(
+                        planes.as_ptr().cast::<i8>(),
+                        poly.small_i8_coeffs.as_ref().unwrap().as_ptr()
+                    );
+                    let cloned = poly.clone();
+                    assert_eq!(cloned.small_i8_bounds(), poly.small_i8_bounds());
+                    assert!(cloned.cached_digit_parts(D, 1, log_basis).is_some());
+                }
+                // A different ring view must remain exact after the first request.
+                let other = poly.digit_planes_for::<64>(1, log_basis);
+                if admitted || D == 64 {
+                    assert_eq!(i16::from(other.unwrap()[0][0]), expected);
+                }
+            }
+        }
+    }
+    check::<64>();
+    check::<128>();
+    check::<1024>();
+    let small = DensePoly::<jolt_field::Fp64<251>>::from_i8_evals(0, vec![-128]).unwrap();
+    assert!(small.small_i8_bounds().is_none());
+    assert!(small.cached_digit_parts(64, 1, 8).is_none());
+}
+
+#[test]
+fn cached_reach_preserves_arbitrary_centering_thresholds() {
+    let poly = DensePoly::<F>::from_i8_evals(3, vec![-128, -7, -1, 0, 1, 7, 126, 127]).unwrap();
+    let q = (-F::from_u64(1)).to_u128_checked().unwrap() + 1;
+    for modulus in [q, q + 1] {
+        for threshold in [0, 126, 127, q / 2, q - 129, q - 128, q - 1] {
+            let mut expected = (0, 0);
+            for value in poly.field_coeffs() {
+                let value = value.to_u128_checked().unwrap();
+                if value <= threshold {
+                    expected.1 = expected.1.max(value);
+                } else {
+                    expected.0 = expected.0.max(modulus - value);
+                }
+            }
+            assert_eq!(
+                poly.committed_centered_reach(modulus, threshold).unwrap(),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn incompatible_digit_cache_falls_back_to_balanced_sparse_convolution() {
+    use akita_challenges::SparseChallenge;
+    const D: usize = 64;
+    let bytes = (0..512).map(|i| (i * 137 + 41) as i8).collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_i8_evals(9, bytes.clone()).unwrap();
+    // Occupy the cache at a different dimension and digit count.
+    poly.digit_planes_for::<128>(2, 4).unwrap();
+    for positions in [vec![], vec![0], vec![1, 17, 63]] {
+        let challenges = (0..4)
+            .map(|block| SparseChallenge {
+                positions: positions.clone().into(),
+                coeffs: positions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| if (block + i) % 2 == 0 { 1 } else { -1 })
+                    .collect::<Vec<_>>()
+                    .into(),
+            })
+            .collect::<Vec<_>>();
+        let got = poly.decompose_fold::<D>(&challenges, 2, 1, 3);
+        let mut expected = vec![0i32; 2 * D];
+        for (block, challenge) in challenges.iter().enumerate() {
+            for position in 0..2 {
+                for coefficient in 0..D {
+                    let value = i32::from(bytes[(block * 2 + position) * D + coefficient]);
+                    let digit = (value + 4).rem_euclid(8) - 4;
+                    for (&shift, &sign) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+                        let shifted = coefficient + shift as usize;
+                        let sign = i32::from(sign) * if shifted < D { 1 } else { -1 };
+                        expected[position * D + shifted % D] += digit * sign;
+                    }
+                }
+            }
+        }
+        assert_eq!(got.centered_coeffs_flat(), expected);
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn signed_bounds_are_consistent_across_concurrent_queries() {
+    use rayon::prelude::*;
+    let poly = DensePoly::<F>::from_i8_evals(17, vec![-7; 1 << 17]).unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap()
+        .install(|| {
+            (0..16).into_par_iter().for_each(|_| {
+                assert_eq!(poly.small_i8_bounds(), Some((-7, 0)));
+            });
+        });
+}
+
+#[test]
 fn dense_source_has_exact_views_across_supported_ring_dimensions() {
     let evals = (1..=32).map(F::from_u64).collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(5, evals.clone()).unwrap();

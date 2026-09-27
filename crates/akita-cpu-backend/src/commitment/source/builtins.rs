@@ -27,6 +27,19 @@ impl<F: Field> CommitmentSource<F> for crate::DensePoly<F> {
     where
         F: CanonicalEncoding,
     {
+        if let Some((min, max)) = self.small_i8_bounds() {
+            let field_modulus = (-F::one()).to_u128_checked().and_then(|q| q.checked_add(1));
+            let negative = u128::from(min.unsigned_abs());
+            let positive = max as u128;
+            // Extrema include zero. Preserve the caller's centering convention:
+            // some decompositions use an asymmetric threshold instead of q/2.
+            if field_modulus == Some(modulus)
+                && positive <= centering_threshold
+                && (min == 0 || modulus - negative > centering_threshold)
+            {
+                return Ok((negative, positive));
+            }
+        }
         Ok(crate::opaque::centered_reach_of_field_coeffs(
             self.field_coeffs(),
             modulus,
