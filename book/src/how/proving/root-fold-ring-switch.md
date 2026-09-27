@@ -375,7 +375,8 @@ quotient checked by the verifier.
 - `crates/akita-types/src/layout/subring_packing_geometry.rs` defines and validates
   the packing geometry.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs` validates the
-  packing groups and expands the prover's Stage-2 packing relation.
+  packing groups and exposes their checked Stage 2 semantics. The CPU backend
+  expands those semantics into local Stage 2 term tables.
 - `crates/akita-verifier/src/coefficient_packing_relation/` builds the
   verifier's compact factors from the same validated groups.
 - `crates/akita-verifier/src/protocol/core/fold/` replays the relation and

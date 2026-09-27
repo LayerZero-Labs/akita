@@ -19,7 +19,7 @@ pub(crate) use compact::{
 };
 
 fn prepare_coefficient_packing_verifier_group<F, E>(
-    validated: &ValidatedCoefficientPackingGroup<'_, F, E>,
+    validated: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<CoefficientPackingVerifierGroupSemantics<E>, AkitaError>
 where
     F: Field,
@@ -37,7 +37,7 @@ where
 /// Prepare the compact packing factors used by the Stage 2 verifier without
 /// constructing the prover's expanded event or segment tables.
 pub(crate) fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
-    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
+    inputs: CoefficientPackingBatchSemanticInputs<'_, '_, '_, F, E>,
 ) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -50,4 +50,4 @@ where
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

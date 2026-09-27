@@ -404,16 +404,13 @@ where
                 )?
             }
             crate::opaque::Stage2OpeningDescription::CoefficientPacking(terms) => {
-                let mut terms = terms.into_iter();
+                let mut groups = terms.into_groups().into_iter();
+                let first_group = groups.next().ok_or(AkitaError::InvalidProof)?;
                 let mut prepared =
-                    relation_range_image::PreparedProverLinearTerms::from_coefficient_packing(
-                        terms.next().ok_or(AkitaError::InvalidProof)?,
-                    )?;
-                for term in terms {
+                    relation_range_image::prepare_coefficient_packing_linear_terms(first_group)?;
+                for group in groups {
                     prepared.merge(
-                        relation_range_image::PreparedProverLinearTerms::from_coefficient_packing(
-                            term,
-                        )?,
+                        relation_range_image::prepare_coefficient_packing_linear_terms(group)?,
                     )?;
                 }
                 prepared

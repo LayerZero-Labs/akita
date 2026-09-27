@@ -58,7 +58,7 @@ where
     };
     let ordinary = match parameters.ring_relation_mode {
         akita_types::RingRelationMode::QuotientLift => {
-            let (events, _) = build_relation_weight_events(RelationWeightEventInputs {
+            let weights = build_relation_lane_weights(RelationLaneWeightInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
                 alpha: request.alpha,
@@ -69,8 +69,14 @@ where
                 opening_ring_dim: request.opening_ring_dimension,
                 relation_plan: request.relation_plan,
                 opening_points,
+                packing_semantics: match plan.linear_terms() {
+                    akita_prover::backend::Stage2OpeningDescription::CoefficientPacking(batch) => {
+                        Some(batch)
+                    }
+                    akita_prover::backend::Stage2OpeningDescription::EvaluationTrace { .. } => None,
+                },
             })?;
-            RelationWeightDescription::QuotientFactored(events.factor_common_alpha()?)
+            RelationWeightDescription::QuotientFactored(weights.into_factorization()?)
         }
         akita_types::RingRelationMode::ReducedEvaluation => {
             if !points.is_empty() {

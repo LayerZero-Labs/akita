@@ -34,6 +34,7 @@ use block_parallel::*;
 use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
+pub(crate) use common::centered_rows_abs_bound;
 use common::*;
 pub(crate) use compression::validate_compression_batch_shape;
 #[cfg(test)]
