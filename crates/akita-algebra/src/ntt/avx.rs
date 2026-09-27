@@ -4,6 +4,7 @@
 //! Pointwise and transform kernels default to AVX2; `AKITA_AVX512_NTT=1` opts
 //! into the 512-bit instantiations on hosts with AVX-512F/DQ/BW.
 
+mod field_limbs;
 mod lanes;
 mod montgomery;
 mod pointwise;
@@ -14,6 +15,8 @@ mod transform;
 mod twiddles;
 
 pub use runtime::{avx_ntt_mode, use_avx2_transform_ntt, AvxNttMode};
+
+pub(crate) use field_limbs::field_residues_i32;
 
 pub use pointwise::{add_reduce_i16, add_reduce_i32, add_reduce_i32_avx512};
 pub(crate) use pointwise::{
