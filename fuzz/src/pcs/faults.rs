@@ -3,8 +3,8 @@
 //! Byte mutations of an honest proof break Fiat–Shamir consistency first, so
 //! they never reach the verifier's norm, range, cap, or relation checks. With
 //! Akita's `fault-injection` feature the honest prover alters one value
-//! before it is absorbed into the transcript: it admits a fold nonce whose
-//! response fails its acceptance predicate, perturbs one recursive witness
+//! before it is absorbed into the transcript: it pushes a fold response past
+//! its L-infinity digit range or L2 cap, perturbs one recursive witness
 //! digit (Z, E, T, or R), one terminal response coefficient, or the L2 norm
 //! claim. Every later challenge is derived from the altered value, so only the
 //! violated condition can catch it. For each input:
@@ -19,7 +19,7 @@ use super::ops::PcsOps;
 use crate::input::Reader;
 use crate::stats;
 use akita_error::AkitaError;
-use akita_prover::fault_injection::{with_fault, Fault, WitnessSegment};
+use akita_prover::fault_injection::{with_fault, Fault, OverBound, WitnessSegment};
 
 fn fault_from(control: &mut Reader<'_>) -> Fault {
     let level = u32::from(control.u8() % 6);
@@ -30,7 +30,20 @@ fn fault_from(control: &mut Reader<'_>) -> Fault {
     };
     // `AcceptRejectedNonce` is left out: honest responses are almost never
     // rejected, so it scans all 4096 nonces per level and rarely applies.
-    match control.u8() % 6 {
+    // `PushResponseOverBound` covers the same checks at one grind's cost.
+    match control.u8() % 8 {
+        6 | 7 => Fault::PushResponseOverBound {
+            level: (control.u8() % 4 != 0).then_some(level),
+            group: control.bool().then(|| usize::from(control.u8() % 4)),
+            index,
+            route: match control.u8() % 3 {
+                0 => OverBound::L2,
+                selector => OverBound::Linf {
+                    excess: u32::from(control.u16()).max(1) >> (control.u8() % 16),
+                    negative: selector == 2,
+                },
+            },
+        },
         0..=2 => Fault::PerturbWitnessDigit {
             level,
             segment: [
