@@ -170,6 +170,9 @@ proof coefficients.
 - `crates/akita-cpu-backend/src/opaque/recursive/opening/dense.rs`
   contains the fused fold-and-accumulate kernels.
 - `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs`.
-- `crates/akita-types/src/extension_opening_reduction.rs`.
+- `crates/akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs`
+  builds the prover's tensor partials and factor tables.
+- `crates/akita-types/src/extension_opening_reduction.rs` holds the tensor
+  algebra the prover and verifier share.
 - Historical records under `specs/archive/2026-Q3/` document the removed root
   EOR implementations and the surviving suffix machinery's origin.

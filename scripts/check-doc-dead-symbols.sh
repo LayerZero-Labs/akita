@@ -163,6 +163,9 @@ removed_api_patterns=(
   'ReducedCoefficientFunctional'
   'CompactFactorInputs'
   'prepare_coefficient_packing_batch_groups'
+  'ExtensionOpeningTensorPartials'
+  'derive_tensor_extension_opening_claim\b'
+  'subring_coefficient_packing_reference_tests'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
