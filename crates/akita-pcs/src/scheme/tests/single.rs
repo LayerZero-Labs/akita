@@ -79,8 +79,7 @@ fn verify_rejects_wrong_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_cpu_backend::CommitOutput {
@@ -88,6 +87,7 @@ fn verify_rejects_wrong_opening() {
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -156,13 +156,14 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
     let (poly, evals) = make_dense_poly(num_vars);
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly]).unwrap(),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )

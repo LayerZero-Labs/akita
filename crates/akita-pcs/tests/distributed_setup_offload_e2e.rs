@@ -62,10 +62,10 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
     let setup_for_two = akita_config::SetupRequirements::from_catalog::<W8R2Cfg>(&catalog, 32, 2)
-        .map(|requirements| requirements.matrix_capacity)
+        .map(|requirements| requirements.matrix_capacity())
         .expect("setup capacity for K=2");
     let setup_for_four = akita_config::SetupRequirements::from_catalog::<W8R2Cfg>(&catalog, 32, 4)
-        .map(|requirements| requirements.matrix_capacity)
+        .map(|requirements| requirements.matrix_capacity())
         .expect("setup capacity for K=4");
     let incoming_prefixes = schedule
         .schedule()

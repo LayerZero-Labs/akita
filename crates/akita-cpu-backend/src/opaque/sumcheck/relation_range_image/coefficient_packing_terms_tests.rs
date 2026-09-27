@@ -2,15 +2,14 @@ use super::*;
 
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    prepare_coefficient_packing_batch_semantics,
-    prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
+    prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
     AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
     CoefficientPackingBatchSemantics, CoefficientPackingChallenges, CoefficientPackingStage2Source,
-    CoefficientPackingVerifierBatchSemantics, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance,
-    RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+    CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
+    OpeningFamily, OpeningMethod, PreparedSubringCoefficientPackingPoint, RelationAddressGeometry,
+    RelationRangeImagePlan, RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening,
+    RingRelationInstance, RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry,
+    WitnessLayout,
 };
 use jolt_field::{Ext2, One, Prime64Offset59, Ring, Zero};
 
@@ -27,7 +26,6 @@ struct Fixture {
     tau1: Vec<E>,
     relation_events: Vec<RelationWeightEvent<E>>,
     batch: CoefficientPackingBatchSemantics<E>,
-    compact_batch: CoefficientPackingVerifierBatchSemantics<E>,
 }
 
 fn fixture() -> Fixture {
@@ -163,19 +161,6 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
             claim_coefficients: &claim_coefficients,
         })
         .unwrap();
-    let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(
-        CoefficientPackingBatchSemanticInputs {
-            level_params: &params,
-            opening_batch: &opening_batch,
-            relation_plan: &relation_plan,
-            relation: &relation,
-            prepared_points: &[(0, &prepared_point)],
-            alpha: E::from_u64(17),
-            tau1: &tau1,
-            claim_coefficients: &claim_coefficients,
-        },
-    )
-    .unwrap();
     Fixture {
         params,
         opening_batch,
@@ -186,7 +171,6 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
         tau1,
         relation_events,
         batch,
-        compact_batch,
     }
 }
 
@@ -258,46 +242,6 @@ fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
         assert_eq!(
             prepared.final_value().unwrap(),
             semantics.stage2_terms().evaluate_at_point(&point).unwrap()
-        );
-        assert_eq!(
-            fixture.compact_batch.groups()[0]
-                .compact_factors()
-                .evaluate_stage2_at_point(&point)
-                .unwrap(),
-            semantics.stage2_terms().evaluate_at_point(&point).unwrap()
-        );
-        let mut dense_relation = vec![
-            E::zero();
-            semantics
-                .stage2_terms()
-                .physical_field_len()
-                .next_power_of_two()
-        ];
-        let alpha = E::from_u64(17);
-        let max_alpha_exponent = fixture
-            .relation_events
-            .iter()
-            .map(|event| event.alpha_exponent_start() + event.physical_coefficients().len())
-            .max()
-            .unwrap_or(0);
-        let mut alpha_powers = Vec::with_capacity(max_alpha_exponent);
-        let mut alpha_power = E::one();
-        for _ in 0..max_alpha_exponent {
-            alpha_powers.push(alpha_power);
-            alpha_power *= alpha;
-        }
-        for event in &fixture.relation_events {
-            for (offset, physical) in event.physical_coefficients().enumerate() {
-                dense_relation[physical] +=
-                    event.scalar() * alpha_powers[event.alpha_exponent_start() + offset];
-            }
-        }
-        assert_eq!(
-            fixture.compact_batch.groups()[0]
-                .compact_factors()
-                .evaluate_relation_at_point(&point)
-                .unwrap(),
-            akita_algebra::poly::multilinear_eval(&dense_relation, &point).unwrap()
         );
     }
 }
@@ -504,7 +448,7 @@ fn recursive_packing_phases_share_one_relation_authority() {
     let source_refs = sources.iter().collect::<Vec<_>>();
     let batch =
         <RecursiveWitnessFlat as RootOpeningSource<F, 256>>::opening_batch(&source_refs).unwrap();
-    let partials = CpuBackend::for_arithmetic_tests()
+    let partials = CpuBackend::<F, E>::for_arithmetic_tests()
         .coefficient_packing_partials_batch(None, batch, SubringCoefficientPackingPlan { point })
         .unwrap();
     let d_input = materialize_coefficient_packing_d_input::<F, 128>(

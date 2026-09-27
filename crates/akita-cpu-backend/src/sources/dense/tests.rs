@@ -214,7 +214,7 @@ fn batch_fold_rejects_mixed_extents_and_count_mismatch() {
         };
         2
     ];
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let run = |refs: &[&DensePoly<F>]| {
         OpeningBatchKernel::decompose_fold_batch(
             &backend,
@@ -251,7 +251,7 @@ fn scalar_fold_rejects_short_and_excess_challenges() {
         positions: vec![0].into(),
         coeffs: vec![1].into(),
     };
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let run = |count: usize| {
         let challenges = vec![challenge.clone(); count];
         OpeningFoldKernel::decompose_fold(

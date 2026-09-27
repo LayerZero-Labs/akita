@@ -51,14 +51,14 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
     let setup = scheme.setup_prover(num_vars, 1).expect("setup");
-    let stack =
-        CpuBackend::<OneHotCfg>::new(setup.expanded.clone(), scheme.schedules()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![poly.clone()]).expect("source"),
             akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )

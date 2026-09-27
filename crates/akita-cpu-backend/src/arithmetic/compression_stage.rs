@@ -106,25 +106,21 @@ impl<F: Field + 'static> PortableCompressionStateExport<F> for CpuCompressionExp
 }
 
 /// CPU compression operation whose returned state directly owns its witness.
-pub(crate) struct CpuCompressionOperation<
-    'a,
-    F,
-    Cfg: akita_config::CommitmentConfig = akita_config::proof_optimized::fp128::OneHot,
-> where
+pub(crate) struct CpuCompressionOperation<'a, F, E>
+where
     F: Field + CanonicalEncoding,
 {
-    context: OperationCtx<'a, F, CpuBackend<Cfg>>,
+    context: OperationCtx<'a, F, CpuBackend<F, E>>,
     owner: StateOwnerCapability<CompressionState>,
 }
 
-impl<'a, F, Cfg> CpuCompressionOperation<'a, F, Cfg>
+impl<'a, F, E> CpuCompressionOperation<'a, F, E>
 where
     F: Field + CanonicalEncoding,
-    Cfg: akita_config::CommitmentConfig,
 {
     /// Construct a CPU compression operation for a custom commitment executor.
     pub(crate) fn new(
-        backend: &'a CpuBackend<Cfg>,
+        backend: &'a CpuBackend<F, E>,
         prepared: &'a CpuPreparedSetup<F>,
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
@@ -164,10 +160,9 @@ where
     }
 }
 
-impl<F, Cfg> CompressionOperation<F> for CpuCompressionOperation<'_, F, Cfg>
+impl<F, E> CompressionOperation<F> for CpuCompressionOperation<'_, F, E>
 where
     F: Field + CanonicalEncoding + 'static,
-    Cfg: akita_config::CommitmentConfig,
 {
     fn compress(
         &self,
@@ -248,7 +243,7 @@ mod tests {
             },
         )
         .unwrap();
-        let backend = CpuBackend::for_arithmetic_tests();
+        let backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let prepared = backend.prepare_setup(&setup).unwrap();
         let operation =
             CpuCompressionOperation::new(&backend, &prepared, setup.expanded.as_ref()).unwrap();

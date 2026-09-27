@@ -2,8 +2,6 @@
 
 use std::ops::Range;
 
-#[cfg(test)]
-use akita_algebra::offset_eq::eq_eval_at_index;
 #[cfg(any(test, feature = "test-support"))]
 use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 #[cfg(any(test, feature = "test-support"))]
@@ -22,11 +20,12 @@ use crate::{
     gadget_row_scalars, r_decomp_levels, validate_role_dims_for_field, CommittedGroupParams,
     FpExtEncoding, OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
     RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, SignedDigitKernel,
-    SubringCoefficientPackingGeometry,
+    SubringCoefficientPackingGeometry, WitnessLayout,
 };
 
-mod compact;
 mod expanded;
+#[cfg(any(test, feature = "test-support"))]
+mod test_fixtures;
 
 #[derive(Clone, Copy)]
 struct RelationEventDomain {
@@ -35,12 +34,6 @@ struct RelationEventDomain {
     physical_field_len: usize,
 }
 
-#[cfg(test)]
-use compact::CoefficientPackingAffineRelationFamily;
-pub use compact::{
-    CoefficientPackingCompactFactors, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics,
-};
 use expanded::CoefficientPackingGroupSemanticInputs;
 #[cfg(test)]
 use expanded::CoefficientPackingRelationEvents;
@@ -49,11 +42,35 @@ pub use expanded::{
     CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use test_fixtures::{
+    coefficient_packing_fixture, coefficient_packing_multigroup_fixture, CoefficientPackingFixture,
+    CoefficientPackingMultigroupFixture,
+};
 
-struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
+/// One packing group whose geometry, prepared point, claims, consistency row
+/// and gadgets have been checked against the fold authority.
+///
+/// Only [`validate_coefficient_packing_batch_groups`] builds one. The prover
+/// expands it into relation events and Stage 2 terms; the verifier reads it
+/// through the accessors below to build compact factors.
+///
+/// Holding one guarantees that `d_d` is nonzero and divides the partial
+/// width, and that the challenge, alpha-power and basis buffers have the
+/// lengths the geometry fixes.
+///
+/// Validation is structural. It checks the supplied prepared point, alpha,
+/// tau1 and claim coefficients against the fold authority's geometry, not
+/// against the transcript: a different point of the same shape validates.
+/// The caller must supply the transcript-derived values, as the verifier's
+/// fold replay does.
+pub struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
     inputs: CoefficientPackingGroupSemanticInputs<'a, F, E>,
     geometry: SubringCoefficientPackingGeometry,
     group_claim_range: Range<usize>,
+    group_claim_coefficients: &'a [E],
+    num_claims: usize,
+    num_live_blocks: usize,
     consistency_row: usize,
     consistency_weight: E,
     scalar_claim_weight: E,
@@ -68,6 +85,119 @@ struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
     denominator: E,
     witness_gadget: Vec<E>,
     fold_gadget: Vec<E>,
+}
+
+impl<'a, F: Field, E: Field> ValidatedCoefficientPackingGroup<'a, F, E> {
+    #[must_use]
+    pub const fn group_index(&self) -> usize {
+        self.inputs.group_index
+    }
+
+    #[must_use]
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
+    #[must_use]
+    pub const fn prepared_point(&self) -> &'a PreparedSubringCoefficientPackingPoint<E> {
+        self.inputs.prepared_point
+    }
+
+    #[must_use]
+    pub fn witness_layout(&self) -> &'a WitnessLayout {
+        self.inputs.relation_plan.witness_layout()
+    }
+
+    /// This group's claims in the batch claim order.
+    #[must_use]
+    pub fn group_claim_range(&self) -> Range<usize> {
+        self.group_claim_range.clone()
+    }
+
+    /// The batch claim coefficients restricted to [`Self::group_claim_range`].
+    #[must_use]
+    pub const fn group_claim_coefficients(&self) -> &'a [E] {
+        self.group_claim_coefficients
+    }
+
+    #[must_use]
+    pub const fn num_claims(&self) -> usize {
+        self.num_claims
+    }
+
+    #[must_use]
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    #[must_use]
+    pub const fn d_d(&self) -> usize {
+        self.d_d
+    }
+
+    #[must_use]
+    pub const fn consistency_row(&self) -> usize {
+        self.consistency_row
+    }
+
+    #[must_use]
+    pub const fn physical_field_len(&self) -> usize {
+        self.physical_field_len
+    }
+
+    #[must_use]
+    pub const fn consistency_weight(&self) -> E {
+        self.consistency_weight
+    }
+
+    #[must_use]
+    pub const fn scalar_claim_weight(&self) -> E {
+        self.scalar_claim_weight
+    }
+
+    /// `alpha^s + 1`, the packing modulus evaluated at alpha.
+    #[must_use]
+    pub const fn denominator(&self) -> E {
+        self.denominator
+    }
+
+    /// `alpha^0, ..., alpha^(s-1)`.
+    #[must_use]
+    pub fn alpha_powers(&self) -> &[E] {
+        &self.alpha_powers
+    }
+
+    #[must_use]
+    pub fn basis(&self) -> &[E] {
+        &self.basis
+    }
+
+    #[must_use]
+    pub fn opening_gadget(&self) -> &[E] {
+        &self.opening_gadget
+    }
+
+    /// Canonical packing challenges evaluated at alpha, claim-major over live
+    /// blocks.
+    #[must_use]
+    pub fn challenge_alpha_values(&self) -> &[E] {
+        &self.challenge_alpha_values
+    }
+
+    #[must_use]
+    pub fn quotient_gadget(&self) -> &[E] {
+        &self.quotient_gadget
+    }
+
+    #[must_use]
+    pub fn witness_gadget(&self) -> &[E] {
+        &self.witness_gadget
+    }
+
+    #[must_use]
+    pub fn fold_gadget(&self) -> &[E] {
+        &self.fold_gadget
+    }
 }
 
 struct CoefficientPackingBatchAuthority {
@@ -323,6 +453,15 @@ where
     )?;
     let s = geometry.challenge_subring_dimension();
     let d_d = inputs.level_params.role_dims().d_d();
+    // `RelationRhsLayout::validate` already rejects both cases when the fold
+    // authority builds its relation geometry. Checking here keeps every
+    // division by `d_d` in the prover and verifier consumers local to this
+    // validator.
+    if d_d == 0 || !geometry.partial_base_field_width().is_multiple_of(d_d) {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing digit dimension does not divide the partial width".into(),
+        ));
+    }
     let coefficient_block = inputs
         .relation_plan
         .relation_address_geometry()
@@ -396,6 +535,9 @@ where
         inputs,
         geometry,
         group_claim_range,
+        group_claim_coefficients,
+        num_claims: group_layout.num_polynomials(),
+        num_live_blocks: group_params.num_live_blocks(),
         consistency_row,
         consistency_weight,
         scalar_claim_weight,
@@ -430,6 +572,9 @@ where
         inputs,
         geometry,
         group_claim_range,
+        group_claim_coefficients: _,
+        num_claims: _,
+        num_live_blocks: _,
         consistency_row,
         consistency_weight,
         scalar_claim_weight,
@@ -727,54 +872,23 @@ where
     ))
 }
 
-fn prepare_coefficient_packing_verifier_group<F, E>(
-    validated: ValidatedCoefficientPackingGroup<'_, F, E>,
-) -> Result<CoefficientPackingVerifierGroupSemantics<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
-{
-    let inputs = &validated.inputs;
-    let group_layout = inputs.opening_batch.group_layout(inputs.group_index)?;
-    let group_params = inputs
-        .level_params
-        .group_params_geometry(inputs.opening_batch, inputs.group_index)?;
-    let group_claim_coefficients = inputs
-        .claim_coefficients
-        .get(validated.group_claim_range.clone())
-        .ok_or(AkitaError::InvalidProof)?;
-    let compact_factors = compact::prepare_compact_factors(compact::CompactFactorInputs {
-        geometry: validated.geometry,
-        prepared_point: inputs.prepared_point,
-        witness_layout: inputs.relation_plan.witness_layout(),
-        group_index: inputs.group_index,
-        num_claims: group_layout.num_polynomials(),
-        num_live_blocks: group_params.num_live_blocks(),
-        d_d: validated.d_d,
-        consistency_row: validated.consistency_row,
-        physical_field_len: validated.physical_field_len,
-        consistency_weight: validated.consistency_weight,
-        scalar_claim_weight: validated.scalar_claim_weight,
-        denominator: validated.denominator,
-        claim_coefficients: group_claim_coefficients,
-        challenge_alpha: &validated.challenge_alpha_values,
-        alpha_powers: &validated.alpha_powers,
-        basis_elements: &validated.basis,
-        opening_gadget: &validated.opening_gadget,
-        quotient_gadget: &validated.quotient_gadget,
-        witness_gadget: &validated.witness_gadget,
-        fold_gadget: &validated.fold_gadget,
-    })?;
-    Ok(CoefficientPackingVerifierGroupSemantics {
-        group_index: inputs.group_index,
-        geometry: validated.geometry,
-        group_claim_range: validated.group_claim_range,
-        scalar_claim_weight: validated.scalar_claim_weight,
-        compact_factors,
-    })
-}
-
-fn prepare_coefficient_packing_batch_groups<'a, F, E, T>(
+/// Validate every packing group of one fold authority, in relation group
+/// order, and hand each one by value to `project`.
+///
+/// A group is validated only after the previous group's `project` call has
+/// returned, so a `project` that keeps only its derived output holds one
+/// group's validation buffers at a time. `project` owns the group and may
+/// retain it; nothing here prevents that.
+///
+/// Validation is not transactional. `project` can run for earlier groups
+/// before a later group fails validation or projection, and its side effects
+/// are not rolled back. An `Err` does not mean `project` never ran, so
+/// `project` must not have effects outside the returned values, such as
+/// transcript writes.
+///
+/// Rejects prepared points for EvaluationTrace groups, duplicate or missing
+/// points, and points outside the relation group order.
+pub fn validate_coefficient_packing_batch_groups<'a, F, E, T>(
     inputs: &CoefficientPackingBatchSemanticInputs<'a, F, E>,
     mut project: impl FnMut(ValidatedCoefficientPackingGroup<'a, F, E>) -> Result<T, AkitaError>,
 ) -> Result<Vec<T>, AkitaError>
@@ -873,33 +987,13 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let prepared = prepare_coefficient_packing_batch_groups(
-        &inputs,
-        prepare_coefficient_packing_prover_group,
-    )?;
     let mut events = Vec::new();
-    let mut groups = Vec::with_capacity(prepared.len());
-    for (group_events, group) in prepared {
+    let groups = validate_coefficient_packing_batch_groups(&inputs, |group| {
+        let (group_events, group) = prepare_coefficient_packing_prover_group(group)?;
         events.extend(group_events);
-        groups.push(group);
-    }
+        Ok(group)
+    })?;
     Ok((events, CoefficientPackingBatchSemantics { groups }))
-}
-
-/// Prepare the compact packing factors used by the Stage 2 verifier without
-/// constructing the prover's expanded event or segment tables.
-pub fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
-    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
-) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F>,
-{
-    let groups = prepare_coefficient_packing_batch_groups(
-        &inputs,
-        prepare_coefficient_packing_verifier_group,
-    )?;
-    Ok(CoefficientPackingVerifierBatchSemantics { groups })
 }
 
 #[cfg(test)]

@@ -420,9 +420,8 @@ pub(super) fn validate_digit_row_request(
     Ok(())
 }
 
-impl<F, Cfg> ComputeBackendSetup<F> for CpuBackend<Cfg>
+impl<F, E> ComputeBackendSetup<F> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig,
     F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;

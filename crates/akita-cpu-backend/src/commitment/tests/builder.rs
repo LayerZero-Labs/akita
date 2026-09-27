@@ -66,7 +66,7 @@ impl CompressionOperation<F> for UnusedCompression {
 }
 
 struct RecordingCpuOuter<'a> {
-    operation: CpuOuterCommitOperation<'a, F>,
+    operation: CpuOuterCommitOperation<'a, F, F>,
     calls: Arc<AtomicUsize>,
 }
 
@@ -283,7 +283,7 @@ fn mixed_outer_with_cpu_compression_matches_the_all_cpu_route() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let standard_types = vec![PolynomialType::Dense(super::super::DenseType::Coefficients)];
     let all_cpu = CommitmentExecutor::cpu(
@@ -391,7 +391,7 @@ fn resident_state_preflight_rejects_mismatched_plan_metadata() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let executor = CommitmentExecutor::cpu(
         &backend,
@@ -430,7 +430,7 @@ fn builder_rejects_duplicate_inner_type_capabilities() {
     )
     .unwrap();
     let dense = PolynomialType::Dense(super::super::DenseType::Coefficients);
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared = backend.prepare_setup(&setup).unwrap();
     let error = CommitmentExecutor::cpu(
         &backend,
@@ -476,7 +476,7 @@ fn builder_rejects_a_prepared_stage_from_another_setup() {
         },
     )
     .unwrap();
-    let backend = CpuBackend::for_arithmetic_tests();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
     let prepared_a = backend.prepare_setup(&setup_a).unwrap();
     let builder_a = CommitmentExecutorBuilder::new(
         setup_a.expanded.as_ref(),

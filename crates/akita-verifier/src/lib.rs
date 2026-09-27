@@ -22,6 +22,7 @@
 //! `benchmark-support` relation-evaluator bench drives directly, and
 //! [`AkitaStage1Verifier`], which downstream range-proof lanes reuse.
 
+mod coefficient_packing_relation;
 mod prepared_cache;
 mod protocol;
 mod setup_contribution;

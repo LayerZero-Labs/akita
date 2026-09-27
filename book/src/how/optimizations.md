@@ -139,7 +139,7 @@ a route change is visible even when total runtime is noisy.
 
 ## CPU resource limits
 
-`CpuBackend::with_ring_switch_cache_limit(expanded, schedules,
+`CpuBackend::with_ring_switch_cache_limit(expanded,
 max_cached_ring_switch_elements)` sets the largest ring switch operation that
 keeps a complete transformed matrix prefix. `CpuBackend::new` uses `2^21` ring
 elements. A zero limit streams every ring switch operation that has a streamed

@@ -517,7 +517,7 @@ where
         None
     } else {
         Some(
-            akita_types::prepare_coefficient_packing_verifier_batch_semantics(
+            crate::coefficient_packing_relation::prepare_coefficient_packing_verifier_batch_semantics(
                 akita_types::CoefficientPackingBatchSemanticInputs {
                     level_params: prepared.lp,
                     opening_batch,

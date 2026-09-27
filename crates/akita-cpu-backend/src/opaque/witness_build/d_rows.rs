@@ -116,15 +116,15 @@ mod tests {
             },
         )
         .unwrap();
-        let prepared = CpuBackend::for_arithmetic_tests()
+        let prepared = CpuBackend::<F, F>::for_arithmetic_tests()
             .prepare_expanded(setup.expanded.clone())
             .unwrap();
-        let arithmetic_backend = CpuBackend::for_arithmetic_tests();
+        let arithmetic_backend = CpuBackend::<F, F>::for_arithmetic_tests();
         let ctx =
             OperationCtx::new(&arithmetic_backend, &prepared, setup.expanded.as_ref()).unwrap();
         let e_hat = DigitBlocks::new(vec![-1; 2 * D], vec![2], D).unwrap();
 
-        let rows = compute_relation_d_rows::<F, CpuBackend, D>(
+        let rows = compute_relation_d_rows::<F, CpuBackend<F, F>, D>(
             &ctx,
             2,
             1,

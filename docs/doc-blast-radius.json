@@ -100,12 +100,15 @@
       "description": "Setup expansion and Ajtai commitment",
       "code": [
         "crates/akita-setup/**",
-        "crates/akita-cpu-backend/src/backend/commitment/**",
-        "crates/akita-cpu-backend/src/backend/**"
+        "crates/akita-cpu-backend/src/commitment/**",
+        "crates/akita-cpu-backend/src/opaque/**",
+        "crates/akita-prover/src/backend/**"
       ],
       "consider_updating": [
         "book/src/how/commitment.md",
         "book/src/usage/commitment-api.md",
+        "book/src/usage/setup-runtime.md",
+        "specs/family-agnostic-cpu-backend.md",
         "specs/setup-*.md"
       ]
     },

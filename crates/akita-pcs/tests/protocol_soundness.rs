@@ -54,7 +54,7 @@ fn selection_for<Cfg: CommitmentConfig>(
 type ProverInput<'a, Cfg> = SelectedProverOpeningData<
     'a,
     <Cfg as CommitmentConfig>::ExtField,
-    CommitmentHandle<<Cfg as CommitmentConfig>::Field, <Cfg as CommitmentConfig>::ExtField, Cfg>,
+    CommitmentHandle<<Cfg as CommitmentConfig>::Field, <Cfg as CommitmentConfig>::ExtField>,
     <Cfg as CommitmentConfig>::Field,
 >;
 
@@ -63,7 +63,7 @@ fn prove_input<'a, Cfg>(
     point: &'a [Cfg::ExtField],
     opening: Cfg::ExtField,
     commitment: &'a CommittedGroup<Cfg::Field>,
-    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField, Cfg>,
+    hint: CommitmentHandle<Cfg::Field, Cfg::ExtField>,
     schedules: &TrustedScheduleCatalog<Cfg>,
 ) -> ProverInput<'a, Cfg>
 where
@@ -148,14 +148,14 @@ where
         });
 
     let setup = scheme.setup_prover(num_vars, 1).expect("prover setup");
-    let stack =
-        CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).expect("prover backend");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("prover backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: hint,
     } = stack
         .commit(
+            scheme.schedules(),
             &stack.import_source(vec![polynomial]).expect("source"),
             GroupContext::scheduler_without_precommitted_groups(),
         )

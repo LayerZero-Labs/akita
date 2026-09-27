@@ -311,7 +311,7 @@ impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
                 "coefficient-packing source exceeds prepared opening domain".into(),
             ));
         }
-        let source_domain = 1usize.checked_shl(source_num_vars as u32).ok_or_else(|| {
+        let source_domain = checked::pow2(source_num_vars).ok_or_else(|| {
             AkitaError::InvalidSetup("coefficient-packing source domain overflow".into())
         })?;
         let padded_ring_positions = source_domain.div_ceil(geometry.a_ring_dimension());

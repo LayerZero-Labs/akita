@@ -29,12 +29,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scheme = load_workspace_scheme::<Config>()?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
-    let backend = Arc::new(CpuBackend::<Config>::new(
-        setup.expanded.clone(),
-        scheme.schedules(),
-    )?);
+    let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
     let source = backend.import_source(vec![polynomial])?;
     let commit_output = backend.commit(
+        scheme.schedules(),
         &source,
         GroupContext::scheduler_without_precommitted_groups(),
     )?;

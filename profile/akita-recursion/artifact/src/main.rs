@@ -16,8 +16,8 @@
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_pcs::AkitaCommitmentScheme;
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend, GroupContext, OneHotPoly};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaSerialize, Valid};
@@ -171,14 +171,13 @@ where
     Ok(opening)
 }
 
-fn materialize_schedule_setup_prefix_slots<C>(
-    setup: &mut AkitaProverSetup<C::Field>,
-    backend: &CpuBackend<C>,
+fn materialize_schedule_setup_prefix_slots<F, E>(
+    setup: &mut AkitaProverSetup<F>,
+    backend: &CpuBackend<F, E>,
     schedule: &akita_types::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    C: CommitmentConfig,
-    C::Field: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator + Valid + 'static,
 {
     let mut ids = Vec::new();
     for setup_prefix in schedule
@@ -194,7 +193,7 @@ where
         }
         ids.push(slot_id);
     }
-    for (_, slot) in backend.export_setup_prefixes::<C::Field>(&ids)?.iter() {
+    for (_, slot) in backend.export_setup_prefixes(&ids)?.iter() {
         setup.prefix_slots.insert(slot.clone())?;
     }
     Ok(())
@@ -362,7 +361,7 @@ macro_rules! generate_scalar_case {
         let mut prover_setup = scheme
             .setup_prover(num_vars, 1)
             .map_err(|err| format!("{} prover setup: {err}", case))?;
-        let backend = CpuBackend::<ScalarCfg>::new(prover_setup.expanded.clone(), scheme.schedules())
+        let backend = CpuBackend::new(prover_setup.expanded.clone())
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
         if $recursive {
             materialize_schedule_setup_prefix_slots(
@@ -387,7 +386,7 @@ macro_rules! generate_scalar_case {
         let CommitOutput {
             committed_group: commitment,
             private_handle: hint,
-        } = backend.commit(&source,
+        } = backend.commit(scheme.schedules(), &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
         .map_err(|err| format!("{} commit: {err}", case))?;
@@ -647,14 +646,10 @@ fn run() -> Result<(), String> {
     let mut prover_setup = scheme
         .setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let backend = CpuBackend::<Cfg>::new(prover_setup.expanded.clone(), scheme.schedules())
+    let backend = CpuBackend::new(prover_setup.expanded.clone())
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
-    materialize_schedule_setup_prefix_slots(
-        &mut prover_setup,
-        &backend,
-        schedule.schedule(),
-    )
-    .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
+    materialize_schedule_setup_prefix_slots(&mut prover_setup, &backend, schedule.schedule())
+        .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"
@@ -670,12 +665,16 @@ fn run() -> Result<(), String> {
             0x0bee_fcaf_2100_0000 + group_idx as u64,
         )?];
         let openings = vec![onehot_opening(&polys[0], pre_point)?];
-        let source = backend.import_source(polys)
+        let source = backend
+            .import_source(polys)
             .map_err(|err| format!("precommit source import: {err}"))?;
         let CommitOutput {
             committed_group,
             private_handle: hint,
-        } = backend.commit(&source,
+        } = backend
+            .commit(
+                scheme.schedules(),
+                &source,
                 GroupContext::explicit(&pre_descriptor),
             )
             .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
@@ -693,12 +692,16 @@ fn run() -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()?;
     let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
         .map_err(|err| format!("precommitted profile list: {err}"))?;
-    let source = backend.import_source(final_polys)
+    let source = backend
+        .import_source(final_polys)
         .map_err(|err| format!("final source import: {err}"))?;
     let CommitOutput {
         committed_group: final_commitment,
         private_handle: final_hint,
-    } = backend.commit(&source,
+    } = backend
+        .commit(
+            scheme.schedules(),
+            &source,
             GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .map_err(|err| format!("final multi-group commit failed: {err}"))?;

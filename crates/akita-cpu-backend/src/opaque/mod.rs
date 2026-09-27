@@ -87,16 +87,15 @@ pub(crate) use recursive::{
     CpuWitnessHandle, CpuWitnessOpeningHandle, RecursiveWitnessFlat,
 };
 pub(crate) use relation_weights::RelationWeightDescription;
-impl<F, E, Cfg> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::ProverHandleFamily<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
-    type CommitmentHandle = CommitmentHandle<F, E, Cfg>;
-    type EorPreparationHandle = eor::CpuEorPreparation<F, E, Cfg>;
+    type CommitmentHandle = CommitmentHandle<F, E>;
+    type EorPreparationHandle = eor::CpuEorPreparation<F, E>;
     type EorSessionHandle = eor::CpuEorSession<E>;
-    type PreparedOpeningHandle = crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>;
+    type PreparedOpeningHandle = crate::opaque::CpuPreparedOpeningHandle<F, E>;
     type CommitmentMaterialHandle = CpuCommitmentMaterialHandle<F>;
     type AcceptedFoldHandle = CpuAcceptedFoldHandle<F>;
     type AcceptedTerminalFoldHandle = CpuAcceptedTerminalFoldHandle<F>;
@@ -106,16 +105,14 @@ where
     type Stage1SessionHandle = crate::opaque::CpuStage1SessionHandle<E>;
     type Stage2SessionHandle = crate::opaque::CpuStage2SessionHandle<E>;
 }
-impl<F, E, Cfg> crate::opaque::OpaqueProverConsumer<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueProverConsumer<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field + CanonicalEncoding + Send + Sync + 'static,
     E: Field + Send + Sync + 'static,
 {
 }
-impl<F, E, Cfg> crate::opaque::OpaqueResourceReleaseKernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueResourceReleaseKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -147,10 +144,9 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueRecursiveWitnessBuildKernel<F, E>
-    for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueRecursiveWitnessBuildKernel<F, E>
+    for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -297,9 +293,8 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueRelationWitnessKernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueRelationWitnessKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -348,9 +343,8 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueStage1Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueStage1Kernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -481,9 +475,8 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueStage2Kernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueStage2Kernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -609,9 +602,8 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueWitnessOpeningKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
@@ -659,7 +651,7 @@ where
             F,
             plan.ring_dimension(),
             |D| {
-                crate::opaque::prepare_recursive_witness_opening::<F, E, Cfg, D>(
+                crate::opaque::prepare_recursive_witness_opening::<F, E, D>(
                     self,
                     Some(self.prepared()?),
                     binding,
@@ -697,9 +689,8 @@ where
     }
 }
 
-impl<F, E, Cfg> crate::opaque::OpaqueTerminalFoldKernel<F, E> for crate::opaque::CpuBackend<Cfg>
+impl<F, E> crate::opaque::OpaqueTerminalFoldKernel<F, E> for crate::opaque::CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize

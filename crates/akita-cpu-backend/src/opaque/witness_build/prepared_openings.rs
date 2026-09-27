@@ -28,11 +28,7 @@ fn decompose_opening_rows<F: Field + CanonicalEncoding, const D: usize>(
     depth_open: usize,
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError> {
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(depth_open, log_basis, q);
+    let params = BalancedDecomposePow2Params::new(depth_open, log_basis);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     if role_subcolumns == 0 || !total_rows.is_multiple_of(role_subcolumns) {
         return Err(AkitaError::InvalidSetup(
@@ -158,8 +154,8 @@ type PreparedGroupWitnessOutput<F, E> = (
     Vec<E>,
 );
 
-pub(super) fn prepare_group_opening_witness<F, E, Cfg, const D: usize>(
-    handle: &crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>,
+pub(super) fn prepare_group_opening_witness<F, E, const D: usize>(
+    handle: &crate::opaque::CpuPreparedOpeningHandle<F, E>,
     level: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
     geometry: &akita_types::RelationWitnessGeometry,
@@ -169,7 +165,6 @@ pub(super) fn prepare_group_opening_witness<F, E, Cfg, const D: usize>(
 where
     F: Field + CanonicalEncoding,
     E: jolt_field::ExtField<F>,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     let (opening, public) =
         handle.relation_opening::<D>(level, opening_batch, geometry, group_index, group_dims)?;

@@ -21,27 +21,25 @@ pub(crate) trait ExtensionOpeningSession<E: Field>: Send {
     fn bind_challenge(&mut self, round: usize, challenge: E) -> Result<(), AkitaError>;
     fn finish(self: Box<Self>) -> Result<Vec<(E, E, E)>, AkitaError>;
 }
-struct PreparedGroup<F, E, Cfg>
+struct PreparedGroup<F, E>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
-    source: RetainedOpeningSource<F, E, Cfg>,
+    source: RetainedOpeningSource<F, E>,
     point: Vec<E>,
     ring_dimension: usize,
     rows: Vec<Vec<E>>,
     witness_opening: Option<crate::opaque::CpuWitnessOpeningHandle<E>>,
 }
-pub struct CpuEorPreparation<F, E, Cfg>
+pub struct CpuEorPreparation<F, E>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     binding: OperationBinding,
     layout: OpeningClaimsLayout,
-    groups: Vec<PreparedGroup<F, E, Cfg>>,
+    groups: Vec<PreparedGroup<F, E>>,
 }
 pub struct CpuEorSession<E: Field> {
     binding: OperationBinding,
@@ -67,9 +65,8 @@ pub struct CpuEorSession<E: Field> {
     group_pending: Vec<UnivariatePoly<E>>,
     challenges: Vec<E>,
 }
-impl<F, E, Cfg> OpaqueEorKernel<F, E> for CpuBackend<Cfg>
+impl<F, E> OpaqueEorKernel<F, E> for CpuBackend<F, E>
 where
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
     F: Field
         + CanonicalEncoding
         + AkitaSerialize

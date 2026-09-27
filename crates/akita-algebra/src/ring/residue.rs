@@ -358,6 +358,53 @@ mod tests {
     }
 
     #[test]
+    fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
+        use crate::offset_eq::eq_eval_at_index;
+        use crate::ring::eval_flat_ring_at_pows_fast;
+        use jolt_field::{Fp32, FpExt2, NegOneNr};
+        type B = Fp32<251>;
+        type X = FpExt2<B, NegOneNr>;
+
+        let extension = |lo, hi| X::from_base_slice(&[B::from_u64(lo), B::from_u64(hi)]);
+        let point = [
+            extension(3, 5),
+            extension(7, 11),
+            extension(13, 17),
+            extension(19, 23),
+        ];
+        let alpha = extension(29, 31);
+        let multiplier = (0..8)
+            .map(|index| B::from_u64(37 + index as u64))
+            .collect::<Vec<_>>();
+        let mut equality = vec![X::zero(); 8];
+        OffsetEqWindow::new(&point)
+            .unwrap()
+            .fill_interval(5, &mut equality)
+            .unwrap();
+        let functional = terminal_residue_kernel(&equality, alpha).unwrap();
+        let powers = scalar_powers(alpha, 8);
+        let expected = (0..8).fold(X::zero(), |evaluation, witness_coefficient| {
+            let residue = multiplier.iter().enumerate().fold(
+                X::zero(),
+                |sum, (multiplier_coefficient, &coefficient)| {
+                    let exponent = multiplier_coefficient + witness_coefficient;
+                    let product = powers[exponent % 8].mul_base(coefficient);
+                    if exponent < 8 {
+                        sum + product
+                    } else {
+                        sum - product
+                    }
+                },
+            );
+            evaluation + eq_eval_at_index(&point, 5 + witness_coefficient) * residue
+        });
+        assert_eq!(
+            eval_flat_ring_at_pows_fast(&multiplier, &functional),
+            expected
+        );
+    }
+
+    #[test]
     fn modulus_roots_do_not_require_division() {
         type F = Prime128OffsetA7F7;
         let alpha = crate::fft::primitive_nth_root::<F>(4);

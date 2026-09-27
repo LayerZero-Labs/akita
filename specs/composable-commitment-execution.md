@@ -407,8 +407,12 @@ All shape, count, product, and range arithmetic uses checked constructors and
 
 ## Owning backend integration
 
-`CpuBackend` owns the configuration, prepared setup, and physical commitment
-executor. Root commitment calls full execution; recursive commitment selects
+`CpuBackend<F, E>` owns the prepared setup and physical commitment executor
+for one base and extension field. It stores no configuration or catalog:
+commitment receives the producer family's catalog and proof admission receives
+the proving catalog, as specified in
+[`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md). Root
+commitment calls full execution; recursive commitment selects
 full or uncompressed execution according to the schedule; terminal commitment
 uses the inner operation. These choices remain internal to the CPU backend.
 

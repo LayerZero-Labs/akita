@@ -371,8 +371,10 @@ quotient checked by the verifier.
   partials and the packing quotient.
 - `crates/akita-types/src/subring_coefficient_packing.rs` defines and validates
   the packing geometry.
-- `crates/akita-types/src/proof/coefficient_packing_relation.rs` supplies the
-  factorized Stage-2 packing relation.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs` validates the
+  packing groups and expands the prover's Stage-2 packing relation.
+- `crates/akita-verifier/src/coefficient_packing_relation/` builds the
+  verifier's compact factors from the same validated groups.
 - `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
   rejects a proof whose dimensions or quotient structure do not match the
   selected schedule.

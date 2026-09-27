@@ -72,7 +72,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let setup = scheme.setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
-        let backend = CpuBackend::<Cfg>::new(setup.expanded.clone(), scheme.schedules()).unwrap();
+        let backend = CpuBackend::new(setup.expanded.clone()).unwrap();
         if let Some(schedule) = plan {
             backend
                 .prewarm(schedule)
@@ -104,6 +104,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             private_handle: hint,
         } = backend
             .commit(
+                scheme.schedules(),
                 &source,
                 akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )

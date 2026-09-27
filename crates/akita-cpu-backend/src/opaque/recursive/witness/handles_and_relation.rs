@@ -17,24 +17,19 @@ enum OpaquePreparedGroupOpeningKind<F: Field, E: Field> {
 /// Consumer-private prepared opening state. Its witness-derived rows never
 /// appear in a protocol-facing carrier.
 #[doc(hidden)]
-pub struct CpuPreparedOpeningHandle<
-    F: Field + CanonicalEncoding,
-    E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
-> {
+pub struct CpuPreparedOpeningHandle<F: Field + CanonicalEncoding, E: Field> {
     binding: crate::opaque::OperationBinding,
     kind: OpaquePreparedGroupOpeningKind<F, E>,
     scalar_openings: Vec<E>,
-    source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+    source: crate::opaque::openings::PreparedOpeningSource<F, E>,
     #[cfg(feature = "response-model-diagnostics")]
     source_l2_sq: Option<u128>,
 }
 
-impl<F, E, Cfg> CpuPreparedOpeningHandle<F, E, Cfg>
+impl<F, E> CpuPreparedOpeningHandle<F, E>
 where
     F: Field + CanonicalEncoding,
     E: Field,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
 {
     pub(crate) const fn is_terminal_native(&self) -> bool {
         matches!(
@@ -45,7 +40,7 @@ where
 
     pub(in crate::opaque) fn source(
         &self,
-    ) -> Result<&crate::opaque::openings::RetainedOpeningSource<F, E, Cfg>, AkitaError> {
+    ) -> Result<&crate::opaque::openings::RetainedOpeningSource<F, E>, AkitaError> {
         match &self.source {
             crate::opaque::openings::PreparedOpeningSource::Retained(source) => Ok(source),
             crate::opaque::openings::PreparedOpeningSource::TerminalNative => Err(
@@ -63,7 +58,7 @@ where
     }
     pub(in crate::opaque) fn evaluation_trace(
         binding: crate::opaque::OperationBinding,
-        source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+        source: crate::opaque::openings::PreparedOpeningSource<F, E>,
         point: akita_types::PreparedOpeningPoint<F, E>,
         folded_by_claim: Vec<akita_types::RingVec<F>>,
         scalar_openings: Vec<E>,
@@ -83,7 +78,7 @@ where
 
     pub(in crate::opaque) fn coefficient_packing(
         binding: crate::opaque::OperationBinding,
-        source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+        source: crate::opaque::openings::PreparedOpeningSource<F, E>,
         point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
         partials_by_claim: Vec<crate::opaque::SubringCoefficientPackingPartials<F>>,
         scalar_openings: Vec<E>,

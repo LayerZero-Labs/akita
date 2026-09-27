@@ -63,14 +63,14 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("quotient setup capacity");
             let reduced_capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(
                 reduced_scheme.schedules(),
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("reduced setup capacity");
             let setup =
                 if quotient_capacity.num_field_elements >= reduced_capacity.num_field_elements {
@@ -79,8 +79,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     reduced_scheme.setup_prover(full_num_vars, 1)
                 }
                 .expect("cross-mode setup");
-            let stack = CpuBackend::<Cfg>::new(setup.expanded.clone(), quotient_scheme.schedules())
-                .expect("backend");
+            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = quotient_scheme
                 .setup_verifier(&setup)
                 .expect("cross-mode verifier setup");
@@ -89,6 +88,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 private_handle: hint,
             } = stack
                 .commit(
+                    quotient_scheme.schedules(),
                     &stack.import_source(vec![poly.clone()]).expect("source"),
                     akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
@@ -106,7 +106,7 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     sum + coefficient * weight
                 });
 
-            let prove = |scheme: &Scheme, backend: &CpuBackend<Cfg>, handle| {
+            let prove = |scheme: &Scheme, backend: &CpuBackend<F, F>, handle| {
                 let group =
                     PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone())
                         .expect("cross-mode prover group");
@@ -124,13 +124,9 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     .expect("cross-mode proof")
             };
             let quotient_proof = prove(&quotient_scheme, &stack, hint.clone());
-            let reduced_backend =
-                CpuBackend::<Cfg>::new(setup.expanded.clone(), reduced_scheme.schedules())
-                    .expect("reduced backend");
-            let reduced_handle = reduced_backend
-                .import_commitment(&hint)
-                .expect("validated cross-mode commitment transfer");
-            let reduced_proof = prove(&reduced_scheme, &reduced_backend, reduced_handle);
+            // The backend is family-agnostic, so one commitment handle opens under
+            // either catalog without a transfer.
+            let reduced_proof = prove(&reduced_scheme, &stack, hint);
 
             for (scheme, proof, selection, name) in [
                 (

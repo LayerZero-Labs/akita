@@ -9,14 +9,13 @@ use std::marker::PhantomData;
 
 macro_rules! impl_cpu_recursive_fold_kernels {
     ($backend:ty) => {
-        impl<F, Cfg, const D: usize>
+        impl<F, E, const D: usize>
             crate::opaque::consumer_kernels::RecursiveWitnessFoldKernel<
                 OpaqueRecursiveWitness,
                 F,
                 D,
             > for $backend
         where
-            Cfg: akita_config::CommitmentConfig<Field = F>,
             F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + 'static,
             $backend: crate::opaque::ComputeBackendSetup<F>
                 + for<'a> crate::opaque::FoldResponseKernel<
@@ -43,14 +42,13 @@ macro_rules! impl_cpu_recursive_fold_kernels {
             }
         }
 
-        impl<F, Cfg, const D: usize>
+        impl<F, E, const D: usize>
             crate::opaque::consumer_kernels::RecursiveWitnessTerminalFoldKernel<
                 OpaqueRecursiveWitness,
                 F,
                 D,
             > for $backend
         where
-            Cfg: akita_config::CommitmentConfig<Field = F>,
             F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + 'static,
             $backend: crate::opaque::ComputeBackendSetup<F>
                 + for<'a> crate::opaque::TerminalFoldResponseKernel<
@@ -92,17 +90,17 @@ macro_rules! impl_cpu_recursive_fold_kernels {
     };
 }
 
-impl_cpu_recursive_fold_kernels!(crate::opaque::CpuBackend<Cfg>);
+impl_cpu_recursive_fold_kernels!(crate::opaque::CpuBackend<F, E>);
 
-pub(in crate::opaque) fn prepare_recursive_witness_opening<F, E, Cfg, const D: usize>(
-    backend: &crate::opaque::CpuBackend<Cfg>,
+pub(in crate::opaque) fn prepare_recursive_witness_opening<F, E, const D: usize>(
+    backend: &crate::opaque::CpuBackend<F, E>,
     prepared: Option<&crate::opaque::CpuPreparedSetup<F>>,
     binding: crate::opaque::OperationBinding,
-    opening_source: crate::opaque::openings::PreparedOpeningSource<F, E, Cfg>,
+    opening_source: crate::opaque::openings::PreparedOpeningSource<F, E>,
     witness: &OpaqueRecursiveWitness,
     plan: &crate::opaque::ValidatedRecursiveGroupOpeningPlan<'_, E>,
 ) -> Result<
-    crate::opaque::PreparedGroupOpening<E, crate::opaque::CpuPreparedOpeningHandle<F, E, Cfg>>,
+    crate::opaque::PreparedGroupOpening<E, crate::opaque::CpuPreparedOpeningHandle<F, E>>,
     AkitaError,
 >
 where
@@ -114,8 +112,7 @@ where
         + 'static,
     <F as jolt_field::Unreduced>::Wide: From<F> + jolt_field::AdditiveGroup,
     E: akita_types::FpExtEncoding<F> + ExtField<F> + akita_serialization::AkitaSerialize,
-    Cfg: akita_config::CommitmentConfig<Field = F, ExtField = E>,
-    crate::opaque::CpuBackend<Cfg>: crate::opaque::ComputeBackendSetup<F, PreparedSetup = crate::opaque::CpuPreparedSetup<F>>
+    crate::opaque::CpuBackend<F, E>: crate::opaque::ComputeBackendSetup<F, PreparedSetup = crate::opaque::CpuPreparedSetup<F>>
         + crate::opaque::DigitRowsComputeBackend<F>
         + for<'a> crate::opaque::OpeningFoldKernel<SuffixWitnessView<'a, F, D>, F, D>
         + for<'a> crate::opaque::SubringCoefficientPackingBatchKernel<

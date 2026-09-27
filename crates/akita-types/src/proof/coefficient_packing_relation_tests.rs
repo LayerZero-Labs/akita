@@ -1,185 +1,24 @@
 use super::*;
-use std::sync::Arc;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use jolt_field::{
     CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
     Prime64Offset59, Ring, Zero,
 };
 
+use crate::InnerCommitMatrixParams;
 use crate::{
     fold_coefficient_packing_partials, relation_claim_from_compressed_rhs_extension,
-    relation_rhs_coeff_len, BasisMode, ChunkedWitnessCfg, CoefficientPackingChallenges,
-    CommitmentPayloadMode, CommitmentRingDims, DigitRangePlan, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingVec,
-    SisModulusProfileId, WitnessLayout,
-};
-use crate::{
-    GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams,
+    relation_rhs_coeff_len, BasisMode, CommitmentRingDims, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationGroupOpening, RingVec, SisModulusProfileId,
 };
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
 
-struct Fixture<Base: Field, Extension: Field> {
-    params: CommittedGroupParams,
-    opening_batch: OpeningClaimsLayout,
-    relation_plan: RelationRangeImagePlan,
-    relation: RingRelationInstance<Base>,
-    prepared_point: PreparedSubringCoefficientPackingPoint<Extension>,
-    claim_coefficients: Vec<Extension>,
-    tau1: Vec<Extension>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fixture<Base, Extension>(
-    profile: SisModulusProfileId,
-    d_a: usize,
-    d_d: usize,
-    s: usize,
-    live_positions: usize,
-    positions_per_block: usize,
-    num_vars: usize,
-    num_claims: usize,
-    num_chunks: usize,
-) -> Fixture<Base, Extension>
-where
-    Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
-{
-    let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-    let mut params = CommittedGroupParams::params_only(profile, d_a, 2, 2, 2, 2, config)
-        .with_decomp(positions_per_block, live_positions, 2, 2, 2)
-        .unwrap();
-    params.payload_mode = CommitmentPayloadMode::Raw;
-    params.witness_chunk = ChunkedWitnessCfg {
-        num_chunks,
-        num_activated_levels: usize::from(num_chunks > 1),
-    };
-    params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: s,
-    };
-    let outer = params.outer().matrix;
-    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        outer.output_rank(),
-        outer.input_width(),
-        outer.coeff_linf_bound(),
-        64,
-    );
-    let opening = params.open().matrix;
-    params.open_matrix = OpenCommitMatrixParams::new_unchecked(
-        opening.security_policy(),
-        opening.sis_table_key().table_digest,
-        opening.sis_modulus_profile(),
-        opening.output_rank(),
-        opening.input_width(),
-        opening.coeff_linf_bound(),
-        d_d,
-    );
-    let opening_batch =
-        OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(num_vars, num_claims)])
-            .unwrap();
-    let extension_degree = <Extension as ExtField<Base>>::DEGREE;
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(&params, &opening_batch, extension_degree).unwrap();
-    let witness_layout = WitnessLayout::new(
-        &params,
-        &opening_batch,
-        &relation_geometry,
-        params.witness_chunk.num_chunks,
-        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<Base>(
-            params.open().digits.log_basis,
-        ))
-        .unwrap(),
-    )
-    .unwrap();
-    let relation_address_geometry = RelationAddressGeometry::for_relation(
-        &relation_geometry,
-        d_d,
-        witness_layout.live_coeff_len(),
-    )
-    .unwrap();
-    let relation_plan = RelationRangeImagePlan::new(
-        relation_geometry.clone(),
-        relation_address_geometry,
-        DigitRangePlan::new(4).unwrap(),
-        witness_layout,
-        &opening_batch,
-    )
-    .unwrap();
-    let geometry = SubringCoefficientPackingGeometry::try_new(extension_degree, d_a, s).unwrap();
-    let point_values = (0..num_vars)
-        .map(|index| Extension::from_u64((index + 2) as u64))
-        .collect::<Vec<_>>();
-    let prepared_point = PreparedSubringCoefficientPackingPoint::new(
-        geometry,
-        BasisMode::Lagrange,
-        live_positions,
-        positions_per_block,
-        num_vars,
-        &point_values,
-    )
-    .unwrap();
-    let challenge_count = num_claims * prepared_point.num_live_blocks();
-    let sparse = (0..challenge_count)
-        .map(|challenge| SparseChallenge {
-            positions: (0..config.weight())
-                .map(|term| ((term + challenge) % s) as u32)
-                .collect(),
-            coeffs: (0..config.count_pm1)
-                .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                .chain((0..config.count_pm2).map(|_| 2))
-                .collect(),
-        })
-        .collect();
-    let challenges =
-        Challenges::from_sparse(sparse, prepared_point.num_live_blocks(), num_claims).unwrap();
-    let group_opening = RingRelationGroupOpening::coefficient_packing(
-        CoefficientPackingChallenges::new(geometry, challenges).unwrap(),
-    );
-    let gamma = (0..num_claims)
-        .map(|claim| Base::from_u64((claim + 3) as u64))
-        .collect::<Vec<_>>();
-    let mut row_coefficients = vec![Base::zero(); num_claims * d_a];
-    for (claim, &coefficient) in gamma.iter().enumerate() {
-        row_coefficients[claim * d_a] = coefficient;
-    }
-    let rhs = RingVec::from_coeffs(vec![
-        Base::zero();
-        relation_rhs_coeff_len(relation_geometry.rhs_layout())
-            .unwrap()
-    ]);
-    let relation = RingRelationInstance::new(
-        vec![group_opening],
-        extension_degree,
-        opening_batch.clone(),
-        gamma,
-        RingVec::from_coeffs_with_ring_dim(row_coefficients, d_a).unwrap(),
-        rhs,
-        params.role_dims(),
-    )
-    .unwrap();
-    let claim_coefficients = (0..num_claims)
-        .map(|claim| Extension::from_u64((claim + 5) as u64))
-        .collect();
-    let tau1 = (0..relation_plan.relation_row_index_num_vars().unwrap())
-        .map(|index| Extension::from_u64((index + 7) as u64))
-        .collect();
-    Fixture {
-        params,
-        opening_batch,
-        relation_plan,
-        relation,
-        prepared_point,
-        claim_coefficients,
-        tau1,
-    }
-}
+use super::test_fixtures::{
+    coefficient_packing_fixture as fixture, CoefficientPackingFixture as Fixture,
+};
 
 #[test]
 fn packing_rejects_tensor_projected_commitment_source() {
@@ -229,29 +68,6 @@ where
     .unwrap()
 }
 
-fn prepare_compact<Base, Extension>(
-    fixture: &Fixture<Base, Extension>,
-    alpha: Extension,
-) -> CoefficientPackingVerifierGroupSemantics<Extension>
-where
-    Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
-{
-    prepare_coefficient_packing_verifier_batch_semantics(CoefficientPackingBatchSemanticInputs {
-        level_params: &fixture.params,
-        opening_batch: &fixture.opening_batch,
-        relation_plan: &fixture.relation_plan,
-        relation: &fixture.relation,
-        prepared_points: &[(0, &fixture.prepared_point)],
-        alpha,
-        tau1: &fixture.tau1,
-        claim_coefficients: &fixture.claim_coefficients,
-    })
-    .unwrap()
-    .groups()[0]
-        .clone()
-}
-
 fn materialize_events<Extension: Field>(
     events: &CoefficientPackingRelationEvents<Extension>,
 ) -> Vec<Extension> {
@@ -292,7 +108,7 @@ fn materialize_stage2_source<Extension: Field>(
 }
 
 #[test]
-fn compact_consumers_match_dense_event_and_stage2_oracles() {
+fn expanded_consumers_match_dense_event_and_stage2_oracles() {
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,
@@ -306,7 +122,6 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
     );
     for alpha in [E::zero(), E::one(), E::from_u64(17)] {
         let semantics = prepare(&fixture, alpha);
-        let compact = prepare_compact(&fixture, alpha);
         let padded_len = semantics
             .relation_events()
             .physical_field_len()
@@ -346,20 +161,6 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
             semantics.stage2_terms().evaluate_at_point(&point).unwrap(),
             multilinear_eval(&dense_stage2, &point).unwrap()
         );
-        assert_eq!(
-            compact
-                .compact_factors()
-                .evaluate_relation_at_point(&point)
-                .unwrap(),
-            multilinear_eval(&dense_events, &point).unwrap()
-        );
-        assert_eq!(
-            compact
-                .compact_factors()
-                .evaluate_stage2_at_point(&point)
-                .unwrap(),
-            multilinear_eval(&dense_stage2, &point).unwrap()
-        );
         let mut reordered_terms = semantics.stage2_terms().clone();
         reordered_terms.terms.reverse();
         assert_eq!(
@@ -378,222 +179,8 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
     }
 }
 
-fn assert_compact_factors_match_dense<Base, Extension>(fixture: &Fixture<Base, Extension>)
-where
-    Base: Field + CanonicalEncoding + Ring,
-    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
-{
-    for alpha in [Extension::zero(), Extension::one(), Extension::from_u64(19)] {
-        let semantics = prepare(fixture, alpha);
-        let compact = prepare_compact(fixture, alpha);
-        let padded_len = semantics
-            .relation_events()
-            .physical_field_len()
-            .next_power_of_two();
-        let point = (0..padded_len.trailing_zeros())
-            .map(|index| Extension::from_u64(29 + u64::from(index)))
-            .collect::<Vec<_>>();
-        let mut relation = materialize_events(semantics.relation_events());
-        relation.resize(padded_len, Extension::zero());
-        let mut stage2 = materialize_stage2_source(
-            semantics.stage2_terms(),
-            CoefficientPackingStage2Source::DirectOpening,
-        );
-        let packing_z = materialize_stage2_source(
-            semantics.stage2_terms(),
-            CoefficientPackingStage2Source::PackingZ,
-        );
-        for (sum, contribution) in stage2.iter_mut().zip(packing_z) {
-            *sum += contribution;
-        }
-        stage2.resize(padded_len, Extension::zero());
-        assert_eq!(
-            compact
-                .compact_factors()
-                .evaluate_relation_at_point(&point)
-                .unwrap(),
-            multilinear_eval(&relation, &point).unwrap()
-        );
-        assert_eq!(
-            compact
-                .compact_factors()
-                .evaluate_stage2_at_point(&point)
-                .unwrap(),
-            multilinear_eval(&stage2, &point).unwrap()
-        );
-        assert!(compact
-            .compact_factors()
-            .evaluate_relation_at_point(&point[..point.len() - 1])
-            .is_err());
-    }
-}
-
 #[test]
-fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
-    let overlap = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-        SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        64,
-        64,
-        6,
-        4,
-        9,
-        2,
-        2,
-    );
-    assert_compact_factors_match_dense(&overlap);
-
-    for d_d in [64, 128] {
-        let h4 = fixture::<Prime32Offset99, FpExt4<Prime32Offset99>>(
-            SisModulusProfileId::Q32Offset99,
-            1024,
-            d_d,
-            64,
-            6,
-            4,
-            13,
-            2,
-            2,
-        );
-        assert_eq!(
-            h4.prepared_point.geometry().packing_factor(),
-            4,
-            "k=4,dA=1024,s=64 must exercise h=4"
-        );
-        assert_compact_factors_match_dense(&h4);
-    }
-    let recursive_role_subcolumns = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-        SisModulusProfileId::Q128OffsetA7F7,
-        512,
-        64,
-        512,
-        6,
-        4,
-        12,
-        2,
-        2,
-    );
-    assert_compact_factors_match_dense(&recursive_role_subcolumns);
-    let compact = prepare_compact(&recursive_role_subcolumns, Prime128OffsetA7F7::from_u64(19));
-    let role_stride = recursive_role_subcolumns.params.open().digits.num_digits * 64;
-    let direct_families = &compact.compact_factors().direct_opening_families;
-    assert!(direct_families
-        .iter()
-        .any(|family| family.axes.iter().any(|axis| axis.len == 8
-            && axis.left_stride == 64
-            && axis.right_stride == role_stride)));
-}
-
-#[test]
-fn compact_factors_skip_empty_distributed_witness_units() {
-    let fixture = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-        SisModulusProfileId::Q128OffsetA7F7,
-        256,
-        64,
-        64,
-        2,
-        1,
-        9,
-        2,
-        8,
-    );
-    assert!(fixture
-        .relation_plan
-        .witness_layout()
-        .units_for_group(0)
-        .unwrap()
-        .any(|unit| unit.num_live_blocks() == 0));
-    assert_compact_factors_match_dense(&fixture);
-}
-
-#[test]
-fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
-    type Extension = Prime128OffsetA7F7;
-
-    const K: usize = 1;
-    const S: usize = 64;
-    const H: usize = 4;
-    const D_A: usize = 256;
-    const D_D: usize = 64;
-    const OPENING_DIGITS: usize = 43;
-    const LIVE_BLOCKS: usize = 8192;
-    assert_eq!(D_A, K * S * H);
-    assert_eq!(D_D, S);
-
-    let alpha = Extension::from_u64(7);
-    let coefficient_weights = scalar_powers(alpha, S);
-    let digit_weights = scalar_powers(Extension::from_u64(3), OPENING_DIGITS);
-    let outer_weights = (0..LIVE_BLOCKS)
-        .map(|block| Extension::from_u64(11 + (block % 251) as u64))
-        .collect::<Vec<_>>();
-    let coefficient_bits = S.trailing_zeros() as usize;
-    let outer_domain = LIVE_BLOCKS * OPENING_DIGITS;
-    let outer_bits = outer_domain.next_power_of_two().trailing_zeros() as usize;
-    let point = (0..coefficient_bits + outer_bits)
-        .map(|bit| match bit % 5 {
-            0 => Extension::zero(),
-            1 => Extension::one(),
-            _ => Extension::from_u64(17 + bit as u64),
-        })
-        .collect::<Vec<_>>();
-    let family = CoefficientPackingAffineRelationFamily {
-        scalar: Extension::from_u64(13),
-        coefficient_weights: coefficient_weights.clone().into(),
-        coefficient_len: S,
-        base_offset: 0,
-        outer_len: LIVE_BLOCKS,
-        outer_stride: OPENING_DIGITS,
-        digit_stride: 1,
-        digit_weights: digit_weights.clone().into(),
-        outer_weights: outer_weights.clone().into(),
-    };
-    let family_scalar = family.scalar;
-    let compact = CoefficientPackingCompactFactors {
-        basis: BasisMode::Lagrange,
-        physical_field_len: 1usize << point.len(),
-        direct_opening_point: Arc::from([]),
-        packing_z_point: Arc::from([]),
-        affine_relation_families: vec![family],
-        quotient_families: Vec::new(),
-        direct_opening_families: Vec::new(),
-        packing_z_families: Vec::new(),
-    };
-
-    let coefficient_evaluation = coefficient_weights.iter().enumerate().fold(
-        Extension::zero(),
-        |sum, (coefficient, &weight)| {
-            sum + weight * eq_eval_at_index(&point[..coefficient_bits], coefficient)
-        },
-    );
-    let outer_evaluation =
-        outer_weights
-            .iter()
-            .enumerate()
-            .fold(Extension::zero(), |sum, (block, &block_weight)| {
-                sum + digit_weights.iter().enumerate().fold(
-                    Extension::zero(),
-                    |digit_sum, (digit, &digit_weight)| {
-                        digit_sum
-                            + block_weight
-                                * digit_weight
-                                * eq_eval_at_index(
-                                    &point[coefficient_bits..],
-                                    block * OPENING_DIGITS + digit,
-                                )
-                    },
-                )
-            });
-    assert_eq!(
-        compact.evaluate_relation_at_point(&point).unwrap(),
-        family_scalar * coefficient_evaluation * outer_evaluation
-    );
-    assert!(compact
-        .evaluate_relation_at_point(&point[..coefficient_bits - 1])
-        .is_err());
-}
-
-#[test]
-fn compact_consumers_parallel_branch_matches_dense_oracles() {
+fn expanded_consumers_parallel_branch_matches_dense_oracles() {
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,

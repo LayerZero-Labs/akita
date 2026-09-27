@@ -23,6 +23,19 @@ fn invalid(label: &str, detail: &str) -> AkitaError {
     AkitaError::InvalidSetup(format!("{label}: {detail}"))
 }
 
+/// Reject an artifact-supplied base the digit-count formulas cannot take
+/// (they assert `0 < log_basis < 128`), so a malformed artifact is an error
+/// rather than a panic. Other invalid bases keep their canonical-depth errors.
+fn ensure_digit_log_basis(label: &str, role: &str, log_basis: u32) -> Result<(), AkitaError> {
+    if log_basis == 0 || log_basis >= 128 {
+        return Err(invalid(
+            label,
+            &format!("{role} log_basis {log_basis} is out of range"),
+        ));
+    }
+    Ok(())
+}
+
 fn audit_sis_key(
     label: &str,
     key: SisTableKey,
@@ -106,6 +119,7 @@ fn audit_frozen_group(
     audit_inner_matrix(label, &params.profile.inner.matrix, policy)?;
     audit_outer_matrix(label, &params.profile.outer.matrix, policy)?;
 
+    ensure_digit_log_basis(label, "opening", params.opening.log_basis_open)?;
     let expected_open_digits = num_digits_open(DecompositionParams {
         log_basis: params.opening.log_basis_open,
         ..policy.decomposition
@@ -201,6 +215,9 @@ fn audit_committed_params(
     audit_inner_matrix(label, &params.inner().matrix, policy)?;
     audit_outer_matrix(label, &params.outer().matrix, policy)?;
     audit_open_matrix(label, &params.open().matrix, policy)?;
+    ensure_digit_log_basis(label, "A", params.inner().digits.log_basis)?;
+    ensure_digit_log_basis(label, "B", params.outer().digits.log_basis)?;
+    ensure_digit_log_basis(label, "D", params.open().digits.log_basis)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
         log_basis: params.outer().digits.log_basis,
@@ -365,6 +382,7 @@ fn audit_terminal(
     {
         return Err(invalid(label, "invalid terminal fold or block geometry"));
     }
+    ensure_digit_log_basis(label, "A", params.inner.digits.log_basis)?;
 
     let expected_digits = num_digits_inner(
         DecompositionParams {

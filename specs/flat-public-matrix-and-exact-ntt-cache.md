@@ -958,9 +958,10 @@ Each artifact under that lineage records its exact materialized field count. A
 validated artifact with a larger count may satisfy a smaller request because
 the derivation is prefix-compatible. The derivation version is already inside
 `AkitaSetupSeed`; config type names, schedule ring dimensions, and generation D
-are not semantic cache keys. Provisioning limits and a schedule/catalog digest
-MAY key or validate the derived setup-prefix registry because that registry
-promises a particular set of precomputed slots.
+are not semantic cache keys. The derived setup-prefix registry promises a
+particular set of precomputed slots, so it is keyed by that slot set rather
+than by provisioning limits or a catalog digest
+([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)).
 
 The base-prefix artifact serializes only `AkitaSetupSeed`, the materialized
 field count, and the flat coefficients. It does not serialize host admission

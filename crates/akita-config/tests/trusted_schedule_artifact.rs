@@ -84,7 +84,7 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
 
 fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
     akita_config::SetupRequirements::from_catalog::<Cfg>(&checked_in_catalog::<Cfg>(), 50, 16)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect("derive recursive setup-prefix slots")
         .into_iter()
         .map(|slot| {
@@ -641,7 +641,7 @@ fn recursive_prefix_slot_id_fixture() {
 fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let dense = checked_in_catalog::<fp128::Dense>();
     let zero_batch = akita_config::SetupRequirements::from_catalog::<fp128::Dense>(&dense, 14, 0)
-        .map(|requirements| requirements.prefix_slot_ids)
+        .map(|requirements| requirements.prefix_slot_ids().to_vec())
         .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
     assert!(format!("{zero_batch}").contains("at least 1"));
 
@@ -649,7 +649,7 @@ fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
     let oversized_vars = akita_config::SetupRequirements::from_catalog::<
         RecursiveCommitmentConfig<fp128::OneHot>,
     >(&recursive, usize::BITS as usize, 1)
-    .map(|requirements| requirements.prefix_slot_ids)
+    .map(|requirements| requirements.prefix_slot_ids().to_vec())
     .expect_err("oversized setup metadata must reject for recursive configs");
     assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
 }
@@ -695,6 +695,130 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
         profile.outer_slice_count,
     )
     .unwrap();
-    assert_eq!(required.matrix_capacity.num_field_elements, expected);
-    assert!(required.prefix_slot_ids.is_empty());
+    assert_eq!(required.matrix_capacity().num_field_elements, expected);
+    assert!(required.prefix_slot_ids().is_empty());
+}
+
+#[test]
+fn setup_requirements_union_covers_both_families_at_one_bound() {
+    type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
+    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    let requirements_at = |max_num_vars, max_num_batched_polys| {
+        (
+            akita_config::SetupRequirements::from_catalog::<OneHot>(
+                &checked_in_catalog::<OneHot>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("one-hot requirements"),
+            akita_config::SetupRequirements::from_catalog::<MultiChunk>(
+                &checked_in_catalog::<MultiChunk>(),
+                max_num_vars,
+                max_num_batched_polys,
+            )
+            .expect("multichunk requirements"),
+        )
+    };
+    let (onehot, multichunk) = requirements_at(50, 16);
+    let combined = onehot
+        .clone()
+        .union(multichunk.clone())
+        .expect("same-bound requirements combine");
+
+    assert_eq!(
+        (combined.max_num_vars(), combined.max_num_batched_polys()),
+        (50, 16)
+    );
+    assert_eq!(
+        combined.matrix_capacity().num_field_elements,
+        onehot
+            .matrix_capacity()
+            .num_field_elements
+            .max(multichunk.matrix_capacity().num_field_elements)
+    );
+    assert!(combined
+        .prefix_slot_ids()
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    for slot in onehot
+        .prefix_slot_ids()
+        .iter()
+        .chain(multichunk.prefix_slot_ids())
+    {
+        assert!(combined.prefix_slot_ids().contains(slot));
+    }
+    assert!(
+        combined.prefix_slot_ids().len()
+            <= onehot.prefix_slot_ids().len() + multichunk.prefix_slot_ids().len()
+    );
+    assert_eq!(
+        combined
+            .clone()
+            .union(combined.clone())
+            .expect("idempotent"),
+        combined
+    );
+
+    let (_, smaller_bound) = requirements_at(40, 16);
+    let error = onehot
+        .union(smaller_bound)
+        .expect_err("requirements at different bounds must not combine");
+    assert!(error.to_string().contains("cannot combine"));
+}
+
+/// Edit a checked-in artifact structurally. Admission audits rows before its
+/// canonical-bytes check, so the edited artifact reaches the audit.
+fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&checked_in_artifact_bytes::<Cfg>()).expect("artifact JSON");
+    edit(&mut value);
+    serde_json::to_vec_pretty(&value).expect("artifact JSON")
+}
+
+fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Value {
+    value["rows"]
+        .as_array_mut()
+        .expect("rows")
+        .iter_mut()
+        .find_map(|row| {
+            row["schedule"]["recursive_folds"]
+                .as_array_mut()
+                .and_then(|folds| folds.first_mut())
+        })
+        .map(|fold| &mut fold["params"]["groups"]["entries"][0])
+        .expect("a row with a recursive fold group")
+}
+
+fn assert_rejected_as_invalid_setup<Cfg: CommitmentConfig>(bytes: &[u8], what: &str) {
+    match TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes) {
+        Err(akita_error::AkitaError::InvalidSetup(_)) => {}
+        other => panic!("{what} must be rejected as InvalidSetup, got {other:?}"),
+    }
+}
+
+#[test]
+fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
+    for log_basis in [0, 128] {
+        let bytes = edited_artifact::<fp128::Dense>(|value| {
+            value["rows"][0]["schedule"]["terminal"]["inner"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "terminal A log_basis");
+    }
+}
+
+#[test]
+fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    for log_basis in [0, 128] {
+        let outer = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["profile"]["outer"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<Cfg>(&outer, "fold B log_basis");
+        let opening = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
+    }
 }
