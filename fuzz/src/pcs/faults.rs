@@ -28,12 +28,10 @@ fn fault_from(control: &mut Reader<'_>) -> Fault {
         0 => control.u32() as usize % (1 << 16),
         _ => usize::from(control.u8()),
     };
-    match control.u8() % 8 {
-        0 | 1 => Fault::AcceptRejectedNonce {
-            level: (control.u8() % 4 != 0).then_some(level),
-            group: control.bool().then(|| usize::from(control.u8() % 4)),
-        },
-        2..=4 => Fault::PerturbWitnessDigit {
+    // `AcceptRejectedNonce` is left out: honest responses are almost never
+    // rejected, so it scans all 4096 nonces per level and rarely applies.
+    match control.u8() % 6 {
+        0..=2 => Fault::PerturbWitnessDigit {
             level,
             segment: [
                 WitnessSegment::Z,
@@ -47,7 +45,7 @@ fn fault_from(control: &mut Reader<'_>) -> Fault {
                 delta => delta,
             },
         },
-        5 | 6 => Fault::PerturbTerminalResponse {
+        3 | 4 => Fault::PerturbTerminalResponse {
             index,
             delta: match control.u16() as i16 {
                 0 => 1,
