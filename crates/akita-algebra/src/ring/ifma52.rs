@@ -6,10 +6,15 @@ use crate::ntt::ifma52::{
     Ifma52Twiddles, IFMA52_ACCUMULATOR_TERMS,
 };
 use crate::{
-    CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Field,
-    NttPrime, PrimeWidth,
+    cfg_into_iter, CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt,
+    CyclotomicRing, Field, NttPrime, PrimeWidth,
 };
 use akita_error::AkitaError;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Matrix entries transformed per parallel preparation task.
+const PREPARE_TILE_ENTRIES: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Ifma52Tail<const K: usize> {
@@ -126,29 +131,21 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
                 "IFMA52 reconstruction tail does not match its parameters".into(),
             ));
         }
-        let mut field_product = F::one();
-        let field_weights: [F; K] = std::array::from_fn(|index| {
-            let weight = field_product;
-            field_product *= F::from_u64(self.primes[index].modulus);
-            weight
-        });
-        let tail_field_weight = field_product;
+        let (field_weights, tail_field_weight) = self.garner.field_weights::<F>();
+        // IFMA moduli are below 2^52, so canonical residues fit in i64.
+        let mut mixed_radix = canonical.map(|limb| limb.0.map(|residue| residue as i64));
+        self.garner.centered_mixed_radix(&mut mixed_radix);
         let coefficients = std::array::from_fn(|coefficient| {
-            let moduli = self.primes.map(|prime| prime.modulus);
-            let residues = std::array::from_fn(|limb| i128::from(canonical[limb].0[coefficient]));
-            let digits = self.garner.centered_mixed_radix(residues, moduli);
+            let digits = std::array::from_fn(|limb| mixed_radix[limb][coefficient]);
 
-            let mut result = F::zero();
-            for (digit, weight) in digits.iter().zip(field_weights) {
-                result += F::from_i128(*digit) * weight;
-            }
+            let mut result = self.garner.digits_to_field(&digits, &field_weights);
             if let (Some(tail), Some(tail_canonical)) = (&self.tail, tail_canonical) {
                 let tail_digit = i128::from(tail_canonical[coefficient].to_i64())
                     * i128::from(tail.residue_weight)
                     + digits
                         .iter()
                         .zip(tail.digit_weights)
-                        .map(|(digit, weight)| *digit * i128::from(weight))
+                        .map(|(digit, weight)| i128::from(*digit) * i128::from(weight))
                         .sum::<i128>();
                 let tail_modulus = i128::from(tail.modulus);
                 let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
@@ -171,6 +168,8 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
 pub struct Ifma52NttMatrix<const K: usize, const D: usize> {
     limbs: [Vec<Ifma52Residues<D>>; K],
     params: Ifma52Params<K, D>,
+    /// Largest centered coefficient magnitude of any prepared entry.
+    entry_abs_bound: u128,
 }
 
 impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
@@ -179,24 +178,61 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         rings: &[CyclotomicRing<F, D>],
         params: &Ifma52Params<K, D>,
     ) -> Self {
+        Self::prepare_centered(
+            rings.len(),
+            |index| rings[index].centered_coefficients_i128(),
+            params,
+        )
+    }
+
+    /// Prepare `len` flat row-major entries, given by their centered integer
+    /// coefficients, in negacyclic NTT form.
+    pub fn prepare_centered(
+        len: usize,
+        entry: impl Fn(usize) -> [i128; D] + Sync,
+        params: &Ifma52Params<K, D>,
+    ) -> Self {
         let mut limbs: [Vec<Ifma52Residues<D>>; K] =
-            std::array::from_fn(|_| Vec::with_capacity(rings.len()));
-        for ring in rings {
-            let centered = ring.centered_coefficients_i128();
-            for (limb, (prime, twiddles)) in limbs
-                .iter_mut()
-                .zip(params.primes.iter().zip(params.twiddles.iter()))
-            {
-                let mut transformed = Ifma52Residues(
-                    centered.map(|value| value.rem_euclid(i128::from(prime.modulus)) as u64),
-                );
-                forward(&mut transformed, *prime, twiddles, params.use_ifma);
-                limb.push(transformed);
+            std::array::from_fn(|_| vec![Ifma52Residues([0; D]); len]);
+        // Tile `t` owns entries `t * T..` of every CRT limb.
+        let mut tiles: Vec<Vec<&mut [Ifma52Residues<D>]>> = (0..len.div_ceil(PREPARE_TILE_ENTRIES))
+            .map(|_| Vec::with_capacity(K))
+            .collect();
+        for limb in &mut limbs {
+            for (tile, entries) in tiles.iter_mut().zip(limb.chunks_mut(PREPARE_TILE_ENTRIES)) {
+                tile.push(entries);
             }
         }
+        let entry_abs_bound = cfg_into_iter!(tiles)
+            .enumerate()
+            .map(|(tile_index, mut tile)| {
+                let tile_len = tile.first().map_or(0, |entries| entries.len());
+                let mut tile_bound = 0;
+                for offset in 0..tile_len {
+                    let centered = entry(tile_index * PREPARE_TILE_ENTRIES + offset);
+                    for value in centered {
+                        tile_bound = tile_bound.max(value.unsigned_abs());
+                    }
+                    for (entries, (prime, twiddles)) in tile
+                        .iter_mut()
+                        .zip(params.primes.iter().zip(params.twiddles.iter()))
+                    {
+                        let transformed = &mut entries[offset];
+                        *transformed = Ifma52Residues(
+                            centered
+                                .map(|value| value.rem_euclid(i128::from(prime.modulus)) as u64),
+                        );
+                        forward(transformed, *prime, twiddles, params.use_ifma);
+                    }
+                }
+                tile_bound
+            })
+            .max()
+            .unwrap_or(0);
         Self {
             limbs,
             params: params.clone(),
+            entry_abs_bound,
         }
     }
 
@@ -307,6 +343,19 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
                 "prepared IFMA52 matrix prefix is undersized".into(),
             ));
         }
+        let rhs_abs_bound = rhs.iter().flatten().map(|value| value.unsigned_abs()).max();
+        // Centered residues of the odd modulus `2A + 1` are exactly `[-A, A]`.
+        let entry_modulus = self.entry_abs_bound.saturating_mul(2).saturating_add(1);
+        if !self.params.crt_capacity().supports_modulus(
+            num_cols,
+            D,
+            entry_modulus,
+            rhs_abs_bound.map_or(0, u64::from),
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "IFMA52 CRT capacity does not cover this mat-vec".into(),
+            ));
+        }
 
         let mut canonical = vec![[Ifma52Residues([0; D]); K]; num_rows];
         if num_rows == 0 || num_cols == 0 {
@@ -400,6 +449,19 @@ mod tests {
     }
 
     #[test]
+    fn limb_major_i16_matvec_rejects_accumulations_past_crt_capacity() {
+        const D: usize = 64;
+        type F = Prime64Offset59;
+        let params = Ifma52Params::<1, D>::new([IFMA52_PRIMES[0]]).expect("params");
+        // One 50-bit prime covers 2 * 64 * 2^30 * 1 but not 2 * 64 * 2^30 * 2^15.
+        let prepared = Ifma52NttMatrix::prepare_centered(1, |_| [1_i128 << 30; D], &params);
+        let small = [[1_i16; D]];
+        assert!(prepared.mat_vec_i16::<F>(1, &small).is_ok());
+        let large = [[i16::MIN; D]];
+        assert!(prepared.mat_vec_i16::<F>(1, &large).is_err());
+    }
+
+    #[test]
     fn limb_major_i16_matvec_matches_ring_arithmetic_at_all_ifma_dimensions() {
         assert_limb_major_i16_matvec::<64>();
         assert_limb_major_i16_matvec::<128>();
@@ -425,9 +487,11 @@ mod tests {
                 }))
             })
             .collect::<Vec<_>>();
-        let rhs = (0..3)
+        // Width 2 and digits in [-1, 1] keep the worst case `2 * 2 * D * A` below
+        // `p * 12289` at D = 2048, while the sums still pass `p / 2`.
+        let rhs = (0..2)
             .map(|column| {
-                std::array::from_fn(|coefficient| ((column * 3 + coefficient * 2) % 5) as i16 - 2)
+                std::array::from_fn(|coefficient| ((column * 3 + coefficient * 2) % 3) as i16 - 1)
             })
             .collect::<Vec<_>>();
         let prepared = Ifma52NttMatrix::prepare(&matrix, &params);
@@ -436,10 +500,10 @@ mod tests {
             .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
             .collect::<Vec<_>>();
         let actual = prepared
-            .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 2, &rhs, &tail_params)
+            .mat_vec_i16_with_tail::<F, _>(&tail_matrix, 3, &rhs, &tail_params)
             .expect("mixed matvec");
         let expected = matrix
-            .chunks_exact(3)
+            .chunks_exact(2)
             .map(|row| {
                 row.iter()
                     .zip(&rhs)

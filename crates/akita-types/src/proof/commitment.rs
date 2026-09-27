@@ -308,6 +308,13 @@ where
             inner_ring_dimension,
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        // `try_new` resolves a bound to its audited table row and stores that
+        // row's bound, so only the row's own bound is a canonical encoding.
+        if inner_commit_matrix.coeff_linf_bound() != Some(a_coeff_linf_bound) {
+            return Err(SerializationError::InvalidData(
+                "committed-group A coefficient bound is not its SIS table's bound".into(),
+            ));
+        }
         let log_basis_outer =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_outer = read_usize(&mut reader)?;
@@ -323,6 +330,11 @@ where
             outer_ring_dimension,
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        if outer_commit_matrix.coeff_linf_bound() != b_coeff_linf_bound {
+            return Err(SerializationError::InvalidData(
+                "committed-group B coefficient bound is not its SIS table's bound".into(),
+            ));
+        }
 
         let descriptor = GroupCommitPhaseParams {
             version,
@@ -528,6 +540,53 @@ mod committed_group_tests {
             &(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn committed_group_decoding_accepts_only_canonical_coefficient_bounds() {
+        let group = group();
+        let mut bytes = Vec::new();
+        group
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize committed group");
+        let bounds = [
+            group
+                .profile
+                .inner
+                .matrix
+                .coeff_linf_bound()
+                .expect("L infinity test matrix"),
+            group.profile.outer.matrix.coeff_linf_bound(),
+        ];
+        for bound in bounds {
+            let encoded = bound.to_le_bytes();
+            let offset = bytes
+                .windows(encoded.len())
+                .position(|window| window == encoded)
+                .expect("encoded coefficient bound");
+            for replacement in [bound - 1, bound / 2, 1, bound + 1] {
+                if replacement == bound {
+                    continue;
+                }
+                let mut candidate = bytes.clone();
+                candidate[offset..offset + 16].copy_from_slice(&replacement.to_le_bytes());
+                if let Ok(decoded) = CommittedGroup::<F>::deserialize_with_mode(
+                    candidate.as_slice(),
+                    Compress::Yes,
+                    Validate::Yes,
+                    &(),
+                ) {
+                    let mut reencoded = Vec::new();
+                    decoded
+                        .serialize_with_mode(&mut reencoded, Compress::Yes)
+                        .expect("re-encode");
+                    assert_eq!(
+                        reencoded, candidate,
+                        "bound {replacement} (table bound {bound}) decoded to a different encoding"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
