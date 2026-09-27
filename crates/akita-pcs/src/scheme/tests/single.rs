@@ -231,6 +231,44 @@ fn native_spongefish_roundtrip_and_statement_binding_inner() {
             )
         })
         .expect_err("native verification must bind the session");
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("the statement must fit the setup's batch capacity");
+    assert_eq!(
+        error,
+        AkitaError::InvalidSize {
+            expected: 1,
+            actual: 2
+        },
+        "a malformed statement keeps its own error"
+    );
+    let short_point = &opening_point[..opening_point.len() - 1];
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &[],
+                b"test/prove",
+                verifier_claims(&scheme, short_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("a claim point shorter than its commitment profile must reject");
+    assert_eq!(
+        error,
+        AkitaError::InvalidInput(
+            "claim group shape does not match its commitment profile".to_string()
+        ),
+        "the statement shape must be checked before proof bytes"
+    );
     let mut truncated = proof.clone();
     truncated.pop().expect("nonempty native proof");
     scheme
