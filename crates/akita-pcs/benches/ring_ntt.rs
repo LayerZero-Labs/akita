@@ -91,7 +91,11 @@ fn legacy_radix64_i8_reference_matvec(
         let lut = DigitMontLut::new_with_digit_bound(params, 32);
         let transformed = plane
             .iter()
-            .map(|digits| ProductionN128D64::from_i8_with_lut(digits, params, &lut))
+            .map(|digits| {
+                let mut transformed = ProductionN128D64::zero();
+                transformed.assign_i8_with_lut(digits, params, &lut);
+                transformed
+            })
             .collect::<Vec<_>>();
         for (dst, row) in out.iter_mut().zip(matrix) {
             let mut accumulator = ProductionN128D64::zero();
@@ -162,7 +166,7 @@ fn bench_fp32_decomposition_dimension<const D: usize, const LOG_BASIS: u32>(c: &
         )
     });
     let levels = 32usize.div_ceil(LOG_BASIS as usize);
-    let params = BalancedDecomposePow2Params::new(levels, LOG_BASIS, (1u128 << 32) - 99);
+    let params = BalancedDecomposePow2Params::new(levels, LOG_BASIS);
     let mut digits = vec![0i8; D * levels];
     let name = format!("fp32_balanced_decompose_l{LOG_BASIS}_d{D}");
     c.bench_function(&name, |b| {
