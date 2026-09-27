@@ -23,7 +23,11 @@ use akita_prover::fault_injection::{with_fault, Fault, WitnessSegment};
 
 fn fault_from(control: &mut Reader<'_>) -> Fault {
     let level = u32::from(control.u8() % 6);
-    let index = control.u32() as usize % (1 << 16);
+    // Mostly early indices: out-of-segment indices leave the fault unapplied.
+    let index = match control.u8() % 4 {
+        0 => control.u32() as usize % (1 << 16),
+        _ => usize::from(control.u8()),
+    };
     match control.u8() % 8 {
         0 | 1 => Fault::AcceptRejectedNonce {
             level: (control.u8() % 4 != 0).then_some(level),
