@@ -1,7 +1,10 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
+use std::array::from_fn;
+
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
+use crate::ntt::field_limbs::FieldLimbScales;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{CanonicalEncoding, CrtCapacity, Field, NttKernelPlan};
 
@@ -39,6 +42,8 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub twiddles: Box<[NttTwiddles<W, D>; K]>,
     /// Garner reconstruction constants for CRT lift-back.
     pub garner: GarnerData<K>,
+    /// Per-prime constants for reducing field coefficients into residues.
+    field_scales: [FieldLimbScales; K],
     /// Host arithmetic kernels selected when this parameter set was prepared.
     kernel_plan: NttKernelPlan,
 }
@@ -55,34 +60,6 @@ pub use mixed::{
     cyclic_ntt_with_i16_tail_to_ring, mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring,
     I16TailParams,
 };
-
-fn reconstruct<F, W, const K: usize, const D: usize>(
-    primes: &[NttPrime<W>; K],
-    garner: &GarnerData<K>,
-    canonical: &[[W; D]; K],
-) -> [F; D]
-where
-    F: CrtNttConvertibleField,
-    W: PrimeWidth,
-{
-    let mut coefficients = [F::zero(); D];
-    for (index, coefficient) in coefficients.iter_mut().enumerate() {
-        let moduli = primes.map(|prime| prime.p.to_i64() as u64);
-        let residues = std::array::from_fn(|limb| i128::from(canonical[limb][index].to_i64()));
-        let mixed_radix = garner.centered_mixed_radix(residues, moduli);
-
-        let mut result = F::from_i128(mixed_radix[0]);
-        let mut partial_product = F::from_i64(primes[0].p.to_i64());
-        for i in 1..K {
-            result += F::from_i128(mixed_radix[i]) * partial_product;
-            if i + 1 < K {
-                partial_product *= F::from_i64(primes[i].p.to_i64());
-            }
-        }
-        *coefficient = result;
-    }
-    coefficients
-}
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Host kernel plan selected when these parameters were prepared.
@@ -135,6 +112,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             primes,
             twiddles,
             garner,
+            field_scales: primes.map(FieldLimbScales::new),
             kernel_plan: NttKernelPlan::detect::<W>(),
         }
     }
@@ -145,6 +123,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     }
 
     fn reconstruct<F: CrtNttConvertibleField>(&self, canonical: &[[W; D]; K]) -> [F; D] {
-        reconstruct(&self.primes, &self.garner, canonical)
+        let (weights, _) = self.garner.field_weights::<F>();
+        let mut digits = canonical.map(|limb| limb.map(|residue| residue.to_i64()));
+        self.garner.centered_mixed_radix(&mut digits);
+        from_fn(|index| {
+            self.garner
+                .digits_to_field(&from_fn(|limb| digits[limb][index]), &weights)
+        })
     }
 }

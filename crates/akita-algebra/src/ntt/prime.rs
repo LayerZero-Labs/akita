@@ -430,42 +430,56 @@ impl<W: PrimeWidth> NttPrime<W> {
     }
 }
 
-/// Whether `n < 2^31` is prime, by deterministic Miller-Rabin.
+/// Whether `n` is prime, by deterministic Miller-Rabin.
 pub(crate) fn is_prime(n: i64) -> bool {
-    // Bases 2, 7 and 61 decide every n below 4_759_123_141.
-    const BASES: [i64; 3] = [2, 7, 61];
+    // Bases 2, 7 and 61 decide every n below 4_759_123_141; these seven
+    // decide every n below 2^64.
+    let bases: &[i64] = if n < 4_759_123_141 {
+        &[2, 7, 61]
+    } else {
+        &[2, 325, 9_375, 28_178, 450_775, 9_780_504, 1_795_265_022]
+    };
     if n < 2 {
         return false;
     }
-    if let Some(&base) = BASES.iter().find(|&&base| n % base == 0) {
+    if let Some(&base) = bases.iter().find(|&&base| n % base == 0) {
         return n == base;
     }
     let shift = (n - 1).trailing_zeros();
     let odd = (n - 1) >> shift;
-    BASES.iter().all(|&base| {
+    bases.iter().all(|&base| {
         let mut x = pow_mod(base, odd, n);
         if x == 1 || x == n - 1 {
             return true;
         }
         (1..shift).any(|_| {
-            x = x * x % n;
+            x = pow_mod(x, 2, n);
             x == n - 1
         })
     })
 }
 
-/// Modular exponentiation: `base^exp mod modulus`, for `modulus < 2^31`.
-pub(crate) fn pow_mod(mut base: i64, mut exp: i64, modulus: i64) -> i64 {
-    let mut result = 1i64;
-    base %= modulus;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = result * base % modulus;
+/// Modular exponentiation: `base^exp mod modulus`, for `base >= 0`.
+pub(crate) fn pow_mod(base: i64, exp: i64, modulus: i64) -> i64 {
+    fn pow(mut base: i64, mut exp: i64, mul: impl Fn(i64, i64) -> i64) -> i64 {
+        let mut result = 1;
+        while exp > 0 {
+            if exp & 1 == 1 {
+                result = mul(result, base);
+            }
+            base = mul(base, base);
+            exp >>= 1;
         }
-        base = base * base % modulus;
-        exp >>= 1;
+        result
     }
-    result
+    // Products of residues below 2^31 fit i64; wider moduli need i128.
+    if modulus < 1 << 31 {
+        pow(base % modulus, exp, |lhs, rhs| lhs * rhs % modulus)
+    } else {
+        pow(base % modulus, exp, |lhs, rhs| {
+            (i128::from(lhs) * i128::from(rhs) % i128::from(modulus)) as i64
+        })
+    }
 }
 
 #[cfg(test)]
@@ -481,6 +495,23 @@ mod tests {
         // 2047, 3277 and 4033, and a window just below 2^30.
         for n in (0..1 << 16).chain((1 << 30) - 8192..1 << 30) {
             assert_eq!(is_prime(n), trial(n), "n={n}");
+        }
+    }
+
+    #[test]
+    fn is_prime_rejects_strong_pseudoprimes_past_2_31() {
+        // 3215031751 = 151 * 751 * 28351 is a strong pseudoprime to bases 2
+        // and 7, and 3825123056546413051 = 149491 * 747451 * 34233211 to every
+        // prime base through 23; 1125899772623531 = 33554393 * 33554467.
+        for n in [
+            3_215_031_751,
+            3_825_123_056_546_413_051,
+            1_125_899_772_623_531,
+        ] {
+            assert!(!is_prime(n), "n={n}");
+        }
+        for p in [2_147_483_647, 4_294_967_291, 1_125_899_906_826_241] {
+            assert!(is_prime(p), "p={p}");
         }
     }
 

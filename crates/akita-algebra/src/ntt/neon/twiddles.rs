@@ -43,6 +43,10 @@ pub struct BarrettTwiddles<W: PrimeWidth, const D: usize> {
     /// `twist` scaled by `R`, for plain-integer inputs such as signed
     /// digits. The first stage then also enters Montgomery form.
     pub(crate) twist_digits: BarrettTable<W, D>,
+    /// First cyclic forward stage for plain-integer inputs: entry `j < D/2`
+    /// is `R`, and entry `D/2 + j` is `R * w_j`. The first stage then also
+    /// enters Montgomery form.
+    pub(crate) cyclic_digits: BarrettTable<W, D>,
     /// Last negacyclic inverse stage scaling: entry `i` is `D^{-1} psi^{-i}`.
     pub(crate) untwist: BarrettTable<W, D>,
     /// `psi^{D/2}`, a square root of `-1`.
@@ -90,6 +94,7 @@ impl<W: PrimeWidth, const D: usize> BarrettTwiddles<W, D> {
 
         let half = D / 2;
         let r = (1i64 << W::R_LOG) % p;
+        let stage_twiddle = |j: usize| plain(fwd_twiddles[half - 1 + j]);
         let twist_entry = |i: usize| {
             if i < half {
                 plain(psi_pows[i])
@@ -97,7 +102,14 @@ impl<W: PrimeWidth, const D: usize> BarrettTwiddles<W, D> {
                 1
             } else {
                 let j = i - half;
-                plain(psi_pows[j]) * plain(fwd_twiddles[half - 1 + j]) % p
+                plain(psi_pows[j]) * stage_twiddle(j) % p
+            }
+        };
+        let cyclic_digits_entry = |i: usize| {
+            if i < half || half == 0 {
+                r
+            } else {
+                stage_twiddle(i - half) * r % p
             }
         };
 
@@ -106,6 +118,7 @@ impl<W: PrimeWidth, const D: usize> BarrettTwiddles<W, D> {
             inv: table(&|i| plain(inv_twiddles[i])),
             twist: table(&twist_entry),
             twist_digits: table(&|i| twist_entry(i) * r % p),
+            cyclic_digits: table(&cyclic_digits_entry),
             untwist: table(&|i| plain(d_inv_psi_inv[i])),
             quarter_root: constant(if D >= 2 { plain(psi_pows[half]) } else { 1 }),
             d_inv: constant(plain(d_inv)),

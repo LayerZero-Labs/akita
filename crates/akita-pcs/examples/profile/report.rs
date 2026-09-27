@@ -1,6 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_cpu_backend::{PreparedCrtNttProfile, PreparedNttCacheMetric};
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::{
     sis::compute_num_digits_field_width, CommitmentPayloadMode, CommitmentSliceCount,
     CommittedGroupParams, CommittedSourceEncoding, FoldSchedule, GrindingPlan,
@@ -924,8 +924,7 @@ pub(crate) fn emit_runtime_schedule_summary(
 }
 
 fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
-    1usize
-        .checked_shl(num_vars as u32)
+    checked::pow2(num_vars)
         .and_then(|len| len.checked_mul(num_polynomials))
         .unwrap_or(0)
 }

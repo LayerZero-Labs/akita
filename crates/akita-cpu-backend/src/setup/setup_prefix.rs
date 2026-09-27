@@ -8,7 +8,7 @@ use crate::commitment::{
 use crate::opaque::DensePoly;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::{AkitaExpandedSetup, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId};
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -33,8 +33,7 @@ pub(crate) fn validate_setup_prefix_commitment<'a, F: Field>(
     commitment_profile.validate_setup_prefix_geometry(id.natural_len)?;
     let n_prefix = id.n_prefix()?;
     let ring_dimension = commitment_profile.inner.matrix.ring_dimension();
-    let committed_n_prefix = 1usize
-        .checked_shl(commitment_profile.group.num_vars() as u32)
+    let committed_n_prefix = checked::pow2(commitment_profile.group.num_vars())
         .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
     if committed_n_prefix != n_prefix || !n_prefix.is_multiple_of(ring_dimension) {
         return Err(AkitaError::InvalidSetup(

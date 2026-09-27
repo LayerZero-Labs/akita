@@ -223,10 +223,12 @@ mod tests {
             centered_rows(&setup, 2, &centered, 10).expect("mixed i16 terminal matvec"),
             expected(&matrix, &centered_rings(&centered))
         );
+        // Both the IFMA52 and scalar profiles cover this shape with the
+        // 14-bit tail.
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
             q128_base_cache_bytes(10)
-                + usize::from(needs_tail) * 10 * D * core::mem::size_of::<i32>()
+                + usize::from(needs_tail) * 10 * D * core::mem::size_of::<i16>()
         );
     }
 
@@ -426,7 +428,7 @@ mod tests {
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("separate bytes"),
             q128_base_cache_bytes(4)
-                + initial_tail_len * D * core::mem::size_of::<i32>()
+                + initial_tail_len * D * core::mem::size_of::<i16>()
                 + q128_base_cache_bytes(10)
         );
         let other_basis = setup

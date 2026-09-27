@@ -3,6 +3,9 @@ use super::*;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
@@ -28,77 +31,19 @@ pub fn decompose_centering_threshold(levels: usize, log_basis: u32, q: u128) -> 
     }
 }
 
-/// Center a canonical field element for balanced decomposition.
-///
-/// Returns `(centered_value, Option<first_digit>)`. When the magnitude
-/// exceeds `i128::MAX`, the first balanced digit is pre-extracted in `u128`
-/// arithmetic and returned separately; `centered_value` is then the remaining
-/// quotient after removing that digit.
-#[inline]
-pub(crate) fn center_for_decomposition(
-    canonical: u128,
-    q: u128,
-    threshold: u128,
-    log_basis: u32,
-) -> (i128, Option<i128>) {
-    if canonical <= threshold {
-        return (canonical as i128, None);
-    }
-    let diff = q - canonical;
-    if diff <= i128::MAX as u128 {
-        return (-(diff as i128), None);
-    }
-    let b_u = 1u128 << log_basis;
-    let mask_u = b_u - 1;
-    let half_b_u = b_u >> 1;
-    let r = canonical.wrapping_sub(q) & mask_u;
-    let balanced = if r >= half_b_u {
-        r as i128 - b_u as i128
-    } else {
-        r as i128
-    };
-    let diff_adj = if balanced >= 0 {
-        diff + balanced as u128
-    } else {
-        diff - ((-balanced) as u128)
-    };
-    debug_assert!(diff_adj & mask_u == 0);
-    let c_prime = -((diff_adj >> log_basis) as i128);
-    (c_prime, Some(balanced))
-}
-
-#[inline(always)]
-/// Peel one balanced base-`2^log_basis` digit from a canonical value.
-pub fn peel_first_balanced_digit(
-    canonical: u128,
-    q: u128,
-    threshold: u128,
-    mask: i128,
-    half_b: i128,
-    b: i128,
-    log_basis: u32,
-) -> (i128, i128) {
-    let (c, first_digit) = center_for_decomposition(canonical, q, threshold, log_basis);
-    if let Some(d0) = first_digit {
-        (c, d0)
-    } else {
-        let d = c & mask;
-        let balanced = if d >= half_b { d - b } else { d };
-        ((c - balanced) >> log_basis, balanced)
-    }
-}
-
-trait BalancedSignedDigit: Copy + Default {
+trait BalancedSignedDigit: Copy {
     const MAX_LOG_BASIS: u32;
-    fn from_i128(value: i128) -> Self;
+    /// Convert a biased digit field `digit + b/2` (low `log_basis` bits of
+    /// `field`) to the balanced digit.
+    fn from_biased_field(field: u16, mask: u16, half_b: u16) -> Self;
 }
 
 impl BalancedSignedDigit for i8 {
     const MAX_LOG_BASIS: u32 = 8;
 
     #[inline(always)]
-    fn from_i128(value: i128) -> Self {
-        value as Self
+    fn from_biased_field(field: u16, mask: u16, half_b: u16) -> Self {
+        (field & mask).wrapping_sub(half_b) as Self
     }
 }
 
@@ -106,55 +51,129 @@ impl BalancedSignedDigit for i16 {
     const MAX_LOG_BASIS: u32 = 16;
 
     #[inline(always)]
-    fn from_i128(value: i128) -> Self {
-        value as Self
+    fn from_biased_field(field: u16, mask: u16, half_b: u16) -> Self {
+        (field & mask).wrapping_sub(half_b) as Self
     }
 }
 
 /// Precomputed parameters for balanced power-of-two signed decomposition.
+///
+/// The balanced digit recurrence `d_k = balanced(c_k mod b)`,
+/// `c_{k+1} = (c_k - d_k) / b` is the carry chain of one wide addition: with
+/// `H = sum_{k < levels} (b/2) b^k` and `x` the centered value,
+/// `x + H = sum_k (d_k + b/2) b^k + c_levels b^levels` and every
+/// `d_k + b/2` lies in `[0, b)`. So digit `k` is bit field `k` of `x + H`,
+/// minus `b/2`. Because `levels * log_basis <= 128 + log_basis < 192`, the
+/// low fields of `x + H` are exact in 192-bit two's-complement arithmetic,
+/// and `x + H` is the canonical residue plus `H` (nonnegative side) or plus
+/// `H - q` (negative side). The bias words below store those two constants.
 #[derive(Clone, Copy, Debug)]
-pub struct BalancedDecomposePow2Params {
+pub struct BalancedDecomposePow2Params<F: Field + CanonicalEncoding> {
     levels: usize,
     log_basis: u32,
     q: u128,
     threshold: u128,
-    half_b: i128,
-    b: i128,
-    mask: i128,
-    overflow_possible: bool,
+    /// `H` as little-endian 192-bit words, added to residues `<= threshold`.
+    bias_nonnegative: [u64; 3],
+    /// `H - q mod 2^192`, added to residues `> threshold`.
+    bias_negative: [u64; 3],
+    field: std::marker::PhantomData<F>,
 }
 
-impl BalancedDecomposePow2Params {
+impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     /// Build decomposition parameters for `levels` digits in base `2^log_basis`.
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is outside `1..=16`, or if the requested digit
-    /// budget exceeds the supported field-width guard.
-    pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
+    /// Panics if `log_basis` is outside `1..=16`, if the requested digit
+    /// budget exceeds the supported field-width guard, or if `log_basis` is 1
+    /// and `levels` exceeds the bit width of `q`.
+    pub fn new(levels: usize, log_basis: u32) -> Self {
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field modulus must fit in u128")
+            .checked_add(1)
+            .expect("Akita field modulus must fit in u128");
         assert!(
             log_basis > 0 && log_basis <= 16,
             "log_basis must be in 1..=16 for signed i16 output"
         );
+        let level_count = u32::try_from(levels).expect("levels must fit in u32");
         assert!(
-            (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
+            level_count.saturating_mul(log_basis) <= 128 + log_basis,
             "levels * log_basis must be <= 128 + log_basis"
         );
+        // Base-2 balanced digits lie in {-1, 0}. Past the field width the
+        // threshold is `q / 2`, and the digits cannot reach the positive
+        // centered values below it.
+        let field_bits = 128 - q.saturating_sub(1).leading_zeros();
+        assert!(
+            log_basis > 1 || level_count <= field_bits,
+            "log_basis 1 needs levels <= the field width"
+        );
 
-        let half_b = 1i128 << (log_basis - 1);
-        let b = half_b << 1;
-        let threshold = decompose_centering_threshold(levels, log_basis, q);
-        let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
+        let mut bias_nonnegative = [0u64; 3];
+        for level in 0..level_count {
+            let bit = level * log_basis + log_basis - 1;
+            bias_nonnegative[(bit / 64) as usize] |= 1u64 << (bit % 64);
+        }
+        let (negative0, borrow0) = bias_nonnegative[0].overflowing_sub(q as u64);
+        let (partial1, borrow1a) = bias_nonnegative[1].overflowing_sub((q >> 64) as u64);
+        let (negative1, borrow1b) = partial1.overflowing_sub(u64::from(borrow0));
+        let negative2 = bias_nonnegative[2].wrapping_sub(u64::from(borrow1a | borrow1b));
+
         Self {
             levels,
             log_basis,
             q,
-            threshold,
-            half_b,
-            b,
-            mask: b - 1,
-            overflow_possible,
+            threshold: decompose_centering_threshold(levels, log_basis, q),
+            bias_nonnegative,
+            bias_negative: [negative0, negative1, negative2],
+            field: std::marker::PhantomData,
         }
+    }
+
+    /// Number of digit planes.
+    #[inline]
+    pub fn levels(&self) -> usize {
+        self.levels
+    }
+
+    /// Base-2 logarithm of the digit basis.
+    #[inline]
+    pub fn log_basis(&self) -> u32 {
+        self.log_basis
+    }
+
+    /// Low bits of `x + H` that the digits read.
+    #[inline]
+    fn digit_bits(&self) -> usize {
+        self.levels * self.log_basis as usize
+    }
+
+    /// `x + H mod 2^192` for the centered value `x` of `canonical`.
+    ///
+    /// Branch-free word selection keeps the coefficient loop vectorizable.
+    #[inline(always)]
+    fn biased(&self, canonical: u128) -> [u64; 3] {
+        let low = canonical as u64;
+        let high = (canonical >> 64) as u64;
+        let threshold_low = self.threshold as u64;
+        let threshold_high = (self.threshold >> 64) as u64;
+        let negative = (high > threshold_high) | ((high == threshold_high) & (low > threshold_low));
+        let select = u64::from(negative).wrapping_neg();
+        let [nonnegative0, nonnegative1, nonnegative2] = self.bias_nonnegative;
+        let [negative0, negative1, negative2] = self.bias_negative;
+        let bias0 = nonnegative0 ^ ((nonnegative0 ^ negative0) & select);
+        let bias1 = nonnegative1 ^ ((nonnegative1 ^ negative1) & select);
+        let bias2 = nonnegative2 ^ ((nonnegative2 ^ negative2) & select);
+        let word0 = low.wrapping_add(bias0);
+        let carry0 = u64::from(word0 < low);
+        let partial1 = high.wrapping_add(bias1);
+        let carry1a = u64::from(partial1 < high);
+        let word1 = partial1.wrapping_add(carry0);
+        let carry1b = u64::from(word1 < partial1);
+        [word0, word1, bias2.wrapping_add(carry1a | carry1b)]
     }
 }
 
@@ -170,10 +189,10 @@ impl BalancedDecomposePow2Params {
 /// Panics if `out.len() != coefficients.len() * params.levels`, or if the
 /// precomputed parameters use a basis wider than signed `i8` digits.
 #[inline]
-pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
+pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding>(
     coefficients: &[F],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     let expected_len = coefficients
         .len()
@@ -193,7 +212,7 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
     }
 
     #[cfg(target_arch = "aarch64")]
-    if coefficients.len().is_multiple_of(4) {
+    if coefficients.len().is_multiple_of(4) && params.digit_bits() <= 64 {
         if let Some(canonical) = F::canonical_u32_slice(coefficients) {
             if std::arch::is_aarch64_feature_detected!("neon") {
                 // SAFETY: runtime feature detection guarantees NEON, and the
@@ -207,7 +226,7 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if coefficients.len().is_multiple_of(8) {
+    if coefficients.len().is_multiple_of(8) && params.digit_bits() <= 64 {
         if let Some(canonical) = F::canonical_u32_slice(coefficients) {
             if std::is_x86_feature_detected!("avx2") {
                 // SAFETY: runtime feature detection guarantees AVX2, and the
@@ -219,300 +238,145 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
             }
         }
     }
-    if try_balanced_decompose_coefficients_pow2_i8_u64_into(
-        coefficients,
-        out,
-        params.levels,
-        params.log_basis,
-        params.q,
-        params.threshold,
-    ) {
-        return;
-    }
-    balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
+    balanced_decompose_coefficients_pow2_signed_into(coefficients, out, params);
 }
 
-/// Try to decompose canonically stored `u64` field coefficients with
-/// native-width carries.
+/// Coefficients staged per pass. Their biased words stay in L1 while every
+/// digit plane is written.
+const BIASED_CHUNK: usize = 64;
+
+/// Decompose flat coefficients into digit-major signed digits.
 ///
-/// The output is digit-major. The function returns `false` without modifying
-/// `out` when the field does not expose canonical `u64` storage or the centered
-/// modulus interval does not fit in `i64`. Callers can then use the general
-/// `u128`/`i128` decomposition path.
+/// Dispatches to the widest available instantiation of
+/// [`balanced_decompose_coefficients_pow2_signed_kernel`].
 ///
 /// # Panics
 ///
-/// Panics if `out.len() != coefficients.len() * levels`, or if `log_basis` is
-/// outside `1..=8`.
+/// Panics if `out.len() != coefficients.len() * params.levels`.
 #[inline]
-pub fn try_balanced_decompose_coefficients_pow2_i8_u64_into<F: CanonicalEncoding>(
+fn balanced_decompose_coefficients_pow2_signed_into<
+    F: Field + CanonicalEncoding,
+    T: BalancedSignedDigit,
+>(
     coefficients: &[F],
-    out: &mut [i8],
-    levels: usize,
-    log_basis: u32,
-    q: u128,
-    threshold: u128,
-) -> bool {
+    out: &mut [T],
+    params: &BalancedDecomposePow2Params<F>,
+) {
     let expected_len = coefficients
         .len()
-        .checked_mul(levels)
+        .checked_mul(params.levels)
         .expect("flat digit output length overflow");
     assert_eq!(
         out.len(),
         expected_len,
         "flat digit output length must match coefficients * levels",
     );
-    assert!(
-        (1..=8).contains(&log_basis),
-        "log_basis must be in 1..=8 for i8 output"
-    );
-    if coefficients.is_empty() || levels == 0 {
-        return true;
+    debug_assert!(params.log_basis <= T::MAX_LOG_BASIS);
+    if coefficients.is_empty() || params.levels == 0 {
+        return;
     }
 
-    let Some(coefficients) = F::canonical_u64_slice(coefficients) else {
-        return false;
-    };
-
-    let Ok(q) = u64::try_from(q) else {
-        return false;
-    };
-    let Ok(threshold) = u64::try_from(threshold) else {
-        return false;
-    };
-    if threshold > i64::MAX as u64 || q.saturating_sub(threshold) > i64::MAX as u64 {
-        return false;
-    }
-
-    let half_b = 1i64 << (log_basis - 1);
-    let b = half_b << 1;
-    let mask = b - 1;
-    let width = coefficients.len();
-    let bulk_end = width - (width % 4);
-
-    #[inline(always)]
-    fn center(canonical: u64, q: u64, threshold: u64) -> i64 {
-        if canonical > threshold {
-            -((q - canonical) as i64)
-        } else {
-            canonical as i64
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512bw")
+            && std::is_x86_feature_detected!("avx512vl")
+            && std::is_x86_feature_detected!("avx512dq")
+        {
+            // SAFETY: runtime feature detection guarantees every enabled feature.
+            unsafe {
+                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params)
+            };
+            return;
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: runtime feature detection guarantees AVX2.
+            unsafe {
+                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params)
+            };
+            return;
         }
     }
-
-    #[inline(always)]
-    fn extract(carry: &mut i64, mask: i64, half_b: i64, b: i64, log_basis: u32) -> i8 {
-        let raw = *carry & mask;
-        if raw >= half_b {
-            *carry = (*carry >> log_basis) + 1;
-            (raw - b) as i8
-        } else {
-            *carry >>= log_basis;
-            raw as i8
-        }
-    }
-
-    for base in (0..bulk_end).step_by(4) {
-        let mut carries = [
-            center(coefficients[base], q, threshold),
-            center(coefficients[base + 1], q, threshold),
-            center(coefficients[base + 2], q, threshold),
-            center(coefficients[base + 3], q, threshold),
-        ];
-        for plane in out.chunks_exact_mut(width) {
-            plane[base] = extract(&mut carries[0], mask, half_b, b, log_basis);
-            plane[base + 1] = extract(&mut carries[1], mask, half_b, b, log_basis);
-            plane[base + 2] = extract(&mut carries[2], mask, half_b, b, log_basis);
-            plane[base + 3] = extract(&mut carries[3], mask, half_b, b, log_basis);
-        }
-    }
-
-    for coefficient in bulk_end..width {
-        let mut carry = center(coefficients[coefficient], q, threshold);
-        for plane in out.chunks_exact_mut(width) {
-            plane[coefficient] = extract(&mut carry, mask, half_b, b, log_basis);
-        }
-    }
-    true
+    balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params);
 }
 
-#[inline]
-fn balanced_decompose_coefficients_pow2_signed_into_with_params<
-    F: CanonicalEncoding,
+/// Add-bias balanced decomposition (see [`BalancedDecomposePow2Params`]).
+///
+/// Digits only read the low `levels * log_basis` bits of `x + H`, so the
+/// kernel stages just the 64-bit words those bits span.
+#[inline(always)]
+fn balanced_decompose_coefficients_pow2_signed_kernel<
+    F: Field + CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
     out: &mut [T],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
+) {
+    match params.digit_bits().div_ceil(64) {
+        0 | 1 => balanced_decompose_biased_words::<F, T, 1>(coefficients, out, params),
+        2 => balanced_decompose_biased_words::<F, T, 2>(coefficients, out, params),
+        _ => balanced_decompose_biased_words::<F, T, 3>(coefficients, out, params),
+    }
+}
+
+/// Each chunk of coefficients is biased into `WORDS` rows of `u64`, then each
+/// digit plane is one shift, mask, and subtract per coefficient. Both loops
+/// are independent across coefficients, so they vectorize for the target
+/// features of the instantiating function.
+#[inline(always)]
+fn balanced_decompose_biased_words<
+    F: Field + CanonicalEncoding,
+    T: BalancedSignedDigit,
+    const WORDS: usize,
+>(
+    coefficients: &[F],
+    out: &mut [T],
+    params: &BalancedDecomposePow2Params<F>,
 ) {
     let width = coefficients.len();
-    debug_assert_eq!(out.len(), width * params.levels);
-    debug_assert!(params.log_basis <= T::MAX_LOG_BASIS);
-    if width == 0 || params.levels == 0 {
-        return;
-    }
-
-    let bulk_end = width - (width % 3);
-    if params.overflow_possible {
-        let (first_plane, remaining) = out.split_at_mut(width);
-        for base in (0..bulk_end).step_by(3) {
-            let (mut c0, d0) = peel_first_balanced_digit(
-                coefficients[base]
+    let log_basis = params.log_basis;
+    let mask = ((1u32 << log_basis) - 1) as u16;
+    let half_b = (1u32 << (log_basis - 1)) as u16;
+    let mut words = [[0u64; BIASED_CHUNK]; WORDS];
+    for (chunk_index, chunk) in coefficients.chunks(BIASED_CHUNK).enumerate() {
+        // `chunks` never yields more than `BIASED_CHUNK` coefficients, but
+        // LLVM cannot see that. Without the explicit bound, the row stores
+        // keep a bounds check that forces a scalar, branchy tail.
+        let len = chunk.len().min(BIASED_CHUNK);
+        #[allow(clippy::needless_range_loop)]
+        for lane in 0..len {
+            let biased = params.biased(
+                chunk[lane]
                     .to_u128_checked()
                     .expect("Akita field element must fit in u128"),
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
             );
-            let (mut c1, d1) = peel_first_balanced_digit(
-                coefficients[base + 1]
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128"),
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-            let (mut c2, d2) = peel_first_balanced_digit(
-                coefficients[base + 2]
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128"),
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-
-            first_plane[base] = T::from_i128(d0);
-            first_plane[base + 1] = T::from_i128(d1);
-            first_plane[base + 2] = T::from_i128(d2);
-            for plane in remaining.chunks_exact_mut(width) {
-                let d0 = c0 & params.mask;
-                let balanced0 = if d0 >= params.half_b {
-                    d0 - params.b
-                } else {
-                    d0
-                };
-                c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = T::from_i128(balanced0);
-
-                let d1 = c1 & params.mask;
-                let balanced1 = if d1 >= params.half_b {
-                    d1 - params.b
-                } else {
-                    d1
-                };
-                c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = T::from_i128(balanced1);
-
-                let d2 = c2 & params.mask;
-                let balanced2 = if d2 >= params.half_b {
-                    d2 - params.b
-                } else {
-                    d2
-                };
-                c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = T::from_i128(balanced2);
+            for (row, word) in words.iter_mut().zip(biased) {
+                row[lane] = word;
             }
         }
 
-        for coefficient in bulk_end..width {
-            let (mut c, d0) = peel_first_balanced_digit(
-                coefficients[coefficient]
-                    .to_u128_checked()
-                    .expect("Akita field element must fit in u128"),
-                params.q,
-                params.threshold,
-                params.mask,
-                params.half_b,
-                params.b,
-                params.log_basis,
-            );
-            first_plane[coefficient] = T::from_i128(d0);
-            for plane in remaining.chunks_exact_mut(width) {
-                let d = c & params.mask;
-                let balanced = if d >= params.half_b { d - params.b } else { d };
-                c = (c - balanced) >> params.log_basis;
-                plane[coefficient] = T::from_i128(balanced);
-            }
-        }
-    } else {
-        for base in (0..bulk_end).step_by(3) {
-            let canonical0 = coefficients[base]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let canonical1 = coefficients[base + 1]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let canonical2 = coefficients[base + 2]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let mut c0 = if canonical0 > params.threshold {
-                -((params.q - canonical0) as i128)
+        let start = chunk_index * BIASED_CHUNK;
+        for (level, plane) in out.chunks_exact_mut(width).enumerate() {
+            let shift = level as u32 * log_basis;
+            let word = (shift / 64) as usize;
+            let bit = shift % 64;
+            let digits = &mut plane[start..start + len];
+            if bit + log_basis <= 64 {
+                for (digit, &low) in digits.iter_mut().zip(&words[word][..len]) {
+                    *digit = T::from_biased_field((low >> bit) as u16, mask, half_b);
+                }
             } else {
-                canonical0 as i128
-            };
-            let mut c1 = if canonical1 > params.threshold {
-                -((params.q - canonical1) as i128)
-            } else {
-                canonical1 as i128
-            };
-            let mut c2 = if canonical2 > params.threshold {
-                -((params.q - canonical2) as i128)
-            } else {
-                canonical2 as i128
-            };
-
-            for plane in out.chunks_exact_mut(width) {
-                let d0 = c0 & params.mask;
-                let balanced0 = if d0 >= params.half_b {
-                    d0 - params.b
-                } else {
-                    d0
-                };
-                c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = T::from_i128(balanced0);
-
-                let d1 = c1 & params.mask;
-                let balanced1 = if d1 >= params.half_b {
-                    d1 - params.b
-                } else {
-                    d1
-                };
-                c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = T::from_i128(balanced1);
-
-                let d2 = c2 & params.mask;
-                let balanced2 = if d2 >= params.half_b {
-                    d2 - params.b
-                } else {
-                    d2
-                };
-                c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = T::from_i128(balanced2);
-            }
-        }
-
-        for coefficient in bulk_end..width {
-            let canonical = coefficients[coefficient]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
-            let mut c = if canonical > params.threshold {
-                -((params.q - canonical) as i128)
-            } else {
-                canonical as i128
-            };
-            for plane in out.chunks_exact_mut(width) {
-                let d = c & params.mask;
-                let balanced = if d >= params.half_b { d - params.b } else { d };
-                c = (c - balanced) >> params.log_basis;
-                plane[coefficient] = T::from_i128(balanced);
+                // A straddling field ends inside `levels * log_basis` bits, so
+                // `word + 1 < WORDS`.
+                for ((digit, &low), &high) in digits
+                    .iter_mut()
+                    .zip(&words[word][..len])
+                    .zip(&words[word + 1][..len])
+                {
+                    let field = (low >> bit) | (high << (64 - bit));
+                    *digit = T::from_biased_field(field as u16, mask, half_b);
+                }
             }
         }
     }
@@ -528,7 +392,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     #[cfg(test)]
     pub(crate) fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
     where
-        F: CanonicalEncoding,
+        F: Field + CanonicalEncoding,
     {
         if digits.is_empty() {
             return Self::zero();
@@ -561,9 +425,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2_i8_into_with_params(
         &self,
         out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2Params,
+        params: &BalancedDecomposePow2Params<F>,
     ) where
-        F: CanonicalEncoding,
+        F: Field + CanonicalEncoding,
     {
         assert!(
             params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
@@ -576,19 +440,22 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     ///
     /// This is the canonical large-basis path. `log_basis` may be in
     /// `1..=16`; bases 10 and 11 map to `[-512, 511]` and `[-1024, 1023]`.
-    pub fn balanced_decompose_pow2_i16_into(&self, out: &mut [[i16; D]], log_basis: u32)
-    where
-        F: CanonicalEncoding,
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != params.levels()`.
+    #[inline]
+    pub fn balanced_decompose_pow2_i16_into(
+        &self,
+        out: &mut [[i16; D]],
+        params: &BalancedDecomposePow2Params<F>,
+    ) where
+        F: Field + CanonicalEncoding,
     {
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
-        balanced_decompose_coefficients_pow2_signed_into_with_params(
+        balanced_decompose_coefficients_pow2_signed_into(
             &self.coeffs,
             out.as_flattened_mut(),
-            &params,
+            params,
         );
     }
 }

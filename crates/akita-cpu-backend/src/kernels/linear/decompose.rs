@@ -53,11 +53,7 @@ pub fn decompose_rows_i8_into<F: Field + CanonicalEncoding, const D: usize>(
     if num_digits == 0 {
         return;
     }
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(num_digits)
@@ -114,11 +110,7 @@ where
         .collect::<Result<_, _>>()?;
     let mut out = DigitBlocks::zeroed(block_sizes, D_ROLE)?;
     let dst_blocks = out.split_typed_blocks_mut::<D_ROLE>()?;
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis, q);
+    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis);
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(rows))
@@ -138,7 +130,7 @@ where
 fn decompose_commit_block_rows_into<F, const D_A: usize, const D_ROLE: usize>(
     block_rows: &[CyclotomicRing<F, D_A>],
     dst: &mut [[i8; D_ROLE]],
-    params: &BalancedDecomposePow2Params,
+    params: &BalancedDecomposePow2Params<F>,
 ) where
     F: Field + CanonicalEncoding,
 {

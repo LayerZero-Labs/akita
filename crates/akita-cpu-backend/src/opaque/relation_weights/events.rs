@@ -248,7 +248,7 @@ impl<E: Field> RelationWeightEvents<E> {
             (true, None) | (false, Some(_)) => return Err(AkitaError::InvalidProof),
             _ => {}
         }
-        if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
+        if akita_error::checked::pow2(point.len()) != Some(self.physical_field_len) {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
                 actual: point.len(),
