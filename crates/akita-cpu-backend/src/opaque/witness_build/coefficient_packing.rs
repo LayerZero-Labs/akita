@@ -179,11 +179,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
             AkitaError::InvalidInput("coefficient-packing digit plane count overflow".into())
         })?;
     let mut digits = DigitBlocks::zeroed(vec![planes_per_block; semantic_blocks], D_D)?;
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open, q);
+    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open);
     let typed_planes = digits.typed_planes_mut::<D_D>()?;
 
     for (claim_index, partials) in partials_by_claim.iter().enumerate() {
