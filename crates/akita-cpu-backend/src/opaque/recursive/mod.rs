@@ -8,16 +8,11 @@ pub(in crate::opaque) mod opening;
 mod relation_witness;
 mod witness;
 
-pub(crate) use crate::opaque::sumcheck::{digit_range, relation_range_image};
+pub(crate) use crate::opaque::sumcheck::digit_range;
 
 #[cfg(test)]
 pub(crate) use digit_range::direct_range_leaf::pad_compact_witness;
 pub use digit_range::{DigitRangeProver, LowBasisRangeCheckProver};
-pub(crate) use relation_range_image::PreparedProverLinearTerms;
-#[cfg(test)]
-pub(crate) use relation_range_image::{
-    StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
-};
 pub(crate) use relation_witness::build_w_evals_compact;
 pub(crate) use witness::cpu_extension_opening_session_from_witnesses;
 pub(crate) use witness::OpaqueRecursiveWitness;

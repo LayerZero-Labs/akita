@@ -32,6 +32,10 @@ impl<E: Field> DenseRelationWeights<E> {
         &self.evaluations
     }
 
+    pub(crate) fn into_evaluations(self) -> Vec<E> {
+        self.evaluations
+    }
+
     pub(crate) const fn live_len(&self) -> usize {
         self.live_len
     }

@@ -98,10 +98,10 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         safe_width,
         params,
         |accs, start, end| {
+            let mut ntt_d = CyclotomicCrtNtt::<W, K, D>::zero();
             if pointwise_dot_batch_size > 1 {
-                let mut transformed = (0..num_live_blocks)
-                    .map(|_| Vec::with_capacity(pointwise_dot_batch_size))
-                    .collect::<Vec<_>>();
+                let mut transformed =
+                    vec![(vec![ntt_d.clone(); pointwise_dot_batch_size], 0usize,); num_live_blocks];
                 for batch_start in (start..end).step_by(pointwise_dot_batch_size) {
                     let batch_end = (batch_start + pointwise_dot_batch_size).min(end);
                     // Keep one matrix sub-tile hot while applying it to every
@@ -127,7 +127,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                                     continue;
                                 }
                                 let col = batch_start + offset;
-                                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                                ntt_d.assign_i8_with_lut(digit, params, &lut);
                                 for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter())
                                 {
                                     accumulate_pointwise_product_into(
@@ -142,23 +142,23 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                         continue;
                     }
 
-                    for (digits_ntt, block) in transformed.iter_mut().zip(blocks) {
-                        digits_ntt.clear();
-                        let block_batch_end = batch_end.min(block.len());
-                        if batch_start < block_batch_end {
-                            digits_ntt.extend(block[batch_start..block_batch_end].iter().map(
-                                |digit| CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut),
-                            ));
+                    for ((digits_ntt, live), &block) in transformed.iter_mut().zip(blocks) {
+                        *live = batch_end.min(block.len()).saturating_sub(batch_start);
+                        for (slot, digit) in digits_ntt
+                            .iter_mut()
+                            .zip(&block[batch_start.min(block.len())..][..*live])
+                        {
+                            slot.assign_i8_with_lut(digit, params, &lut);
                         }
                     }
                     for (row_idx, mat_row) in ntt_mat.iter().enumerate() {
-                        for (block_idx, digits_ntt) in transformed.iter().enumerate() {
-                            if digits_ntt.is_empty() {
+                        for (block_idx, (digits_ntt, live)) in transformed.iter().enumerate() {
+                            if *live == 0 {
                                 continue;
                             }
                             accs[block_idx][row_idx].add_assign_pointwise_dot(
-                                &mat_row[batch_start..batch_start + digits_ntt.len()],
-                                digits_ntt,
+                                &mat_row[batch_start..batch_start + *live],
+                                &digits_ntt[..*live],
                                 params,
                             );
                         }
@@ -176,7 +176,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                             continue;
                         }
                         let col = start + i;
-                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        ntt_d.assign_i8_with_lut(digit, params, &lut);
                         for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                             accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
                         }
@@ -192,7 +192,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                     let tile = &block[start..block_tile_end];
                     for (i, digit) in tile.iter().enumerate() {
                         let col = start + i;
-                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        ntt_d.assign_i8_with_lut(digit, params, &lut);
                         for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                             accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
                         }

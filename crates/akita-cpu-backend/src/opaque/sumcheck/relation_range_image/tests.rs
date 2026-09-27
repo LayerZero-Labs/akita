@@ -1,4 +1,6 @@
+mod lane_product;
 mod reduced_dense;
+mod reference;
 mod trace_prefix;
 
 use super::*;
@@ -258,7 +260,7 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
 #[test]
 fn common_coordinate_factorization_matches_flattened_rounds() {
     // Four coefficient bits exercise the fused folded-coefficient transition after
-    // the deferred two-round compact prefix.
+    // the compact quotient prefix.
     let common_coeff_count = 16usize;
     let live_relation_lanes = 5usize;
     let common_bits = common_coeff_count.trailing_zeros() as usize;
@@ -388,32 +390,6 @@ fn virtual_round_reference(
     split_eq.gruen_mul(&polynomial)
 }
 
-fn fold_compact_partial_lanes_reference(
-    compact_witness: &[i8],
-    live_lane_count: usize,
-    coeff_count: usize,
-    r: F,
-) -> Vec<F> {
-    let next_live_lane_count = live_lane_count.div_ceil(2);
-    let mut out = vec![F::zero(); coeff_count * next_live_lane_count];
-    for (coefficient, row_out) in out.chunks_mut(next_live_lane_count).enumerate() {
-        let coefficient_start = coefficient * live_lane_count;
-        let coefficient_values =
-            &compact_witness[coefficient_start..coefficient_start + live_lane_count];
-        for (lane_pair, dst) in row_out.iter_mut().enumerate() {
-            let left = 2 * lane_pair;
-            let w_0 = F::from_i64(coefficient_values[left] as i64);
-            let w_1 = if left + 1 < live_lane_count {
-                F::from_i64(coefficient_values[left + 1] as i64)
-            } else {
-                F::zero()
-            };
-            *dst = w_0 + r * (w_1 - w_0);
-        }
-    }
-    out
-}
-
 fn materialize_compact_witness_reference(compact_witness: &[i8], r: F) -> Vec<F> {
     (0..compact_witness.len() / 2)
         .map(|j| {
@@ -427,19 +403,6 @@ fn materialize_compact_witness_reference(compact_witness: &[i8], r: F) -> Vec<F>
 #[test]
 fn stage2_compact_fold_lookup_matches_direct_formula() {
     let r = F::from_u64(53);
-
-    let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-    let packed_prefix = packed(&w_prefix);
-    let fold_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(packed_prefix.view(), r);
-    assert_eq!(
-        RelationRangeImageProver::<F>::fold_compact_partial_lanes(
-            packed_prefix.view(),
-            5,
-            2,
-            &fold_lut
-        ),
-        fold_compact_partial_lanes_reference(&w_prefix, 5, 2, r)
-    );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let packed_dense = packed(&w_dense);
@@ -624,319 +587,6 @@ fn stage2_zero_gated_round0_matches_reference() {
 }
 
 #[test]
-fn stage2_fused_round2_transition_matches_two_pass_reference() {
-    let lane_bits = 3usize;
-    let coefficient_bits = 2usize;
-    let live_lane_count = 6usize;
-    let b = 8usize;
-    let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
-        .map(|i| ((i * 11 + 7) % b) as i8 - half)
-        .collect();
-    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
-        .map(|i| F::from_u64((i as u64) + 71))
-        .collect();
-    let common_alpha_factor: Vec<F> = (0..coeff_count)
-        .map(|i| F::from_u64((5 * i as u64) + 73))
-        .collect();
-    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
-        .map(|i| F::from_u64((13 * i as u64) + 79))
-        .collect();
-    let params = Stage2Params {
-        stage1_point: &stage1_point,
-        b,
-        live_lane_count,
-        lane_bits,
-        coefficient_bits,
-    };
-
-    let mut prover = new_stage2_test_prover(
-        F::from_u64(83),
-        w_prefix.clone(),
-        common_alpha_factor.clone(),
-        relation_lane_weights.clone(),
-        params,
-    );
-    let round0 = prover.compute_round_univariate(0, prover.input_claim());
-    let r0 = F::from_u64(89);
-    prover.ingest_challenge(0, r0);
-    let round1 = prover.compute_round_univariate(1, round0.evaluate(r0));
-    let r1 = F::from_u64(97);
-
-    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        packed(&w_prefix).view(),
-        live_lane_count,
-        coeff_count,
-        r0,
-        r1,
-    );
-    let expected_alpha_round2 =
-        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let expected_relation_lane_weights = prover
-        .relation_lane_weights()
-        .expect("quotient test state")
-        .to_vec();
-
-    let mut expected = new_stage2_test_prover(
-        F::from_u64(83),
-        w_prefix.clone(),
-        common_alpha_factor,
-        relation_lane_weights,
-        params,
-    );
-    let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
-    assert_eq!(expected_round0, round0);
-    expected.ingest_challenge(0, r0);
-    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(r0));
-    assert_eq!(expected_round1, round1);
-    expected.prev_norm_claim = expected
-        .prev_norm_poly
-        .as_ref()
-        .expect("round1 norm poly should be cached")
-        .evaluate(r1);
-    expected.split_eq.bind(r1);
-    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
-    expected.replace_common_alpha_factor(expected_alpha_round2.clone());
-    expected.linear_terms.fold_two_coefficients(r0, r1);
-    expected.rounds_completed = 2;
-    expected.replace_relation_lane_weights(expected_relation_lane_weights.clone());
-    let expected_round2 = expected.compute_current_round_poly_from_state();
-
-    prover.ingest_challenge(1, r1);
-
-    match &prover.witness_state {
-        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
-        WitnessState::CompactPrefix(_) => {
-            panic!("expected fused stage2 transition to enter the folded suffix")
-        }
-    }
-    assert_eq!(
-        prover.common_alpha_factor().expect("quotient test state"),
-        expected_alpha_round2
-    );
-    assert_eq!(
-        prover.relation_lane_weights().expect("quotient test state"),
-        expected_relation_lane_weights
-    );
-    assert!(!prover.can_use_deferred_compact_prefix());
-    assert!(!prover.using_deferred_compact_prefix());
-    assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
-}
-
-#[test]
-fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
-    let lane_bits = 3usize;
-    let coefficient_bits = 4usize;
-    let live_lane_count = 6usize;
-    let b = 8usize;
-    let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
-        .map(|i| ((i * 13 + 9) % b) as i8 - half)
-        .collect();
-    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
-        .map(|i| F::from_u64((i as u64) + 101))
-        .collect();
-    let common_alpha_factor: Vec<F> = (0..coeff_count)
-        .map(|i| F::from_u64((7 * i as u64) + 103))
-        .collect();
-    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
-        .map(|i| F::from_u64((17 * i as u64) + 107))
-        .collect();
-    let params = Stage2Params {
-        stage1_point: &stage1_point,
-        b,
-        live_lane_count,
-        lane_bits,
-        coefficient_bits,
-    };
-
-    let mut prover = new_stage2_test_prover(
-        F::from_u64(109),
-        w_prefix.clone(),
-        common_alpha_factor.clone(),
-        relation_lane_weights.clone(),
-        params,
-    );
-    let round0 = prover.compute_round_univariate(0, prover.input_claim());
-    let r0 = F::from_u64(113);
-    prover.ingest_challenge(0, r0);
-    let round1 = prover.compute_round_univariate(1, round0.evaluate(r0));
-    let r1 = F::from_u64(127);
-
-    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        packed(&w_prefix).view(),
-        live_lane_count,
-        coeff_count,
-        r0,
-        r1,
-    );
-    let expected_alpha_round2 =
-        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let expected_relation_lane_weights = prover
-        .relation_lane_weights()
-        .expect("quotient test state")
-        .to_vec();
-
-    let mut expected = new_stage2_test_prover(
-        F::from_u64(109),
-        w_prefix,
-        common_alpha_factor,
-        relation_lane_weights,
-        params,
-    );
-    let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
-    assert_eq!(expected_round0, round0);
-    expected.ingest_challenge(0, r0);
-    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(r0));
-    assert_eq!(expected_round1, round1);
-    expected.prev_norm_claim = expected
-        .prev_norm_poly
-        .as_ref()
-        .expect("round1 norm poly should be cached")
-        .evaluate(r1);
-    expected.split_eq.bind(r1);
-    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
-    expected.replace_common_alpha_factor(expected_alpha_round2.clone());
-    expected.linear_terms.fold_two_coefficients(r0, r1);
-    expected.rounds_completed = 2;
-    expected.replace_relation_lane_weights(expected_relation_lane_weights.clone());
-    let expected_round2 = expected.compute_current_round_poly_from_state();
-
-    prover.ingest_challenge(1, r1);
-
-    match &prover.witness_state {
-        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
-        WitnessState::CompactPrefix(_) => {
-            panic!("expected fused stage2 transition to enter the folded suffix")
-        }
-    }
-    assert_eq!(
-        prover.common_alpha_factor().expect("quotient test state"),
-        expected_alpha_round2
-    );
-    assert_eq!(
-        prover.relation_lane_weights().expect("quotient test state"),
-        expected_relation_lane_weights
-    );
-    assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
-}
-
-#[test]
-fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
-    let lane_bits = 5usize;
-    let coefficient_bits = 2usize;
-    let live_lane_count = 12usize;
-    let b = 8usize;
-    let half = (b / 2) as i8;
-    let coeff_count = 1usize << coefficient_bits;
-    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
-        .map(|i| ((i * 9 + 7) % b) as i8 - half)
-        .collect();
-    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
-        .map(|i| F::from_u64((i as u64) + 131))
-        .collect();
-    let common_alpha_factor: Vec<F> = (0..coeff_count)
-        .map(|i| F::from_u64((7 * i as u64) + 137))
-        .collect();
-    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
-        .map(|i| F::from_u64((11 * i as u64) + 139))
-        .collect();
-    let params = Stage2Params {
-        stage1_point: &stage1_point,
-        b,
-        live_lane_count,
-        lane_bits,
-        coefficient_bits,
-    };
-
-    let mut prover = new_stage2_test_prover(
-        F::from_u64(149),
-        w_prefix.clone(),
-        common_alpha_factor.clone(),
-        relation_lane_weights.clone(),
-        params,
-    );
-    let round0 = prover.compute_round_univariate(0, prover.input_claim());
-    let r0 = F::from_u64(151);
-    prover.ingest_challenge(0, r0);
-    let round1 = prover.compute_round_univariate(1, round0.evaluate(r0));
-    let r1 = F::from_u64(157);
-    prover.ingest_challenge(1, r1);
-    let round2 = prover.compute_round_univariate(2, round1.evaluate(r0));
-    let r2 = F::from_u64(163);
-
-    let mut expected = new_stage2_test_prover(
-        F::from_u64(149),
-        w_prefix,
-        common_alpha_factor,
-        relation_lane_weights,
-        params,
-    );
-    let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
-    assert_eq!(expected_round0, round0);
-    expected.ingest_challenge(0, r0);
-    let expected_round1 = expected.compute_round_univariate(1, expected_round0.evaluate(r0));
-    assert_eq!(expected_round1, round1);
-    expected.ingest_challenge(1, r1);
-    let expected_round2 = expected.compute_round_univariate(2, expected_round1.evaluate(r0));
-    assert_eq!(expected_round2, round2);
-
-    let current_w_full = match &expected.witness_state {
-        WitnessState::FoldedSuffix(folded_witness) => folded_witness.clone(),
-        WitnessState::CompactPrefix(_) => panic!("expected later prefix state to be full"),
-    };
-    let current_relation_lane_weights = expected
-        .relation_lane_weights()
-        .expect("quotient test state")
-        .to_vec();
-    let current_coeff_count = expected
-        .common_alpha_factor()
-        .expect("quotient test state")
-        .len();
-    let expected_next_folded_witness = RelationRangeImageProver::<F>::fold_folded_partial_lanes(
-        &current_w_full,
-        expected.live_lane_count,
-        current_coeff_count,
-        r2,
-    );
-    let expected_next_relation_lane_weights =
-        RelationRangeImageProver::<F>::fold_relation_lane_weights(
-            &current_relation_lane_weights,
-            r2,
-        );
-    expected.prev_norm_claim = expected
-        .prev_norm_poly
-        .as_ref()
-        .expect("round2 norm poly should be cached")
-        .evaluate(r2);
-    expected.split_eq.bind(r2);
-    expected.live_lane_count = expected.live_lane_count.div_ceil(2);
-    expected.rounds_completed += 1;
-    expected.replace_relation_lane_weights(expected_next_relation_lane_weights.clone());
-    let (virt_terms, rel_coeffs) = expected.compute_folded_partial_lane_round_terms(
-        &expected_next_folded_witness,
-        expected.quotient_weights().expect("quotient test state"),
-    );
-    let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
-
-    prover.ingest_challenge(2, r2);
-
-    match &prover.witness_state {
-        WitnessState::FoldedSuffix(folded_witness) => {
-            assert_eq!(folded_witness, &expected_next_folded_witness)
-        }
-        WitnessState::CompactPrefix(_) => panic!("expected fused later prefix stage to stay full"),
-    }
-    assert_eq!(
-        prover.relation_lane_weights().expect("quotient test state"),
-        expected_next_relation_lane_weights
-    );
-    assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
-}
-
-#[test]
 fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path() {
     let lane_bits = 16usize;
     let coefficient_bits = 6usize;
@@ -977,7 +627,7 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
         relation_lane_weights,
         params,
     );
-    direct.disable_deferred_compact_prefix();
+    direct.disable_compact_quotient_prefix();
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -1113,7 +763,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
-    direct.disable_deferred_compact_prefix();
+    direct.disable_compact_quotient_prefix();
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();

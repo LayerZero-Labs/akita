@@ -216,7 +216,7 @@ Archive it after the durable content is fully folded, following
 | Review concern | Primary current files |
 |---|---|
 | Protocol mode and schedule binding | `crates/akita-types/src/layout/params.rs`, `layout/params/descriptor.rs`, `schedule.rs`, `instance_descriptor/mod.rs` |
-| Semantic rows and physical layout | `crates/akita-types/src/proof/relation_layout.rs`, `proof/relation.rs`, `witness.rs`, `witness/scalar_len.rs` |
+| Semantic rows and physical layout | `crates/akita-types/src/layout/relation_layout.rs`, `proof/relation.rs`, `witness.rs`, `witness/scalar_len.rs` |
 | Shared residue algebra | `crates/akita-algebra/src/ring/` |
 | Prover quotient removal | `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`, `ring_switch/coeffs.rs` |
 | Prover Stage-2 weights | `crates/akita-prover/src/protocol/ring_switch/relation_weights/`, `sumcheck/relation_range_image/` |

@@ -499,6 +499,8 @@ form instead identifies a future small-space execution strategy; see the
   defines the head split, basis packing, column-to-row transpose, and public
   factor evaluation. In particular, `tensor_equality_factor_eval_at_point`
   evaluates Equation (12), not coordinates of an already evaluated equality.
+- [Prover tensor tables](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/arithmetic/extension_opening_reduction.rs)
+  build the column partials and the dense factor table from the witness.
 - [Prover orchestration](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/prove/opening_reduction.rs)
   absorbs claims and partials before sampling $\eta$, runs sumcheck, and
   records the terminal products. The
@@ -510,7 +512,7 @@ form instead identifies a future small-space execution strategy; see the
   [Fold claim preparation](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/core/fold/mod.rs)
   applies the factors to the later evaluation-trace weights.
 
-The [tensor and sumcheck tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/tests/extension_opening_reduction.rs)
+The [tensor and sumcheck tests](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/tests/extension_opening_reduction_tests.rs)
 compare partial recombination with direct evaluation, the row claim with the
 dense witness-factor sum, and the verifier's factor evaluation with the
 multilinear extension of the factor table. The verifier replay tests also

@@ -11,6 +11,7 @@ use akita_algebra::offset_eq::{
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::{checked, AkitaError};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
@@ -213,43 +214,75 @@ impl<E: Field> CompressionRelationWeights<E> {
     /// small collection of aligned witness intervals, so retaining the padded
     /// full-domain table would turn a sparse addend into an avoidable scan and
     /// allocation at every Stage-2 round.
-    pub fn into_sparse_entries(self) -> Result<Vec<(usize, E)>, AkitaError> {
-        let total_entries = self.events.iter().try_fold(0usize, |sum, event| {
-            sum.checked_add(event.coefficient_count).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression sparse-entry count overflow".into())
-            })
-        })?;
-        let mut entries = Vec::with_capacity(total_entries);
-        for event in self.events {
-            let alpha_end = event
-                .alpha_exponent_start
-                .checked_add(event.coefficient_count)
-                .ok_or(AkitaError::InvalidProof)?;
-            let powers = self
-                .alpha_powers
-                .get(event.alpha_exponent_start..alpha_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            for (offset, &power) in powers.iter().enumerate() {
-                let index = event
-                    .physical_start
-                    .checked_add(offset)
-                    .ok_or(AkitaError::InvalidProof)?;
-                entries.push((index, event.scalar * power));
+    ///
+    /// Events sorted by first coefficient split into clusters of overlapping
+    /// intervals. Each cluster accumulates densely over its own span, so no
+    /// per-coefficient sort is needed and clusters are independent.
+    pub fn into_sparse_entries(mut self) -> Result<Vec<(usize, E)>, AkitaError> {
+        /// Coefficients per parallel task, rounded up to whole clusters.
+        const TASK_COEFFICIENTS: usize = 1 << 14;
+        self.events
+            .sort_unstable_by_key(|event| event.physical_start);
+        // `push` bounds every event inside the physical domain, so these
+        // ends cannot overflow.
+        let mut tasks = Vec::new();
+        let (mut task_start, mut task_coefficients, mut cluster_end) = (0, 0, 0);
+        for (index, event) in self.events.iter().enumerate() {
+            if event.physical_start >= cluster_end && task_coefficients >= TASK_COEFFICIENTS {
+                tasks.push(task_start..index);
+                (task_start, task_coefficients) = (index, 0);
             }
+            task_coefficients += event.coefficient_count;
+            cluster_end = cluster_end.max(event.physical_start + event.coefficient_count);
         }
-        entries.sort_unstable_by_key(|(index, _)| *index);
-        let mut sparse: Vec<(usize, E)> = Vec::with_capacity(entries.len());
-        for (index, value) in entries {
-            if let Some((last_index, last_value)) = sparse.last_mut() {
-                if *last_index == index {
-                    *last_value += value;
-                    continue;
+        tasks.push(task_start..self.events.len());
+        let events = &self.events;
+        let alpha_powers = &self.alpha_powers;
+        let entries = cfg_into_iter!(tasks)
+            .map(|task| {
+                let mut entries = Vec::new();
+                let mut dense = Vec::new();
+                let mut rest = &events[task];
+                while let Some(first) = rest.first() {
+                    let cluster_start = first.physical_start;
+                    let mut cluster_end = cluster_start + first.coefficient_count;
+                    let cluster_len = 1 + rest[1..]
+                        .iter()
+                        .take_while(|event| {
+                            let overlaps = event.physical_start < cluster_end;
+                            if overlaps {
+                                cluster_end =
+                                    cluster_end.max(event.physical_start + event.coefficient_count);
+                            }
+                            overlaps
+                        })
+                        .count();
+                    let (cluster, tail) = rest.split_at(cluster_len);
+                    rest = tail;
+                    dense.clear();
+                    dense.resize(cluster_end - cluster_start, E::zero());
+                    for event in cluster {
+                        let powers = alpha_powers
+                            .get(event.alpha_exponent_start..)
+                            .and_then(|powers| powers.get(..event.coefficient_count))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let offset = event.physical_start - cluster_start;
+                        for (weight, &power) in dense[offset..].iter_mut().zip(powers) {
+                            *weight += event.scalar * power;
+                        }
+                    }
+                    entries.extend(
+                        dense
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, weight)| !weight.is_zero())
+                            .map(|(offset, &weight)| (cluster_start + offset, weight)),
+                    );
                 }
-            }
-            sparse.push((index, value));
-        }
-        sparse.retain(|(_, value)| !value.is_zero());
-        Ok(sparse)
+                Ok(entries)
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        Ok(entries.concat())
     }
 
     /// Evaluate the table's multilinear extension at one full witness point.
@@ -675,8 +708,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::{One, Zero};
 
     #[test]
     fn sparse_evaluator_matches_dense_materialization() {
@@ -699,6 +732,43 @@ mod tests {
             weights.evaluate_at_point(&point).unwrap(),
             multilinear_eval(&weights.materialize_dense().unwrap(), &point).unwrap()
         );
+    }
+
+    /// Unsorted, overlapping, cancelling, and task-spanning events give the
+    /// nonzero entries of the dense table in index order.
+    #[test]
+    fn sparse_entries_match_dense_materialization() {
+        let physical_field_len = 1 << 16;
+        let mut weights = CompressionRelationWeights {
+            events: Vec::new(),
+            alpha_powers: (1..=4096).map(F::from_u64).collect(),
+            coefficient_block_len: 8,
+            physical_field_len,
+        };
+        for index in 0..600usize {
+            let coefficient_count = 8 << (index % 5);
+            let physical_start = (index * 7919 * 8) % (physical_field_len - coefficient_count);
+            let physical_start = physical_start - physical_start % 8;
+            weights
+                .push(
+                    physical_start,
+                    coefficient_count,
+                    8 * (index % 7),
+                    F::from_u64(index as u64 + 1),
+                )
+                .unwrap();
+        }
+        // An exact cancellation leaves zeros inside a cluster.
+        weights.push(40_000, 16, 8, F::from_u64(3)).unwrap();
+        weights.push(40_000, 16, 8, -F::from_u64(3)).unwrap();
+        let expected = weights
+            .materialize_dense()
+            .unwrap()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, weight)| !weight.is_zero())
+            .collect::<Vec<_>>();
+        assert_eq!(weights.into_sparse_entries().unwrap(), expected);
     }
 
     #[test]

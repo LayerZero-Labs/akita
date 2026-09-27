@@ -307,11 +307,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         )
         .entered();
         let rings = self.ring_coeffs::<D>().ok()?;
-        let q = (-F::one())
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128")
-            + 1;
-        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)
             .zip(cfg_iter!(rings))

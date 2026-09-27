@@ -1,4 +1,6 @@
 use super::*;
+use crate::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
+use crate::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
 use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Fp32<251>;

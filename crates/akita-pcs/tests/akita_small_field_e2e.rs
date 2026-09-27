@@ -628,13 +628,15 @@ fn fp32_onehot_multi_group() {
         ])
         .expect("verifier claims");
         scheme
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                session,
-                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                BasisMode::Lagrange,
-            )
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &proof,
+                    session,
+                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                    BasisMode::Lagrange,
+                )
+            })
             .expect("fp32 multi-group verify");
     });
 }

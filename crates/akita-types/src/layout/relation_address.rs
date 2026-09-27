@@ -2,10 +2,10 @@
 
 use akita_error::AkitaError;
 
-use super::stage1::FlatBooleanDomain;
 #[cfg(any(test, feature = "test-support"))]
 use crate::layout::RingRole;
 use crate::layout::{validate_role_dims, witness_commitment_domain_len, CommitmentRingDims};
+use crate::FlatBooleanDomain;
 use crate::RelationWitnessGeometry;
 
 /// Checked address geometry for one compact relation witness.
