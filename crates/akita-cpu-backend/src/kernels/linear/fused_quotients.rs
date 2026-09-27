@@ -268,19 +268,20 @@ fn accumulate_cyclic_i8_runs<
     params: &CrtNttParamSet<W, K, D>,
 ) {
     let width = rhs.len();
+    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
     for_each_nonzero_column_run(
         range,
         params.pointwise_dot_batch_size(),
         |j| is_zero_plane(&rhs[j]),
         |run| {
-            scratch.rhs.clear();
-            for j in run.clone() {
-                source.prefetch_column(rows, width, j, false);
-                scratch.rhs.push(CyclotomicCrtNtt::from_i8_cyclic_with_lut(
-                    &rhs[j], params, lut,
-                ));
+            while scratch.rhs.len() < run.len() {
+                scratch.rhs.push(zero.clone());
             }
-            source.accumulate_cyclic_run(accs, width, run.start, &scratch.rhs, params);
+            for (offset, j) in run.clone().enumerate() {
+                source.prefetch_column(rows, width, j, false);
+                scratch.rhs[offset].assign_i8_cyclic_with_lut(&rhs[j], params, lut);
+            }
+            source.accumulate_cyclic_run(accs, width, run.start, &scratch.rhs[..run.len()], params);
         },
     );
 }

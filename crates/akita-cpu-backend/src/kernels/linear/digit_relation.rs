@@ -117,13 +117,15 @@ fn digit_relation_rows_with_params<
             let end = (start + chunk_width).min(width);
             let mut neg_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
             let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+            let mut rhs_neg = CyclotomicCrtNtt::<W, K, D>::zero();
+            let mut rhs_cyc = CyclotomicCrtNtt::<W, K, D>::zero();
 
             for (column, digit) in digits.iter().enumerate().take(end).skip(start) {
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let rhs_neg = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                let rhs_cyc = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                rhs_neg.assign_i8_with_lut(digit, params, &lut);
+                rhs_cyc.assign_i8_cyclic_with_lut(digit, params, &lut);
                 for row in 0..num_rows {
                     let index = row * width + column;
                     let (matrix_neg, matrix_cyc) =

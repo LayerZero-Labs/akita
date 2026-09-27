@@ -152,13 +152,11 @@ fn bench_q64_forward_inputs<const D: usize>(c: &mut Criterion) {
 
     group.bench_with_input(BenchmarkId::new("signed_i8", D), &D, |b, _| {
         let mut index = 0usize;
+        let mut out = CyclotomicCrtNtt::zero();
         b.iter(|| {
             index = (index + 1) % FORWARD_INPUT_POOL;
-            black_box(CyclotomicCrtNtt::from_i8_with_lut(
-                black_box(&signed[index]),
-                &params,
-                &lut,
-            ))
+            out.assign_i8_with_lut(black_box(&signed[index]), &params, &lut);
+            black_box(&out);
         })
     });
     group.bench_with_input(BenchmarkId::new("general_montgomery", D), &D, |b, _| {
@@ -224,24 +222,20 @@ fn bench_quotient_inputs<const K: usize, const D: usize>(
 
     group.bench_with_input(BenchmarkId::new("signed_i8_negacyclic", D), &D, |b, _| {
         let mut index = 0usize;
+        let mut prepared = CyclotomicCrtNtt::<i32, K, D>::zero();
         b.iter(|| {
             index = (index + 1) % FORWARD_INPUT_POOL;
-            black_box(CyclotomicCrtNtt::from_i8_with_lut(
-                black_box(&digits[index]),
-                &params,
-                &digit_lut,
-            ))
+            prepared.assign_i8_with_lut(black_box(&digits[index]), &params, &digit_lut);
+            black_box(&prepared);
         })
     });
     group.bench_with_input(BenchmarkId::new("signed_i8_cyclic", D), &D, |b, _| {
         let mut index = 0usize;
+        let mut prepared = CyclotomicCrtNtt::<i32, K, D>::zero();
         b.iter(|| {
             index = (index + 1) % FORWARD_INPUT_POOL;
-            black_box(CyclotomicCrtNtt::from_i8_cyclic_with_lut(
-                black_box(&digits[index]),
-                &params,
-                &digit_lut,
-            ))
+            prepared.assign_i8_cyclic_with_lut(black_box(&digits[index]), &params, &digit_lut);
+            black_box(&prepared);
         })
     });
     group.bench_with_input(BenchmarkId::new("centered_i32_pair", D), &D, |b, _| {

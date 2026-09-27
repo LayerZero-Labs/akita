@@ -66,11 +66,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let converter = CenteredI16NttConverter::new(params, rhs);
         let mut accumulators = vec![Self::zero(); num_rows];
         if !params.uses_lazy_i32_dot() {
+            let mut transformed = Self::zero();
             for (column, digits) in rhs.iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = converter.transform(digits);
+                converter.transform_into(digits, &mut transformed);
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
@@ -83,42 +84,44 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
 
         const BATCH: usize = I32_LAZY_DOT_BATCH;
-        let mut transformed = Vec::with_capacity(BATCH);
+        let mut transformed = vec![Self::zero(); BATCH.min(num_cols)];
         for batch_start in (0..num_cols).step_by(BATCH) {
             let batch_end = (batch_start + BATCH).min(num_cols);
-            transformed.clear();
-            for digits in &rhs[batch_start..batch_end] {
+            let width = batch_end - batch_start;
+            let mut dense = 0;
+            for (digits, slot) in rhs[batch_start..batch_end].iter().zip(&mut transformed) {
                 if digits.iter().all(|&digit| digit == 0) {
                     break;
                 }
-                let transformed_rhs = converter.transform(digits);
-                transformed.push(transformed_rhs);
+                converter.transform_into(digits, slot);
+                dense += 1;
             }
 
-            if transformed.len() == batch_end - batch_start {
+            if dense == width {
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     accumulator.add_assign_pointwise_dot(
                         &row[batch_start..batch_end],
-                        &transformed,
+                        &transformed[..width],
                         params,
                     );
                 }
                 continue;
             }
             // Preserve the zero-ring fast path when a batch is not fully dense.
+            let scratch = &mut transformed[0];
             for (offset, digits) in rhs[batch_start..batch_end].iter().enumerate() {
                 if digits.iter().all(|&digit| digit == 0) {
                     continue;
                 }
-                let transformed = converter.transform(digits);
+                converter.transform_into(digits, scratch);
                 let column = batch_start + offset;
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
                         AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
                     })?;
-                    accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
+                    accumulator.add_assign_pointwise_mul(matrix_entry, scratch, params);
                 }
             }
         }

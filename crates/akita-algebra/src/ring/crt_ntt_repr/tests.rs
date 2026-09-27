@@ -1,5 +1,6 @@
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
+use crate::ntt::butterfly::forward_ntt;
 use crate::ntt::prime::NttPrime;
 use crate::ntt::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_PRIMES, Q64_PRIMES,
@@ -70,6 +71,44 @@ fn centered_mont_reducer_matches_euclidean_residues() {
     for p in Q128_RAW_PRIMES.into_iter().chain([1_073_707_009]) {
         check_reducer(NttPrime::compute(p));
     }
+}
+
+#[test]
+fn wide_centered_conversion_matches_per_prime_residues() {
+    const D: usize = 64;
+    fn check<W: PrimeWidth, const K: usize>(
+        params: &CrtNttParamSet<W, K, D>,
+        centered: &[i128; D],
+    ) {
+        let actual = CyclotomicCrtNtt::from_centered_coefficients(centered, params);
+        let expected = std::array::from_fn(|k| {
+            let prime = params.primes[k];
+            let modulus = i128::from(prime.p.to_i64());
+            let mut limb = centered
+                .map(|value| prime.from_canonical(W::from_i64(value.rem_euclid(modulus) as i64)));
+            forward_ntt(&mut limb, prime, &params.twiddles[k], params.kernel_plan);
+            limb
+        });
+        assert_eq!(actual.limbs, expected);
+    }
+
+    // The 7,000-valued coefficients fit the first i16 prime's centered
+    // range but require wide reduction for the other two primes.
+    let mixed = std::array::from_fn(|index| match index % 4 {
+        0 => 7_000,
+        1 => -7_000,
+        2 => 1,
+        _ => 0,
+    });
+    check(&CrtNttParamSet::new(synthetic_i16_primes()), &mixed);
+
+    let wide = std::array::from_fn(|index| match index % 4 {
+        0 => 1i128 << 100,
+        1 => -(1i128 << 100),
+        2 => (1i128 << 63) + 1,
+        _ => 0,
+    });
+    check(&CrtNttParamSet::new(q128_primes()), &wide);
 }
 
 #[test]
@@ -158,8 +197,10 @@ fn check_digit_lut_conversions<W: PrimeWidth, const K: usize, const D: usize>(
             std::array::from_fn(|i| (low + (i as i64 * 37 + 11) % (2 * bound as i64)) as i8),
         ];
         for (case, digits) in cases.iter().enumerate() {
+            let mut actual = CyclotomicCrtNtt::<W, K, D>::zero();
+            actual.assign_i8_with_lut(digits, params, &lut);
             assert_eq!(
-                CyclotomicCrtNtt::from_i8_with_lut(digits, params, &lut),
+                actual,
                 CyclotomicCrtNtt::from_i8_with_params(digits, params),
                 "negacyclic D={D}, bound={bound}, case={case}"
             );
@@ -172,7 +213,7 @@ fn check_digit_lut_conversions<W: PrimeWidth, const K: usize, const D: usize>(
                 *limb = digits.map(|digit| prime.from_canonical(W::from_i64(i64::from(digit))));
                 forward_ntt_cyclic(limb, *prime, tw, NttKernelPlan::SCALAR);
             }
-            let actual = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digits, params, &lut);
+            actual.assign_i8_cyclic_with_lut(digits, params, &lut);
             for (k, (actual, expected)) in actual.limbs.iter().zip(expected.iter()).enumerate() {
                 let p = params.primes[k].p.to_i64();
                 let canonical = |x: &MontCoeff<W>| x.raw().to_i64().rem_euclid(p);

@@ -194,11 +194,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let n_a = ntt_mat.len();
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -365,11 +361,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
         .expect("single i8 CRT term must fit supported parameters");
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let mat_row = &ntt_mat[0];
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis);
 
     if inner_width <= safe_width && inner_width == max_data_width {
         return cfg_into_iter!(blocks)
