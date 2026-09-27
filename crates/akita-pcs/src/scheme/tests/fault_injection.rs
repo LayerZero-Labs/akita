@@ -2,7 +2,7 @@
 //! violates one verifier-enforced condition.
 
 use super::*;
-use akita_prover::fault_injection::{with_fault, Fault, FaultReport, WitnessSegment};
+use akita_prover::fault_injection::{with_fault, Fault, FaultReport, OverBound, WitnessSegment};
 
 const NUM_VARS: usize = 16;
 
@@ -186,4 +186,46 @@ fn accepted_rejected_nonces_are_rejected() {
         applied_levels += usize::from(report.applied > 0);
     }
     assert!(applied_levels > 0, "no level produced a rejected nonce");
+}
+
+#[test]
+fn responses_pushed_over_bound_are_rejected() {
+    // The push applies at the first accepted nonce. The L2 route applies only
+    // at L2-route levels, and a terminal push applies only if it still fits the
+    // payload budget; unapplied pushes must leave the proof valid.
+    let mut applied_levels = 0;
+    for level in 0..=terminal_level() {
+        for route in [
+            OverBound::Linf {
+                excess: 1,
+                negative: false,
+            },
+            OverBound::Linf {
+                excess: 1,
+                negative: true,
+            },
+            OverBound::L2,
+        ] {
+            let fault = Fault::PushResponseOverBound {
+                level: Some(level),
+                group: None,
+                index: 0,
+                route,
+            };
+            let (outcome, report) = prove_and_verify_with_fault(fault);
+            match outcome {
+                FaultOutcome::ProverError(error) => panic!("{fault:?}: proving failed: {error:?}"),
+                FaultOutcome::Verified(result) => assert_eq!(
+                    result.is_err(),
+                    report.applied > 0,
+                    "{fault:?}: {report:?}, verifier returned {result:?}"
+                ),
+            }
+            applied_levels += usize::from(report.applied > 0);
+        }
+    }
+    assert!(
+        applied_levels > 0,
+        "no level pushed its response over bound"
+    );
 }

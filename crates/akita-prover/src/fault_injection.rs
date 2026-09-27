@@ -27,6 +27,24 @@ pub enum WitnessSegment {
     R,
 }
 
+/// Acceptance condition violated by [`Fault::PushResponseOverBound`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverBound {
+    /// Set the addressed coefficient just outside the admissible L∞ range:
+    /// `excess.max(1)` above the positive bound, or below the negative bound
+    /// when `negative` is set. Recursive responses keep only their scheduled
+    /// digits, so the committed digits wrap around.
+    Linf { excess: u32, negative: bool },
+    /// Raise the squared L2 norm above `response_l2_sq_cap` by moving
+    /// coefficients, starting at the addressed one and wrapping cyclically, to
+    /// the admissible L∞ bound of their sign, so every coefficient stays
+    /// exactly representable. The L2 norm claim is then computed from the
+    /// raised response. Does not apply where no L2 cap is enforced; falls back
+    /// to `Linf { excess: 1, negative: false }` when the cap is unreachable
+    /// within the L∞ range.
+    L2,
+}
+
 /// One verifier-enforced condition for the prover to violate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -65,6 +83,23 @@ pub enum Fault {
     /// response at `level` before it is absorbed. Applies only to levels on
     /// the L2 security route.
     PerturbNormClaim { level: u32, delta: i64 },
+    /// Push an honestly accepted fold response over its acceptance bound
+    /// before it is decomposed or encoded, at the first nonce the grind
+    /// accepts (no nonce scanning).
+    ///
+    /// `level` selects the fold level (`None`: every level) and `group` the
+    /// group whose response is pushed (`None`: every group; the terminal level
+    /// has group 0 only). `index` addresses one response coefficient modulo
+    /// the response length, counted across chunks in order for chunked
+    /// responses. The terminal response is pushed only if it still fits its
+    /// Golomb–Rice payload budget under a widened zigzag width; otherwise the
+    /// fault is not applied at that level.
+    PushResponseOverBound {
+        level: Option<u32>,
+        group: Option<usize>,
+        index: usize,
+        route: OverBound,
+    },
 }
 
 /// What the prover did while a fault was installed.
@@ -79,6 +114,8 @@ thread_local! {
     static APPLIED: Cell<usize> = const { Cell::new(0) };
     static ADMISSION_BYPASS: Cell<bool> = const { Cell::new(false) };
     static BYPASSED_REJECTION: Cell<bool> = const { Cell::new(false) };
+    static OVER_BOUND: Cell<Option<(usize, OverBound)>> = const { Cell::new(None) };
+    static PUSHED_OVER_BOUND: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Run `f` with `fault` installed on this thread and report its effect.
@@ -124,21 +161,45 @@ pub fn record_bypassed_rejection() {
     BYPASSED_REJECTION.set(true);
 }
 
-/// Probe with the admission bypass set to `bypass`; also return whether the
-/// backend admitted a response that it would have rejected.
-pub(crate) fn probe_with_admission_bypass<T>(bypass: bool, probe: impl FnOnce() -> T) -> (T, bool) {
+/// Coefficient index and route with which the backend should push the fold
+/// response it is probing over its acceptance bound, provided the response is
+/// honestly accepted. Set by the protocol for selected groups under
+/// [`Fault::PushResponseOverBound`].
+pub fn over_bound_requested() -> Option<(usize, OverBound)> {
+    OVER_BOUND.get()
+}
+
+/// Called by a backend that pushed an admitted response over its bound because
+/// of [`over_bound_requested`].
+pub fn record_pushed_over_bound() {
+    PUSHED_OVER_BOUND.set(true);
+}
+
+/// Probe with the admission bypass set to `bypass` and the over-bound request
+/// set to `over_bound`; also return whether the backend admitted a response
+/// that it would have rejected, and whether it pushed an admitted response
+/// over its bound.
+pub(crate) fn probe_with_fault<T>(
+    bypass: bool,
+    over_bound: Option<(usize, OverBound)>,
+    probe: impl FnOnce() -> T,
+) -> (T, bool, bool) {
     struct Clear;
     impl Drop for Clear {
         fn drop(&mut self) {
             ADMISSION_BYPASS.set(false);
             BYPASSED_REJECTION.set(false);
+            OVER_BOUND.set(None);
+            PUSHED_OVER_BOUND.set(false);
         }
     }
     let _clear = Clear;
     ADMISSION_BYPASS.set(bypass);
     BYPASSED_REJECTION.set(false);
+    OVER_BOUND.set(over_bound);
+    PUSHED_OVER_BOUND.set(false);
     let value = probe();
-    (value, BYPASSED_REJECTION.get())
+    (value, BYPASSED_REJECTION.get(), PUSHED_OVER_BOUND.get())
 }
 
 /// Groups at `level` whose admission is skipped by the active fault.
@@ -148,6 +209,24 @@ pub(crate) fn accept_rejected_target(level: u32) -> Option<Option<usize>> {
             level: fault_level,
             group,
         } if fault_level.is_none_or(|fault_level| fault_level == level) => Some(group),
+        _ => None,
+    }
+}
+
+/// Coefficient index and route with which the active fault pushes the
+/// response of `group` at `level` over its bound.
+pub(crate) fn over_bound_target(level: u32, group: usize) -> Option<(usize, OverBound)> {
+    match active()? {
+        Fault::PushResponseOverBound {
+            level: fault_level,
+            group: fault_group,
+            index,
+            route,
+        } if fault_level.is_none_or(|fault_level| fault_level == level)
+            && fault_group.is_none_or(|fault_group| fault_group == group) =>
+        {
+            Some((index, route))
+        }
         _ => None,
     }
 }

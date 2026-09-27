@@ -85,22 +85,47 @@ impl FoldProbeTrace {
     }
 }
 
-/// Run one backend probe with the fault-injection admission bypass set to
-/// `bypass`. Also returns whether the backend admitted a response only
-/// because of that bypass.
-fn probe_with_admission_bypass<T>(
+/// What an installed fault made the backend do during one probe.
+#[derive(Clone, Copy, Default)]
+struct ProbeFaultEffect {
+    /// Admitted a response that failed its acceptance predicate.
+    bypassed_rejection: bool,
+    /// Pushed an admitted response over its acceptance bound.
+    pushed_over_bound: bool,
+}
+
+impl ProbeFaultEffect {
+    const fn faulted(self) -> bool {
+        self.bypassed_rejection || self.pushed_over_bound
+    }
+}
+
+/// Run one backend probe of `group_index` at `level` with the fault-injection
+/// admission bypass set to `bypass` and any over-bound push the active fault
+/// requests for that group.
+fn probe_with_fault<T>(
+    level: u32,
+    group_index: usize,
     bypass: bool,
     probe: impl FnOnce() -> Result<T, AkitaError>,
-) -> Result<(T, bool), AkitaError> {
+) -> Result<(T, ProbeFaultEffect), AkitaError> {
     #[cfg(feature = "fault-injection")]
     {
-        let (value, bypassed) = crate::fault_injection::probe_with_admission_bypass(bypass, probe);
-        Ok((value?, bypassed))
+        let over_bound = crate::fault_injection::over_bound_target(level, group_index);
+        let (value, bypassed_rejection, pushed_over_bound) =
+            crate::fault_injection::probe_with_fault(bypass, over_bound, probe);
+        Ok((
+            value?,
+            ProbeFaultEffect {
+                bypassed_rejection,
+                pushed_over_bound,
+            },
+        ))
     }
     #[cfg(not(feature = "fault-injection"))]
     {
-        let _ = bypass;
-        Ok((probe()?, false))
+        let _ = (level, group_index, bypass);
+        Ok((probe()?, ProbeFaultEffect::default()))
     }
 }
 
@@ -126,13 +151,15 @@ enum NonceProbe<T> {
     /// Every group passed its acceptance predicate.
     Accepted(T),
     /// Every group was admitted, and a fault-selected group only because its
-    /// predicate was skipped.
+    /// predicate was skipped or after its response was pushed over its bound.
     FaultAccepted(T),
 }
 
-/// Commit the first nonce the grind accepts. While a fault targets this grind
-/// (`faulted`), only fault-accepted nonces qualify; the first honestly
-/// accepted nonce is kept as a fallback when none exists.
+/// Commit the first nonce the grind accepts. While an `AcceptRejectedNonce`
+/// fault targets this grind (`faulted`), only fault-accepted nonces qualify;
+/// the first honestly accepted nonce is kept as a fallback when none exists.
+/// Otherwise the first accepted nonce is committed, and counted as an applied
+/// fault when a fault altered its response.
 fn first_accepted_nonce_with_fault<T>(
     max_grind_attempts: u32,
     faulted: bool,
@@ -277,7 +304,7 @@ where
                 expected_group.z_rice_low_bits,
                 expected_group.z_payload_bytes,
             )?;
-            let (outcome, bypassed) = probe_with_admission_bypass(bypass, || {
+            let (outcome, effect) = probe_with_fault(level, 0, bypass, || {
                 <B as crate::backend::OpaqueTerminalFoldKernel<F, E>>::probe_terminal_fold(
                     backend, witness, &plan,
                 )
@@ -291,14 +318,14 @@ where
                     fold_handle,
                     diagnostics,
                 } => {
-                    probe_trace.emit(nonce, !bypassed, diagnostics);
+                    probe_trace.emit(nonce, !effect.bypassed_rejection, diagnostics);
                     let value = (
                         fold_handle,
                         challenges,
                         crate::backend::ValidatedTerminalZEncodingPlan::from_probe(&plan),
                         diagnostics,
                     );
-                    Ok(if bypassed {
+                    Ok(if effect.faulted() {
                         NonceProbe::FaultAccepted(value)
                     } else {
                         NonceProbe::Accepted(value)
@@ -443,31 +470,32 @@ where
                     let bypass = fault_target
                         .is_some_and(|target| target.is_none_or(|g| g == group.group_index));
                     let ring_dimension = group.params.inner_commit_matrix_params().ring_dimension();
-                    let (outcome, bypassed) = probe_with_admission_bypass(bypass, || {
-                        akita_types::dispatch_for_field!(
-                            ProtocolDispatchSlot::Role(RingRole::Inner),
-                            F,
-                            ring_dimension,
-                            |D| {
-                                let plan = ValidatedFoldProbePlan::new::<D>(
-                                    challenges.ambient_a(),
-                                    group.num_polynomials,
-                                    group.params.num_live_blocks(),
-                                    geometry,
-                                    group.params.num_positions_per_block(),
-                                    group.params.num_digits_inner(),
-                                    group.params.log_basis_inner(),
-                                    group.params.opening_method(),
-                                    prepared_group.acceptance,
-                                )?;
-                                opening_ctx.backend().probe_opening_fold(
-                                    context.proof_context(),
-                                    group.opening,
-                                    &plan,
-                                )
-                            }
-                        )
-                    })?;
+                    let (outcome, effect) =
+                        probe_with_fault(level, group.group_index, bypass, || {
+                            akita_types::dispatch_for_field!(
+                                ProtocolDispatchSlot::Role(RingRole::Inner),
+                                F,
+                                ring_dimension,
+                                |D| {
+                                    let plan = ValidatedFoldProbePlan::new::<D>(
+                                        challenges.ambient_a(),
+                                        group.num_polynomials,
+                                        group.params.num_live_blocks(),
+                                        geometry,
+                                        group.params.num_positions_per_block(),
+                                        group.params.num_digits_inner(),
+                                        group.params.log_basis_inner(),
+                                        group.params.opening_method(),
+                                        prepared_group.acceptance,
+                                    )?;
+                                    opening_ctx.backend().probe_opening_fold(
+                                        context.proof_context(),
+                                        group.opening,
+                                        &plan,
+                                    )
+                                }
+                            )
+                        })?;
                     let probe_trace = || {
                         let response_coeffs = group
                             .params
@@ -506,9 +534,9 @@ where
                             diagnostics,
                         } => {
                             if trace_probes {
-                                probe_trace().emit(nonce, !bypassed, diagnostics);
+                                probe_trace().emit(nonce, !effect.bypassed_rejection, diagnostics);
                             }
-                            fault_accepted |= bypassed;
+                            fault_accepted |= effect.faulted();
                             candidate_outputs.push(FoldProbeOutput {
                                 fold_handle,
                                 challenges,
