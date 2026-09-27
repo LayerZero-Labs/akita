@@ -1,9 +1,6 @@
 //! Rotated-challenge accumulation for decompose-fold (dense D64 high-weight path).
 
-use super::{extract_balanced_digit, peel_first_balanced_digit_i32, to_signed, DecomposeParams};
-use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use jolt_field::{CanonicalEncoding, Field};
 
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
@@ -72,10 +69,10 @@ fn accumulate_rotated_triplet<const D: usize>(
     }
 }
 
-/// Single-plane rotated accumulation from a pre-materialized i8 digit plane.
+/// Single-plane rotated accumulation from a pre-materialized signed digit plane.
 #[inline(always)]
-pub(super) fn accumulate_rotated_digit_plane<const D: usize>(
-    digit_plane: &[i8; D],
+pub(super) fn accumulate_rotated_digit_plane<T: Copy + Into<i32>, const D: usize>(
+    digit_plane: &[T; D],
     rotated: &[[i16; D]],
     acc: &mut [i32; D],
 ) {
@@ -86,171 +83,17 @@ pub(super) fn accumulate_rotated_digit_plane<const D: usize>(
             acc,
             [&rotated[base], &rotated[base + 1], &rotated[base + 2]],
             [
-                i32::from(digit_plane[base]),
-                i32::from(digit_plane[base + 1]),
-                i32::from(digit_plane[base + 2]),
+                digit_plane[base].into(),
+                digit_plane[base + 1].into(),
+                digit_plane[base + 2].into(),
             ],
         );
     }
 
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let digit = i32::from(digit_plane[idx]);
+        let digit: i32 = digit_plane[idx].into();
         if digit != 0 {
             add_scaled_rotated_row(acc, rot, digit);
-        }
-    }
-}
-
-#[inline(always)]
-pub(crate) fn decompose_ring_full_challenge_accumulate<
-    F: Field + CanonicalEncoding,
-    const D: usize,
->(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    if p.overflow_possible {
-        decompose_ring_full_challenge_accumulate_overflow(ring, rotated, acc, p);
-    } else {
-        decompose_ring_full_challenge_accumulate_fast(ring, rotated, acc, p);
-    }
-}
-
-#[inline(always)]
-fn decompose_ring_full_challenge_accumulate_fast<F: Field + CanonicalEncoding, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let mut c0 = to_signed(
-            ring.coeffs[base]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        let mut c1 = to_signed(
-            ring.coeffs[base + 1]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        let mut c2 = to_signed(
-            ring.coeffs[base + 2]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        let rot0 = &rotated[base];
-        let rot1 = &rotated[base + 1];
-        let rot2 = &rotated[base + 2];
-
-        for plane in acc.iter_mut() {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            match (d0 != 0, d1 != 0, d2 != 0) {
-                (false, false, false) => {}
-                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
-                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
-                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
-                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
-            }
-        }
-    }
-
-    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let mut c = to_signed(
-            ring.coeffs[idx]
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128"),
-            p,
-        );
-        for plane in acc.iter_mut() {
-            let digit = extract_balanced_digit(&mut c, p);
-            if digit != 0 {
-                add_scaled_rotated_row(plane, rot, digit);
-            }
-        }
-    }
-}
-
-#[inline(always)]
-fn decompose_ring_full_challenge_accumulate_overflow<
-    F: Field + CanonicalEncoding,
-    const D: usize,
->(
-    ring: &CyclotomicRing<F, D>,
-    rotated: &[[i16; D]],
-    acc: &mut [[i32; D]],
-    p: &DecomposeParams,
-) {
-    let (first_acc, remaining_acc) = acc
-        .split_first_mut()
-        .expect("decompose_ring_full_challenge_accumulate_overflow requires at least one plane");
-    let bulk_end = D - (D % 3);
-
-    for base in (0..bulk_end).step_by(3) {
-        let rot0 = &rotated[base];
-        let rot1 = &rotated[base + 1];
-        let rot2 = &rotated[base + 2];
-
-        let canonical0 = ring.coeffs[base]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let canonical1 = ring.coeffs[base + 1]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let canonical2 = ring.coeffs[base + 2]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-
-        let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
-        let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
-        let (mut c2, d2) = peel_first_balanced_digit_i32(canonical2, p);
-
-        if d0 != 0 {
-            add_scaled_rotated_row(first_acc, rot0, d0);
-        }
-        if d1 != 0 {
-            add_scaled_rotated_row(first_acc, rot1, d1);
-        }
-        if d2 != 0 {
-            add_scaled_rotated_row(first_acc, rot2, d2);
-        }
-
-        for plane in remaining_acc.iter_mut() {
-            let d0 = extract_balanced_digit(&mut c0, p);
-            let d1 = extract_balanced_digit(&mut c1, p);
-            let d2 = extract_balanced_digit(&mut c2, p);
-            match (d0 != 0, d1 != 0, d2 != 0) {
-                (false, false, false) => {}
-                (true, false, false) => add_scaled_rotated_row(plane, rot0, d0),
-                (false, true, false) => add_scaled_rotated_row(plane, rot1, d1),
-                (false, false, true) => add_scaled_rotated_row(plane, rot2, d2),
-                _ => add_scaled_rotated_rows_triplet(plane, [rot0, rot1, rot2], [d0, d1, d2]),
-            }
-        }
-    }
-
-    for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let canonical = ring.coeffs[idx]
-            .to_u128_checked()
-            .expect("Akita field element must fit in u128");
-        let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
-        if d0 != 0 {
-            add_scaled_rotated_row(first_acc, rot, d0);
-        }
-        for plane in remaining_acc.iter_mut() {
-            let digit = extract_balanced_digit(&mut c, p);
-            if digit != 0 {
-                add_scaled_rotated_row(plane, rot, digit);
-            }
         }
     }
 }

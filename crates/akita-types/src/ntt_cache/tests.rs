@@ -178,17 +178,14 @@ fn prepare_materializes_exactly_the_requested_layout() {
             rhs_abs_bound: 1 << 15,
         },
     )
-    .expect("tail negacyclic");
+    .expect("limb negacyclic");
+    // Two q128 rows are cheaper as balanced limb rows under two CRT primes:
+    // four 33-bit limbs of two i32 residues, or two 65-bit limbs of two IFMA52
+    // residues. Both store 32 bytes per matrix coefficient.
+    assert!(q128_exact.uses_limb_split());
     assert!(!q128_exact.has_cyclic());
-    assert_eq!(q128_exact.has_exactness_tail(), ifma52_cache_enabled::<D>());
-    // The 14-bit IFMA52 tail covers this shape.
-    let bytes_per_ring = if ifma52_cache_enabled::<D>() {
-        IFMA52_PRIMES.len() * size_of::<u64>()
-            + usize::from(q128_exact.has_exactness_tail()) * size_of::<i16>()
-    } else {
-        Q128_NUM_PRIMES * size_of::<i32>()
-    };
-    assert_eq!(q128_exact.cache_bytes(), 10 * D * bytes_per_ring);
+    assert!(!q128_exact.has_exactness_tail());
+    assert_eq!(q128_exact.cache_bytes(), 10 * D * 32);
 }
 
 #[test]
@@ -485,21 +482,39 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
         })
         .collect::<Vec<_>>();
     let flat = crate::FlatMatrix::from_ring_slice(&matrix);
+    let view = || flat.ring_view::<D>(ROWS, COLS).expect("matrix view");
     let cache = prepare_ntt_cache(
-        flat.ring_view::<D>(ROWS, COLS).expect("matrix view"),
+        view(),
         NttCacheMode::ExactNegacyclic {
             width: COLS,
             rhs_abs_bound: 1 << 15,
         },
     )
     .expect("exact cache");
+    // The field-sized plan is the one verifier caches keep.
+    let base_plan = base_exact_cache_plan::<F, D>(
+        select_crt_ntt_params::<F, D>().expect("CRT params"),
+        COLS,
+        1 << 15,
+    )
+    .expect("base plan")
+    .expect("base capacity");
+    let base = prepare_exact_ntt_cache(view(), None, base_plan).expect("base cache");
     if ifma52_cache_enabled::<D>() {
-        assert!(cache.uses_ifma52());
-        assert!(cache.has_exactness_tail());
+        assert!(base.uses_ifma52());
         // At most 155 bits here, within base plus the 14-bit tail.
+        assert!(base.has_exactness_tail());
+        assert_eq!(
+            base.cache_bytes(),
+            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i16>())
+        );
+        // Two 65-bit limbs under two IFMA primes.
+        assert!(cache.uses_ifma52());
+        assert!(cache.uses_limb_split());
+        assert!(!cache.has_exactness_tail());
         assert_eq!(
             cache.cache_bytes(),
-            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i16>())
+            ROWS * 2 * COLS * D * 2 * size_of::<u64>()
         );
     }
     let rhs = (0..COLS)
@@ -516,6 +531,10 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     let actual = cache
         .mat_vec_i16::<F>(16, ROWS, &rhs)
         .expect("exact matvec");
+    assert_eq!(
+        base.mat_vec_i16::<F>(16, ROWS, &rhs).expect("base matvec"),
+        actual
+    );
     let expected = matrix
         .chunks_exact(COLS)
         .map(|row| {
