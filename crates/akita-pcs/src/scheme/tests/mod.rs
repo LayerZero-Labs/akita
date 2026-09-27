@@ -101,6 +101,8 @@ mod cross_mode;
 mod dense_group;
 #[cfg(feature = "response-model-diagnostics")]
 mod diagnostics;
+#[cfg(feature = "fault-injection")]
+mod fault_injection;
 mod layout;
 mod onehot;
 mod single;

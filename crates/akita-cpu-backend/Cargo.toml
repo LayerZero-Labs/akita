@@ -65,6 +65,8 @@ logging-transcript = [
   "akita-types/logging-transcript",
 ]
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
+# Test-only prover fault injection; see `akita_prover::fault_injection`.
+fault-injection = ["akita-prover/fault-injection"]
 disk-persistence = []
 parallel = [
   "akita-prover/parallel",

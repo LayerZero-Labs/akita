@@ -272,7 +272,7 @@ where
         if round != self.next_round
             || round >= self.num_rounds()
             || self.pending.is_some()
-            || previous_claim != self.claim
+            || (previous_claim != self.claim && !crate::opaque::fold::fault_skips_self_checks())
         {
             return Err(AkitaError::InvalidInput(
                 "relation session round order or claim mismatch".into(),
@@ -284,7 +284,8 @@ where
             previous_claim,
         );
         if polynomial.degree() > 3
-            || polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
+            || (polynomial.evaluate(E::zero()) + polynomial.evaluate(E::one()) != previous_claim
+                && !crate::opaque::fold::fault_skips_self_checks())
         {
             return Err(AkitaError::InvalidInput(
                 "relation session returned an invalid round polynomial".into(),

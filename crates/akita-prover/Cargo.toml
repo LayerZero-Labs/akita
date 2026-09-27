@@ -54,6 +54,9 @@ logging-transcript = [
   "akita-types/logging-transcript",
 ]
 response-model-diagnostics = []
+# Test-only: let a harness make the honest prover violate one verifier check.
+# Never enable in production builds.
+fault-injection = ["akita-sumcheck/fault-injection"]
 parallel = [
   "akita-challenges/parallel",
   "jolt-field/parallel",

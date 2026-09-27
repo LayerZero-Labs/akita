@@ -193,7 +193,11 @@ where
             )?,
         };
         Ok(match outcome {
-            FoldProbeOutcome::Rejected => FoldProbeOutcome::Rejected,
+            FoldProbeOutcome::Rejected { diagnostics } => {
+                #[cfg(feature = "response-model-diagnostics")]
+                let diagnostics = diagnostics.with_source_l2_sq(opening.source_l2_sq());
+                FoldProbeOutcome::Rejected { diagnostics }
+            }
             FoldProbeOutcome::Accepted {
                 mut fold_handle,
                 diagnostics,

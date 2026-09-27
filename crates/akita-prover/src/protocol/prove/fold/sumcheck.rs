@@ -262,6 +262,14 @@ where
         else {
             return Err(AkitaError::InvalidProof);
         };
+        #[cfg(feature = "fault-injection")]
+        let response_l2_sq = match crate::fault_injection::norm_claim_delta(level) {
+            Some(delta) => {
+                crate::fault_injection::record_applied();
+                response_l2_sq.wrapping_add_signed(i128::from(delta))
+            }
+            None => response_l2_sq,
+        };
         let physical = physical_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
         if subclaims.len()
             != physical
@@ -398,7 +406,9 @@ where
     };
     let final_claims =
         crate::backend::OpaqueStage1Kernel::finish_stage1(ctx.backend(), session_handle)?;
-    if final_claims.final_claim() != claim || final_claims.point() != final_point {
+    if (final_claims.final_claim() != claim && !crate::protocol::fault_skips_self_checks())
+        || final_claims.point() != final_point
+    {
         return Err(AkitaError::InvalidProof);
     }
     let stage1_point = final_claims.point().to_vec();
@@ -420,7 +430,7 @@ where
                     "physical L2 plan disagrees with the A security route".into(),
                 ));
             };
-            if *response_l2_sq > response_l2_sq_cap {
+            if *response_l2_sq > response_l2_sq_cap && !crate::protocol::fault_skips_self_checks() {
                 return Err(AkitaError::InvalidInput(
                     "folded response exceeds the scheduled L2 cap".into(),
                 ));
@@ -557,7 +567,7 @@ where
     )?;
     let final_output =
         crate::backend::OpaqueStage2Kernel::finish_stage2(ctx.backend(), session_handle)?;
-    if claim != final_output.final_claim() {
+    if claim != final_output.final_claim() && !crate::protocol::fault_skips_self_checks() {
         return Err(AkitaError::InvalidProof);
     }
     Ok(Stage2ProveOutput {

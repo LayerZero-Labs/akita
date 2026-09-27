@@ -6,7 +6,7 @@ use crate::opaque::RecursiveWitnessFlat;
 use crate::opaque::{OperationCtx, RuntimeRingSwitchProveBackend};
 use crate::protocol::validate_chunked_witness_cfg;
 use crate::sources::packed_digits::PackedSignedDigitWriter;
-#[cfg(feature = "response-model-diagnostics")]
+#[cfg(any(feature = "response-model-diagnostics", feature = "fault-injection"))]
 use crate::sources::packed_digits::PackedSignedDigits;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
@@ -390,6 +390,60 @@ fn trace_witness_source_moments(
     );
 }
 
+/// Apply an installed [`PerturbWitnessDigit`] fault to the witness built at
+/// `level`, before it is committed. The perturbed digit is wrapped into the
+/// balanced base-`2^log_basis` range the packed witness certifies.
+///
+/// [`PerturbWitnessDigit`]: akita_prover::fault_injection::Fault::PerturbWitnessDigit
+#[cfg(feature = "fault-injection")]
+fn inject_witness_digit_fault(
+    witness: PackedSignedDigits,
+    layout: &WitnessLayout,
+    level: u32,
+    log_basis: u32,
+) -> Result<PackedSignedDigits, AkitaError> {
+    use akita_prover::fault_injection::{Fault, WitnessSegment};
+    let Some(Fault::PerturbWitnessDigit {
+        level: fault_level,
+        segment,
+        index,
+        delta,
+    }) = akita_prover::fault_injection::active()
+    else {
+        return Ok(witness);
+    };
+    if fault_level != level {
+        return Ok(witness);
+    }
+    let ranges: Vec<std::ops::Range<usize>> = match segment {
+        WitnessSegment::Z => layout.units().iter().map(|unit| unit.z_range()).collect(),
+        WitnessSegment::E => layout.units().iter().map(|unit| unit.e_range()).collect(),
+        WitnessSegment::T => layout.units().iter().map(|unit| unit.t_range()).collect(),
+        WitnessSegment::R => layout.r_rows().iter().map(|row| row.range()).collect(),
+    };
+    let mut offset = index;
+    let Some(position) = ranges.into_iter().find_map(|range| {
+        if offset < range.len() {
+            Some(range.start + offset)
+        } else {
+            offset -= range.len();
+            None
+        }
+    }) else {
+        return Ok(witness);
+    };
+    let mut digits = witness.iter().collect::<Vec<_>>();
+    let half = 1i16 << (log_basis - 1);
+    let perturbed =
+        ((i16::from(digits[position]) + i16::from(delta) + half).rem_euclid(2 * half) - half) as i8;
+    if perturbed == digits[position] {
+        return Ok(witness);
+    }
+    digits[position] = perturbed;
+    akita_prover::fault_injection::record_applied();
+    PackedSignedDigits::from_i8_digits(digits, witness.bit_width())
+}
+
 /// Emit one physical `[Z | E | T]` ownership unit directly into packed storage.
 fn build_witness_unit<F: Field + CanonicalEncoding>(
     out: &mut CpuRecursiveWitnessBuilder,
@@ -733,6 +787,13 @@ where
         });
     }
     let out = out.finish()?;
+    #[cfg(feature = "fault-injection")]
+    let out = inject_witness_digit_fault(
+        out,
+        &witness_layout,
+        binding.fold_level(),
+        known_balanced_log_basis,
+    )?;
     #[cfg(feature = "response-model-diagnostics")]
     trace_witness_source_moments(&out, &witness_layout, lp);
     crate::opaque::CpuWitnessHandle::from_cpu(

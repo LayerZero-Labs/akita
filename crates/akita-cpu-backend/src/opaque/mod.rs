@@ -759,8 +759,14 @@ where
                     plan,
                 )?;
                 Ok(match outcome {
-                    crate::opaque::FoldProbeOutcome::Rejected => {
-                        crate::opaque::FoldProbeOutcome::Rejected
+                    crate::opaque::FoldProbeOutcome::Rejected { diagnostics } => {
+                        #[cfg(feature = "response-model-diagnostics")]
+                        let diagnostics = diagnostics.with_source_l2_sq(
+                            crate::opaque::fold::response_model_diagnostics_enabled()
+                                .then(|| witness_handle.source_l2_sq::<F>())
+                                .flatten(),
+                        );
+                        crate::opaque::FoldProbeOutcome::Rejected { diagnostics }
                     }
                     crate::opaque::FoldProbeOutcome::Accepted {
                         mut fold_handle,

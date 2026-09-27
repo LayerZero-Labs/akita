@@ -155,3 +155,78 @@ fn accepted_fold_and_terminal_events_preserve_calibration_fields() {
         "terminal response-model sample did not retain exact source energy"
     );
 }
+
+#[test]
+fn every_fold_probe_reports_its_acceptance_inputs() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let thread_events = Arc::clone(&events);
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(move || {
+            let subscriber = tracing_subscriber::registry().with(CaptureLayer {
+                events: thread_events,
+            });
+            tracing::subscriber::with_default(subscriber, || {
+                let _fixture = make_verify_fixture(16);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+
+    let events = events.lock().unwrap();
+    let field = |event: &CapturedEvent, name: &str| event.fields.get(name).cloned();
+    let probes = events
+        .iter()
+        .filter(|event| field(event, "message").as_deref() == Some("fold probe"))
+        .collect::<Vec<_>>();
+    for terminal in ["false", "true"] {
+        assert!(
+            probes
+                .iter()
+                .any(|event| field(event, "terminal").as_deref() == Some(terminal)),
+            "fold probe with terminal={terminal} is missing"
+        );
+    }
+    for event in &probes {
+        for name in [
+            "level",
+            "group_index",
+            "nonce",
+            "observed_l2_sq",
+            "response_l2_sq_cap",
+            "log_basis_response",
+            "num_digits_response",
+        ] {
+            assert!(event.fields.contains_key(name), "missing {name}: {event:?}");
+        }
+        let linf = required_u128(event, "observed_linf");
+        let negative = required_u128(event, "linf_bound_negative");
+        let positive = required_u128(event, "linf_bound_positive");
+        assert!(required_u128(event, "response_coeffs") > 0);
+        match field(event, "accepted").as_deref() {
+            Some("true") => assert!(
+                linf <= negative.max(positive),
+                "accepted probe exceeds its bounds: {event:?}"
+            ),
+            Some("false") => {}
+            other => panic!("malformed acceptance flag {other:?}: {event:?}"),
+        }
+    }
+    // Every committed nonce was first reported as an accepted probe.
+    let samples = events
+        .iter()
+        .filter(|event| {
+            field(event, "message")
+                .is_some_and(|message| message.contains("fold response model sample"))
+        })
+        .count();
+    let accepted = probes
+        .iter()
+        .filter(|event| field(event, "accepted").as_deref() == Some("true"))
+        .count();
+    assert!(
+        accepted >= samples,
+        "accepted probes {accepted} < samples {samples}"
+    );
+}

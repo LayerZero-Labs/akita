@@ -4,6 +4,8 @@
 //! This crate exchanges opaque handles and scheduled public messages with them.
 
 pub mod backend;
+#[cfg(feature = "fault-injection")]
+pub mod fault_injection;
 mod opening;
 pub mod protocol;
 mod setup;
