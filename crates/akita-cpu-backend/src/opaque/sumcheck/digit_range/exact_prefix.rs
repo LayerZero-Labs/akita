@@ -42,6 +42,23 @@ impl<T: Copy> ExactPrefixTable<T> {
         self.default
     }
 
+    /// Borrow the current logical table shape for a fused fold-and-consume kernel.
+    #[cfg(feature = "parallel")]
+    pub(crate) fn parts(&self) -> (usize, &[T], T) {
+        (self.domain_len, &self.explicit, self.default)
+    }
+
+    /// Install a table already folded by one variable, returning the old buffer
+    /// through `next_explicit` so callers can reuse it for the following round.
+    #[cfg(feature = "parallel")]
+    pub(crate) fn replace_after_fold(&mut self, next_explicit: &mut Vec<T>, next_default: T) {
+        debug_assert!(self.domain_len >= 2);
+        debug_assert_eq!(next_explicit.len(), self.explicit.len().div_ceil(2));
+        std::mem::swap(&mut self.explicit, next_explicit);
+        self.default = next_default;
+        self.domain_len /= 2;
+    }
+
     #[inline(always)]
     pub(crate) fn value_or_default(&self, index: usize) -> T {
         self.explicit.get(index).copied().unwrap_or(self.default)

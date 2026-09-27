@@ -4,6 +4,11 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Zero};
 
+#[cfg(feature = "parallel")]
+// Above this prefix size, the separate fold no longer stays in its sequential
+// region, so combining the fold and following round can amortize parallel work.
+const FUSED_MIN_EXPLICIT_ROWS: usize = 1 << 13;
+
 #[inline]
 fn accumulate_canonical_blocks<E: Field>(
     first: &[E],
@@ -87,6 +92,210 @@ fn accumulate_delayed_blocks<E: Field + Unreduced>(
         }
     )
     .map(E::reduce_product)
+}
+
+/// Fold an exact-prefix table and accumulate the following equality-weighted
+/// round from the folded pairs before they are read back from memory.
+///
+/// `fold` computes one table entry from an adjacent source pair. `coefficients`
+/// computes the next round's polynomial coefficients from an adjacent pair of
+/// folded entries. The explicit prefix, its implicit default suffix, and the
+/// equality split all follow the same layout as
+/// [`accumulate_equality_weighted_round`].
+pub(super) fn fold_and_accumulate_equality_weighted_round<E, T>(
+    table: &mut super::exact_prefix::ExactPrefixTable<T>,
+    scratch: &mut Vec<T>,
+    first: &[E],
+    second: &[E],
+    fold: impl Fn(T, T) -> T + Sync,
+    coefficients: impl Fn(T, T) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] + Sync,
+) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1]
+where
+    E: Field + Unreduced,
+    T: Copy + Send + Sync,
+{
+    let domain_len = table.domain_len();
+    debug_assert!(domain_len >= 4);
+    debug_assert!(first.len().is_power_of_two());
+    debug_assert!(second.len().is_power_of_two());
+    debug_assert_eq!(domain_len / 4, first.len() * second.len());
+
+    #[cfg(feature = "parallel")]
+    if table.explicit_len() > FUSED_MIN_EXPLICIT_ROWS {
+        let (_, source, source_default) = table.parts();
+
+        let output_len = source.len().div_ceil(2);
+        let next_default = fold(source_default, source_default);
+        if scratch.len() < output_len {
+            scratch.resize(output_len, next_default);
+        } else {
+            scratch.truncate(output_len);
+        }
+
+        // Each task owns complete rows of the split equality table. This keeps
+        // output writes disjoint and gives a small tail at least 1024 pair terms
+        // per task without changing equality-block reduction boundaries.
+        let rows_per_task = 1024usize.div_ceil(first.len());
+        let pairs_per_task = rows_per_task * first.len();
+        let output_chunk_len = 2 * pairs_per_task;
+
+        let mut round_coefficients = if E::SUM_IS_EXACT {
+            let partials = cfg_fold_reduce!(
+                cfg_chunks_mut!(scratch, output_chunk_len).enumerate(),
+                || [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+                |mut outer, (task, output)| {
+                    let pair_start = task * pairs_per_task;
+                    let pair_end =
+                        (pair_start + output.len().div_ceil(2)).min(output_len.div_ceil(2));
+                    let mut pair_index = pair_start;
+                    while pair_index < pair_end {
+                        let second_index = pair_index / first.len();
+                        let block_start = second_index * first.len();
+                        let block_end = pair_end.min(block_start + first.len());
+                        let mut inner = [E::Product::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                        for pair in pair_index..block_end {
+                            let left_source = 4 * pair;
+                            let left = fold(
+                                source.get(left_source).copied().unwrap_or(source_default),
+                                source
+                                    .get(left_source + 1)
+                                    .copied()
+                                    .unwrap_or(source_default),
+                            );
+                            let local_left = 2 * (pair - pair_start);
+                            output[local_left] = left;
+                            let right = if local_left + 1 < output.len() {
+                                let right_source = left_source + 2;
+                                let right = fold(
+                                    source.get(right_source).copied().unwrap_or(source_default),
+                                    source
+                                        .get(right_source + 1)
+                                        .copied()
+                                        .unwrap_or(source_default),
+                                );
+                                output[local_left + 1] = right;
+                                right
+                            } else {
+                                next_default
+                            };
+                            let pair_coefficients = coefficients(left, right);
+                            let first_weight = first[pair - block_start];
+                            for (sum, coefficient) in inner.iter_mut().zip(pair_coefficients) {
+                                *sum += first_weight.mul_unreduced(coefficient);
+                            }
+                        }
+
+                        let second_weight = second[second_index];
+                        for (sum, inner) in outer.iter_mut().zip(inner) {
+                            *sum += second_weight.mul_unreduced(E::reduce_product(inner));
+                        }
+                        pair_index = block_end;
+                    }
+                    outer
+                },
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                    left
+                }
+            );
+            partials.map(E::reduce_product)
+        } else {
+            cfg_fold_reduce!(
+                cfg_chunks_mut!(scratch, output_chunk_len).enumerate(),
+                || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+                |mut outer, (task, output)| {
+                    let pair_start = task * pairs_per_task;
+                    let pair_end =
+                        (pair_start + output.len().div_ceil(2)).min(output_len.div_ceil(2));
+                    let mut pair_index = pair_start;
+                    while pair_index < pair_end {
+                        let second_index = pair_index / first.len();
+                        let block_start = second_index * first.len();
+                        let block_end = pair_end.min(block_start + first.len());
+                        let mut inner = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
+                        for pair in pair_index..block_end {
+                            let left_source = 4 * pair;
+                            let left = fold(
+                                source.get(left_source).copied().unwrap_or(source_default),
+                                source
+                                    .get(left_source + 1)
+                                    .copied()
+                                    .unwrap_or(source_default),
+                            );
+                            let local_left = 2 * (pair - pair_start);
+                            output[local_left] = left;
+                            let right = if local_left + 1 < output.len() {
+                                let right_source = left_source + 2;
+                                let right = fold(
+                                    source.get(right_source).copied().unwrap_or(source_default),
+                                    source
+                                        .get(right_source + 1)
+                                        .copied()
+                                        .unwrap_or(source_default),
+                                );
+                                output[local_left + 1] = right;
+                                right
+                            } else {
+                                next_default
+                            };
+                            let pair_coefficients = coefficients(left, right);
+                            let first_weight = first[pair - block_start];
+                            for (sum, coefficient) in inner.iter_mut().zip(pair_coefficients) {
+                                *sum += first_weight * coefficient;
+                            }
+                        }
+
+                        let second_weight = second[second_index];
+                        for (sum, inner) in outer.iter_mut().zip(inner) {
+                            *sum += second_weight * inner;
+                        }
+                        pair_index = block_end;
+                    }
+                    outer
+                },
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                    left
+                }
+            )
+        };
+
+        let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+            .and_then(|suffix| suffix.weight_from(output_len.div_ceil(2)))
+            .expect("split equality and exact prefix were validated at construction");
+        add_scaled_round_coefficients(
+            &mut round_coefficients,
+            &coefficients(next_default, next_default),
+            suffix_weight,
+        );
+
+        table.replace_after_fold(scratch, next_default);
+        return round_coefficients;
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    let _ = scratch;
+    table
+        .fold_in_place(fold)
+        .expect("validated exact-prefix product state can fold");
+    let explicit_pair_count = table.explicit_len().div_ceil(2);
+    let default = table.default_value();
+    accumulate_equality_weighted_round(
+        first,
+        second,
+        explicit_pair_count,
+        |pair_index| {
+            coefficients(
+                table.value_or_default(2 * pair_index),
+                table.value_or_default(2 * pair_index + 1),
+            )
+        },
+        coefficients(default, default),
+    )
 }
 
 pub(super) fn accumulate_equality_weighted_round<E: Field + Unreduced>(

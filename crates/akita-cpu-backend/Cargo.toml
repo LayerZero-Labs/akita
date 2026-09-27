@@ -96,5 +96,13 @@ harness = false
 name = "quotient_kernels"
 harness = false
 
+[[bench]]
+name = "digit_range_rounds"
+harness = false
+
+[[bench]]
+name = "cached_decompose_fold"
+harness = false
+
 [lints]
 workspace = true

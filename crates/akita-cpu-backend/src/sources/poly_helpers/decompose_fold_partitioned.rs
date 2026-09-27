@@ -1,5 +1,6 @@
 //! Partitioned decompose-fold accumulation (element- and position-partitioned).
 
+use super::cached_narrow_accum::sparse_mul_acc as cached_narrow_mul_acc;
 use super::narrow_accum::{
     sparse_mul_acc as sparse_mul_acc_narrow, sparse_mul_acc_i16 as sparse_mul_acc_i16_narrow,
     sparse_mul_acc_i16_terms as sparse_mul_acc_i16_narrow_terms,
@@ -129,6 +130,7 @@ fn position_tile_len(num_positions_per_block: usize) -> usize {
 /// associated scratch type makes the source/scratch pairing a type invariant.
 trait FoldSource<const D: usize>: Sync {
     type Scratch;
+    type NarrowScratch;
     type Planes<'a>: DigitPlaneSet<D>
     where
         Self: 'a;
@@ -142,6 +144,17 @@ trait FoldSource<const D: usize>: Sync {
         num_digits: usize,
         scratch: &'a mut Self::Scratch,
     ) -> Self::Planes<'a>;
+    fn narrow_scratch(&self) -> Self::NarrowScratch;
+    fn accumulate_narrow<'a>(
+        planes: Self::Planes<'a>,
+        acc: &mut [[i16; D]],
+        challenge: &SparseChallenge,
+        _scratch: &mut Self::NarrowScratch,
+    ) where
+        Self: 'a,
+    {
+        planes.accumulate_narrow(acc, challenge);
+    }
 }
 
 struct CachedDigits<'a, const D: usize> {
@@ -152,6 +165,7 @@ struct CachedDigits<'a, const D: usize> {
 
 impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
     type Scratch = ();
+    type NarrowScratch = [[i16; D]; 2];
     type Planes<'a>
         = DigitPlanes<'a, D>
     where
@@ -167,6 +181,10 @@ impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
 
     fn scratch(&self, _num_digits: usize) {}
 
+    fn narrow_scratch(&self) -> Self::NarrowScratch {
+        [[0i16; D]; 2]
+    }
+
     #[inline]
     fn digit_planes<'a>(
         &'a self,
@@ -176,6 +194,29 @@ impl<const D: usize> FoldSource<D> for CachedDigits<'_, D> {
     ) -> Self::Planes<'a> {
         let start = ring_idx * num_digits;
         DigitPlanes::I8(&self.digit_planes[start..start + num_digits])
+    }
+
+    #[inline]
+    fn accumulate_narrow<'a>(
+        planes: Self::Planes<'a>,
+        acc: &mut [[i16; D]],
+        challenge: &SparseChallenge,
+        scratch: &mut Self::NarrowScratch,
+    ) where
+        Self: 'a,
+    {
+        match planes {
+            DigitPlanes::I8(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    cached_narrow_mul_acc(plane, challenge, dst, scratch);
+                }
+            }
+            DigitPlanes::I16(planes) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    sparse_mul_acc_i16_narrow(plane, challenge, dst);
+                }
+            }
+        }
     }
 }
 
@@ -191,6 +232,7 @@ enum LiveDigitScratch<const D: usize> {
 
 impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'_, F, D> {
     type Scratch = LiveDigitScratch<D>;
+    type NarrowScratch = ();
     type Planes<'a>
         = DigitPlanes<'a, D>
     where
@@ -213,6 +255,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> FoldSource<D> for LiveRings<'
             SignedDigitKernel::I16 => LiveDigitScratch::I16(vec![[0i16; D]; num_digits]),
         }
     }
+
+    fn narrow_scratch(&self) -> Self::NarrowScratch {}
 
     #[inline]
     fn digit_planes<'a>(
@@ -243,6 +287,7 @@ struct PackedDigits<'a> {
 
 impl<const D: usize> FoldSource<D> for PackedDigits<'_> {
     type Scratch = [i8; D];
+    type NarrowScratch = ();
     type Planes<'a>
         = &'a [i8; D]
     where
@@ -259,6 +304,8 @@ impl<const D: usize> FoldSource<D> for PackedDigits<'_> {
     fn scratch(&self, _num_digits: usize) -> Self::Scratch {
         [0i8; D]
     }
+
+    fn narrow_scratch(&self) -> Self::NarrowScratch {}
 
     #[inline]
     fn digit_planes<'a>(
@@ -473,6 +520,7 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
             let mut digit_scratch = source.scratch(num_digits);
+            let mut narrow_scratch = source.narrow_scratch();
             let mut narrow_acc = uses_narrow_accumulation.then(|| vec![[0i16; D]; acc.len()]);
             let mut narrow_bound = 0u64;
 
@@ -508,7 +556,12 @@ fn element_partitioned_decompose_fold<S: FoldSource<D>, const D: usize>(
                             &mut digit_scratch,
                         );
                         let base = local_elem_idx * num_digits;
-                        planes.accumulate_narrow(&mut narrow[base..base + num_digits], challenge);
+                        S::accumulate_narrow(
+                            planes,
+                            &mut narrow[base..base + num_digits],
+                            challenge,
+                            &mut narrow_scratch,
+                        );
                     }
                     narrow_bound += contribution_bound;
                 } else if let ChallengePlan::NarrowChunked(term_ranges) = plan {

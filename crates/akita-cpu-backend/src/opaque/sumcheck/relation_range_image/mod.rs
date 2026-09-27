@@ -354,3 +354,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod norm_tests;
