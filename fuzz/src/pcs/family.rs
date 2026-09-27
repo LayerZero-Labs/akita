@@ -13,9 +13,10 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_types::sis::CommittedSourceClass;
 use akita_types::GroupCommitPhaseParams;
 use akita_types::{
-    AkitaVerifierSetup, BasisMode, CommittedGroup, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims, PrecommittedGroupProfiles,
+    BasisMode, CommittedGroup, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
+    PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
+use akita_verifier::AkitaVerifier;
 use jolt_field::{ExtField, Field, One, Zero};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -98,8 +99,8 @@ pub(super) struct Prepared<Cfg: PcsOps> {
     pub(super) max_num_vars: usize,
     pub(super) max_num_polys: usize,
     pub(super) setup: AkitaProverSetup<Cfg::Field>,
-    pub(super) backend: CpuBackend<Cfg>,
-    pub(super) verifier_setup: AkitaVerifierSetup<Cfg::Field>,
+    pub(super) backend: CpuBackend<Cfg::Field, Cfg::ExtField>,
+    pub(super) verifier: AkitaVerifier<Cfg>,
 }
 
 pub struct FamilyImpl<Cfg: PcsOps> {
@@ -108,7 +109,7 @@ pub struct FamilyImpl<Cfg: PcsOps> {
     cases: OnceLock<Vec<Case>>,
     excluded: OnceLock<Vec<(String, String)>>,
     prepared: OnceLock<Prepared<Cfg>>,
-    narrowed: Mutex<HashMap<usize, Arc<AkitaVerifierSetup<Cfg::Field>>>>,
+    narrowed: Mutex<HashMap<usize, Arc<AkitaVerifier<Cfg>>>>,
     pub(super) fixtures: Mutex<HashMap<usize, Arc<Honest<Cfg>>>>,
 }
 
@@ -205,33 +206,40 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     .unwrap_or_else(|error| panic!("{}: backend: {error:?}", self.name()));
                 let verifier_setup = Cfg::verifier_setup(&self.scheme, &setup)
                     .unwrap_or_else(|error| panic!("{}: verifier setup: {error:?}", self.name()));
+                let verifier = Cfg::verifier(&self.scheme, verifier_setup)
+                    .unwrap_or_else(|error| panic!("{}: verifier: {error:?}", self.name()));
                 Prepared {
                     max_num_vars: max_nv,
                     max_num_polys: max_polys,
                     setup,
                     backend,
-                    verifier_setup,
+                    verifier,
                 }
             })
         })
     }
 
-    fn narrowed_setup(&self, case: usize, proved: &Proved) -> Arc<AkitaVerifierSetup<Cfg::Field>> {
-        let mut cache = self.narrowed.lock().expect("narrowed setup cache");
+    /// Verifier over the setup narrowed to the proved schedule, admitting only
+    /// that row.
+    fn narrowed_verifier(&self, case: usize, proved: &Proved) -> Arc<AkitaVerifier<Cfg>> {
+        let mut cache = self.narrowed.lock().expect("narrowed verifier cache");
         Arc::clone(cache.entry(case).or_insert_with(|| {
             let prepared = self.prepared();
             let schedule = Cfg::schedules(&self.scheme)
                 .resolve_selection(proved.selection)
                 .expect("proved selection resolves")
                 .schedule();
+            let setup = Cfg::narrowed_verifier_setup(
+                &self.scheme,
+                &prepared.setup,
+                schedule,
+                &proved.layout,
+            )
+            .unwrap_or_else(|error| panic!("{}: narrowed setup: {error:?}", self.name()));
             Arc::new(
-                Cfg::narrowed_verifier_setup(
-                    &self.scheme,
-                    &prepared.setup,
-                    schedule,
-                    &proved.layout,
-                )
-                .unwrap_or_else(|error| panic!("{}: narrowed setup: {error:?}", self.name())),
+                Cfg::selection_verifier(&self.scheme, setup, proved.selection).unwrap_or_else(
+                    |error| panic!("{}: selection verifier: {error:?}", self.name()),
+                ),
             )
         }))
     }
@@ -536,8 +544,11 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
     ) -> (CommittedGroup<Cfg::Field>, Handle<Cfg>) {
         let backend = &self.prepared().backend;
         let prior_profiles = (!prior.is_empty()).then(|| {
-            PrecommittedGroupProfiles::from_ordered_groups(
-                prior.iter().map(|group| &group.commitment),
+            PrecommittedGroupProfiles::from_profiles(
+                prior
+                    .iter()
+                    .map(|group| *group.commitment.profile())
+                    .collect(),
             )
             .expect("nonempty precommitted prefix")
         });
@@ -581,6 +592,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         };
         let output = stats::time("commit", || match tables {
             Tables::Dense(tables) => Cfg::commit_dense(
+                &self.scheme,
                 backend,
                 tables
                     .iter()
@@ -592,6 +604,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 context,
             ),
             Tables::OneHot { chunk, indices } => Cfg::commit_onehot(
+                &self.scheme,
                 backend,
                 indices
                     .iter()
@@ -719,13 +732,13 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
     pub(super) fn verify(
         &self,
         proof: &[u8],
-        setup: &AkitaVerifierSetup<Cfg::Field>,
+        verifier: &AkitaVerifier<Cfg>,
         session: &[u8],
         statement: Statement<'_, Cfg>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         stats::time("verify", || {
-            Cfg::verify(&self.scheme, proof, setup, session, statement, basis)
+            Cfg::verify(verifier, proof, session, statement, basis)
         })
     }
 
@@ -733,7 +746,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         let prepared = self.prepared();
         self.verify(
             &honest.proved.proof,
-            &prepared.verifier_setup,
+            &prepared.verifier,
             &honest.session,
             honest_statement(honest),
             honest.basis,
@@ -746,7 +759,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             )
         });
         if reader.bool() {
-            let narrowed = self.narrowed_setup(case, &honest.proved);
+            let narrowed = self.narrowed_verifier(case, &honest.proved);
             self.verify(
                 &honest.proved.proof,
                 &narrowed,
@@ -756,7 +769,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             )
             .unwrap_or_else(|error| {
                 panic!(
-                    "{}: honest proof rejected by schedule-narrowed verifier setup: {error:?}",
+                    "{}: honest proof rejected by the schedule-narrowed, selection-only verifier: {error:?}",
                     self.name()
                 )
             });
@@ -815,7 +828,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
     pub(super) fn check_valid_baseline(&self, honest: &Honest<Cfg>) {
         self.verify(
             &honest.proved.proof,
-            &self.prepared().verifier_setup,
+            &self.prepared().verifier,
             &honest.session,
             honest_statement(honest),
             honest.basis,
@@ -828,7 +841,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
     fn check_reject(&self, honest: &Honest<Cfg>, reader: &mut Reader<'_>) {
         self.check_valid_baseline(honest);
         let mutation = MUTATIONS[reader.choose(MUTATIONS.len())];
-        let setup = &self.prepared().verifier_setup;
+        let setup = &self.prepared().verifier;
         let group_index = reader.choose(honest.groups.len());
         let target = &honest.groups[group_index];
         let expect_invalid_proof = |result: Result<(), AkitaError>, what: &str| match result {

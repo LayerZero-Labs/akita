@@ -151,7 +151,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         use super::family::Family;
         let name = self.name();
         let fixture = self.fixture(case);
-        let setup = &self.prepared().verifier_setup;
+        let setup = &self.prepared().verifier;
         let verify = |proof: &[u8], session: &[u8]| {
             self.verify(
                 proof,
@@ -465,7 +465,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 expect_err(
                     name,
                     "a bounded source with an out-of-bound coefficient",
-                    Cfg::commit_dense(backend, polys, context).map(|_| ()),
+                    Cfg::commit_dense(&self.scheme, backend, polys, context).map(|_| ()),
                     &["InvalidInput"],
                 );
             }
@@ -493,6 +493,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     name,
                     "a dense source under a unit one-hot schedule",
                     Cfg::commit_dense(
+                        &self.scheme,
                         backend,
                         polys,
                         GroupContext::scheduler_without_precommitted_groups(),
@@ -538,7 +539,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                     &["UnsupportedSchedule"],
                 );
             }
-            _ => constructors::<Cfg>(name, backend, reader),
+            _ => constructors::<Cfg>(name, &self.scheme, backend, reader),
         }
     }
 
@@ -560,7 +561,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                             .expect("valid")
                     })
                     .collect();
-                Cfg::commit_onehot(backend, polys, context).map(|_| ())
+                Cfg::commit_onehot(&self.scheme, backend, polys, context).map(|_| ())
             }
             None => {
                 let table: Vec<Cfg::Field> = gen::table(reader, len, source.domain);
@@ -569,7 +570,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                         DensePoly::from_field_evals(num_vars, table.as_slice()).expect("valid")
                     })
                     .collect();
-                Cfg::commit_dense(backend, polys, context).map(|_| ())
+                Cfg::commit_dense(&self.scheme, backend, polys, context).map(|_| ())
             }
         }
     }
@@ -577,7 +578,8 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
 
 fn constructors<Cfg: PcsOps>(
     name: &str,
-    backend: &akita_cpu_backend::CpuBackend<Cfg>,
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
+    backend: &akita_cpu_backend::CpuBackend<Cfg::Field, Cfg::ExtField>,
     reader: &mut Reader<'_>,
 ) {
     let num_vars = usize::from(reader.u8() % 16);
@@ -631,6 +633,7 @@ fn constructors<Cfg: PcsOps>(
             name,
             "a source group with mixed variable counts",
             Cfg::commit_dense(
+                scheme,
                 backend,
                 vec![small, large],
                 GroupContext::scheduler_without_precommitted_groups(),

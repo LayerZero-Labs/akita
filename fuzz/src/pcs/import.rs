@@ -29,9 +29,9 @@ pub fn is_wired(target: &str, owner: &str) -> bool {
 }
 
 struct Owner<Cfg: PcsOps> {
-    _scheme: AkitaCommitmentScheme<Cfg>,
+    scheme: AkitaCommitmentScheme<Cfg>,
     _setup: AkitaProverSetup<Cfg::Field>,
-    backend: CpuBackend<Cfg>,
+    backend: CpuBackend<Cfg::Field, Cfg::ExtField>,
 }
 
 type OwnerCache = Mutex<HashMap<(&'static str, usize, usize), Arc<dyn Any + Send + Sync>>>;
@@ -52,7 +52,7 @@ fn owner<Cfg: PcsOps>(num_vars: usize, num_polys: usize) -> Arc<Owner<Cfg>> {
         let setup = Cfg::setup(&scheme, num_vars, num_polys).expect("owner setup");
         let backend = Cfg::backend(&scheme, &setup).expect("owner backend");
         Arc::new(Owner {
-            _scheme: scheme,
+            scheme,
             _setup: setup,
             backend,
         })
@@ -63,7 +63,7 @@ fn owner<Cfg: PcsOps>(num_vars: usize, num_polys: usize) -> Arc<Owner<Cfg>> {
 }
 
 fn via<OwnerCfg>(
-    target: &CpuBackend<fp128::OneHot>,
+    target: &CpuBackend<fp128::Field, fp128::Field>,
     num_vars: usize,
     polys: Vec<DensePoly<fp128::Field>>,
 ) -> Result<(CommittedGroup<fp128::Field>, Handle<fp128::OneHot>), AkitaError>
@@ -72,11 +72,12 @@ where
 {
     let owner = owner::<OwnerCfg>(num_vars, polys.len());
     let output = OwnerCfg::commit_dense(
+        &owner.scheme,
         &owner.backend,
         polys,
         GroupContext::scheduler_without_precommitted_groups(),
     )?;
-    let imported = target.import_commitment::<OwnerCfg>(&output.private_handle)?;
+    let imported = target.import_commitment(&output.private_handle)?;
     Ok((output.committed_group, imported))
 }
 
@@ -88,13 +89,13 @@ fn cast<T: 'static, U: 'static>(value: T) -> U {
 
 /// Commit dense `polys` on `owner`'s backend and import into `target`.
 pub fn import_dense<Cfg: PcsOps>(
-    target: &CpuBackend<Cfg>,
+    target: &CpuBackend<Cfg::Field, Cfg::ExtField>,
     owner: &'static str,
     num_vars: usize,
     polys: Vec<DensePoly<Cfg::Field>>,
 ) -> Result<(CommittedGroup<Cfg::Field>, Handle<Cfg>), AkitaError> {
     let target = (target as &dyn Any)
-        .downcast_ref::<CpuBackend<fp128::OneHot>>()
+        .downcast_ref::<CpuBackend<fp128::Field, fp128::Field>>()
         .expect("planner only wires fp128_onehot targets");
     let polys: Vec<DensePoly<fp128::Field>> = cast(polys);
     let imported = match owner {

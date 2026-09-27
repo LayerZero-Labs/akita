@@ -387,7 +387,10 @@ mod tests {
                 let value = extreme_digits::<F>(log_basis, style);
                 let ring = CyclotomicRing::<F, 1>::from_coefficients([value]);
                 let mut planes = vec![[0i16; 1]; levels];
-                ring.balanced_decompose_pow2_i16_into(&mut planes, log_basis);
+                let params = akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::<F>::new(
+                    levels, log_basis,
+                );
+                ring.balanced_decompose_pow2_i16_into(&mut planes, &params);
                 for (level, plane) in planes.iter().take(spanned).enumerate() {
                     assert_eq!(
                         plane[0], expected,

@@ -27,7 +27,9 @@ parallel lane uses 2 internal threads.
 
 ## F-5 (Medium, robustness): schedule-artifact admission panics on a zero terminal `log_basis`
 
-Fix: draft PR #91 (`fix/artifact-log-basis-validation`).
+Fixed upstream: PR #91 (`fix/artifact-log-basis-validation`), merged 2026-09-27
+as `cc1042c2`. Campaign builds from v8 on include it; the regression input below
+replays cleanly.
 
 `TrustedScheduleCatalog::from_artifact_bytes` panics instead of returning an
 error when a row's `schedule.terminal.inner.digits.log_basis` is `0`:
@@ -66,14 +68,15 @@ cd fuzz && cargo run --release -p akita-fuzz-dev -- replay schedule_artifact \
 Suggested fix: validate every artifact-supplied `log_basis` (as
 `GadgetDigits::validate` does) before computing digit counts in
 `audit_terminal` and `audit_committed_params`, or make the digit-count
-helpers return `Option`. Not fixed here: this change set is test infrastructure
-only. Until it is fixed the `schedule_artifact` lane keeps rediscovering it;
-occurrences only increment the finding's count.
+helpers return `Option`. (#91 took the first option.) Before the fix the
+`schedule_artifact` lane rediscovered it several hundred times a day; a new
+occurrence on a v8+ build would be a regression.
 Campaign dedup IDs: `panic-schedule_artifact-d656fe5be7e9` (line 223) and `panic-schedule_artifact-a81c207e4e7e` (line 248).
 
 ## F-4 (Low, encoding): `CommittedGroup` decoding accepts non-canonical coefficient bounds
 
-Fix: draft PR #92 (`fix/committed-group-canonical-bound`).
+Fixed upstream: PR #92 (`fix/committed-group-canonical-bound`), merged
+2026-09-27 as `e432abf9`. Campaign builds from v8 on include it.
 
 `CommittedGroup::deserialize_with_mode` (`crates/akita-types/src/proof/
 commitment.rs`) reads each matrix's `coeff_linf_bound` and passes it to

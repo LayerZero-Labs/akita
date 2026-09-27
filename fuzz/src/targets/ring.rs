@@ -138,9 +138,12 @@ fn case<F, const K: usize, const D: usize>(
                 let a = ring::<F, D>(reader, Domain::Full);
                 let b = digits::<D>(reader, bound);
                 let b_ntt = CyclotomicCrtNtt::from_i8_with_params(&b, params);
+                // The LUT entry points overwrite a reused buffer; start from
+                // a stale image so a missed limb or coefficient shows.
+                let mut reused = CyclotomicCrtNtt::from_ring(&a, params);
+                reused.assign_i8_with_lut(&b, params, &lut);
                 assert_eq!(
-                    CyclotomicCrtNtt::from_i8_with_lut(&b, params, &lut),
-                    b_ntt,
+                    reused, b_ntt,
                     "digit LUT transform differs from direct transform"
                 );
                 accumulator.add_assign_pointwise_mul(
@@ -176,12 +179,10 @@ fn case<F, const K: usize, const D: usize>(
                 CyclotomicCrtNtt::from_ring_cyclic(&a, params),
                 "pair cyclic half"
             );
+            let mut b_cyclic = negacyclic.clone();
+            b_cyclic.assign_i8_cyclic_with_lut(&b, params, &lut);
             let mut product = CyclotomicCrtNtt::<i32, K, D>::zero();
-            product.add_assign_pointwise_mul(
-                &cyclic,
-                &CyclotomicCrtNtt::from_i8_cyclic_with_lut(&b, params, &lut),
-                params,
-            );
+            product.add_assign_pointwise_mul(&cyclic, &b_cyclic, params);
             assert_eq!(
                 product.to_ring_cyclic::<F>(params),
                 cyclic_schoolbook(&a, &lift::<F, D>(&b.map(i64::from))),
@@ -197,19 +198,36 @@ fn case<F, const K: usize, const D: usize>(
             let coefficients: [i32; D] = values.map(|value| value as i32);
             let lut = CenteredMontLut::new(params, lut_abs);
             let expected = CyclotomicCrtNtt::from_ring(&lift::<F, D>(&values), params);
-            assert_eq!(
-                CyclotomicCrtNtt::from_centered_i32_with_lut(&coefficients, params, &lut),
-                expected,
-                "centered i32 LUT transform"
-            );
+            let expected_cyclic =
+                CyclotomicCrtNtt::from_ring_cyclic(&lift::<F, D>(&values), params);
+            let mut reused = expected_cyclic.clone();
+            reused.assign_centered_i32_with_lut(&coefficients, params, &lut);
+            assert_eq!(reused, expected, "centered i32 LUT transform");
             let (negacyclic, cyclic) =
                 CyclotomicCrtNtt::from_centered_i32_pair_with_params(&coefficients, params);
             assert_eq!(negacyclic, expected, "centered i32 pair negacyclic half");
-            assert_eq!(
-                cyclic,
-                CyclotomicCrtNtt::from_ring_cyclic(&lift::<F, D>(&values), params),
-                "centered i32 pair cyclic half"
-            );
+            assert_eq!(cyclic, expected_cyclic, "centered i32 pair cyclic half");
+            // The unchecked LUT pair requires every coefficient in LUT range.
+            if coefficients
+                .iter()
+                .all(|c| c.unsigned_abs() <= lut_abs.unsigned_abs())
+            {
+                // SAFETY: every coefficient is within `lut_abs`, the range
+                // `lut` was built for.
+                let (negacyclic, cyclic) = unsafe {
+                    CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
+                        &coefficients,
+                        params,
+                        &lut,
+                    )
+                };
+                assert_eq!(
+                    negacyclic, expected,
+                    "centered i32 LUT pair negacyclic half"
+                );
+                assert_eq!(cyclic, expected_cyclic, "centered i32 LUT pair cyclic half");
+                stats::count("ring_centered_i32_lut_pair");
+            }
             stats::count("ring_centered_i32");
         }
         3 | 4 => {

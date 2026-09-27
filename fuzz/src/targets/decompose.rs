@@ -85,7 +85,7 @@ fn case<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, (min_basis, max_b
         _ => 1 + usize::from(reader.u8() % 64),
     };
     let coefficients: Vec<F> = gen::table(reader, len, domain);
-    let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+    let params = BalancedDecomposePow2Params::<F>::new(levels, log_basis);
     let half_b = 1i128 << (log_basis - 1);
     let base = F::from_u128_reduced(1u128 << log_basis);
 
@@ -95,7 +95,7 @@ fn case<F: Field + CanonicalEncoding>(reader: &mut Reader<'_>, (min_basis, max_b
     for (index, &coefficient) in coefficients.iter().enumerate() {
         let ring = CyclotomicRing::<F, 1>::from_coefficients([coefficient]);
         let mut planes = vec![[0i16; 1]; levels];
-        ring.balanced_decompose_pow2_i16_into(&mut planes, log_basis);
+        ring.balanced_decompose_pow2_i16_into(&mut planes, &params);
         for (level, plane) in planes.iter().enumerate() {
             i16_planes[level * len + index] = plane[0];
         }
