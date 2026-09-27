@@ -300,11 +300,12 @@ fn fused_split_eq_quotients_one_shot<
         |mut accs: FusedNttAccumulators<W, K, D>, tile_idx| {
             let tile_start = tile_idx * tw;
             let tile_end = (tile_start + tw).min(plan.max_col);
+            let mut ntt_t = zero.clone();
 
             for j in tile_start..tile_end {
                 if j < plan.t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
-                    let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
+                    ntt_t.assign_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (i, acc_b) in accs.b.iter_mut().enumerate() {
                         source.with_cyclic(plan.b_row(i).start + j, params, |cyclic| {
                             accumulate_pointwise_product_into(acc_b, cyclic, &ntt_t, params);
@@ -458,12 +459,13 @@ fn accumulate_cyclic_i8_rows<
         |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
             let chunk = FusedQuotientPlan::chunk_range(rhs_len, chunk_width, chunk_idx);
             let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+            let mut ntt_rhs = CyclotomicCrtNtt::<W, K, D>::zero();
 
             for j in chunk {
                 if is_zero_plane(&rhs[j]) {
                     continue;
                 }
-                let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
+                ntt_rhs.assign_i8_cyclic_with_lut(&rhs[j], params, &lut);
                 for (row, acc) in accs.iter_mut().enumerate() {
                     source.with_cyclic(plan.b_row(row).start + j, params, |cyclic| {
                         accumulate_pointwise_product_into(acc, cyclic, &ntt_rhs, params);
