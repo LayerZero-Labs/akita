@@ -63,9 +63,7 @@ fn compact_request_label(request: &PlanningRequest) -> String {
         PlanningRequest::Scalar(layout) => AkitaScheduleLookupKey::single(*layout),
         PlanningRequest::Grouped(request) => request.key(),
     };
-    let digest = akita_types::instance_descriptor::digest_descriptor_bytes(
-        &key.canonical_descriptor_bytes(),
-    );
+    let digest = akita_types::digest_descriptor_bytes(&key.canonical_descriptor_bytes());
     let id = digest
         .iter()
         .take(6)

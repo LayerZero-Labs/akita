@@ -101,8 +101,7 @@ fn serialized_slot_ids<Cfg: CommitmentConfig>() -> Vec<String> {
 
 fn recursive_prefix_fixture<Cfg: CommitmentConfig>() -> (usize, String) {
     let slots = serialized_slot_ids::<Cfg>();
-    let digest =
-        akita_types::instance_descriptor::digest_descriptor_bytes(slots.join("\n").as_bytes());
+    let digest = akita_types::digest_descriptor_bytes(slots.join("\n").as_bytes());
     let digest = digest
         .into_iter()
         .map(|byte| format!("{byte:02x}"))

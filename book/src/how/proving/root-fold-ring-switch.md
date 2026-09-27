@@ -372,7 +372,7 @@ quotient checked by the verifier.
 - `crates/akita-cpu-backend/src/arithmetic/coefficient_packing_fold.rs` holds
   the packing map, the direct partial and scalar-opening formulas, and the
   subring-challenge fold products.
-- `crates/akita-types/src/subring_coefficient_packing.rs` defines and validates
+- `crates/akita-types/src/layout/subring_packing_geometry.rs` defines and validates
   the packing geometry.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs` validates the
   packing groups and expands the prover's Stage-2 packing relation.

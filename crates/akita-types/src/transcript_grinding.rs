@@ -1,6 +1,6 @@
 //! Public transcript-grinding policy and canonical replay plan.
 
-use crate::instance_descriptor::digest_descriptor_bytes;
+use crate::descriptor_bytes::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
 use akita_transcript::native_nonce_max_bytes;

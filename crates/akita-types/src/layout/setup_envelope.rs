@@ -2,12 +2,32 @@
 
 use akita_error::AkitaError;
 
-use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
+use super::setup_prefix_slots::{active_setup_field_len, suffix_opening_layout};
 use crate::{
     CommitmentSliceCount, CommittedGroupParams, CompressionChainPlan, FoldSchedule,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
-    SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupPrefixSlotId,
+    SisModulusProfileId, TerminalFoldParams,
 };
+
+/// Exact base-field capacity of the shared public setup vector.
+///
+/// The setup stores one flat vector of field elements. A/B/D matrices are
+/// role-local prefix views of this vector, so capacity is the maximum required
+/// role footprint, not `max_rows * max_stride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupMatrixCapacity {
+    /// Number of materialized base-field elements.
+    pub num_field_elements: usize,
+}
+
+impl SetupMatrixCapacity {
+    /// Smallest non-empty shared setup capacity.
+    pub const fn minimum() -> Self {
+        Self {
+            num_field_elements: std::num::NonZeroUsize::MIN.get(),
+        }
+    }
+}
 
 /// Physical shape of one commitment matrix in the shared setup field stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,12 +2,10 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::instance_descriptor::{
-    digest_descriptor_bytes, AKITA_INSTANCE_DESCRIPTOR_VERSION,
-};
 use akita_types::{
-    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile, FoldSchedule,
-    OpeningScheduleSelection,
+    digest_descriptor_bytes, AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey,
+    CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
+    AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;

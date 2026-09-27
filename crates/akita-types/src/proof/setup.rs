@@ -70,26 +70,6 @@ pub const MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS: usize = 1 << 26;
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
 const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
 
-/// Exact base-field capacity of the shared public setup vector.
-///
-/// The setup stores one flat vector of field elements. A/B/D matrices are
-/// role-local prefix views of this vector, so capacity is the maximum required
-/// role footprint, not `max_rows * max_stride`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetupMatrixCapacity {
-    /// Number of materialized base-field elements.
-    pub num_field_elements: usize,
-}
-
-impl SetupMatrixCapacity {
-    /// Smallest non-empty shared setup capacity.
-    pub const fn minimum() -> Self {
-        Self {
-            num_field_elements: std::num::NonZeroUsize::MIN.get(),
-        }
-    }
-}
-
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaSetupDescriptor {
