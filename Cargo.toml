@@ -3,6 +3,7 @@ members = [
   "crates/akita-algebra",
   "crates/akita-challenges",
   "crates/akita-config",
+  "crates/akita-cpu-backend",
   "crates/akita-error",
   "crates/akita-pcs",
   "crates/akita-serialization",
@@ -14,7 +15,6 @@ members = [
   "crates/akita-prover",
   "crates/akita-planner",
   "crates/akita-schedules",
-  "crates/akita-witness",
   "crates/akita-sis-estimator",
 ]
 # `profile/akita-recursion/` is a standalone sub-workspace: it pins its own

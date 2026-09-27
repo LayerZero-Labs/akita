@@ -32,6 +32,13 @@ pub trait PrimeWidth:
     /// Double-width type for intermediate Montgomery products.
     type Wide: Copy + Clone;
 
+    /// Tables the NEON transforms read beside the Montgomery tables: the
+    /// Barrett-form tables for `i32`, and nothing for `i16`, whose kernels
+    /// never read them.
+    #[cfg(target_arch = "aarch64")]
+    #[doc(hidden)]
+    type NeonTables<const D: usize>: Clone + fmt::Debug + PartialEq + Eq + Send + Sync;
+
     /// log2(R) for Montgomery reduction: 16 for `i16`, 32 for `i32`.
     const R_LOG: u32;
 
@@ -66,10 +73,24 @@ pub trait PrimeWidth:
     fn from_i64(v: i64) -> Self;
     /// Convert to `i64` (sign-extending).
     fn to_i64(self) -> i64;
+
+    /// Derive [`Self::NeonTables`] from the Montgomery-form tables.
+    #[cfg(target_arch = "aarch64")]
+    #[doc(hidden)]
+    fn neon_tables<const D: usize>(
+        prime: NttPrime<Self>,
+        fwd_twiddles: &[MontCoeff<Self>; D],
+        inv_twiddles: &[MontCoeff<Self>; D],
+        psi_pows: &[MontCoeff<Self>; D],
+        d_inv_psi_inv: &[MontCoeff<Self>; D],
+        d_inv: MontCoeff<Self>,
+    ) -> Self::NeonTables<D>;
 }
 
 impl PrimeWidth for i16 {
     type Wide = i32;
+    #[cfg(target_arch = "aarch64")]
+    type NeonTables<const D: usize> = ();
     const R_LOG: u32 = 16;
 
     #[inline]
@@ -120,10 +141,23 @@ impl PrimeWidth for i16 {
     fn to_i64(self) -> i64 {
         self as i64
     }
+
+    #[cfg(target_arch = "aarch64")]
+    fn neon_tables<const D: usize>(
+        _: NttPrime<Self>,
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: &[MontCoeff<Self>; D],
+        _: MontCoeff<Self>,
+    ) {
+    }
 }
 
 impl PrimeWidth for i32 {
     type Wide = i64;
+    #[cfg(target_arch = "aarch64")]
+    type NeonTables<const D: usize> = super::neon::BarrettTwiddles<i32, D>;
     const R_LOG: u32 = 32;
 
     #[inline]
@@ -173,6 +207,25 @@ impl PrimeWidth for i32 {
     #[inline]
     fn to_i64(self) -> i64 {
         self as i64
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn neon_tables<const D: usize>(
+        prime: NttPrime<Self>,
+        fwd_twiddles: &[MontCoeff<Self>; D],
+        inv_twiddles: &[MontCoeff<Self>; D],
+        psi_pows: &[MontCoeff<Self>; D],
+        d_inv_psi_inv: &[MontCoeff<Self>; D],
+        d_inv: MontCoeff<Self>,
+    ) -> Self::NeonTables<D> {
+        super::neon::BarrettTwiddles::compute(
+            prime,
+            fwd_twiddles,
+            inv_twiddles,
+            psi_pows,
+            d_inv_psi_inv,
+            d_inv,
+        )
     }
 }
 
@@ -227,7 +280,29 @@ pub struct NttPrime<W: PrimeWidth> {
 }
 
 impl<W: PrimeWidth> NttPrime<W> {
+    /// Check that `p` is an odd prime below `R/4` and derive its constants.
+    ///
+    /// The kernels' lazy ranges assume `p < R/4`: `2^14` for `i16` and `2^30`
+    /// for `i32`. The Fermat inverses in
+    /// [`NttTwiddles::compute`](super::butterfly::NttTwiddles::compute) assume
+    /// `p` is prime.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `p` is not an odd prime below `R/4`.
+    pub fn new(p: W) -> Self {
+        let p_i64 = p.to_i64();
+        assert!(
+            p_i64 > 2 && p_i64 < 1 << (W::R_LOG - 2) && is_prime(p_i64),
+            "NTT modulus {p_i64} must be an odd prime below 2^{}",
+            W::R_LOG - 2
+        );
+        Self::compute(p)
+    }
+
     /// Derive all Montgomery constants from a raw prime value.
+    ///
+    /// Does not check `p`; [`Self::new`] does.
     pub fn compute(p: W) -> Self {
         let p_i64 = p.to_i64();
         debug_assert!(p_i64 > 1 && p_i64 % 2 == 1, "NTT prime must be odd and > 1");
@@ -346,33 +421,6 @@ impl<W: PrimeWidth> NttPrime<W> {
         canonical.wrapping_add(needs_sub.bitand(self.p.wrapping_neg()))
     }
 
-    /// Pointwise Montgomery multiplication of two coefficient slices.
-    ///
-    /// # Panics
-    ///
-    /// Panics if slices have different lengths.
-    #[inline]
-    pub fn pointwise_mul(
-        self,
-        out: &mut [MontCoeff<W>],
-        lhs: &[MontCoeff<W>],
-        rhs: &[MontCoeff<W>],
-    ) {
-        assert_eq!(out.len(), lhs.len());
-        assert_eq!(lhs.len(), rhs.len());
-        for ((o, a), b) in out.iter_mut().zip(lhs.iter()).zip(rhs.iter()) {
-            *o = self.mul(*a, *b);
-        }
-    }
-
-    /// In-place Montgomery scaling by a constant.
-    #[inline]
-    pub fn scale_in_place(self, coeffs: &mut [MontCoeff<W>], scalar: MontCoeff<W>) {
-        for c in coeffs {
-            *c = self.mul(*c, scalar);
-        }
-    }
-
     /// In-place range reduction on a coefficient slice.
     #[inline]
     pub fn reduce_range_in_place(self, coeffs: &mut [MontCoeff<W>]) {
@@ -380,12 +428,107 @@ impl<W: PrimeWidth> NttPrime<W> {
             *c = self.reduce_range(*c);
         }
     }
+}
 
-    /// In-place centering of canonical values to `[-p/2, p/2)`.
-    #[inline]
-    pub fn center_slice(self, coeffs: &mut [W]) {
-        for c in coeffs {
-            *c = self.center(*c);
+/// Whether `n` is prime, by deterministic Miller-Rabin.
+pub(crate) fn is_prime(n: i64) -> bool {
+    // Bases 2, 7 and 61 decide every n below 4_759_123_141; these seven
+    // decide every n below 2^64.
+    let bases: &[i64] = if n < 4_759_123_141 {
+        &[2, 7, 61]
+    } else {
+        &[2, 325, 9_375, 28_178, 450_775, 9_780_504, 1_795_265_022]
+    };
+    if n < 2 {
+        return false;
+    }
+    if let Some(&base) = bases.iter().find(|&&base| n % base == 0) {
+        return n == base;
+    }
+    let shift = (n - 1).trailing_zeros();
+    let odd = (n - 1) >> shift;
+    bases.iter().all(|&base| {
+        let mut x = pow_mod(base, odd, n);
+        if x == 1 || x == n - 1 {
+            return true;
+        }
+        (1..shift).any(|_| {
+            x = pow_mod(x, 2, n);
+            x == n - 1
+        })
+    })
+}
+
+/// Modular exponentiation: `base^exp mod modulus`, for `base >= 0`.
+pub(crate) fn pow_mod(base: i64, exp: i64, modulus: i64) -> i64 {
+    fn pow(mut base: i64, mut exp: i64, mul: impl Fn(i64, i64) -> i64) -> i64 {
+        let mut result = 1;
+        while exp > 0 {
+            if exp & 1 == 1 {
+                result = mul(result, base);
+            }
+            base = mul(base, base);
+            exp >>= 1;
+        }
+        result
+    }
+    // Products of residues below 2^31 fit i64; wider moduli need i128.
+    if modulus < 1 << 31 {
+        pow(base % modulus, exp, |lhs, rhs| lhs * rhs % modulus)
+    } else {
+        pow(base % modulus, exp, |lhs, rhs| {
+            (i128::from(lhs) * i128::from(rhs) % i128::from(modulus)) as i64
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::catch_unwind;
+
+    use super::*;
+
+    #[test]
+    fn is_prime_matches_trial_division() {
+        let trial = |n: i64| n > 1 && (2..).take_while(|d| d * d <= n).all(|d| n % d != 0);
+        // Every value below 2^16, including the base-2 strong pseudoprimes
+        // 2047, 3277 and 4033, and a window just below 2^30.
+        for n in (0..1 << 16).chain((1 << 30) - 8192..1 << 30) {
+            assert_eq!(is_prime(n), trial(n), "n={n}");
+        }
+    }
+
+    #[test]
+    fn is_prime_rejects_strong_pseudoprimes_past_2_31() {
+        // 3215031751 = 151 * 751 * 28351 is a strong pseudoprime to bases 2
+        // and 7, and 3825123056546413051 = 149491 * 747451 * 34233211 to every
+        // prime base through 23; 1125899772623531 = 33554393 * 33554467.
+        for n in [
+            3_215_031_751,
+            3_825_123_056_546_413_051,
+            1_125_899_772_623_531,
+        ] {
+            assert!(!is_prime(n), "n={n}");
+        }
+        for p in [2_147_483_647, 4_294_967_291, 1_125_899_906_826_241] {
+            assert!(is_prime(p), "p={p}");
+        }
+    }
+
+    #[test]
+    fn new_accepts_only_odd_primes_below_a_quarter_radix() {
+        assert_eq!(NttPrime::new(12289_i16), NttPrime::compute(12289_i16));
+        assert_eq!(
+            NttPrime::new(1073707009_i32),
+            NttPrime::compute(1073707009_i32)
+        );
+        // 1537 = 29 * 53 and 94391809 = 7681 * 12289 pass the `2D | p - 1`
+        // twiddle check for D = 256; 18433 and 2013265921 are primes above R/4.
+        for p in [2_i16, 1537, 18433] {
+            assert!(catch_unwind(|| NttPrime::new(p)).is_err(), "p={p}");
+        }
+        for p in [2_i32, 1073707008, 94391809, 2013265921] {
+            assert!(catch_unwind(|| NttPrime::new(p)).is_err(), "p={p}");
         }
     }
 }

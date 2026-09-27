@@ -71,7 +71,8 @@ The `disk-persistence` feature stores the public setup matrix and setup prefix
 registry. It does not store backend NTT caches.
 
 Cache entries use versioned filenames, and prefix registry names include a
-digest of the resolved schedule. Old, truncated, corrupt, or mismatched entries
+digest of the setup requirements: the capacity bound and the sorted setup
+prefix slot ids. Old, truncated, corrupt, or mismatched entries
 are not accepted as current setup. Akita logs the load failure and regenerates
 the setup. If saving the replacement fails, Akita logs a warning and continues
 with the in-memory setup.
@@ -108,8 +109,13 @@ and verifier work is sequential and all reported thread counts are one.
 ## Verification rejects an artifact
 
 A verifier error does not always mean the proof was wrong. Decode and shape
-errors mean the public artifact was malformed. `AkitaError::InvalidProof`
-means the well-formed proof failed a protocol check.
+errors mean the public artifact was malformed. A statement that does not fit
+the verifier's setup or the selected schedule row returns the failing check's
+own error before transcript replay starts: `InvalidSize` or
+`InvalidPointDimension` for a statement larger than the setup, and
+`InvalidInput` with a message for a claim group or commitment profile that
+does not match. `AkitaError::InvalidProof` means the proof bytes failed a
+protocol check.
 
 Confirm that prover and verifier use the same Akita revision, configuration,
 transcript backend, transcript domain, ordered commitment groups, opening

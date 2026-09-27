@@ -184,3 +184,38 @@ fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
         "unexpected setup-prefix challenge error: {error}"
     );
 }
+
+#[test]
+fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
+    use crate::proof_optimized::{fp32, fp64};
+    use crate::recursive_commitment::RecursiveScheduleConfig;
+    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+
+    fn check<Cfg: RecursiveScheduleConfig>(sizes: &[usize]) {
+        type Recursive<C> = RecursiveCommitmentConfig<C>;
+        let catalog = crate::test_support::workspace_schedule_catalog::<Recursive<Cfg>>()
+            .expect("dense recursive artifact admitted under current policy");
+        assert_eq!(catalog.rows().count(), sizes.len());
+        let mut offloaded = 0;
+        for &num_vars in sizes {
+            let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+            let row = catalog.resolve_key(&key).expect("benchmark size present");
+            if row
+                .schedule()
+                .recursive_folds
+                .iter()
+                .any(|fold| fold.params.setup_prefix().is_some())
+            {
+                offloaded += 1;
+            }
+        }
+        assert!(
+            offloaded > 0,
+            "dense recursive family must actually offload setup"
+        );
+    }
+
+    check::<fp32::Dense>(&[20, 22, 24, 26, 28, 30]);
+    check::<fp64::Dense>(&[21, 23, 25, 27, 29]);
+    check::<fp128::Dense>(&[20, 22, 24, 26, 28]);
+}

@@ -4,15 +4,14 @@
 //! lane-and-column coordinates and preparing either lifted role powers or the
 //! complete reduced terminal functional.
 
+use crate::PreparedCoefficientFunctional;
 #[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
 use akita_error::AkitaError;
 #[cfg(test)]
 use akita_types::{CommitmentRingDims, RingRole};
-use akita_types::{
-    PreparedCoefficientFunctional, PreparedRelationAddress, RelationAddressGeometry,
-};
+use akita_types::{PreparedRelationAddress, RelationAddressGeometry};
 use jolt_field::Field;
 use std::sync::Arc;
 
@@ -141,10 +140,6 @@ impl<E: Field> PreparedLiftedRelationPoint<E> {
 
     pub(super) fn alpha(&self) -> E {
         self.alpha
-    }
-
-    pub(super) fn address_point(&self) -> &[E] {
-        self.address.point()
     }
 
     pub(super) fn relation_address(&self) -> &PreparedRelationAddress<E> {
@@ -279,7 +274,7 @@ mod tests {
         let flat_live_len = 1024;
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, flat_live_len).unwrap();
-        let field_len = geometry.committed_witness_coeff_len();
+        let field_len = geometry.digit_witness_domain().domain_len();
         let point = point_for(field_len);
         let prepared = PreparedLiftedRelationPoint::new(&point, alpha, geometry, &[]).unwrap();
 
@@ -366,7 +361,7 @@ mod tests {
             Err(AkitaError::InvalidSetup(_))
         ));
         let geometry = RelationAddressGeometry::new(role_dims, 128, 256).unwrap();
-        let point = point_for(geometry.committed_witness_coeff_len());
+        let point = point_for(geometry.digit_witness_domain().domain_len());
         assert!(matches!(
             PreparedLiftedRelationPoint::new(&point[..point.len() - 1], F::one(), geometry, &[],),
             Err(AkitaError::InvalidSize { .. })
@@ -390,7 +385,7 @@ mod tests {
             opening: 64,
         };
         let geometry = RelationAddressGeometry::new(role_dims, 32, 320).unwrap();
-        let point = point_for(geometry.committed_witness_coeff_len());
+        let point = point_for(geometry.digit_witness_domain().domain_len());
         let prepared = PreparedReducedRelationPoint::new(&point, F::from_u64(7), geometry).unwrap();
         assert!(matches!(
             prepared.coefficient_functional(),
@@ -410,7 +405,7 @@ mod tests {
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, live_witness_coeff_len)
                 .unwrap();
-        let point = point_for(geometry.committed_witness_coeff_len());
+        let point = point_for(geometry.digit_witness_domain().domain_len());
         let prepared =
             PreparedLiftedRelationPoint::new(&point, F::from_u64(7), geometry, &[]).unwrap();
         assert!(matches!(
@@ -437,7 +432,7 @@ mod tests {
             320,
         )
         .unwrap();
-        let point = point_for(geometry.committed_witness_coeff_len());
+        let point = point_for(geometry.digit_witness_domain().domain_len());
         let prepared =
             PreparedLiftedRelationPoint::new(&point, F::from_u64(7), geometry, &[64, 64])
                 .expect("additional group-local dimension");

@@ -63,14 +63,14 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("quotient setup capacity");
             let reduced_capacity = akita_config::SetupRequirements::from_catalog::<Cfg>(
                 reduced_scheme.schedules(),
                 full_num_vars,
                 1,
             )
-            .map(|requirements| requirements.matrix_capacity)
+            .map(|requirements| requirements.matrix_capacity())
             .expect("reduced setup capacity");
             let setup =
                 if quotient_capacity.num_field_elements >= reduced_capacity.num_field_elements {
@@ -79,27 +79,18 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     reduced_scheme.setup_prover(full_num_vars, 1)
                 }
                 .expect("cross-mode setup");
-            let prepared = CpuBackend::DEFAULT
-                .prepare_setup(&setup)
-                .expect("cross-mode prepared setup");
-            let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend::DEFAULT,
-                &prepared,
-                setup.expanded.as_ref(),
-            )
-            .expect("cross-mode prover stack");
+            let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
             let verifier_setup = quotient_scheme
                 .setup_verifier(&setup)
                 .expect("cross-mode verifier setup");
-            let akita_prover::CommitOutput {
+            let akita_cpu_backend::CommitOutput {
                 committed_group: commitment,
-                prover_state: hint,
-            } = quotient_scheme
-                .commit::<_, _>(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    stack.commitment(),
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                private_handle: hint,
+            } = stack
+                .commit(
+                    quotient_scheme.schedules(),
+                    &stack.import_source(vec![poly.clone()]).expect("source"),
+                    akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .expect("cross-mode commitment");
             assert_eq!(commitment.profile(), &quotient_row.profiles().final_group);
@@ -114,28 +105,28 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 .fold(F::zero(), |sum, (&coefficient, weight)| {
                     sum + coefficient * weight
                 });
-            let poly_refs = [&poly];
 
-            let prove = |scheme: &Scheme| {
+            let prove = |scheme: &Scheme, backend: &CpuBackend<F, F>, handle| {
                 let group =
-                    PolynomialGroupClaims::new(point.clone(), vec![F::zero()], commitment.clone())
+                    PolynomialGroupClaims::new(point.clone(), vec![opening], commitment.clone())
                         .expect("cross-mode prover group");
                 let claims =
                     OpeningClaims::from_groups(vec![group]).expect("cross-mode prover claims");
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_prove::<_, _, _, _>(
+                    .batched_prove(
                         &setup,
-                        selected_prover_data(scheme, claims, vec![hint.clone()], vec![&poly_refs])
+                        selected_prover_data(scheme, claims, vec![handle])
                             .expect("cross-mode prover data"),
-                        &stack,
-                        &mut transcript,
+                        backend,
+                        LABEL,
                         BasisMode::Lagrange,
                     )
                     .expect("cross-mode proof")
             };
-            let quotient_proof = prove(&quotient_scheme);
-            let reduced_proof = prove(&reduced_scheme);
+            let quotient_proof = prove(&quotient_scheme, &stack, hint.clone());
+            // The backend is family-agnostic, so one commitment handle opens under
+            // either catalog without a transfer.
+            let reduced_proof = prove(&reduced_scheme, &stack, hint);
 
             for (scheme, proof, selection, name) in [
                 (
@@ -151,15 +142,16 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                     "reduced",
                 ),
             ] {
-                let mut transcript = AkitaTranscript::<F>::new(LABEL);
                 scheme
-                    .batched_verify(
-                        proof,
-                        &verifier_setup,
-                        &mut transcript,
-                        statement(selection, &point, opening, &commitment),
-                        BasisMode::Lagrange,
-                    )
+                    .verifier(verifier_setup.clone())
+                    .and_then(|verifier| {
+                        verifier.batched_verify(
+                            proof,
+                            LABEL,
+                            statement(selection, &point, opening, &commitment),
+                            BasisMode::Lagrange,
+                        )
+                    })
                     .unwrap_or_else(|error| panic!("honest {name} proof must verify: {error:?}"));
             }
 
@@ -178,14 +170,16 @@ fn proofs_cannot_replay_across_valid_quotient_and_reduced_schedules() {
                 ),
             ] {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    let mut transcript = AkitaTranscript::<F>::new(LABEL);
-                    scheme.batched_verify(
-                        proof,
-                        &verifier_setup,
-                        &mut transcript,
-                        statement(wrong_selection, &point, opening, &commitment),
-                        BasisMode::Lagrange,
-                    )
+                    scheme
+                        .verifier(verifier_setup.clone())
+                        .and_then(|verifier| {
+                            verifier.batched_verify(
+                                proof,
+                                LABEL,
+                                statement(wrong_selection, &point, opening, &commitment),
+                                BasisMode::Lagrange,
+                            )
+                        })
                 }));
                 assert!(
                     matches!(outcome, Ok(Err(_))),

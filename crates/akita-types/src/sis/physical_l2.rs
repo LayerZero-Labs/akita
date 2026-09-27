@@ -68,11 +68,6 @@ impl LimbGramLayout {
     }
 
     #[must_use]
-    pub const fn block_len(self) -> usize {
-        self.block_len
-    }
-
-    #[must_use]
     pub const fn limb_count(self) -> usize {
         self.limb_count
     }

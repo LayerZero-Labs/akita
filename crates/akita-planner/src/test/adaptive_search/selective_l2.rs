@@ -12,7 +12,7 @@ fn unpruned_search_covers_selective_l2_candidate_domain() {
     let selected = find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &domain,
         OneHot::ring_challenge_config,
     )
@@ -24,7 +24,7 @@ fn unpruned_search_covers_selective_l2_candidate_domain() {
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         OneHot::ring_challenge_config,
     )
     .expect("unpruned selective-L2 schedule");

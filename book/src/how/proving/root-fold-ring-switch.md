@@ -361,18 +361,23 @@ quotient checked by the verifier.
 
 - `crates/akita-prover/src/protocol/ring_relation.rs` assembles ordinary
   relation terms.
-- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` computes
+- `crates/akita-cpu-backend/src/opaque/witness_build/relation_quotient.rs` computes
   the role-native ordinary quotients and sparse high-half contributions.
-- `crates/akita-prover/src/compute/cpu/ring_switch.rs` selects the retained or
+- `crates/akita-cpu-backend/src/arithmetic/ring_switch.rs` selects the retained or
   streamed CPU kernels.
 - `crates/akita-prover/src/protocol/ring_switch.rs` assembles the ring-switch
   witness and proof state.
-- `crates/akita-prover/src/protocol/coefficient_packing.rs` forms packed
+- `crates/akita-cpu-backend/src/opaque/witness_build/coefficient_packing.rs` forms packed
   partials and the packing quotient.
-- `crates/akita-types/src/subring_coefficient_packing.rs` defines and validates
+- `crates/akita-cpu-backend/src/arithmetic/coefficient_packing_fold.rs` holds
+  the packing map, the direct partial and scalar-opening formulas, and the
+  subring-challenge fold products.
+- `crates/akita-types/src/layout/subring_packing_geometry.rs` defines and validates
   the packing geometry.
-- `crates/akita-types/src/proof/coefficient_packing_relation.rs` supplies the
-  factorized Stage-2 packing relation.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs` validates the
+  packing groups and expands the prover's Stage-2 packing relation.
+- `crates/akita-verifier/src/coefficient_packing_relation/` builds the
+  verifier's compact factors from the same validated groups.
 - `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
   rejects a proof whose dimensions or quotient structure do not match the
   selected schedule.

@@ -219,16 +219,19 @@ pub struct CoefficientPackingStage2Terms<E: Field> {
 }
 
 impl<E: Field> CoefficientPackingStage2Terms<E> {
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn direct_opening_source(&self) -> &[E] {
         &self.direct_opening_source
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn packing_z_source(&self) -> &[E] {
         &self.packing_z_source
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn segments(&self) -> &[CoefficientPackingStage2Segment] {
         &self.segments
@@ -276,6 +279,7 @@ impl<E: Field> CoefficientPackingStage2Terms<E> {
 
     /// Evaluate the structured direct-opening and packing-Z terms at one flat
     /// witness point without materializing a witness-sized weight table.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         let point_variables = u32::try_from(point.len())
             .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;

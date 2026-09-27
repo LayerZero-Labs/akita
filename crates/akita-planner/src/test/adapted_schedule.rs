@@ -1,8 +1,8 @@
 use super::*;
 
 use akita_config::{
-    honest_fold_policy_of, policy_of,
-    proof_optimized::fp128::{Dense, OneHot},
+    policy_of,
+    proof_optimized::fp128::{Dense, DenseBounded, OneHot},
     CommitmentConfig,
 };
 use akita_types::CommittedGroupBatchProfile;
@@ -13,7 +13,6 @@ fn producer<Cfg: CommitmentConfig>(
     crate::emit::PrecommittedProducer::try_new(
         profile,
         Cfg::committed_source_contract().expect("producer source contract"),
-        honest_fold_policy_of::<Cfg>(),
     )
     .expect("valid precommitted producer")
 }
@@ -132,21 +131,6 @@ fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, Akita
 }
 
 #[test]
-fn precommitted_producer_rejects_a_mismatched_fold_policy() {
-    let profile = scalar_row(PolynomialGroupLayout::singleton(14))
-        .expect("scalar producer row")
-        .profiles()
-        .final_group;
-    let error = crate::emit::PrecommittedProducer::try_new(
-        profile,
-        Dense::committed_source_contract().expect("dense source contract"),
-        honest_fold_policy_of::<OneHot>(),
-    )
-    .expect_err("producer policy must agree with its source contract");
-    assert!(matches!(error, AkitaError::InvalidSetup(_)));
-}
-
-#[test]
 fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let policy = policy_of::<Dense>();
     let main_group = PolynomialGroupLayout::singleton(24);
@@ -158,12 +142,12 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         final_group: main_group,
         precommitteds: vec![pre_profile],
     };
-    let request = grouped_request::<Dense>(main_group, &key.precommitteds);
+    let request = grouped_request::<DenseBounded>(main_group, &key.precommitteds);
 
     let adapted = find_adapted_schedule(
         &main_row,
         &request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -186,6 +170,23 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     );
     assert_frozen_skeleton(main_row.schedule(), &adapted.schedule);
 
+    let source_moment = |contract| {
+        let layout = key.opening_layout().unwrap();
+        let moments = crate::response_model::root_group_source_moments(
+            &adapted.schedule.root.params,
+            &layout,
+            Dense::committed_source_contract().unwrap(),
+            &[contract],
+        )
+        .unwrap();
+        moments[0].mean_l2_sq()
+    };
+    assert!(
+        source_moment(request.source_contracts()[0])
+            < source_moment(Dense::committed_source_contract().unwrap()),
+        "the producer bound must lower its source moment for frozen geometry",
+    );
+
     let profiles = CommittedGroupBatchProfile {
         final_group: main_row.profiles().final_group,
         precommitteds: vec![pre_profile],
@@ -205,17 +206,13 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
 }
 
 #[test]
-fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
+fn adapted_schedule_rejects_oversized_precommit_width_before_search() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
     let main_group = PolynomialGroupLayout::singleton(44);
     let main_row = catalog
         .resolve_key(&AkitaScheduleLookupKey::single(main_group))
         .expect("scalar main row");
-    assert!(matches!(
-        main_row.schedule().root.params.opening_method(),
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-    ));
     let pre_profile = catalog
         .resolve_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
@@ -223,18 +220,6 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
         .expect("scalar producer row")
         .profiles()
         .final_group;
-    let packing_domain = PlannerOpeningCandidate::coefficient_packing_domain(
-        0,
-        policy_of::<OneHot>().claim_ext_degree,
-        CommitmentRingDims {
-            inner: pre_profile.inner.matrix.ring_dimension(),
-            outer: pre_profile.outer.matrix.ring_dimension(),
-            opening: main_row.schedule().root.params.role_dims().d_d(),
-        },
-    )
-    .expect("valid packing domain");
-    assert_eq!(packing_domain.len(), 1, "regression requires one choice");
-
     let request = crate::emit::GroupedGenerationRequest::new(
         main_group,
         vec![producer::<OneHot>(pre_profile); MAX_ADAPTED_PRECOMMIT_WIDTH + 1],
@@ -242,11 +227,11 @@ fn adapted_schedule_rejects_oversized_one_choice_packing_domain() {
     let error = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy_of::<OneHot>(),
         |_| panic!("oversized request must reject before planner search"),
     )
-    .expect_err("oversized one-choice producer domain must fail at the public boundary");
+    .expect_err("oversized producer domain must fail at the public boundary");
     let AkitaError::UnsupportedSchedule(message) = error else {
         panic!("unexpected error: {error}");
     };
@@ -269,7 +254,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     let scalar_error = find_adapted_schedule(
         &main_row,
         &scalar_request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -284,7 +269,7 @@ fn adapted_schedule_rejects_non_grouped_or_mismatched_requests() {
     let mismatch_error = find_adapted_schedule(
         &main_row,
         &mismatch_request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -310,7 +295,7 @@ fn adapted_schedule_forces_the_frozen_split_after_grouped_growth() {
     let adapted = find_adapted_schedule(
         &main_row,
         &request,
-        honest_fold_policy_of::<Dense>(),
+        Dense::committed_source_contract().unwrap(),
         &policy,
         Dense::ring_challenge_config,
     )
@@ -339,7 +324,7 @@ fn adapted_schedule_fails_when_the_frozen_suffix_cannot_absorb_the_change() {
     let error = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
     )
@@ -374,7 +359,7 @@ fn adapted_schedule_rebuilds_a_checked_in_onehot_group_shape() {
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &policy,
         OneHot::ring_challenge_config,
     )
@@ -426,7 +411,7 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<RecursiveOneHot>(),
+        RecursiveOneHot::committed_source_contract().unwrap(),
         &policy,
         RecursiveOneHot::ring_challenge_config,
     )
@@ -544,7 +529,7 @@ fn benchmark_adapted_schedule_against_full_plans() {
         let result = find_adapted_schedule(
             main_row,
             &request,
-            honest_fold_policy_of::<OneHot>(),
+            OneHot::committed_source_contract().unwrap(),
             &policy,
             OneHot::ring_challenge_config,
         );
@@ -556,8 +541,8 @@ fn benchmark_adapted_schedule_against_full_plans() {
             .or_else(|_| {
                 find_schedule(
                     &key,
-                    honest_fold_policy_of::<OneHot>(),
-                    &request.fold_policies(),
+                    OneHot::committed_source_contract().unwrap(),
+                    &request.source_contracts(),
                     &policy,
                     OneHot::ring_challenge_config,
                 )
@@ -586,13 +571,13 @@ fn benchmark_adapted_schedule_against_full_plans() {
                 admitted
                     .resolve_key(&key)
                     .expect("successful adaptation must resolve from the admitted catalog");
-                let adapted_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let adapted_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
                     &key,
                     &adapted.schedule,
                     &policy,
                 )
                 .expect("adapted payload bytes");
-                let full_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
+                let full_bytes = akita_schedules::expanded_schedule_native_proof_estimate_bytes(
                     &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");

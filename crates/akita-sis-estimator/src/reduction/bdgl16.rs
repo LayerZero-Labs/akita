@@ -18,14 +18,6 @@ pub fn lll(d: u64) -> f64 {
     (d as f64).powi(3)
 }
 
-/// BDGL16 asymptotic sieve cost `LLL(d) + 2^(0.292·β + 16.4 + log₂ repeat)`.
-#[must_use]
-pub fn bdgl16_cost(beta: u32, d: u64) -> f64 {
-    let repeat = svp_repeat(beta, d) as f64;
-    let exponent = 0.292 * beta as f64 + 16.4 + repeat.log2();
-    lll(d) + 2.0_f64.powf(exponent)
-}
-
 /// BDGL16 BKZ cost in log₂ space.
 #[must_use]
 pub fn bdgl16_log2_cost(beta: u32, d: u64) -> f64 {

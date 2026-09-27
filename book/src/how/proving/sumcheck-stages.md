@@ -183,7 +183,7 @@ $$
 Their product is $R_b$. Each $L_\ell$ is quartic except at basis $4$, where
 the only leaf is quadratic. Product substages prove how these leaves combine,
 using only arity-$2$ or arity-$4$ products. The topology is fixed by
-[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs):
+[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/layout/digit_range.rs):
 
 | Basis | Product substages | Final leaf |
 |---:|---|---|
@@ -284,7 +284,7 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/sumcheck/digit_range/mod.rs),
 [`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf

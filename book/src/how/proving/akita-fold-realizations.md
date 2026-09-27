@@ -911,14 +911,14 @@ page.
 
 1. **Create and retain the commitment-side material.** The standalone/root
    commitment paths in
-   [`commitment API`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/commitment/api.rs)
+   [`commitment API`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/commitment/api.rs)
    compute the semantic outer commitment
    $\mathbf u=\mathbf B\hat{\mathbf t}$ and compress it. The recursive
-   [`commit_w`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/commit.rs)
+   [`commit_witness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/recursive/commit.rs)
    computes the same semantic value, then follows the payload mode selected
    for that level. A raw recursive level exposes $\mathbf u$ directly. A
    compressed commitment passes it to
-   [`execute_compression_chains`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/compute/compression.rs),
+   [`execute_compression_chains`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/compression.rs),
    exposes only $p_F$, and retains the two packed $\mathbf F$ digit layers and
    their quotient rows in the commitment hint.
 2. **Build the fold-side objects.**
@@ -926,7 +926,7 @@ page.
    decomposes the position-folded values into $\hat{\mathbf e}$, computes
    $\mathbf v_D=\mathbf D\hat{\mathbf e}$, samples the fold challenges, and
    builds $\mathbf z$. In compressed mode,
-   [`materialize_compression_witness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation/compression_witness.rs)
+   [`materialize_compression_witness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/compression_witness.rs)
    combines the retained $\mathbf F$ material with a newly computed
    $\mathbf H$ chain for $\mathbf v_D$, producing the terminal payload $p_H$
    and storing both chains as `CompressionWitnessMaterialization`.
@@ -942,7 +942,7 @@ page.
    derives $\hat{\mathbf t}$ from the semantic inner rows stored in the hint,
    and emits $\hat{\mathbf z}$, $\hat{\mathbf e}$, and $\hat{\mathbf t}$. In
    quotient-lift mode it invokes
-   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs)
+   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/relation_quotient.rs)
    to compute one quotient in every physical row's native ring. In compressed
    mode it also emits the two $\mathbf F/\mathbf H$ digit layers. In reduced
    mode it dispatches before quotient construction and uses negacyclic-only D
@@ -1036,12 +1036,13 @@ and coefficient-packing points through its compact packing relation path. Only
 the projections needed by the physical consistency relation remain in this
 instance.
 
-### Prover witness: `RingRelationWitness`
+### CPU-private relation witness state
 
-[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation_witness.rs)
-is the prover-only aggregate witness. In the basic setting, its `groups`
-vector contains one
-`RingRelationGroupWitness`:
+The CPU consumer's private
+[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/opaque/witness_build/finalize.rs)
+is the aggregate used while constructing an opaque `CpuWitnessHandle`; protocol
+orchestration cannot inspect or transport it. In the basic setting, its private
+`groups` vector contains one `RingRelationGroupWitness`:
 
 | Field | Mathematical meaning |
 |---|---|
@@ -1051,7 +1052,7 @@ vector contains one
 | `hint` | semantic inner rows, plus retained $\mathbf F$ stages and quotients when the incoming payload is compressed |
 
 The
-[`AkitaCommitmentHint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/hints.rs)
+[`PortableCommitmentHandle`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-cpu-backend/src/commitment/portable.rs)
 does not store a materialized $\hat{\mathbf t}$ or a separate copy of
 $\mathbf u$. `ring_switch_build_w` derives $\hat{\mathbf t}$ from its semantic
 inner rows. At the aggregate level, `RingRelationWitness::compression` holds

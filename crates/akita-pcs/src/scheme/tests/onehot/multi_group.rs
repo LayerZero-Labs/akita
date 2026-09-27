@@ -32,7 +32,7 @@ fn multi_group_root_round_trip_onehot<ProtocolCfg>(
     multi_group_key: &akita_types::AkitaScheduleLookupKey,
     check_group_binding: bool,
     max_cached_ring_switch_elements: usize,
-) -> AkitaBatchedProof<OneHotF, OneHotF>
+) -> Vec<u8>
 where
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
@@ -66,20 +66,11 @@ where
         .clone();
 
     let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
-    let cached_backend = CpuBackend::with_resource_limits(
+    let stack = CpuBackend::with_ring_switch_cache_limit(
+        setup.expanded.clone(),
         max_cached_ring_switch_elements,
-        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .expect("cached backend");
-    let prepared = cached_backend
-        .prepare_setup(&setup)
-        .expect("prepared setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &cached_backend,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
     // Commit every precommitted group from its exact generated profile; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_commitments = Vec::new();
@@ -97,15 +88,14 @@ where
                 )
             })
             .collect();
-        let akita_prover::CommitOutput {
+        let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
-            prover_state: hint,
-        } = scheme
+            private_handle: hint,
+        } = stack
             .commit(
-                &setup,
-                &polys,
-                stack.commitment(),
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                scheme.schedules(),
+                &stack.import_source(polys.to_vec()).expect("source"),
+                akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
         assert_eq!(commitment.profile, *profile);
@@ -169,18 +159,21 @@ where
             )
         })
         .collect();
-    let precommitteds =
-        akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-            .expect("nonempty precommitted groups");
-    let akita_prover::CommitOutput {
+    let precommitteds = akita_types::PrecommittedGroupProfiles::from_profiles(
+        pre_commitments
+            .iter()
+            .map(|group| *group.profile())
+            .collect(),
+    )
+    .expect("nonempty precommitted groups");
+    let akita_cpu_backend::CommitOutput {
         committed_group: final_commitment,
-        prover_state: final_hint,
-    } = scheme
+        private_handle: final_hint,
+    } = stack
         .commit(
-            &setup,
-            &final_polys,
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+            scheme.schedules(),
+            &stack.import_source(final_polys.to_vec()).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
 
@@ -218,12 +211,6 @@ where
         })
         .collect();
 
-    let pre_refs_by_group: Vec<Vec<&OneHotPoly<OneHotF, u8>>> = pre_polys_by_group
-        .iter()
-        .map(|polys| polys.iter().collect())
-        .collect();
-    let final_refs: Vec<&OneHotPoly<OneHotF, u8>> = final_polys.iter().collect();
-
     let mut prover_groups = Vec::new();
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         prover_groups.push(
@@ -244,59 +231,27 @@ where
         .expect("final prover group"),
     );
 
-    let mut prover_polys: Vec<&[&OneHotPoly<OneHotF, u8>]> = Vec::new();
-    for refs in &pre_refs_by_group {
-        prover_polys.push(&refs[..]);
-    }
-    prover_polys.push(&final_refs[..]);
     let mut prover_hints = pre_hints;
     prover_hints.push(final_hint);
 
     let prover_claims = SelectedProverOpeningData::from_committed_claims::<ProtocolCfg>(
         OpeningClaims::from_groups(prover_groups).expect("prover claims"),
         prover_hints,
-        prover_polys,
         scheme.schedules(),
     )
     .expect("multi-group prover data");
     let selection = prover_claims.selection();
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     let proof = scheme
         .batched_prove(
             &setup,
             prover_claims,
             &stack,
-            &mut prover_transcript,
+            b"test/multi-group-unequal",
             BasisMode::Lagrange,
         )
         .expect("multi-group prove");
-    assert!(proof.num_fold_levels() >= 2);
-    let planned_stage3 = multi_group_schedule
-        .recursive_folds
-        .iter()
-        .filter(|fold| fold.params.setup_prefix().is_some())
-        .count();
-    let proved_stage3 = proof
-        .nonterminal_folds()
-        .filter(|fold| fold.stage3_sumcheck_proof().is_some())
-        .count();
-    assert_eq!(
-        proved_stage3, planned_stage3,
-        "proof stage-3 payloads must follow the config-selected schedule"
-    );
-
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize multi-group proof");
-    let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize multi-group proof");
-    assert_eq!(decoded, proof);
+    assert!(multi_group_schedule.num_fold_levels() >= 2);
 
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
@@ -320,15 +275,16 @@ where
     );
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     scheme
-        .batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/multi-group-unequal",
+                GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("multi-group verify");
 
     if check_group_binding {
@@ -348,17 +304,16 @@ where
             .expect("swapped final verifier group"),
         ])
         .expect("swapped verifier claims");
-        let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
-                .batched_verify(
-                    &decoded,
-                    &verifier_setup,
-                    &mut swapped_transcript,
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
+                    &proof,
+                    b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "swapped group commitments must reject"
         );
@@ -372,17 +327,16 @@ where
                 .expect("tampered final verifier group"),
         ])
         .expect("tampered verifier claims");
-        let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
             scheme
-                .batched_verify(
-                    &decoded,
-                    &verifier_setup,
-                    &mut tampered_transcript,
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
+                    &proof,
+                    b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "tampered group opening must reject"
         );

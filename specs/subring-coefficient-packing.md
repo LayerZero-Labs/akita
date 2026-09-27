@@ -1259,16 +1259,21 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs retain `MinFirstDirectSetupThenPayloadV2`:
-first-direct padded setup capacity, proof payload, exact total setup field
-elements, root output-witness length, and the canonical descriptor. Recursive
-catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
-compares the next-power-of-two capacity covering the total setup envelope.
+Adaptive direct catalogs use `MinFirstDirectSetupThenExactProofAndWorkV5`:
+first-direct padded setup capacity, exact additive proof-and-work score,
+native proof bytes, exact total setup field elements, root output-witness
+length, and the canonical descriptor.
+
+The additive work term includes each fold's outgoing witness and, for a direct
+edge, twice the natural setup-scan length plus 64 units per common-base ring.
+Offloaded edges have no direct-scan charge. Recursive catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`, which first compares
+the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity, proof payload, and first-direct
-output-witness length. A numeric tie then goes directly to the canonical descriptor.
-No objective component for `s`, `d_A`, rank, fold count, or prover time is
-added.
+before comparing first-direct capacity, the proof-and-work score, native proof bytes, and first-direct
+output-witness length. A numeric tie then goes
+directly to the canonical descriptor. No direct objective component for `s`,
+`d_A`, rank, fold count, or measured wall-clock time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1327,12 +1332,12 @@ The retained catalog improves in aggregate under both setup coordinates and
 proof payload. The two proof regressions remain explicit in the per-row review
 data; setup-primary selection does not imply per-row proof nonregression.
 
-At the checked head, the fp32 dense nv20 adaptive direct rows use
-`MinFirstDirectSetupThenPayloadV2`. Their first-direct padded
-capacities are 131,072 and 262,144 fields. Their six-level schedules use
-458,752 and 524,288 total setup fields and produce 62,447 and 63,254 proof
-bytes across six fold levels. The checked decision is recorded in the
+At the pinned head of that comparison, the fp32 dense nv20 adaptive direct
+rows had first-direct padded capacities of 131,072 and 262,144 fields. Their
+six-level schedules used 458,752 and 524,288 total setup fields and modeled
+62,447 and 63,254 proof bytes. Those historical results are recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
+The current catalog is regenerated under the proof-only native policy above.
 
 ### B slicing interaction
 
@@ -1504,10 +1509,11 @@ The planner MUST keep the search bounded in the following ways.
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
-- [x] Adaptive direct catalogs minimize first-direct setup capacity, proof
-      payload, exact total setup, root output-witness length, and the canonical
+- [x] Adaptive direct catalogs minimize first-direct setup capacity, the exact
+      proof-and-work score, proof bytes, exact total setup, root output-witness length, and the canonical
       descriptor. Recursive catalogs minimize padded total setup-envelope
-      capacity, first-direct setup capacity, proof payload, first-direct
+      capacity, first-direct setup capacity, the exact proof-and-work score,
+      proof bytes, first-direct
       output-witness length, and then the canonical descriptor. The objective has no
       explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects

@@ -1,5 +1,4 @@
-use akita_algebra::poly::Poly;
-use akita_algebra::{CyclotomicRing, VectorModule};
+use akita_algebra::CyclotomicRing;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError};
 use jolt_field::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275, Ring, Zero};
 
@@ -61,32 +60,6 @@ fn serialization_round_trip_fp_ext4() {
     val.serialize_compressed(&mut buf).unwrap();
     let restored = F4::deserialize_compressed(&buf[..], &()).unwrap();
     assert!(val == restored);
-}
-
-#[test]
-fn serialization_round_trip_vector_module() {
-    type F = Fp32<251>;
-    let val = VectorModule::<F, 3>([F::from_u64(1), F::from_u64(2), F::from_u64(3)]);
-    let mut buf = Vec::new();
-    val.serialize_compressed(&mut buf).unwrap();
-    let restored = VectorModule::<F, 3>::deserialize_compressed(&buf[..], &()).unwrap();
-    assert_eq!(val, restored);
-}
-
-#[test]
-fn serialization_round_trip_poly() {
-    type F = Fp32<251>;
-
-    let val = Poly::<F, 4>([
-        F::from_u64(7),
-        F::from_u64(11),
-        F::from_u64(13),
-        F::from_u64(29),
-    ]);
-    let mut buf = Vec::new();
-    val.serialize_compressed(&mut buf).unwrap();
-    let restored = Poly::<F, 4>::deserialize_compressed(&buf[..], &()).unwrap();
-    assert_eq!(val, restored);
 }
 
 #[test]

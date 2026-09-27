@@ -2,11 +2,10 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::{
-    CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
-    OpeningClaimsLayout, PolynomialGroupLayout,
+    CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
+    PolynomialGroupLayout,
 };
-use akita_error::AkitaError;
-use jolt_field::Field;
+use akita_error::{checked, AkitaError};
 
 /// Physical coefficient representation authenticated by a commitment.
 ///
@@ -144,8 +143,8 @@ impl GroupCommitPhaseParams {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_params_unchecked_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_params_unchecked_for_test(
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
     ) -> Self {
@@ -189,13 +188,6 @@ impl GroupCommitPhaseParams {
     #[must_use]
     pub fn inner_digits(&self) -> crate::GadgetDigits {
         self.inner.digits
-    }
-
-    /// The B-role gadget decomposition.
-    #[inline]
-    #[must_use]
-    pub fn outer_digits(&self) -> crate::GadgetDigits {
-        self.outer.digits
     }
 
     /// Canonical versioned bytes used for catalog and schedule-key identity.
@@ -286,8 +278,7 @@ impl GroupCommitPhaseParams {
                 "setup-prefix commitment profile must be singleton".into(),
             ));
         }
-        let n_prefix = 1usize
-            .checked_shl(self.group.num_vars() as u32)
+        let n_prefix = checked::pow2(self.group.num_vars())
             .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
         crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
 
@@ -408,23 +399,6 @@ impl PrecommittedGroupProfiles {
         Ok(Self { profiles })
     }
 
-    /// Extract profiles from committed groups in caller-supplied order.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `groups` is empty.
-    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
-    where
-        F: Field + 'a,
-        I: IntoIterator<Item = &'a CommittedGroup<F>>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let groups = groups.into_iter();
-        let mut profiles = Vec::with_capacity(groups.len());
-        profiles.extend(groups.map(|group| *group.profile()));
-        Self::from_profiles(profiles)
-    }
-
     /// Borrow the exact ordered profiles.
     pub fn as_slice(&self) -> &[GroupCommitPhaseParams] {
         &self.profiles
@@ -474,11 +448,6 @@ impl AkitaScheduleLookupKey {
             .collect();
         groups.push(self.final_group);
         OpeningClaimsLayout::from_groups(groups)
-    }
-
-    /// Number of commitment groups in this schedule key.
-    pub fn num_commitment_groups(&self) -> usize {
-        self.precommitteds.len() + 1
     }
 
     /// Maximum opening arity across the final and precommitted groups.
@@ -612,24 +581,13 @@ pub struct CommittedGroupBatchProfile {
 }
 
 impl CommittedGroupBatchProfile {
-    /// Assemble an exact batch profile from ordered committed groups.
-    ///
-    /// Each group carries its own profile, so the prefix is derived here
-    /// rather than supplied and cross-checked.
+    /// Assemble an exact batch profile from committed-group profiles in
+    /// transcript order; the last profile is the final group.
     ///
     /// # Errors
     ///
-    /// Returns an error when `groups` is empty.
-    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
-    where
-        F: Field + 'a,
-        I: IntoIterator<Item = &'a CommittedGroup<F>>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let mut profiles = groups
-            .into_iter()
-            .map(|group| *group.profile())
-            .collect::<Vec<_>>();
+    /// Returns an error when `profiles` is empty.
+    pub fn from_profiles(mut profiles: Vec<GroupCommitPhaseParams>) -> Result<Self, AkitaError> {
         let final_group = profiles.pop().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "committed group batch profile requires at least one group".to_string(),

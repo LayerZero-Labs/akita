@@ -34,9 +34,9 @@ env:
   # This lets the runner reach a steady state and warms operating system file
   # caches. Each measured process constructs fresh setup and local state.
   AKITA_BENCH_WARMUPS: "1"
-  # The profile example emits the exact proof-global nonce-stream width and
-  # every public grinding-plan run. The detailed report attributes packed bits
-  # to each fold and query without rounding fold subtotals to bytes.
+  # The profile example emits native LEB128 nonce accounting and every public
+  # grinding-plan run. The detailed report separates semantic nonce bits,
+  # native worst-case bytes, and expanded query counts by fold and query.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

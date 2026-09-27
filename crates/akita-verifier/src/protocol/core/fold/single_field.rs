@@ -4,63 +4,11 @@
 // no extension-opening-reduction symbols in scope.
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
-use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
-    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point, BasisMode,
-    CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    TerminalFoldParams,
+    dispatch_for_field, prepare_opening_point, BasisMode, CommittedGroupParams, FpExtEncoding,
+    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
-
-pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
-    protocol_points: &[&[E]],
-    transcript: &mut T,
-) where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + AkitaSerialize,
-    T: Transcript<F>,
-{
-    for point in protocol_points {
-        for coordinate in *point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
-        }
-    }
-}
-
-/// Terminal-suffix single-field prefix: prepare the recursive opening point
-/// and absorb the point and claim value, no EOR.
-pub(in crate::protocol::core) fn prepare_single_field_terminal_suffix<F, E, T>(
-    protocol_point: &[E],
-    basis: BasisMode,
-    opening: &E,
-    params: &TerminalFoldParams,
-    transcript: &mut T,
-) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let prepared_point = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        params.d_a(),
-        |D| {
-            prepare_opening_point::<F, E, D>(
-                protocol_point,
-                basis,
-                params.blocks.positions_per_block,
-                params.blocks.live_blocks,
-                params.d_a().trailing_zeros() as usize,
-            )
-        }
-    )?;
-    let prepared_points = vec![prepared_point];
-    absorb_protocol_opening_points(&[protocol_point], transcript);
-    append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
-    Ok(prepared_points)
-}
 
 /// Recursive-suffix single-field preparation: per-group `prepare_opening_point`
 /// over the suffix opening groups, no EOR.

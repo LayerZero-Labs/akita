@@ -39,14 +39,6 @@ impl SignedDigitKernel {
             None
         }
     }
-
-    /// Largest supported basis exponent for this storage kernel.
-    pub const fn max_log_basis(self) -> u32 {
-        match self {
-            Self::I8 => MAX_I8_LOG_BASIS,
-            Self::I16 => MAX_I16_LOG_BASIS,
-        }
-    }
 }
 
 #[cfg(test)]

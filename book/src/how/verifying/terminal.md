@@ -235,8 +235,9 @@ prepared state. Malformed terminal bytes return `AkitaError` or
   exact A product.
 - `crates/akita-types/src/golomb_rice.rs` implements the codec and its
   canonical-decoding tests.
-- `crates/akita-types/src/proof/tail_segments.rs` defines the response
-  layout and transcript segments.
+- `crates/akita-types/src/layout/tail_segments.rs` defines the response
+  layout and transcript segments, and
+  `crates/akita-types/src/proof/tail_segments.rs` defines the wire response.
 - `crates/akita-types/src/field_reduction.rs` implements subfield recovery.
   `crates/akita-pcs/tests/transcript_hardening.rs` supplies end-to-end
   regression coverage for terminal binding and proof tampering.

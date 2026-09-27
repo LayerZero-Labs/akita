@@ -11,12 +11,13 @@ impl WitnessLayout {
     /// its address ranges.
     ///
     /// This is the candidate-aware counterpart of [`Self::new`] for planner
-    /// hot paths. The caller validates compression-source feasibility before
-    /// constructing `relation_geometry`; all malformed geometry is an error.
+    /// hot paths. The caller supplies the extension degree, not a prebuilt
+    /// geometry: this function owns its one construction and validation of
+    /// the candidate's relation layout.
     pub fn scalar_live_coeff_len(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        relation_geometry: &RelationWitnessGeometry,
+        extension_degree: usize,
         num_chunks: usize,
         quotient_plan: RelationQuotientPlan,
     ) -> Result<usize, AkitaError> {
@@ -40,17 +41,8 @@ impl WitnessLayout {
                 "witness chunk count exceeds verifier cap".into(),
             ));
         }
-        let expected_relation_geometry = RelationWitnessGeometry::for_level(
-            lp,
-            opening_batch,
-            relation_geometry.extension_degree(),
-        )?;
-        if &expected_relation_geometry != relation_geometry {
-            return Err(AkitaError::InvalidSetup(
-                "scalar witness sizing received relation geometry for different level parameters"
-                    .into(),
-            ));
-        }
+        let relation_geometry =
+            RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
         let relation_group_order = opening_batch.root_group_order()?;
         let group_index = *relation_group_order.first().ok_or_else(|| {
             AkitaError::InvalidSetup("scalar witness relation group is missing".into())
@@ -90,10 +82,12 @@ impl WitnessLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 
-        let successor_a_alignment = relation_geometry.relation_coefficient_block_len()?;
+        let successor_a_alignment = relation_geometry
+            .rhs_layout()
+            .relation_coefficient_block_len()?;
         super::tail::measure(
             lp,
-            relation_geometry,
+            &relation_geometry,
             1,
             successor_a_alignment,
             cursor,
@@ -195,7 +189,7 @@ mod tests {
                             let scalar = WitnessLayout::scalar_live_coeff_len(
                                 &params,
                                 &opening_batch,
-                                &relation_geometry,
+                                relation_geometry.extension_degree(),
                                 num_chunks,
                                 quotient_plan,
                             )
@@ -300,7 +294,10 @@ mod tests {
             assert_eq!(opening_geometry.coordinate_plane_count(), 2);
             assert_eq!(opening_geometry.physical_coefficient_width(), 128);
             assert_eq!(
-                relation_geometry.relation_coefficient_block_len().unwrap(),
+                relation_geometry
+                    .rhs_layout()
+                    .relation_coefficient_block_len()
+                    .unwrap(),
                 64
             );
             assert_eq!(params.role_dims().common_relation_coeff_count(), 128);
@@ -390,7 +387,7 @@ mod tests {
                 let scalar = WitnessLayout::scalar_live_coeff_len(
                     &params,
                     &opening_batch,
-                    &relation_geometry,
+                    relation_geometry.extension_degree(),
                     num_chunks,
                     RelationQuotientPlan::quotient_lift(2).unwrap(),
                 )
@@ -718,5 +715,94 @@ mod tests {
             RelationWitnessGeometry::for_evaluation_trace_execution(&invalid, &opening_batch)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn scalar_live_length_matches_packing_layout_across_extension_degrees() {
+        let opening = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+        for payload in [
+            crate::CommitmentPayloadMode::Raw,
+            crate::CommitmentPayloadMode::Compressed,
+        ] {
+            let mut params = coefficient_packing_params(payload);
+            // Degree one has a 64-coefficient opening row. Use D64 so every
+            // tested degree has an opening width divisible by the D dimension.
+            let open = params.open().matrix;
+            params.open_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+                open.security_policy(),
+                open.sis_table_key().table_digest,
+                open.sis_modulus_profile(),
+                open.output_rank(),
+                open.input_width() * 2,
+                open.coeff_linf_bound(),
+                64,
+            );
+            for extension_degree in [1, 2, 4] {
+                let geometry =
+                    RelationWitnessGeometry::for_level(&params, &opening, extension_degree)
+                        .expect("packing geometry");
+                for chunks in [1, 2, 4] {
+                    let quotient = RelationQuotientPlan::quotient_lift(2).unwrap();
+                    let expected =
+                        WitnessLayout::new(&params, &opening, &geometry, chunks, quotient)
+                            .expect("materialized packing layout")
+                            .live_coeff_len();
+                    let actual = WitnessLayout::scalar_live_coeff_len(
+                        &params,
+                        &opening,
+                        extension_degree,
+                        chunks,
+                        quotient,
+                    )
+                    .expect("scalar packing length");
+                    assert_eq!(
+                        actual, expected,
+                        "degree={extension_degree}, chunks={chunks}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_live_length_preserves_canonical_input_rejection() {
+        let params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
+        let opening = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+        let quotient = RelationQuotientPlan::quotient_lift(2).unwrap();
+        let check = |params: &CommittedGroupParams, extension_degree, chunks, quotient| {
+            let expected = RelationWitnessGeometry::for_level(params, &opening, extension_degree)
+                .and_then(|geometry| {
+                    WitnessLayout::new(params, &opening, &geometry, chunks, quotient)
+                })
+                .expect_err("materialized layout rejects malformed input");
+            let actual = WitnessLayout::scalar_live_coeff_len(
+                params,
+                &opening,
+                extension_degree,
+                chunks,
+                quotient,
+            )
+            .expect_err("scalar sizing rejects malformed input");
+            assert_eq!(actual.to_string(), expected.to_string());
+        };
+        for degree in [0, 3] {
+            check(&params, degree, 1, quotient);
+        }
+        // A valid extension degree can still be incompatible with D128:
+        // degree one supplies only 64 coefficients per opening row.
+        check(&params, 1, 1, quotient);
+        for chunks in [0, 3, MAX_WITNESS_CHUNKS + 1] {
+            check(&params, 2, chunks, quotient);
+        }
+        check(&params, 2, 1, RelationQuotientPlan::ReducedEvaluation);
+        let mut malformed = params.clone();
+        malformed.own_group_mut().opening.opening_method =
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 32,
+            };
+        check(&malformed, 2, 1, quotient);
+        let mut malformed = params;
+        malformed.own_group_mut().profile.inner.digits.num_digits = 0;
+        check(&malformed, 2, 1, quotient);
     }
 }

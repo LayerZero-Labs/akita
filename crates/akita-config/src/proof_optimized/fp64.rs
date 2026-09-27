@@ -50,3 +50,7 @@ impl_proof_optimized_preset!(
     schedule_family = "fp64_onehot",
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp64_dense_recursive";
+}

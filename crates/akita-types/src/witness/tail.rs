@@ -395,7 +395,9 @@ fn resolve<S: TailSink>(
         return sink.finish(start, plan);
     }
 
-    let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
+    let relation_coefficient_block = relation_geometry
+        .rhs_layout()
+        .relation_coefficient_block_len()?;
     sink.align(
         relation_coefficient_block,
         "compression witness alignment overflow",

@@ -22,7 +22,8 @@
 //! O(1) pops per round instead of an O(2^n) fold.
 
 use super::eq_poly::EqPolynomial;
-use super::uni_poly::UniPoly;
+use jolt_poly::UnivariatePoly;
+
 use crate::{Field, Ring};
 use akita_error::AkitaError;
 
@@ -169,15 +170,15 @@ impl<E: Field> GruenSplitEq<E> {
     /// `l(X) = current_scalar · eq(τ_current, X)` is the linear eq factor
     /// for the current variable, including any constructor-supplied leading
     /// scalar. The result has degree `d + 1`.
-    pub fn gruen_mul(&self, q_poly: &UniPoly<E>) -> UniPoly<E> {
+    pub fn gruen_mul(&self, q_poly: &UnivariatePoly<E>) -> UnivariatePoly<E> {
         let (l_at_0, l_at_1) = self.linear_factor_evals();
         let slope = l_at_1 - l_at_0;
-        let mut coeffs = vec![E::zero(); q_poly.coeffs.len() + 1];
-        for (i, &c) in q_poly.coeffs.iter().enumerate() {
+        let mut coeffs = vec![E::zero(); q_poly.coefficients().len() + 1];
+        for (i, &c) in q_poly.coefficients().iter().enumerate() {
             coeffs[i] += c * l_at_0;
             coeffs[i + 1] += c * slope;
         }
-        UniPoly::from_coeffs(coeffs)
+        UnivariatePoly::new(coeffs)
     }
 
     /// Recover a missing linear coefficient of `q(X)` from `s(0) + s(1)` and
@@ -190,14 +191,14 @@ impl<E: Field> GruenSplitEq<E> {
         &self,
         q_coeffs_except_linear: &[E],
         s_0_plus_s_1: E,
-    ) -> Option<UniPoly<E>> {
+    ) -> Option<UnivariatePoly<E>> {
         if q_coeffs_except_linear.is_empty() {
-            return Some(UniPoly::from_coeffs(vec![E::zero()]));
+            return Some(UnivariatePoly::new(vec![E::zero()]));
         }
 
         let (l_at_0, l_at_1) = self.linear_factor_evals();
         if l_at_0.is_zero() && l_at_1.is_zero() {
-            return Some(UniPoly::from_coeffs(vec![E::zero()]));
+            return Some(UnivariatePoly::new(vec![E::zero()]));
         }
 
         let l_at_1_inv = l_at_1.inverse()?;
@@ -213,7 +214,7 @@ impl<E: Field> GruenSplitEq<E> {
         q_coeffs.push(q_at_0);
         q_coeffs.push(q_linear);
         q_coeffs.extend_from_slice(&q_coeffs_except_linear[1..]);
-        Some(self.gruen_mul(&UniPoly::from_coeffs(q_coeffs)))
+        Some(self.gruen_mul(&UnivariatePoly::new(q_coeffs)))
     }
 }
 
@@ -229,10 +230,10 @@ impl<E: Field + Ring> GruenSplitEq<E> {
         q_constant: E,
         q_quadratic_coeff: E,
         s_0_plus_s_1: E,
-    ) -> Option<UniPoly<E>> {
+    ) -> Option<UnivariatePoly<E>> {
         let (l_at_0, l_at_1) = self.linear_factor_evals();
         if l_at_0.is_zero() && l_at_1.is_zero() {
-            return Some(UniPoly::from_coeffs(vec![E::zero()]));
+            return Some(UnivariatePoly::new(vec![E::zero()]));
         }
 
         let l_at_1_inv = l_at_1.inverse()?;
@@ -249,12 +250,10 @@ impl<E: Field + Ring> GruenSplitEq<E> {
         let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_q_quadratic;
         let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_q_quadratic + twice_q_quadratic;
 
-        Some(UniPoly::from_evals(&[
-            s_at_0,
-            s_at_1,
-            l_at_2 * q_at_2,
-            l_at_3 * q_at_3,
-        ]))
+        let mut polynomial =
+            UnivariatePoly::from_evals(&[s_at_0, s_at_1, l_at_2 * q_at_2, l_at_3 * q_at_3]);
+        polynomial.trim_trailing_zeros();
+        Some(polynomial)
     }
 }
 
@@ -309,7 +308,7 @@ mod tests {
         let tau: Vec<F> = (0..5).map(|_| F::random(&mut rng)).collect();
         let split_eq = GruenSplitEq::new(&tau).unwrap();
 
-        let q = UniPoly::from_coeffs(vec![F::from_u64(3), F::from_u64(7), F::from_u64(2)]);
+        let q = UnivariatePoly::new(vec![F::from_u64(3), F::from_u64(7), F::from_u64(2)]);
         let s = split_eq.gruen_mul(&q);
 
         let tau_k = split_eq.current_tau();
@@ -317,8 +316,8 @@ mod tests {
         for t in 0..10u64 {
             let x = F::from_u64(t);
             let l_x = scalar * (tau_k * x + (F::one() - tau_k) * (F::one() - x));
-            let q_x = q.evaluate(&x);
-            assert_eq!(s.evaluate(&x), l_x * q_x, "t={t}");
+            let q_x = q.evaluate(x);
+            assert_eq!(s.evaluate(x), l_x * q_x, "t={t}");
         }
     }
 
@@ -331,15 +330,19 @@ mod tests {
         }
         let split_eq = GruenSplitEq::new(&tau).unwrap();
 
-        let q = UniPoly::from_coeffs(vec![
+        let q = UnivariatePoly::new(vec![
             F::from_u64(3),
             F::from_u64(7),
             F::from_u64(11),
             F::from_u64(2),
         ]);
         let s = split_eq.gruen_mul(&q);
-        let q_except_linear = vec![q.coeffs[0], q.coeffs[2], q.coeffs[3]];
-        let previous_claim = s.evaluate(&F::zero()) + s.evaluate(&F::one());
+        let q_except_linear = vec![
+            q.coefficients()[0],
+            q.coefficients()[2],
+            q.coefficients()[3],
+        ];
+        let previous_claim = s.evaluate(F::zero()) + s.evaluate(F::one());
 
         let recovered = split_eq
             .try_gruen_poly_from_coeffs_except_linear(&q_except_linear, previous_claim)
@@ -357,12 +360,12 @@ mod tests {
         }
         let split_eq = GruenSplitEq::new(&tau).unwrap();
 
-        let q = UniPoly::from_coeffs(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
+        let q = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
         let s = split_eq.gruen_mul(&q);
-        let previous_claim = s.evaluate(&F::zero()) + s.evaluate(&F::one());
+        let previous_claim = s.evaluate(F::zero()) + s.evaluate(F::one());
 
         let recovered = split_eq
-            .try_gruen_poly_deg_3(q.coeffs[0], q.coeffs[2], previous_claim)
+            .try_gruen_poly_deg_3(q.coefficients()[0], q.coefficients()[2], previous_claim)
             .expect("tau_0 is nonzero, so q(1) is recoverable");
 
         assert_eq!(recovered, s);

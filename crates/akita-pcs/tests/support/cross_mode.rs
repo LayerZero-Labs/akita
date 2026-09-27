@@ -1,9 +1,6 @@
 //! Explicit one-row catalogs for quotient/reduced relation-mode tests.
 
-use akita_config::{
-    honest_fold_policy_of, policy_of, CommitmentConfig, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog,
-};
+use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_planner::{find_schedule_for_test_relation_mode, TestRelationModeFilter};
 use akita_types::{
@@ -30,10 +27,10 @@ fn planned_row<Base: CommitmentConfig>(
         ));
     }
     let policy = policy_of::<Base>();
-    let final_honest_fold_policy = honest_fold_policy_of::<Base>();
+    let final_source_contract = Base::committed_source_contract()?;
     let planned = find_schedule_for_test_relation_mode(
         key,
-        final_honest_fold_policy,
+        final_source_contract,
         &[],
         &policy,
         Base::ring_challenge_config,

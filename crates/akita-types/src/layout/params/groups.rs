@@ -76,7 +76,7 @@ impl FoldGroups {
         self.preceding().get(index)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn preceding_group_mut(
         &mut self,
         index: usize,
@@ -100,6 +100,7 @@ impl FoldGroups {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn replace_precommitted(
         &mut self,
         groups: Vec<GroupOpenPhaseParams>,
@@ -121,6 +122,7 @@ impl FoldGroups {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn insert_precommitted(
         &mut self,
         group: GroupOpenPhaseParams,

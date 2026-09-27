@@ -282,7 +282,7 @@ functional is applied or what protocol object disappears.
 | Semantic relation rows and native geometry | `RelationRhsLayout`, `RelationRowFamily`, `RelationRowGeometry` |
 | Physical recursive witness ranges | `WitnessLayout` |
 | Flat Stage-2 address split | `RelationAddressGeometry` |
-| Public A/B/D setup contraction | `SetupContributionPlan` |
+| Public A/B/D setup contraction | `SetupContributionPlan` (plan), `DirectScan` (verifier evaluation) |
 | Per-fold effective parameters | `CommittedGroupParams` |
 | Absolute schedule positions and adjacency | `FoldSchedule` |
 | Transcript preamble binding | `AkitaInstanceDescriptor::plan` and effective schedule digest |
@@ -560,7 +560,7 @@ weights. The implementation MAY stream or cache these kernels, but auxiliary
 storage MUST remain bounded by the largest active native window and it MUST NOT
 materialize a witness-sized functional table.
 
-The verifier MUST extend the existing fused `SetupContributionPlan` scan for
+The verifier MUST extend the existing fused `DirectScan` setup scan for
 the ordinary A, B, and D setup tensor. It MUST NOT add independent A, B, and D
 scans or materialize one residue kernel per setup lane. Compression F/H maps
 remain owned by the canonical compression-relation program: they use the same

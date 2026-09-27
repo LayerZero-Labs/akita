@@ -72,18 +72,12 @@ fn recursive_shared_d_matrix_has_a_single_owner() {
         input_witness_len: 64,
         output_witness_len: 64,
     };
-    // Reading the matrix through the fold accessor and through its params must
-    // be the same read, because it is the same field. If a second copy is ever
-    // reintroduced, these diverge and this fails.
+    // The opening-role view must read the one stored matrix. If a second copy
+    // is ever reintroduced, these diverge and this fails.
     assert_eq!(
-        fold.open_commit_matrix(),
-        &fold.params.open().matrix,
-        "the fold accessor must not introduce a second copy"
-    );
-    assert_eq!(
-        fold.sparse_challenge_config(),
-        fold.params.fold_challenge_config(),
-        "the challenge-family accessor must not introduce a second copy"
+        fold.params.open_matrix,
+        fold.params.open().matrix,
+        "the opening-role view must not introduce a second copy"
     );
 }
 

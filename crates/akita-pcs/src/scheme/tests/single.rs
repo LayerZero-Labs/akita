@@ -42,37 +42,30 @@ fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
 
             let commitments = [commitment];
             let openings = [opening];
-            let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
             scheme
-                .batched_verify(
-                    &proof,
-                    &verifier_setup,
-                    &mut verifier_transcript,
-                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
-                    BasisMode::Lagrange,
-                )
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        b"test/prove",
+                        verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                        BasisMode::Lagrange,
+                    )
+                })
                 .expect("production verifier must replay the reduced-relation suffix");
 
-            let first_round = proof.recursive_folds[first_reduced_index]
-                .stage2
-                .sumcheck_proof
-                .round_polys
-                .first_mut()
-                .expect("reduced stage2 sumcheck round");
-            let coefficient = first_round
-                .coeffs_except_linear_term
-                .first_mut()
-                .expect("reduced stage2 sumcheck coefficient");
-            *coefficient += F::one();
-            let mut tampered_transcript = AkitaTranscript::<F>::new(b"test/prove");
+            let mutation = proof.len() * 3 / 4;
+            proof[mutation] ^= 1;
             scheme
-                .batched_verify(
-                    &proof,
-                    &verifier_setup,
-                    &mut tampered_transcript,
-                    verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
-                    BasisMode::Lagrange,
-                )
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| {
+                    verifier.batched_verify(
+                        &proof,
+                        b"test/prove",
+                        verifier_claims(&scheme, &opening_point, &openings, &commitments[0]),
+                        BasisMode::Lagrange,
+                    )
+                })
                 .expect_err("production verifier must reject a tampered reduced stage2 proof");
         })
         .expect("reduced-relation test thread")
@@ -90,24 +83,17 @@ fn verify_rejects_wrong_opening() {
     let (poly, evals) = make_dense_poly(num_vars);
 
     let setup = scheme.setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
-    let akita_prover::CommitOutput {
+    let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
-        prover_state: hint,
-    } = scheme
-        .commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            stack.commitment(),
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![poly.clone()]).expect("source"),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
 
@@ -118,41 +104,41 @@ fn verify_rejects_wrong_opening() {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = scheme
-        .batched_prove::<_, _, _, _>(
+        .batched_prove(
             &setup,
             prover_claims(
                 &scheme,
                 &opening_point[..],
-                &poly_refs[..],
+                &[opening],
                 &commitments[0],
                 hint,
             ),
             &stack,
-            &mut prover_transcript,
+            b"test/prove",
             BasisMode::Lagrange,
         )
         .unwrap();
 
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = scheme.batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(
-            &scheme,
-            &opening_point[..],
-            &wrong_openings[..],
-            &commitments[0],
-        ),
-        BasisMode::Lagrange,
-    );
+    let result = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(
+                    &scheme,
+                    &opening_point[..],
+                    &wrong_openings[..],
+                    &commitments[0],
+                ),
+                BasisMode::Lagrange,
+            )
+        });
 
     assert!(
         result.is_err(),
@@ -161,78 +147,168 @@ fn verify_rejects_wrong_opening() {
 }
 
 #[test]
-fn verify_rejects_malformed_v_dimension_without_panicking() {
-    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
-        make_verify_fixture(16);
-    let root_fold = &mut proof.root;
-    let mut coeffs = root_fold.opening_payload.coeffs().to_vec();
-    let _ = coeffs.pop().expect("expected non-empty v");
-    root_fold.opening_payload = RingVec::from_coeffs(coeffs);
+fn native_spongefish_roundtrip_and_statement_binding() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(native_spongefish_roundtrip_and_statement_binding_inner)
+        .expect("native test thread")
+        .join()
+        .expect("native test thread panicked");
+}
 
-    let commitments = [commitment];
-    let openings = [opening];
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        scheme.batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
+fn native_spongefish_roundtrip_and_statement_binding_inner() {
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let layout = singleton_layout(&scheme, 16);
+    let num_vars =
+        layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+    let (poly, evals) = make_dense_poly(num_vars);
+    let setup = scheme.setup_prover(num_vars, 1).unwrap();
+    let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let akita_cpu_backend::CommitOutput {
+        committed_group: commitment,
+        private_handle: prover_state,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![poly]).unwrap(),
+            akita_cpu_backend::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
+    let opening_point = (0..num_vars)
+        .map(|index| F::from_u64((index + 2) as u64))
+        .collect::<Vec<_>>();
+    let weights = lagrange_weights(&opening_point).unwrap();
+    let opening = evals
+        .iter()
+        .zip(&weights)
+        .fold(F::zero(), |sum, (&value, &weight)| sum + value * weight);
+    let proof = scheme
+        .batched_prove(
+            &setup,
+            prover_claims(
+                &scheme,
+                &opening_point,
+                &[opening],
+                &commitment,
+                prover_state,
+            ),
+            &stack,
+            b"test/prove",
             BasisMode::Lagrange,
         )
-    }));
-
-    assert!(
-        matches!(result, Ok(Err(_))),
-        "malformed opening payload must be rejected without panicking"
-    );
-}
-
-#[test]
-fn folded_payload_commitments_and_digits_stay_base_field() {
-    fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
-    fn assert_base_direct_witness(_: &akita_types::TerminalResponse<F>) {}
-
-    let (_, _, _, proof, _, _, _) = make_verify_fixture(16);
-    let root = &proof.root;
-    assert_base_flat_ring_vec(&root.opening_payload);
-    if let Some(commitment) = root.stage2.next_witness_binding.outer_payload() {
-        assert_base_flat_ring_vec(commitment);
-    }
-
-    for level in proof.nonterminal_folds() {
-        assert_base_flat_ring_vec(&level.opening_payload);
-        if let Some(commitment) = level.stage2.next_witness_binding.outer_payload() {
-            assert_base_flat_ring_vec(commitment);
-        }
-    }
-    assert_base_direct_witness(proof.terminal_response());
-}
-
-#[test]
-fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
-    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
-        make_verify_fixture(16);
-    let dummy_sumcheck = akita_sumcheck::SumcheckProof {
-        round_polys: proof.root.stage2.sumcheck_proof.round_polys.to_vec(),
-    };
-    proof.root.extension_opening_reduction = Some(ExtensionOpeningReductionProof {
-        partials: vec![F::zero()],
-        sumcheck: dummy_sumcheck,
-        final_claims: vec![F::zero()],
-    });
-
-    let openings = [opening];
-    let commitments = [commitment];
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
+        .expect("native proof");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
-            BasisMode::Lagrange,
-        )
-        .expect_err("unchecked extension-opening payload must be rejected");
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect("native verification");
+    scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening + F::one()], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("native verification must bind the claimed opening");
+    scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/different-session",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("native verification must bind the session");
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening, opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("the statement must fit the setup's batch capacity");
+    assert_eq!(
+        error,
+        AkitaError::InvalidSize {
+            expected: 1,
+            actual: 2
+        },
+        "a malformed statement keeps its own error"
+    );
+    let short_point = &opening_point[..opening_point.len() - 1];
+    let error = scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &[],
+                b"test/prove",
+                verifier_claims(&scheme, short_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("a claim point shorter than its commitment profile must reject");
+    assert_eq!(
+        error,
+        AkitaError::InvalidInput(
+            "claim group shape does not match its commitment profile".to_string()
+        ),
+        "the statement shape must be checked before proof bytes"
+    );
+    let mut truncated = proof.clone();
+    truncated.pop().expect("nonempty native proof");
+    scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &truncated,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("truncated native proof must reject");
+    let mut trailing = proof.clone();
+    trailing.push(0);
+    scheme
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &trailing,
+                b"test/prove",
+                verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+        })
+        .expect_err("trailing native proof bytes must reject");
+    let mut mutated = proof;
+    let middle = mutated.len() / 2;
+    mutated[middle] ^= 1;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &mutated,
+                    b"test/prove",
+                    verifier_claims(&scheme, &opening_point, &[opening], &commitment),
+                    BasisMode::Lagrange,
+                )
+            })
+    }));
+    assert!(matches!(outcome, Ok(Err(_))));
 }

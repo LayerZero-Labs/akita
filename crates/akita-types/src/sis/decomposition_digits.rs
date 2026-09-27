@@ -25,11 +25,10 @@
 //!    - [`super::honest_fold_policy::HonestFoldPolicy`]: folded witness `z` — the
 //!      group-owned offline policy returns its exact scheduled digit count.
 //!
-//! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
-//!    digit depth plus block geometry into a matrix's ring-column count:
-//!    [`decomposed_s_block_ring_count`] (A), [`decomposed_t_ring_count`] (B),
-//!    [`decomposed_w_ring_count`] (D). These are layout arithmetic, not digit
-//!    math; they sit here so each width formula lives beside the depth it
+//! 3. **Committed-matrix widths** — name the `checked_mul` product that turns a
+//!    digit depth plus block geometry into the A matrix's ring-column count:
+//!    [`decomposed_s_block_ring_count`]. This is layout arithmetic, not digit
+//!    math; it sits here so the width formula lives beside the depth it
 //!    multiplies.
 
 use crate::DecompositionParams;
@@ -300,15 +299,6 @@ pub fn num_digits_inner_for_bound(
     )
 }
 
-/// `δ_setup`: digits per coefficient for setup-prefix commitments.
-///
-/// Setup prefixes commit raw shared-setup field elements, not the already-small
-/// recursive witness digits. Their commit-side decomposition must therefore
-/// cover the full configured field width.
-pub fn num_digits_setup_prefix_commit(decomposition: DecompositionParams) -> usize {
-    compute_num_digits_field_width(decomposition.field_bits(), decomposition.log_basis)
-}
-
 /// `δ_open`: digits per coefficient of the opening witnesses `t̂` / `ŵ`,
 /// which are opened at the field level (`log_open_bound`).
 pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
@@ -326,31 +316,6 @@ pub fn decomposed_s_block_ring_count(
     num_digits_inner: usize,
 ) -> Option<usize> {
     num_positions_per_block.checked_mul(num_digits_inner)
-}
-
-/// B-matrix committed width (ring columns): `n_a · δ_open · num_live_blocks · num_polynomials`.
-#[inline]
-pub fn decomposed_t_ring_count(
-    n_a: usize,
-    num_digits_open: usize,
-    num_live_blocks: usize,
-    num_polynomials: usize,
-) -> Option<usize> {
-    n_a.checked_mul(num_digits_open)?
-        .checked_mul(num_live_blocks)?
-        .checked_mul(num_polynomials)
-}
-
-/// D-matrix committed width (ring columns): `δ_open · num_live_blocks · num_polynomials`.
-#[inline]
-pub fn decomposed_w_ring_count(
-    num_digits_open: usize,
-    num_live_blocks: usize,
-    num_polynomials: usize,
-) -> Option<usize> {
-    num_digits_open
-        .checked_mul(num_live_blocks)?
-        .checked_mul(num_polynomials)
 }
 
 /// Convert an A-native ring-column count into the physical column count of a
@@ -515,8 +480,6 @@ mod tests {
     #[test]
     fn widths_are_checked() {
         assert_eq!(decomposed_s_block_ring_count(4, 3), Some(12));
-        assert_eq!(decomposed_t_ring_count(2, 3, 4, 5), Some(120));
-        assert_eq!(decomposed_w_ring_count(3, 4, 5), Some(60));
         assert_eq!(decomposed_s_block_ring_count(usize::MAX, 2), None);
         assert_eq!(projected_role_ring_count(256, 64, 7), Some(28));
         assert_eq!(projected_role_ring_count(256, 128, 7), Some(14));

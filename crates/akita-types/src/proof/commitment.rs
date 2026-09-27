@@ -5,7 +5,6 @@ use crate::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
     SisSecurityPolicyId, SisTableDigest,
 };
-use crate::transcript::AppendToTranscript;
 use crate::{
     CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
@@ -19,97 +18,11 @@ type MatrixFields = (
     u128,
     usize,
 );
-use akita_algebra::ring::CyclotomicRing;
-use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
-
-/// Minimal commitment wrapper used by protocol traits/tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct AkitaCommitment(pub u128);
-
-/// Minimal proof wrapper used by protocol trait stubs and tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DummyProof(pub u128);
-
-impl Valid for AkitaCommitment {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl AkitaSerialize for AkitaCommitment {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.0.serialize_with_mode(&mut writer, Compress::No)
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        16
-    }
-}
-
-impl AkitaDeserialize for AkitaCommitment {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        _compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
-        Ok(Self(value))
-    }
-}
-
-impl Valid for DummyProof {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl AkitaSerialize for DummyProof {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.0.serialize_with_mode(&mut writer, Compress::No)
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        16
-    }
-}
-
-impl AkitaDeserialize for DummyProof {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        _compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let value = u128::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
-        Ok(Self(value))
-    }
-}
-
-impl<F> AppendToTranscript<F> for AkitaCommitment
-where
-    F: Field + CanonicalEncoding,
-{
-    fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
-        transcript.append_serde(label, self);
-    }
-}
 
 /// D-free public commitment payload stored as flat field coefficients.
 ///
@@ -126,39 +39,9 @@ impl<F: Field> Commitment<F> {
         Self(rows)
     }
 
-    /// Construct from typed ring elements.
-    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
-        Self(RingVec::from_ring_elems(elems))
-    }
-
     /// Borrow the underlying flat ring-coefficient buffer.
     pub fn rows(&self) -> &RingVec<F> {
         &self.0
-    }
-
-    /// Consume into the underlying flat ring-coefficient buffer.
-    pub fn into_rows(self) -> RingVec<F> {
-        self.0
-    }
-
-    /// Absorb this payload using its canonical flat coefficient encoding under
-    /// the caller-derived terminal compression `ring_dim`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored buffer is not
-    /// well-formed for `ring_dim` (see [`RingVec::append_flat_to_transcript`]).
-    pub fn append_to_transcript<T: Transcript<F>>(
-        &self,
-        label: &[u8],
-        ring_dim: usize,
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: CanonicalEncoding + AkitaSerialize,
-    {
-        self.0
-            .append_flat_to_transcript(label, ring_dim, transcript)
     }
 }
 
@@ -425,6 +308,13 @@ where
             inner_ring_dimension,
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        // `try_new` resolves a bound to its audited table row and stores that
+        // row's bound, so only the row's own bound is a canonical encoding.
+        if inner_commit_matrix.coeff_linf_bound() != Some(a_coeff_linf_bound) {
+            return Err(SerializationError::InvalidData(
+                "committed-group A coefficient bound is not its SIS table's bound".into(),
+            ));
+        }
         let log_basis_outer =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_outer = read_usize(&mut reader)?;
@@ -440,6 +330,11 @@ where
             outer_ring_dimension,
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+        if outer_commit_matrix.coeff_linf_bound() != b_coeff_linf_bound {
+            return Err(SerializationError::InvalidData(
+                "committed-group B coefficient bound is not its SIS table's bound".into(),
+            ));
+        }
 
         let descriptor = GroupCommitPhaseParams {
             version,
@@ -648,6 +543,53 @@ mod committed_group_tests {
     }
 
     #[test]
+    fn committed_group_decoding_accepts_only_canonical_coefficient_bounds() {
+        let group = group();
+        let mut bytes = Vec::new();
+        group
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize committed group");
+        let bounds = [
+            group
+                .profile
+                .inner
+                .matrix
+                .coeff_linf_bound()
+                .expect("L infinity test matrix"),
+            group.profile.outer.matrix.coeff_linf_bound(),
+        ];
+        for bound in bounds {
+            let encoded = bound.to_le_bytes();
+            let offset = bytes
+                .windows(encoded.len())
+                .position(|window| window == encoded)
+                .expect("encoded coefficient bound");
+            for replacement in [bound - 1, bound / 2, 1, bound + 1] {
+                if replacement == bound {
+                    continue;
+                }
+                let mut candidate = bytes.clone();
+                candidate[offset..offset + 16].copy_from_slice(&replacement.to_le_bytes());
+                if let Ok(decoded) = CommittedGroup::<F>::deserialize_with_mode(
+                    candidate.as_slice(),
+                    Compress::Yes,
+                    Validate::Yes,
+                    &(),
+                ) {
+                    let mut reencoded = Vec::new();
+                    decoded
+                        .serialize_with_mode(&mut reencoded, Compress::Yes)
+                        .expect("re-encode");
+                    assert_eq!(
+                        reencoded, candidate,
+                        "bound {replacement} (table bound {bound}) decoded to a different encoding"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn committed_group_rejects_commitment_row_count_mismatch() {
         let mut group = group();
         let coeffs = group.commitment.rows().coeffs();
@@ -737,82 +679,5 @@ mod committed_group_tests {
                 .serialize_with_mode(Vec::new(), Compress::Yes)
                 .is_err());
         }
-    }
-}
-
-/// Ring-native commitment object `u in R_q^{n_B}` used by §4.1.
-///
-/// **Arithmetic-only leaf helper.** As of S4 this type is no longer used for
-/// protocol-facing storage, serialization, or transcript absorption — that role
-/// belongs to the D-free [`Commitment`] / [`RingVec`]. It is kept solely as a
-/// typed arithmetic carrier inside kernels.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RingCommitment<F: Field, const D: usize> {
-    /// Outer commitment vector.
-    pub u: Vec<CyclotomicRing<F, D>>,
-}
-
-/// Borrow ring rows from commitment-like prover inputs.
-pub trait ProverCommitmentRows<CommitF: Field, const D: usize> {
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>];
-}
-
-impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
-    for RingCommitment<CommitF, D>
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        &self.u
-    }
-}
-
-impl<CommitF: Field, const D: usize> ProverCommitmentRows<CommitF, D>
-    for [CyclotomicRing<CommitF, D>]
-{
-    fn commitment_rows(&self) -> &[CyclotomicRing<CommitF, D>] {
-        self
-    }
-}
-
-impl<F: Field + Valid, const D: usize> Valid for RingCommitment<F, D> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.u.check()
-    }
-}
-
-impl<F: Field + AkitaSerialize, const D: usize> AkitaSerialize for RingCommitment<F, D> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.u.serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.u.serialized_size(compress)
-    }
-}
-
-impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
-    for RingCommitment<F, D>
-{
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let u = Vec::<CyclotomicRing<F, D>>::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?;
-        let out = Self { u };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
     }
 }

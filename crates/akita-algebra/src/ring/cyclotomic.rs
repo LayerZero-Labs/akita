@@ -17,11 +17,8 @@ use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(test)]
-pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
     balanced_decompose_coefficients_pow2_i8_into, decompose_centering_threshold,
-    peel_first_balanced_digit, try_balanced_decompose_coefficients_pow2_i8_u64_into,
     BalancedDecomposePow2Params,
 };
 pub use wide::WideCyclotomicRing;
@@ -193,17 +190,6 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
         Self { coeffs: out }
     }
 
-    /// Multiply `self` by a sum of monomials `X^{k_1} + X^{k_2} + ...`
-    ///
-    /// Each term is a negacyclic shift, so the total cost is
-    /// `O(positions.len() * D)` field additions with zero multiplications.
-    #[inline]
-    pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
-        let mut result = Self::zero();
-        self.mul_by_monomial_sum_into(&mut result, nonzero_positions);
-        result
-    }
-
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     ///
     /// Requires `k < D`.
@@ -273,17 +259,6 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
         }
     }
 
-    /// Fused multiply-by-monomial-sum + accumulate:
-    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
-    ///
-    /// Each term is a negacyclic shift, so the total cost is
-    /// `O(positions.len() * D)` field additions with zero multiplications.
-    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
-        for &k in nonzero_positions {
-            *dst += self.negacyclic_shift(k);
-        }
-    }
-
     /// Fused `dst += self * rhs` when `rhs` is coefficient-sparse.
     ///
     /// This is exact for any field coefficients in `rhs`, but runs in
@@ -335,41 +310,11 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     pub fn is_zero(&self) -> bool {
         self.coeffs.iter().all(|c| c.is_zero())
     }
-
-    /// Count non-zero coefficients.
-    #[inline]
-    pub fn hamming_weight(&self) -> usize {
-        self.coeffs.iter().filter(|c| !c.is_zero()).count()
-    }
-
-    /// Sample a sparse challenge with exactly `omega` non-zeros in `{+1, -1}`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `omega > D` or `D == 0` with non-zero `omega`.
-    pub fn sample_sparse_pm1<R: RngCore>(rng: &mut R, omega: usize) -> Self {
-        assert!(omega <= D, "omega must be <= ring degree");
-        assert!(D > 0 || omega == 0, "ring degree must be non-zero");
-
-        let mut coeffs = [F::zero(); D];
-        let mut placed = 0usize;
-        while placed < omega {
-            let idx = (rng.next_u64() % (D as u64)) as usize;
-            if coeffs[idx].is_zero() {
-                coeffs[idx] = if (rng.next_u32() & 1) == 0 {
-                    F::one()
-                } else {
-                    -F::one()
-                };
-                placed += 1;
-            }
-        }
-        Self { coeffs }
-    }
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
-    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+    /// Coefficients as centered integers in `(-q/2, q/2]`.
+    pub fn centered_coefficients_i128(&self) -> [i128; D] {
         let modulus = (-F::one())
             .to_u128_checked()
             .expect("Akita field element must fit in u128")

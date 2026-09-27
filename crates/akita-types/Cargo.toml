@@ -12,17 +12,16 @@ readme = "../../README.md"
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false, features = [
   "asm",
   "solinas",
 ] }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e290a0d10a30f16dafd4b1ef65f3ebbb497b8f6c", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 serde = { version = "1", features = ["derive"] }
-rayon = { version = "1.10", optional = true }
 blake2 = "0.11.0"
-num-traits = "0.2"
 rand_core = "0.6"
 sha3 = "0.12.0"
 shake = "0.1.0"
@@ -41,7 +40,7 @@ transcript-keccak = [
   "akita-sumcheck/transcript-keccak",
   "akita-transcript/transcript-keccak",
 ]
-parallel = ["dep:rayon", "akita-algebra/parallel", "jolt-field/parallel"]
+parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]

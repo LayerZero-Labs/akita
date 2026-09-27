@@ -14,7 +14,7 @@
 //! Markov interpretation once that envelope bounds the conditional mean.
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::HonestFoldPolicySpec;
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -350,68 +350,6 @@ pub(crate) fn uniform_field_source_moment(
         .ok_or_else(|| AkitaError::InvalidSetup("uniform field source is empty".into()))
 }
 
-/// Deterministic maximum squared digit energy of a balanced signed-digit source
-/// whose centered coefficients fit `source_log_bound` bits.
-///
-/// `source_log_bound` is the **declared committed-source bound**, not the field
-/// width: a bounded source stops short of the field, so its final digit plane
-/// only spans the bits the bound leaves. Charging that plane a full `log_basis`
-/// of range would over-estimate its energy and inflate the L2 response cap the
-/// A rank is priced against. A full-field source passes its own field width and
-/// is unaffected.
-///
-/// Planes past the bound are **not** free. Balanced extraction carries:
-/// `|c_p| <= |v| / b^p + b / (2·(b - 1))`, so the plane just past the bound can
-/// still hold `±1`, and the canonical depth adds exactly one such plane whenever
-/// `log_basis` divides `source_log_bound` (the `+1` correction in
-/// `compute_num_digits`). Charging it `1` instead of dropping it keeps this a
-/// true deterministic maximum. This never fires for a full-field source, whose
-/// depth is `ceil(field_bits / log_basis)` and so never overshoots by a whole
-/// plane.
-fn bounded_field_source_moment(
-    scalar_count: usize,
-    source_log_bound: u32,
-    log_basis: u32,
-    digit_count: usize,
-) -> Result<SourceMomentEstimate, AkitaError> {
-    if scalar_count == 0 || source_log_bound == 0 || log_basis == 0 || digit_count == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "bounded field source requires positive geometry".into(),
-        ));
-    }
-    let mut per_scalar = 0u128;
-    let mut peak = 0u128;
-    for plane in 0..digit_count {
-        let consumed = (plane as u32)
-            .checked_mul(log_basis)
-            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane width overflow".into()))?;
-        // `max(1)` is the carry plane described above; below the bound this is
-        // just `min(log_basis, source_log_bound - consumed)`.
-        let plane_bits = source_log_bound
-            .saturating_sub(consumed)
-            .min(log_basis)
-            .max(1);
-        let half_basis = 1u128
-            .checked_shl(plane_bits - 1)
-            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane bound overflow".into()))?;
-        let square = half_basis
-            .checked_mul(half_basis)
-            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane energy overflow".into()))?;
-        per_scalar = per_scalar
-            .checked_add(square)
-            .ok_or_else(|| AkitaError::InvalidSetup("bounded source energy overflow".into()))?;
-        peak = peak.max(square);
-    }
-    let energy = per_scalar
-        .checked_mul(scalar_count as u128)
-        .ok_or_else(|| AkitaError::InvalidSetup("bounded source energy overflow".into()))?;
-    let peak_ppm = peak
-        .checked_mul(MOMENT_PPM)
-        .ok_or_else(|| AkitaError::InvalidSetup("bounded source peak overflow".into()))?;
-    SourceMomentEstimate::from_moments(energy, peak_ppm)
-        .ok_or_else(|| AkitaError::InvalidSetup("bounded field source is empty".into()))
-}
-
 fn centered_residue(value: i64, basis: i64) -> i64 {
     let residue = value.rem_euclid(basis);
     if residue >= basis / 2 {
@@ -661,28 +599,36 @@ fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<
 
 /// Source moments of each root opening group before its first fold.
 ///
-/// `decomposition` supplies both the field width and the final group's declared
-/// committed-source bound (`log_commit_bound`). Precommitted groups were frozen
-/// by a possibly different producer whose bound is not carried in their params,
-/// so they are priced at the shared field width — always a valid upper bound on
-/// their source energy, and exactly the previous behavior.
+/// Every group's producer contract supplies its source class and bound; its
+/// selected commit-phase profile supplies the exact digit geometry.
 pub(crate) fn root_group_source_moments(
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
-    final_policy: HonestFoldPolicySpec,
-    precommitted_policies: &[HonestFoldPolicySpec],
-    decomposition: akita_types::DecompositionParams,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
-    let field_bits = decomposition.field_bits();
+    let field_bits = final_source_contract.decomposition().field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
     params.validate_opening_batch(opening_layout)?;
-    if precommitted_policies.len() != final_group_index {
+    if precommitted_source_contracts.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
-            "root response model requires one policy per precommitted group".into(),
+            "root response model requires one source contract per precommitted group".into(),
+        ));
+    }
+    if precommitted_source_contracts
+        .iter()
+        .any(|contract| contract.decomposition().field_bits() != field_bits)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "precommitted source contract field must match the root response field".into(),
         ));
     }
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
-    for group_index in 0..opening_layout.num_groups() {
+    let source_contracts = precommitted_source_contracts
+        .iter()
+        .copied()
+        .chain(std::iter::once(final_source_contract));
+    for (group_index, contract) in source_contracts.enumerate() {
         let group_layout = *opening_layout.group_layout(group_index)?;
         // Validate the grouped batch once above, then resolve each source view
         // directly. The public group accessor would revalidate every group for
@@ -696,63 +642,34 @@ pub(crate) fn root_group_source_moments(
         };
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
-        let policy = if group_index == final_group_index {
-            final_policy
+        let norms = contract.source_norms(
+            group_params.log_basis_inner(),
+            group_params.num_digits_inner(),
+            group_params.inner_commit_matrix_params().ring_dimension(),
+            logical_len,
+        )?;
+        let peak = norms
+            .coefficient_sq_max
+            .checked_mul(MOMENT_PPM)
+            .ok_or_else(|| AkitaError::InvalidSetup("source peak moment overflow".into()))?;
+        let moment = if matches!(
+            contract.class(),
+            akita_types::sis::CommittedSourceClass::UnitOneHot { .. }
+        ) {
+            let mut components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
+            components[Z_COMPONENT] = SourceMomentComponent {
+                mean_l2_sq: norms.l2_sq,
+                full_ring_peak_second_moment_ppm: peak,
+                local_peak_second_moment_ppm: peak,
+            };
+            SourceMomentEstimate::from_components(
+                components,
+                group_params.inner_commit_matrix_params().ring_dimension(),
+            )
         } else {
-            *precommitted_policies.get(group_index).ok_or_else(|| {
-                AkitaError::InvalidSetup("precommitted response policy is missing".into())
-            })?
-        };
-        let moment = match policy {
-            HonestFoldPolicySpec::UnitOneHot(onehot) => {
-                let chunk = onehot.source_chunk_size();
-                if !logical_len.is_multiple_of(chunk) {
-                    return Err(AkitaError::InvalidSetup(
-                        "unit one-hot root length must be a multiple of its source chunk size"
-                            .into(),
-                    ));
-                }
-                let (energy, coefficient_sq_max) = policy
-                    .root_source_l2_sq(
-                        logical_len,
-                        group_params.inner_commit_matrix_params().ring_dimension(),
-                    )
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "unit one-hot root source geometry is unsupported".into(),
-                        )
-                    })?;
-                let peak = coefficient_sq_max.checked_mul(MOMENT_PPM).ok_or_else(|| {
-                    AkitaError::InvalidSetup("unit one-hot root peak moment overflow".into())
-                })?;
-                let mut components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
-                components[Z_COMPONENT] = SourceMomentComponent {
-                    mean_l2_sq: energy,
-                    full_ring_peak_second_moment_ppm: peak,
-                    local_peak_second_moment_ppm: peak,
-                };
-                SourceMomentEstimate::from_components(
-                    components,
-                    group_params.inner_commit_matrix_params().ring_dimension(),
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("unit one-hot source moments overflow".into())
-                })?
-            }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-                let source_log_bound = if group_index == final_group_index {
-                    decomposition.log_commit_bound
-                } else {
-                    field_bits
-                };
-                bounded_field_source_moment(
-                    logical_len,
-                    source_log_bound,
-                    group_params.log_basis_inner(),
-                    group_params.num_digits_inner(),
-                )?
-            }
-        };
+            SourceMomentEstimate::from_moments(norms.l2_sq, peak)
+        }
+        .ok_or_else(|| AkitaError::InvalidSetup("source moments overflow".into()))?;
         moments.push(moment);
     }
     Ok(moments)

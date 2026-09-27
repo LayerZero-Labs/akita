@@ -257,7 +257,7 @@ fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
 #[test]
 fn guided_early_pruning_includes_recursive_prefixes() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
     assert!(matches!(
         super::GuideScope::for_state(&policy, true, None),
         Some(super::GuideScope::CompleteRoot)
@@ -268,7 +268,7 @@ fn guided_early_pruning_includes_recursive_prefixes() {
     ));
     assert!(super::GuideScope::for_state(&policy, false, None).is_none());
 
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     assert!(super::GuideScope::for_state(&policy, false, Some(1)).is_none());
 }
 
@@ -309,7 +309,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
     let candidate = |queries| super::ScheduleCandidate {
         first_direct_setup_field_len: std::num::NonZeroUsize::new(1),
         first_direct_output_witness_len: 512,
-        cost: super::PackedProofCost::new(1, 0, queries).expect("candidate cost"),
+        cost: super::NativeProofCost::new(1, 0, queries, 512).expect("candidate cost"),
         setup_field_elements: 1,
         folds: super::super::CandidateFoldChain::default().prepend(super::CandidateFoldStep {
             params: std::sync::Arc::new(params.clone()),
@@ -371,14 +371,14 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedExactProofAndWorkV5;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let key = akita_types::AkitaScheduleLookupKey::single(
         akita_types::PolynomialGroupLayout::singleton(14),
     );
     let root = crate::planner::find_schedule(
         &key,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::committed_source_contract().unwrap(),
         &[],
         &policy,
         OneHot::ring_challenge_config,
@@ -397,8 +397,8 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
         root_lookup_key: Some(&key),
         root_main_constraint: None,
         adaptation_guide: None,
-        root_honest_fold_policy: Some(akita_config::honest_fold_policy_of::<OneHot>()),
-        precommitted_honest_fold_policies: &[],
+        root_source_contract: Some(OneHot::committed_source_contract().unwrap()),
+        precommitted_source_contracts: &[],
         level_zero_is_root: true,
         relation_traversal_order: super::RelationTraversalOrder::Canonical,
         relation_mode_filter: super::RelationModeFilter::All,
@@ -417,7 +417,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
     let mut memo = super::ScheduleMemo::new();
     let domain = super::candidates::CandidateDomain::prepare(&ctx, state).unwrap();
     let generated = domain
-        .generate_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
+        .generate_recursive_for_opening_basis(&ctx, state, 6, &mut memo.setup_prefixes)
         .unwrap();
     let candidates =
         super::attach_source_moments(&ctx, state, false, &domain.opening_layout, generated.folds)

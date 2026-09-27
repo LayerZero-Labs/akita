@@ -180,7 +180,7 @@ fn price_planned_fold_candidate(
             });
     if matches!(
         ctx.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
         && guide.is_some_and(|(lower_bound, _)| {
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
@@ -416,7 +416,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                 )
             })?;
         } else {
-            let generated = candidate_domain.generate_for_opening_basis(
+            let generated = candidate_domain.generate_recursive_for_opening_basis(
                 ctx,
                 state,
                 open_log_basis,

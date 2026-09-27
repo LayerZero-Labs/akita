@@ -88,7 +88,8 @@ For the common case where $p$ contributes degree two, ordinary sum-check would
 send three coefficients for the degree-three product $s_j$. The factored
 message sends two coefficients for the degree-two inner polynomial $q_j$.
 
-`EqFactoredUniPoly` in `akita-sumcheck/src/types.rs` is this exact wire type. A
+`jolt_poly::OmittedConstantPoly` stores this round message, and
+`akita-serialization` encodes it on the wire. A
 degree-$d$ inner polynomial contributes exactly $d$ field elements. Thus every
 deployed Akita Stage 1 round, whose inner degree is positive, keeps the same
 message width; the valid degree-zero case needs no transmitted coefficient.
@@ -111,10 +112,11 @@ No inverse or accumulated claim scale appears, and the formula remains valid
 when $\tau_j=0$ or when an earlier equality evaluation vanishes. The final
 verifier check compares $T_n$ directly with the expected folded oracle value.
 
-The function `advance_eq_factored_claim` in
-`akita-sumcheck/src/drivers/eq_factored.rs` implements these equations directly.
-Both prover and verifier call that one function, so the transcript replay and
-the generated proof cannot drift onto different update rules.
+The public function `advance_eq_factored_claim` in
+`akita-sumcheck/src/single.rs` implements these equations directly. The direct
+`prove_eq_factored_sumcheck` and `verify_eq_factored_sumcheck` functions both
+call it, so transcript replay and proof generation cannot drift onto different
+update rules.
 
 ## Avoiding a full equality table
 
@@ -170,9 +172,9 @@ matching verifier equation.
 | --- | --- |
 | Equality polynomial definition and tables | `akita-algebra/src/eq_poly.rs` |
 | Split equality state and suffix caches | `akita-algebra/src/split_eq.rs` |
-| Factored prover and verifier interfaces | `akita-sumcheck/src/traits.rs` |
+| Factored prover interface | `akita-sumcheck/src/traits.rs` |
 | Factored round message and proof encoding | `akita-sumcheck/src/types.rs` |
-| Normalized claim update and transcript driver | `akita-sumcheck/src/drivers/eq_factored.rs` |
+| Direct prover/verifier functions and normalized claim update | `akita-sumcheck/src/single.rs` |
 
 For a review, check these facts together:
 

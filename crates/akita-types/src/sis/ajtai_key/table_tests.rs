@@ -51,34 +51,6 @@ fn unsupported_shape_rejects_exact_linf_bound() {
 }
 
 #[test]
-fn fixed_matrix_capacity_inverts_the_checked_sis_table() {
-    let key = SisTableKey {
-        policy: DEFAULT_SIS_SECURITY_POLICY,
-        table_digest: SisTableDigest::CURRENT,
-        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-        role: SisMatrixRole::Inner,
-        ring_dimension: 64,
-        coeff_linf_bound: 6_684_468,
-    };
-    let matrix = InnerCommitMatrixParams::try_new_with_min_rank(key, 64).expect("audited matrix");
-    let capacity = matrix
-        .max_secure_collision_linf()
-        .expect("fixed matrix capacity");
-    assert!(capacity >= key.coeff_linf_bound);
-    for larger in inner_coeff_linf_bounds(key.modulus_profile, key.ring_dimension)
-        .into_iter()
-        .filter(|&bound| bound > capacity)
-    {
-        let larger_key = SisTableKey {
-            coeff_linf_bound: larger,
-            ..key
-        };
-        assert!(min_secure_rank(larger_key, matrix.input_width() as u64)
-            .is_none_or(|rank| rank > matrix.output_rank()));
-    }
-}
-
-#[test]
 fn inner_linf_key_rounds_up_to_the_next_audited_target() {
     let linf = 130_023_300u128;
     let key = sis_table_key_for_linf_bound(

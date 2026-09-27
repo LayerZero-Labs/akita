@@ -6,12 +6,9 @@ pub(crate) mod core;
 pub(crate) mod evaluation_trace;
 pub(crate) mod ring_switch;
 
-pub use core::batched_verify;
 #[cfg(any(test, feature = "benchmark-support"))]
 pub use evaluation_trace::{evaluation_trace_benchmark_case, EvaluationTraceBenchmarkCase};
-pub use ring_switch::{
-    prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
-};
+pub use ring_switch::RelationMatrixEvaluator;
 #[cfg(feature = "benchmark-support")]
 pub use ring_switch::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,

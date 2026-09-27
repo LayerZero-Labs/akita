@@ -49,7 +49,8 @@ record that method.
 
 ## Implementation map
 
-- `crates/akita-prover/src/protocol/core/fold/`.
+- `crates/akita-prover/src/protocol/prove/fold/`.
 - `crates/akita-verifier/src/protocol/core/fold/`.
 - `crates/akita-types/src/layout/params/precommitted.rs`.
+- `crates/akita-types/src/layout/subring_packing_geometry.rs`.
 - `crates/akita-types/src/subring_coefficient_packing.rs`.

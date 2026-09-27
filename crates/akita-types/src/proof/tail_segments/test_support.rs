@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use super::*;
+use crate::golomb_rice::golomb_rice_encode_vec;
 
 #[cfg(test)]
 #[must_use]

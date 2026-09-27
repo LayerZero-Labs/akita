@@ -22,18 +22,6 @@ pub enum OpeningMethod {
     },
 }
 
-/// Runtime value carried by one of Akita's two opening methods.
-///
-/// The schedule chooses an [`OpeningMethod`]; this family preserves that same
-/// method distinction while each protocol stage supplies its own payloads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum OpeningFamily<Trace, Packing> {
-    /// Value belonging to the full-A evaluation-trace method.
-    EvaluationTrace(Trace),
-    /// Value belonging to subring coefficient packing.
-    SubringCoefficientPacking(Packing),
-}
-
 impl OpeningMethod {
     /// Whether this method uses extension-opening reduction for the field tower.
     #[must_use]
@@ -249,28 +237,6 @@ impl GroupOpenPhaseParams {
         Self::admit_with_setup_natural_len(
             layout,
             None,
-            num_digits_fold,
-            policy,
-            opening_method,
-            fold_challenge_config,
-            log_basis_open,
-        )
-    }
-
-    /// Validate and materialize a recursive setup prefix at the batch-shared
-    /// opening basis.
-    pub fn admit_setup_prefix(
-        layout: GroupCommitPhaseParams,
-        natural_len: usize,
-        num_digits_fold: usize,
-        policy: PrecommittedGroupAdmissionPolicy,
-        opening_method: OpeningMethod,
-        fold_challenge_config: SparseChallengeConfig,
-        log_basis_open: u32,
-    ) -> Result<Self, AkitaError> {
-        Self::admit_with_setup_natural_len(
-            layout,
-            Some(natural_len),
             num_digits_fold,
             policy,
             opening_method,
@@ -502,13 +468,6 @@ impl GroupOpenPhaseParams {
         )
     }
 
-    /// Width contribution of this group's decomposed folded response.
-    pub fn z_segment_width(&self, num_digits_fold: usize) -> Result<usize, AkitaError> {
-        self.inner_width()
-            .checked_mul(num_digits_fold)
-            .ok_or_else(|| AkitaError::InvalidSetup("group z segment width overflow".to_string()))
-    }
-
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         self.profile.append_descriptor_bytes(bytes);
         self.opening.append_descriptor_bytes(bytes);
@@ -532,12 +491,6 @@ impl GroupOpenPhaseParams {
 /// group uniformly without knowing which it held. Both are the same
 /// type.
 impl GroupOpenPhaseParams {
-    #[inline]
-    #[must_use]
-    pub fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable
-    }
-
     #[inline]
     #[must_use]
     pub fn opening_method(&self) -> OpeningMethod {

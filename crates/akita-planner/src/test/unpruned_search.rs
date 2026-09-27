@@ -140,7 +140,10 @@ fn consider_complete_schedule(
     else {
         return Ok(());
     };
-    if !policy.admits_setup_field_elements(candidate.setup_field_elements) {
+    if !policy
+        .setup_field_budget
+        .is_none_or(|budget| candidate.setup_field_elements <= budget)
+    {
         return Ok(());
     }
     let candidate_score = score(policy, &candidate)?;
@@ -156,14 +159,14 @@ fn consider_complete_schedule(
 pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
+    source_contract: akita_types::sis::CommittedSourceContract,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
     akita_schedules::planner_support::validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
-    let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
+    let input_witness_len = akita_error::checked::pow2(key.num_vars()).ok_or_else(|| {
         AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
     })?;
     let (min_log_basis, max_log_basis) = crate::policy::log_basis_search_range_at_level(policy, 0);
@@ -176,8 +179,7 @@ pub(super) fn find_schedule(
         policy,
         ring_challenge_config: &ring_challenge_config,
     };
-    let inner_source =
-        root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
+    let inner_source = root_inner_basis_source(source_contract);
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
     let relation_state = OracleRelationState::QuotientPrefix;
     for log_basis in min_log_basis..=max_log_basis {
@@ -200,7 +202,7 @@ pub(super) fn find_schedule(
                     for (root_params, output_witness_len) in
                         crate::planner::exhaustive_root_candidates_for_reference(
                             &schedule_key,
-                            honest_fold_policy,
+                            source_contract,
                             policy,
                             root_dimensions,
                             root_opening,
@@ -213,9 +215,8 @@ pub(super) fn find_schedule(
                             let source_groups = crate::response_model::root_group_source_moments(
                                 &root_params,
                                 &opening_layout,
-                                honest_fold_policy,
+                                source_contract,
                                 &[],
-                                policy.decomposition,
                             )?;
                             Some(crate::response_model::next_source_moment(
                                 &root_params,
@@ -269,8 +270,8 @@ pub(super) fn find_schedule(
     };
     let cached_first_direct_setup_field_len = if matches!(
         policy.selection_policy,
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
     ) {
         selected.first_direct_setup_field_len.map(NonZeroUsize::get)
     } else {

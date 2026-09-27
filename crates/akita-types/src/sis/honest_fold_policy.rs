@@ -7,10 +7,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 
 #[cfg(test)]
-use super::onehot_source::SourceClass;
-use super::onehot_source::{
-    canonical_source_classes, deterministic_convolution_cap, ln_upper, max_log_mgf_upper, round_up,
-};
+use super::onehot_source::{canonical_source_classes, SourceClass};
+use super::onehot_source::{deterministic_convolution_cap, ln_upper, max_log_mgf_upper, round_up};
 use super::{
     fold_witness_linf_cap, num_digits_for_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
     FoldWitnessNorms,
@@ -47,18 +45,9 @@ pub trait HonestFoldPolicy {
 
 /// Distribution-free sizing rule for balanced signed-digit witnesses.
 ///
-/// This is the sizing rule for every source whose committed plane is balanced
-/// base-`2^log_basis_inner` digits, which is the whole
-/// `1 < log_commit_bound <= field_bits` range: a bounded source and a full-field
-/// source decompose into the same digit alphabet and differ only in how many
-/// digit planes they need. The declared source bound therefore does not appear
-/// here — it is carried by
-/// [`crate::DecompositionParams::log_commit_bound`] and consumed by the
-/// A-role digit depth. The per-block source norms this policy sizes against
-/// come from the query
-/// ([`HonestFoldSizingQuery::witness_norms`], built by
-/// [`HonestFoldPolicySpec::witness_norms_for_inner_basis`]), which describes one
-/// balanced digit plane and is independent of the bound.
+/// The producer contract derives the query's worst digit-plane norms from its
+/// declared bound and selected decomposition. This policy combines those norms
+/// with the fold challenge; it does not reinterpret the source declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BalancedSignedDigitFoldPolicy {
     field_bits: u32,
@@ -319,82 +308,6 @@ pub enum HonestFoldPolicySpec {
     UnitOneHot(UnitOneHotFoldPolicy),
 }
 
-impl HonestFoldPolicySpec {
-    /// Source-plane norms for one selected A decomposition basis.
-    ///
-    /// Balanced sources follow the candidate basis. Unit one-hot sources keep
-    /// their profile-owned sparse norm; the planner canonicalizes their
-    /// already-single-digit representation without a basis sweep.
-    pub fn witness_norms_for_inner_basis(
-        self,
-        log_basis_inner: u32,
-        ring_dimension: usize,
-    ) -> Result<FoldWitnessNorms, AkitaError> {
-        match self {
-            Self::BalancedSignedDigit(_) => {
-                Ok(FoldWitnessNorms::bounded(log_basis_inner, ring_dimension))
-            }
-            Self::UnitOneHot(policy) => {
-                let classes = canonical_source_classes(ring_dimension, policy.source_chunk_size)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "unit one-hot source geometry is unsupported or overflows".into(),
-                        )
-                    })?;
-                let infinity_norm = classes
-                    .iter()
-                    .map(|class| class.infinity_norm())
-                    .max()
-                    .unwrap_or(1);
-                let l1_norm = classes
-                    .iter()
-                    .filter_map(|class| class.l1_norm())
-                    .max()
-                    .unwrap_or(infinity_norm);
-                Ok(FoldWitnessNorms::new(infinity_norm, l1_norm))
-            }
-        }
-    }
-
-    /// Maximum physical squared coefficient norm of a valid canonical root source.
-    ///
-    /// This maximizes over every hot position allowed by the unit one-hot
-    /// chunk contract. Distinct chunks occupy distinct canonical coefficients.
-    pub fn root_source_l2_sq(
-        self,
-        logical_len: usize,
-        ring_dimension: usize,
-    ) -> Option<(u128, u128)> {
-        match self {
-            Self::BalancedSignedDigit(_) => None,
-            Self::UnitOneHot(policy) => {
-                if logical_len == 0
-                    || ring_dimension == 0
-                    || policy.source_chunk_size == 0
-                    || !logical_len.is_multiple_of(policy.source_chunk_size)
-                    || !logical_len.is_multiple_of(ring_dimension)
-                {
-                    return None;
-                }
-                let classes = canonical_source_classes(ring_dimension, policy.source_chunk_size)?;
-                let per_group_energy = classes.iter().try_fold(0u128, |maximum, class| {
-                    let energy = class.nonzero_count as u128;
-                    Some(maximum.max(energy))
-                })?;
-                let group_count = if policy.source_chunk_size >= ring_dimension {
-                    logical_len / policy.source_chunk_size
-                } else {
-                    logical_len / ring_dimension
-                };
-                let energy = per_group_energy.checked_mul(group_count as u128)?;
-                let coefficient_sq_max =
-                    usize::from(classes.iter().any(|class| class.nonzero_count > 0)) as u128;
-                Some((energy, coefficient_sq_max))
-            }
-        }
-    }
-}
-
 impl HonestFoldPolicy for HonestFoldPolicySpec {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
         match self {
@@ -526,14 +439,19 @@ mod tests {
     #[test]
     fn every_field_tier_uses_the_same_canonical_root_energy() {
         for field_bits in [32, 64, 128] {
-            let policy =
-                HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::canonical(field_bits, 256));
-            let (energy, coefficient_sq_max) = policy
-                .root_source_l2_sq(4_096, 256)
-                .expect("supported canonical root geometry");
-
-            assert_eq!(energy, 16);
-            assert_eq!(coefficient_sq_max, 1);
+            let source = crate::sis::CommittedSourceContract::try_new(
+                crate::sis::CommittedSourceClass::UnitOneHot {
+                    source_chunk_size: 256,
+                },
+                crate::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: 1,
+                    log_open_bound: Some(field_bits),
+                },
+            )
+            .unwrap();
+            let norms = source.source_norms(3, 1, 256, 4_096).unwrap();
+            assert_eq!((norms.l2_sq, norms.coefficient_sq_max), (16, 1));
         }
     }
 
@@ -541,12 +459,18 @@ mod tests {
     fn root_energy_matches_exhaustive_canonical_onehot_tables() {
         const D: usize = 8;
         for chunk_size in [4, 8] {
-            let policy =
-                HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::canonical(32, chunk_size));
-            let modeled = policy
-                .root_source_l2_sq(D, D)
-                .expect("supported small root geometry")
-                .0;
+            let source = crate::sis::CommittedSourceContract::try_new(
+                crate::sis::CommittedSourceClass::UnitOneHot {
+                    source_chunk_size: chunk_size,
+                },
+                crate::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: 1,
+                    log_open_bound: Some(32),
+                },
+            )
+            .unwrap();
+            let modeled = source.source_norms(3, 1, D, D).unwrap().l2_sq;
             let chunk_count = D / chunk_size;
             let choices_per_chunk = chunk_size + 1;
             let mut observed_max = 0u128;

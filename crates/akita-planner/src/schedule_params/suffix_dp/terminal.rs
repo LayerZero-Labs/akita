@@ -147,11 +147,11 @@ pub(crate) fn terminal_direct_suffix_cost(
         })
         .unwrap_or(certified_linf_cap);
     let witness_shape = TerminalResponseShape::derive(&terminal_params, encoding_scale)?;
-    let estimated_terminal_bytes = terminal_response_planner_bytes(
+    let estimated_terminal_bytes = native_terminal_response_planner_bytes(
         field_bits,
         &witness_shape,
         terminal_params.response_l2_sq_cap(),
-    );
+    )?;
     let direct = CandidateTerminalResponse {
         params: terminal_params,
         sparse_challenge_config,

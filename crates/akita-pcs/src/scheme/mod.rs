@@ -1,27 +1,15 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_cpu_backend::{AkitaProverSetup, CommitmentHandle, CpuBackend};
 use akita_error::AkitaError;
-use akita_prover::commitment::{
-    CommitmentExecutor, CommitmentSource, CommitmentStatePolicy, InnerRelationState,
-    OuterCompressionState,
-};
-use akita_prover::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend,
-};
-use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
-use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
+use akita_prover::{ProverBackend, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
-use akita_transcript::{Transcript, TranscriptChallengePreview};
-use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
-    SetupMatrixCapacity,
+    BasisMode, FoldSchedule, FpExtEncoding, OpeningClaimsLayout, SetupMatrixCapacity,
 };
+use akita_verifier::AkitaVerifier;
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
@@ -37,7 +25,7 @@ pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
 
 impl<Cfg> AkitaCommitmentScheme<Cfg>
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + 'static,
     Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
@@ -80,11 +68,12 @@ where
     where
         Cfg::Field: AkitaDeserialize<Context = ()> + WithCommitAccumulator,
     {
-        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+        let requirements = akita_config::SetupRequirements::from_catalog::<Cfg>(
             &self.schedules,
             max_num_vars,
             max_num_batched_polys,
-        )
+        )?;
+        akita_setup::new_prover_setup::<Cfg::Field>(&requirements)
     }
 
     /// Derive a verifier setup that preserves the prover's full matrix prefix.
@@ -124,120 +113,79 @@ where
         setup.to_verifier_setup(capacity)
     }
 
-    /// Commit one polynomial group in its complete parameter context.
+    /// Produce a fused batched opening proof from retained commitments.
+    ///
+    /// Each handle retains its exact source. The backend validates public claims
+    /// against that commitment before creating independent proof state.
     ///
     /// # Errors
     ///
-    /// Returns an error when the group is malformed, its scheduled S/G or
-    /// explicit parameters are unsupported, setup capacity is insufficient,
-    /// or commitment execution fails.
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    pub fn commit<P, SP>(
-        &self,
-        setup: &AkitaProverSetup<Cfg::Field>,
-        polys: &[P],
-        executor: &CommitmentExecutor<'_, Cfg::Field, SP>,
-        context: GroupContext<'_>,
-    ) -> Result<CommitOutput<Cfg::Field, SP::State>, AkitaError>
-    where
-        Cfg::Field: Ring + Unreduced + Field + 'static,
-        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
-        P: CommitmentSource<Cfg::Field>,
-        SP: CommitmentStatePolicy<Cfg::Field>,
-    {
-        akita_prover::commit::<Cfg, P, SP>(
-            polys,
-            setup.expanded.as_ref(),
-            &self.schedules,
-            executor,
-            context,
-        )
-    }
-
-    /// Produce a fused batched opening proof over ordered commitment groups.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any opening point is invalid or proof generation fails.
-    #[allow(clippy::too_many_arguments)]
+    /// Returns an error for mismatched ownership, setup, claims, or an invalid
+    /// protocol transition.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    pub fn batched_prove<'a, T, P, B, SP>(
+    #[allow(clippy::type_complexity)]
+    pub fn batched_prove<'a>(
         &self,
         setup: &AkitaProverSetup<Cfg::Field>,
         opening: SelectedProverOpeningData<
             'a,
             Cfg::ExtField,
-            P,
+            CommitmentHandle<Cfg::Field, Cfg::ExtField>,
             Cfg::Field,
-            impl InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
         >,
-        stacks: &'a impl LevelProveStacks<
-            'a,
-            Cfg::Field,
-            Opening = B,
-            Tensor = B,
-            RingSwitch = B,
-            CommitmentStatePolicy = SP,
-        >,
-        transcript: &mut T,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        session: &[u8],
         basis: BasisMode,
-    ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
+    ) -> Result<Vec<u8>, AkitaError>
     where
-        T: Transcript<Cfg::Field> + TranscriptChallengePreview,
-        Cfg::Field: Ring + Unreduced + Field + 'static,
+        Cfg::Field: WithCommitAccumulator + 'static,
+        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
-        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
-        B: ComputeBackendSetup<Cfg::Field>
-            + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-            + RuntimeCoefficientPackingBackendFor<
-                Cfg::Field,
-                RecursiveFoldSource<Cfg::Field>,
-                Cfg::ExtField,
-            > + SuffixOpeningProveBackend<Cfg::Field>
-            + DigitRowsComputeBackend<Cfg::Field>
-            + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-            + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
-            + RuntimeRingSwitchProveBackend<Cfg::Field>
-            + 'a,
-        <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
-        SP: CommitmentStatePolicy<Cfg::Field> + 'a,
-        SP::State: InnerRelationState<Cfg::Field> + OuterCompressionState<Cfg::Field>,
+        CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
+            Cfg::Field,
+            Cfg::ExtField,
+            CommitmentHandle = CommitmentHandle<Cfg::Field, Cfg::ExtField>,
+        >,
     {
-        let t_prove_total = Instant::now();
-        let proof = akita_prover::batched_prove::<Cfg, T, P, _, B, B, B, SP>(
-            &setup.expanded,
-            &setup.prefix_slots,
+        let started = Instant::now();
+        let resolved = self.schedules.resolve_selection(opening.selection())?;
+        let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+            resolved.schedule(),
+            opening.opening_layout(),
+        )?;
+        let prefix_slots =
+            backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
+        let proof = akita_prover::batched_prove::<Cfg, CpuBackend<Cfg::Field, Cfg::ExtField>>(
+            setup.expanded.descriptor(),
+            &prefix_slots,
             &self.schedules,
-            stacks,
+            backend,
             opening,
-            transcript,
+            session,
             basis,
         )?;
-
         tracing::info!(
-            levels = proof.num_fold_levels(),
-            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
+            proof_bytes = proof.len(),
+            elapsed_s = started.elapsed().as_secs_f64(),
             "akita batched prove complete"
         );
-
         Ok(proof)
     }
 
-    /// Verify a fused batched opening proof over ordered commitment groups.
+    /// Build a verifier for `setup` over this scheme's schedule catalog.
+    ///
+    /// The verifier admits every catalog row `setup` supports and prepares
+    /// their terminal matrices once; see [`AkitaVerifier::new`].
     ///
     /// # Errors
     ///
-    /// Returns an error when verification fails.
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
-    pub fn batched_verify<T: Transcript<Cfg::Field>>(
+    /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
+    /// admitted row fails.
+    pub fn verifier(
         &self,
-        proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
-        setup: &AkitaVerifierSetup<Cfg::Field>,
-        transcript: &mut T,
-        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-        basis: BasisMode,
-    ) -> Result<(), AkitaError> {
-        batched_verify_inner::<Cfg, T>(proof, setup, &self.schedules, transcript, statement, basis)
+        setup: AkitaVerifierSetup<Cfg::Field>,
+    ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
+        AkitaVerifier::new(setup, self.schedules.clone())
     }
 
     /// Protocol identifier.
@@ -245,36 +193,6 @@ where
     pub fn protocol_name() -> &'static [u8] {
         PROTOCOL_NAME
     }
-}
-
-fn batched_verify_inner<Cfg, T>(
-    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
-    setup: &AkitaVerifierSetup<Cfg::Field>,
-    schedules: &TrustedScheduleCatalog<Cfg>,
-    transcript: &mut T,
-    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
-    basis: BasisMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field:
-        Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
-    T: Transcript<Cfg::Field>,
-{
-    let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(
-        proof, setup, schedules, transcript, statement, basis,
-    )?;
-
-    tracing::info!(
-        levels = proof.num_fold_levels(),
-        elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
-        "akita batched verify complete"
-    );
-
-    Ok(())
 }
 
 const PROTOCOL_NAME: &[u8] = b"Akita";
