@@ -150,13 +150,11 @@ fn bench_q64_forward_inputs<const D: usize>(c: &mut Criterion) {
 
     group.bench_with_input(BenchmarkId::new("signed_i8", D), &D, |b, _| {
         let mut index = 0usize;
+        let mut out = CyclotomicCrtNtt::zero();
         b.iter(|| {
             index = (index + 1) % FORWARD_INPUT_POOL;
-            black_box(CyclotomicCrtNtt::from_i8_with_lut(
-                black_box(&signed[index]),
-                &params,
-                &lut,
-            ))
+            out.assign_i8_with_lut(black_box(&signed[index]), &params, &lut);
+            black_box(&out);
         })
     });
     group.bench_with_input(BenchmarkId::new("general_montgomery", D), &D, |b, _| {

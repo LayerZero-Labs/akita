@@ -137,7 +137,8 @@ fn centered_lut_understated_bound_falls_back_exactly() {
         }
     });
 
-    let with_lut = CyclotomicCrtNtt::from_centered_i32_with_lut(&coeffs, &params, &lut);
+    let mut with_lut = CyclotomicCrtNtt::zero();
+    with_lut.assign_centered_i32_with_lut(&coeffs, &params, &lut);
     let (direct, _) =
         CyclotomicCrtNtt::<i32, Q32_NUM_PRIMES, D>::from_centered_i32_pair_with_params(
             &coeffs, &params,
