@@ -698,6 +698,33 @@ unsafe fn forward_digits<V: Lanes, const D: usize>(
 }
 
 #[inline(always)]
+unsafe fn forward_cyclic_digits<V: Lanes, const D: usize>(
+    a: &mut [MontCoeff<V::Elem>; D],
+    digits: &[i8; D],
+    prime: NttPrime<V::Elem>,
+    tw: &NttTwiddles<V::Elem, D>,
+) where
+    V::Elem: Width,
+{
+    let digits = digits.as_ptr();
+    // SAFETY: inherited from the caller; `digits` has `D` entries.
+    unsafe {
+        let m = Modulus::<V>::splat(prime.p);
+        let r2 = V::Multiplier::new(
+            V::splat(prime.montsq),
+            V::splat(prime.montsq.wrapping_mul(prime.pinv)),
+        );
+        forward::<V, D>(
+            a.as_mut_ptr().cast(),
+            prime,
+            tw,
+            #[inline(always)]
+            |i| r2.mul(V::load_i8(digits.add(i)), m),
+        )
+    }
+}
+
+#[inline(always)]
 unsafe fn forward_centered_i16<V: Lanes, const D: usize>(
     a: &mut [MontCoeff<V::Elem>; D],
     coefficients: &[i16; D],
@@ -860,6 +887,10 @@ x86_transforms! {
         forward_ntt_centered_i16_i16;
     /// Inverse negacyclic NTT.
     inverse_negacyclic, () => inverse_ntt_i32, inverse_ntt_i32_avx512, inverse_ntt_i16;
+    /// Signed-digit conversion and forward cyclic NTT. One Montgomery product
+    /// by `R^2` enters Montgomery form on the first pass's loads.
+    forward_cyclic_digits, (digits: &[i8; D]) =>
+        forward_ntt_cyclic_i8_i32, forward_ntt_cyclic_i8_i32_avx512, forward_ntt_cyclic_i8_i16;
     /// Forward cyclic NTT.
     forward_cyclic, () =>
         forward_ntt_cyclic_i32, forward_ntt_cyclic_i32_avx512, forward_ntt_cyclic_i16;

@@ -439,7 +439,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
     ) {
         for (k, limb) in self.limbs.iter_mut().enumerate() {
-            lut.fill_negacyclic_limb(k, digits, params, limb);
+            lut.fill_ntt_limb::<false, D>(k, digits, params, limb);
         }
     }
 
@@ -452,14 +452,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
     ) {
-        for (k, (limb, tw)) in self
-            .limbs
-            .iter_mut()
-            .zip(params.twiddles.iter())
-            .enumerate()
-        {
-            lut.fill_limb(k, digits, params, limb);
-            forward_ntt_cyclic(limb, params.primes[k], tw, params.kernel_plan);
+        for (k, limb) in self.limbs.iter_mut().enumerate() {
+            lut.fill_ntt_limb::<true, D>(k, digits, params, limb);
         }
     }
 

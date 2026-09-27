@@ -2,8 +2,8 @@ use std::arch::aarch64::*;
 
 use super::i32_kernels::centered_reduce_4x_i32;
 use super::{
-    forward_ntt_centered_i16_i32, forward_ntt_cyclic_i32, forward_ntt_i32, forward_ntt_i8_i32,
-    inverse_ntt_cyclic_i32, inverse_ntt_i32,
+    forward_ntt_centered_i16_i32, forward_ntt_cyclic_i32, forward_ntt_cyclic_i8_i32,
+    forward_ntt_i32, forward_ntt_i8_i32, inverse_ntt_cyclic_i32, inverse_ntt_i32,
 };
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
 use crate::ntt::tables::{Q128_RAW_PRIMES, Q64_PRIMES};
@@ -167,6 +167,24 @@ fn check_transform<const D: usize>(prime: NttPrime<i32>) {
         forward_ntt_i8_i32(&mut actual, &digits, prime, &tw);
     }
     assert_eq!(actual, expected, "signed digits D={D}, p={p}");
+    let digit_cases: [[i8; D]; 4] = [
+        digits,
+        [i8::MIN; D],
+        [i8::MAX; D],
+        std::array::from_fn(|i| [i8::MIN, i8::MAX, -1, 0, 1][i % 5]),
+    ];
+    for (case, digits) in digit_cases.into_iter().enumerate() {
+        let mut expected = digits.map(|x| prime.from_canonical(i32::from(x)));
+        forward_ntt_cyclic(&mut expected, prime, &tw, NttKernelPlan::SCALAR);
+        let mut actual = [MontCoeff::from_raw(0); D];
+        unsafe {
+            forward_ntt_cyclic_i8_i32(&mut actual, &digits, prime, &tw);
+        }
+        assert_eq!(
+            actual, expected,
+            "cyclic signed digits D={D}, p={p}, case={case}"
+        );
+    }
     let coefficients: [i16; D] = std::array::from_fn(|i| match i % 5 {
         0 => i16::MIN,
         1 => i16::MAX,
