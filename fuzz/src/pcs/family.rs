@@ -89,6 +89,26 @@ pub trait Family: Send + Sync {
     fn verifier_boundary(&self, case: usize, reader: &mut Reader<'_>);
     /// Malformed and unsupported prover-side requests.
     fn prover_boundary(&self, case: usize, reader: &mut Reader<'_>);
+    /// Tampered trusted terminal-cache artifacts for a selection-only verifier.
+    fn terminal_cache(&self, case: usize, reader: &mut Reader<'_>);
+    /// Field type, grouping families that can share one setup.
+    fn field_type(&self) -> std::any::TypeId;
+    /// Largest `(num_vars, polys)` the planned cases need.
+    fn setup_capacity(&self) -> (usize, usize);
+    /// Union this family's setup requirements into `acc` (same field).
+    fn union_requirements(
+        &self,
+        acc: Option<Box<dyn std::any::Any + Send + Sync>>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Box<dyn std::any::Any + Send + Sync>;
+    /// Prove `case` again under a covering setup and a shared backend.
+    fn shared_setup(
+        &self,
+        case: usize,
+        reader: &mut Reader<'_>,
+        requirements: &(dyn std::any::Any + Send + Sync),
+    );
     /// Honest proof bytes of the fixed fixture, for seed corpora.
     fn fixture_proof(&self, case: usize) -> Vec<u8>;
     /// `public_deserialize` inputs encoding this fixture's public objects.
@@ -542,7 +562,18 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         tables: &Tables<Cfg::Field>,
         prior: &[Group<Cfg>],
     ) -> (CommittedGroup<Cfg::Field>, Handle<Cfg>) {
-        let backend = &self.prepared().backend;
+        self.commit_on(&self.prepared().backend, plan, tables, prior)
+    }
+
+    /// [`Self::commit`] on an explicit backend (for example one shared by
+    /// several families over a covering setup).
+    pub(super) fn commit_on(
+        &self,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        plan: &GroupPlan,
+        tables: &Tables<Cfg::Field>,
+        prior: &[Group<Cfg>],
+    ) -> (CommittedGroup<Cfg::Field>, Handle<Cfg>) {
         let prior_profiles = (!prior.is_empty()).then(|| {
             PrecommittedGroupProfiles::from_profiles(
                 prior
@@ -706,6 +737,26 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         pool: Option<&rayon::ThreadPool>,
     ) -> Proved {
         let prepared = self.prepared();
+        self.prove_on(
+            &prepared.setup,
+            &prepared.backend,
+            groups,
+            session,
+            basis,
+            pool,
+        )
+    }
+
+    /// [`Self::prove`] under an explicit setup and backend.
+    pub(super) fn prove_on(
+        &self,
+        setup: &AkitaProverSetup<Cfg::Field>,
+        backend: &CpuBackend<Cfg::Field, Cfg::ExtField>,
+        groups: &[Group<Cfg>],
+        session: &[u8],
+        basis: BasisMode,
+        pool: Option<&rayon::ThreadPool>,
+    ) -> Proved {
         let run = || {
             let opening = Cfg::select(
                 claims_of(groups),
@@ -713,15 +764,8 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 &self.scheme,
             )
             .unwrap_or_else(|error| panic!("{}: honest opening selection: {error:?}", self.name()));
-            Cfg::prove(
-                &self.scheme,
-                &prepared.setup,
-                opening,
-                &prepared.backend,
-                session,
-                basis,
-            )
-            .unwrap_or_else(|error| panic!("{}: honest proof failed: {error:?}", self.name()))
+            Cfg::prove(&self.scheme, setup, opening, backend, session, basis)
+                .unwrap_or_else(|error| panic!("{}: honest proof failed: {error:?}", self.name()))
         };
         stats::time("prove", || match pool {
             Some(pool) => pool.install(run),
@@ -1221,6 +1265,36 @@ impl<Cfg: PcsOps> Family for FamilyImpl<Cfg> {
 
     fn prover_boundary(&self, case: usize, reader: &mut Reader<'_>) {
         self.prover_boundary_impl(case, reader);
+    }
+
+    fn terminal_cache(&self, case: usize, reader: &mut Reader<'_>) {
+        self.terminal_cache_impl(case, reader);
+    }
+
+    fn field_type(&self) -> std::any::TypeId {
+        self.field_type_impl()
+    }
+
+    fn setup_capacity(&self) -> (usize, usize) {
+        self.setup_capacity_impl()
+    }
+
+    fn union_requirements(
+        &self,
+        acc: Option<Box<dyn std::any::Any + Send + Sync>>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Box<dyn std::any::Any + Send + Sync> {
+        self.union_requirements_impl(acc, max_num_vars, max_num_polys)
+    }
+
+    fn shared_setup(
+        &self,
+        case: usize,
+        reader: &mut Reader<'_>,
+        requirements: &(dyn std::any::Any + Send + Sync),
+    ) {
+        self.shared_setup_impl(case, reader, requirements);
     }
 
     fn fixture_proof(&self, case: usize) -> Vec<u8> {

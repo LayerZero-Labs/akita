@@ -75,8 +75,8 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
     });
     let cases = registry.select(Selector::Any);
     println!(
-        "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8} {:>8}  status",
-        "case", "family", "shape", "inputs", "folds", "l2", "linf", "attempts"
+        "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8} {:>8} {:>6}  status",
+        "case", "family", "shape", "inputs", "folds", "l2", "linf", "attempts", "mean"
     );
     let mut failed = 0usize;
     for (index, (family, case)) in cases.iter().enumerate() {
@@ -98,13 +98,14 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
         }
         let peak = akita_fuzz::liveness::take_peak();
         println!(
-            "{index:>4}  {:<34} {:<24} {inputs:>6} {:>6} {:>8.4} {:>8.4} {:>8}  {} ({:.1}s)",
+            "{index:>4}  {:<34} {:<24} {inputs:>6} {:>6} {:>8.4} {:>8.4} {:>8} {:>6.2}  {} ({:.1}s)",
             family.name(),
             label,
             peak.folds,
             peak.max_margin,
             peak.max_linf_margin,
             peak.max_attempts,
+            peak.attempts_total as f64 / peak.folds.max(1) as f64,
             if failures.is_empty() {
                 "ok".to_string()
             } else {
@@ -148,7 +149,7 @@ pub fn seeds(out: &Path) {
     // End-to-end targets: one seed family per planned case, selected by its
     // leading u16. The case list depends on the process cost limit, so these
     // mirror each target's default limit.
-    let pcs: [(&str, Selector, u32); 7] = [
+    let pcs: [(&str, Selector, u32); 8] = [
         ("pcs_dense", Selector::DenseSingle, 18),
         ("pcs_onehot", Selector::OneHotSingle, 20),
         ("pcs_batch", Selector::Batch, 20),
@@ -156,6 +157,7 @@ pub fn seeds(out: &Path) {
         ("pcs_reject", Selector::AnyDirect, 17),
         ("pcs_parallel", Selector::AnyDirect, 17),
         ("pcs_liveness", Selector::Any, 20),
+        ("pcs_shared", Selector::AnyDirect, 17),
     ];
     for (name, selector, log2) in pcs {
         let limits = Limits {

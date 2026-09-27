@@ -151,6 +151,8 @@ impl fmt::Display for Sample {
 #[derive(Clone, Debug, Default)]
 pub struct Peak {
     pub folds: u64,
+    /// Sum of attempts over `folds`; the mean estimates `1 / acceptance`.
+    pub attempts_total: u64,
     pub max_attempts: u64,
     pub max_margin: f64,
     pub max_linf_margin: f64,
@@ -278,8 +280,19 @@ fn install() {
     });
 }
 
-pub fn is_grind_exhaustion(error: &AkitaError) -> bool {
-    matches!(error, AkitaError::InvalidInput(message) if message.contains("fold grind exceeded"))
+/// A bounded prover-side retry loop gave up: the fold grind (4096 nonces) or
+/// operator-norm challenge rejection (4096 draws per coordinate). Both return
+/// `InvalidInput`, but neither is an input validation failure.
+pub fn is_liveness_exhaustion(error: &AkitaError) -> bool {
+    matches!(error, AkitaError::InvalidInput(message)
+        if message.contains("fold grind exceeded")
+            || message.contains("operator-norm rejection exceeded"))
+}
+
+/// Report a closeness ratio in `[0.25, 1.25)` (1.0 = at a limit) to the
+/// engine as coverage, for checks outside the fold reports.
+pub fn guide_ratio(ratio: f64) {
+    guide::ratio(ratio);
 }
 
 /// Run one proof, capture its fold reports, and check their margins.
@@ -294,8 +307,8 @@ pub fn observe<T>(
         .with(|capture| std::mem::replace(&mut *capture.borrow_mut(), previous))
         .unwrap_or_default();
     match &result {
-        Err(error) if is_grind_exhaustion(error) => panic!(
-            "liveness: {context}: fold grind exhausted ({error:?}); last reports:\n{}",
+        Err(error) if is_liveness_exhaustion(error) => panic!(
+            "liveness: {context}: prover retry loop exhausted ({error:?}); last reports:\n{}",
             tail(&samples)
         ),
         Ok(_) => check(context, &samples),
@@ -337,6 +350,7 @@ fn check(context: &str, samples: &[Sample]) {
         stats::count(ATTEMPT_COUNTERS[attempt_bucket(attempts)]);
         guide::attempts(sample.terminal, attempt_bucket(attempts));
         peak.max_attempts = peak.max_attempts.max(attempts);
+        peak.attempts_total += attempts;
         if let (Some(response), Some(cap)) = (sample.response, sample.cap) {
             assert!(
                 response <= cap,
@@ -384,6 +398,7 @@ fn check(context: &str, samples: &[Sample]) {
     if let Ok(mut global) = PEAK.lock() {
         let global = global.get_or_insert_with(Peak::default);
         global.folds += peak.folds;
+        global.attempts_total += peak.attempts_total;
         global.max_attempts = global.max_attempts.max(peak.max_attempts);
         global.max_linf_margin = global.max_linf_margin.max(peak.max_linf_margin);
         if peak.max_margin > global.max_margin {
@@ -467,6 +482,15 @@ mod guide {
 
     pub(super) fn margin(terminal: bool, margin: f64) {
         MARGIN[usize::from(terminal) * 64 + step(margin)]();
+    }
+
+    /// Other closeness ratios (224..288).
+    static RATIO: [fn(); 64] = marks!(
+        224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 280 281 282 283 284 285 286 287
+    );
+
+    pub(super) fn ratio(ratio: f64) {
+        RATIO[step(ratio)]();
     }
 
     pub(super) fn linf(margin: f64) {

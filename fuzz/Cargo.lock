@@ -77,6 +77,7 @@ name = "akita-fuzz"
 version = "0.0.0"
 dependencies = [
  "akita-algebra",
+ "akita-challenges",
  "akita-config",
  "akita-cpu-backend",
  "akita-error",
@@ -84,6 +85,7 @@ dependencies = [
  "akita-prover",
  "akita-schedules",
  "akita-serialization",
+ "akita-setup",
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",

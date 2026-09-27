@@ -7,10 +7,12 @@
 //! a sizing or schedule rule.
 
 mod boundary;
+mod cache;
 mod family;
 mod import;
 pub mod ops;
 mod registry;
+mod shared;
 
 pub use family::Family;
 pub use family::{Check, Mutation};

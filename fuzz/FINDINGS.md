@@ -100,6 +100,46 @@ Suggested fix: reject a stored bound that differs from the resolved key's.
 value to be a stable encode/decode fixed point; every other type keeps the
 strict byte-for-byte check.
 
+## D-1 (deferred design issue, liveness): joint fold grinds have no certified completeness bound
+
+Status: open, deferred by decision (no protocol or schedule change for now).
+The fuzzer measures it instead; see "Tracking" below.
+
+All groups of a fold level share one grind nonce, and a nonce is accepted
+only when every group accepts (`first_jointly_accepted_nonce`,
+`crates/akita-prover/src/protocol/fold_grind.rs`). The planner sizes each
+group on its own: root and precommitted groups for per-attempt acceptance
+`≥ 1/8` (`FOLD_LINF_GRIND_TARGET_ACCEPT_PROB`, `fold_linf_cap.rs`;
+`honest_fold_policy.rs`), recursive and setup-prefix groups for `≥ 1/40`
+(`response_linf_cap`, `response_model.rs`). Nothing scales these targets by
+the number of jointly ground groups, and `specs/fold-linf-rejection.md`
+(multi-group section) states that the per-group sizing "does not assert … a
+joint expected-attempt bound. The hard probe cap is the protocol-wide
+termination guarantee." The documented `2^-149` exhaustion bound therefore
+holds for single-group grinds only.
+
+Certified per-attempt floors in the shipped catalogs (group challenges come
+from separate indexed queries, so group acceptances are independent given the
+witnesses):
+
+| Level | Groups sharing a nonce | Floor | Certified P[4096 attempts exhausted] |
+|---|---|---|---|
+| Root, fp128_onehot `20:4` + three `14:1` precommitted | 4 at 1/8 | 1/4096 | ≈ 0.37 |
+| Root, rows with two precommitted groups | 3 at 1/8 | 1/512 | ≈ 3·10^-4 |
+| Setup-prefix level (14 recursive rows; row 64 has two such levels) | 2 at 1/40 | 1/1600 | ≈ 0.077 |
+
+Observed behavior is far better: rounding to whole digits leaves slack, and
+no sweep or campaign proof has needed more than 3 attempts. The gap is in
+the guarantee, not (so far) in practice.
+
+Possible fixes, for later: size each of `k` jointly ground groups for
+`target^(1/k)` (changes schedules and catalogs), or grind groups on
+independent nonces (protocol change).
+
+Tracking: the liveness oracle checks every fold's attempts and margins;
+multi-group rows are measured per group and jointly once the prover reports
+per-probe L-infinity diagnostics (see COVERAGE.md).
+
 ## F-1 (Low, documentation): `EqPolynomial::evals_cached` returns suffix tables
 
 `crates/akita-algebra/src/eq_poly.rs` documents

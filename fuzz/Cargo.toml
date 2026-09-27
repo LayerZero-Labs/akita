@@ -18,6 +18,7 @@ default = ["parallel"]
 # Rayon-parallel production paths. Build with `--no-default-features` for the
 # sequential feature graph, which CI otherwise never executes.
 parallel = [
+  "akita-challenges/parallel",
   "akita-cpu-backend/parallel",
   "akita-pcs/parallel",
   "akita-prover/parallel",
@@ -30,6 +31,7 @@ parallel = [
 [dependencies]
 akita-algebra = { path = "../crates/akita-algebra" }
 akita-config = { path = "../crates/akita-config", default-features = false, features = ["transcript-blake2b"] }
+akita-setup = { path = "../crates/akita-setup", default-features = false, features = ["transcript-blake2b"] }
 akita-cpu-backend = { path = "../crates/akita-cpu-backend", default-features = false, features = ["transcript-blake2b"] }
 akita-error = { path = "../crates/akita-error" }
 akita-pcs = { path = "../crates/akita-pcs", default-features = false, features = ["transcript-blake2b", "response-model-diagnostics"] }
@@ -37,6 +39,7 @@ akita-prover = { path = "../crates/akita-prover", default-features = false, feat
 akita-schedules = { path = "../crates/akita-schedules", default-features = false, features = ["transcript-blake2b"] }
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-sumcheck = { path = "../crates/akita-sumcheck", default-features = false, features = ["transcript-blake2b"] }
+akita-challenges = { path = "../crates/akita-challenges", default-features = false, features = ["transcript-blake2b"] }
 akita-transcript = { path = "../crates/akita-transcript", default-features = false, features = ["transcript-blake2b"] }
 akita-types = { path = "../crates/akita-types", default-features = false, features = ["transcript-blake2b"] }
 akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = ["transcript-blake2b"] }
@@ -116,6 +119,27 @@ bench = false
 [[bin]]
 name = "pcs_parallel"
 path = "fuzz_targets/pcs_parallel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fold_challenges"
+path = "fuzz_targets/fold_challenges.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "terminal_cache"
+path = "fuzz_targets/terminal_cache.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pcs_shared"
+path = "fuzz_targets/pcs_shared.rs"
 test = false
 doc = false
 bench = false

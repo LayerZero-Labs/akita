@@ -4,7 +4,7 @@
 //! [`PcsOps`], blanket-implemented for each config that satisfies the bounds
 //! of the production APIs. Generic harness code then needs only `Cfg: PcsOps`.
 
-use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, CpuSource, DensePoly,
     GroupContext, OneHotPoly,
@@ -82,6 +82,18 @@ pub trait PcsOps: CommitmentConfig {
         scheme: &AkitaCommitmentScheme<Self>,
         setup: &AkitaProverSetup<Self::Field>,
     ) -> Result<CpuBackend<Self::Field, Self::ExtField>, AkitaError>;
+
+    /// This family's setup requirements at a given capacity.
+    fn setup_requirements(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<SetupRequirements<Self::Field>, AkitaError>;
+
+    /// One prover setup covering `requirements` (possibly several families).
+    fn covering_setup(
+        requirements: &SetupRequirements<Self::Field>,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError>;
 
     fn verifier_setup(
         scheme: &AkitaCommitmentScheme<Self>,
@@ -215,6 +227,20 @@ where
         setup: &AkitaProverSetup<Self::Field>,
     ) -> Result<CpuBackend<Self::Field, Self::ExtField>, AkitaError> {
         CpuBackend::new(Arc::clone(&setup.expanded))
+    }
+
+    fn setup_requirements(
+        scheme: &AkitaCommitmentScheme<Self>,
+        max_num_vars: usize,
+        max_num_polys: usize,
+    ) -> Result<SetupRequirements<Self::Field>, AkitaError> {
+        SetupRequirements::from_catalog::<Self>(scheme.schedules(), max_num_vars, max_num_polys)
+    }
+
+    fn covering_setup(
+        requirements: &SetupRequirements<Self::Field>,
+    ) -> Result<AkitaProverSetup<Self::Field>, AkitaError> {
+        akita_setup::new_prover_setup::<Self::Field>(requirements)
     }
 
     fn verifier_setup(

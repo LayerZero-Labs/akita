@@ -2,6 +2,7 @@
 
 pub mod artifact;
 pub mod boundary;
+pub mod challenges;
 pub mod decompose;
 pub mod deserialize;
 pub mod field;
@@ -27,6 +28,7 @@ pub const ALL: &[(&str, Target)] = &[
     ("transcript_labels", legacy::transcript_labels),
     ("serialization_vec", legacy::serialization_vec),
     ("public_deserialize", deserialize::run),
+    ("fold_challenges", challenges::run),
     ("schedule_artifact", artifact::run),
     ("pcs_dense", pcs::dense),
     ("pcs_onehot", pcs::onehot),
@@ -35,8 +37,10 @@ pub const ALL: &[(&str, Target)] = &[
     ("pcs_reject", pcs::reject),
     ("pcs_parallel", pcs::parallel),
     ("pcs_liveness", pcs::liveness),
+    ("pcs_shared", pcs::shared),
     ("verifier_boundary", boundary::verifier),
     ("prover_boundary", boundary::prover),
+    ("terminal_cache", boundary::terminal_cache),
 ];
 
 pub fn by_name(name: &str) -> Option<Target> {

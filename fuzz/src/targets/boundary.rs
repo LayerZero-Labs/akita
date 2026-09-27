@@ -9,7 +9,15 @@ use crate::pcs::{registry, Limits, Selector};
 const VERIFIER_LIMITS: Limits = Limits { max_cost: 1 << 20 };
 const PROVER_LIMITS: Limits = Limits { max_cost: 1 << 16 };
 
-fn run(data: &[u8], prover: bool) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Boundary {
+    Verifier,
+    Prover,
+    TerminalCache,
+}
+
+fn run(data: &[u8], boundary: Boundary) {
+    let prover = boundary == Boundary::Prover;
     let (limits, selector) = if prover {
         (PROVER_LIMITS, Selector::AnyDirect)
     } else {
@@ -20,12 +28,10 @@ fn run(data: &[u8], prover: bool) {
     let mut reader = Reader::new(data);
     let (family, case) = cases[reader.choose(cases.len())];
     let family = &registry.families()[family];
-    crate::env::on_large_stack(|| {
-        if prover {
-            family.prover_boundary(case, &mut reader);
-        } else {
-            family.verifier_boundary(case, &mut reader);
-        }
+    crate::env::on_large_stack(|| match boundary {
+        Boundary::Prover => family.prover_boundary(case, &mut reader),
+        Boundary::Verifier => family.verifier_boundary(case, &mut reader),
+        Boundary::TerminalCache => family.terminal_cache(case, &mut reader),
     });
 }
 
@@ -34,9 +40,13 @@ pub const VERIFIER_CASES: (Selector, Limits) = (Selector::Any, VERIFIER_LIMITS);
 pub const PROVER_CASES: (Selector, Limits) = (Selector::AnyDirect, PROVER_LIMITS);
 
 pub fn verifier(data: &[u8]) {
-    run(data, false);
+    run(data, Boundary::Verifier);
 }
 
 pub fn prover(data: &[u8]) {
-    run(data, true);
+    run(data, Boundary::Prover);
+}
+
+pub fn terminal_cache(data: &[u8]) {
+    run(data, Boundary::TerminalCache);
 }

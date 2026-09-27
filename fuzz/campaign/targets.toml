@@ -94,6 +94,12 @@ description = "Untrusted decoding of commitments, setups, descriptors, selection
 max_len = 65536
 timeout_s = 30
 
+[target.fold_challenges]
+kind = "primitive"
+description = "Fold-challenge sampling: exact declared shape and norms, operator-norm rejection soundness (independent DFT), determinism, group binding"
+max_len = 512
+timeout_s = 30
+
 [target.schedule_artifact]
 kind = "boundary"
 description = "Trusted-schedule artifact admission from mutated shipped artifacts; canonical re-encoding"
@@ -160,6 +166,15 @@ timeout_s = 300
 rss_limit_mb = 8192
 malloc_limit_mb = 8192
 
+[target.pcs_shared]
+kind = "end_to_end"
+description = "One covering setup per field and one backend shared by all families: commitments and proofs byte-identical to per-family ones; covering verifier accepts"
+weight = 1.0
+max_len = 16384
+timeout_s = 600
+rss_limit_mb = 8192
+malloc_limit_mb = 8192
+
 [target.pcs_liveness]
 kind = "end_to_end"
 description = "Liveness: every catalog row under witnesses and opening points shaped to maximize recursive digit energy; fold-grind margins guide the search"
@@ -168,6 +183,14 @@ max_len = 16384
 timeout_s = 600
 rss_limit_mb = 8192
 malloc_limit_mb = 8192
+
+[target.terminal_cache]
+kind = "boundary"
+description = "Trusted terminal-NTT cache artifacts for selection-only verifiers: header binding, payload range, agreement with the cache-free verifier"
+max_len = 4096
+timeout_s = 120
+rss_limit_mb = 6144
+malloc_limit_mb = 6144
 
 [target.verifier_boundary]
 kind = "boundary"
