@@ -225,9 +225,9 @@ impl RelationRhsLayout {
 #[cfg(test)]
 mod tests {
     use super::{RelationRhsLayout, RelationRowFamily, RelationRowGeometry};
+    use crate::layout::relation_layout::RelationCompressionLayout;
+    use crate::layout::relation_rhs_layout::compression_plan;
     use crate::layout::CommitmentRingDims;
-    use crate::proof::relation::compression_plan;
-    use crate::proof::relation::layout_types::RelationCompressionLayout;
     use crate::{CommitmentSliceCount, SisModulusProfileId};
     use akita_error::AkitaError;
 

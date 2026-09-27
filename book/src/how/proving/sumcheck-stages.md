@@ -183,7 +183,7 @@ $$
 Their product is $R_b$. Each $L_\ell$ is quartic except at basis $4$, where
 the only leaf is quadratic. Product substages prove how these leaves combine,
 using only arity-$2$ or arity-$4$ products. The topology is fixed by
-[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs):
+[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/layout/digit_range.rs):
 
 | Basis | Product substages | Final leaf |
 |---:|---|---|

@@ -85,8 +85,8 @@ Before committing the final group, derive the ordered profiles of the earlier
 commitments:
 
 ```rust
-let prior = PrecommittedGroupProfiles::from_ordered_groups(
-    prior_commitments.iter(),
+let prior = PrecommittedGroupProfiles::from_profiles(
+    prior_commitments.iter().map(|group| *group.profile()).collect(),
 )?;
 let final_source = backend.import_source(final_polynomials)?;
 let final_output = backend.commit(

@@ -8,9 +8,6 @@ use akita_algebra::EqPolynomial;
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
-/// Degree bound for one witness factor times one transparent reduction factor.
-pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
-
 /// Full-split tensor opening shape for an extension `E/F`.
 ///
 /// # Errors
