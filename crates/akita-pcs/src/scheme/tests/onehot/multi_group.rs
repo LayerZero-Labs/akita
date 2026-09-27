@@ -272,13 +272,15 @@ where
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"test/multi-group-unequal",
-            GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"test/multi-group-unequal",
+                GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
+                BasisMode::Lagrange,
+            )
+        })
         .expect("multi-group verify");
 
     if check_group_binding {
@@ -300,14 +302,14 @@ where
         .expect("swapped verifier claims");
         assert!(
             scheme
-                .batched_verify(
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
-                    &verifier_setup,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, swapped_claims)
                         .expect("swapped-group statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "swapped group commitments must reject"
         );
@@ -323,14 +325,14 @@ where
         .expect("tampered verifier claims");
         assert!(
             scheme
-                .batched_verify(
+                .verifier(verifier_setup.clone())
+                .and_then(|verifier| verifier.batched_verify(
                     &proof,
-                    &verifier_setup,
                     b"test/multi-group-unequal",
                     GroupBatchStatement::new(selection, tampered_claims)
                         .expect("tampered-opening statement"),
-                    BasisMode::Lagrange,
-                )
+                    BasisMode::Lagrange
+                ))
                 .is_err(),
             "tampered group opening must reject"
         );
