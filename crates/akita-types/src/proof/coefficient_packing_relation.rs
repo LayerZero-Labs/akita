@@ -2,13 +2,12 @@
 
 use std::ops::Range;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
 use jolt_field::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
 
 use super::{
@@ -19,7 +18,7 @@ use crate::{
     gadget_row_scalars, r_decomp_levels, validate_role_dims_for_field, CommittedGroupParams,
     FpExtEncoding, OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
     RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, SignedDigitKernel,
-    SubringCoefficientPackingGeometry, WitnessLayout,
+    SubringCoefficientPackingGeometry, WitnessLayout, WitnessUnitLayout,
 };
 
 mod expanded;
@@ -37,8 +36,7 @@ use expanded::CoefficientPackingGroupSemanticInputs;
 use expanded::CoefficientPackingRelationEvents;
 pub use expanded::{
     CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
-    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
+    CoefficientPackingGroupSemantics,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use test_fixtures::{
@@ -62,11 +60,11 @@ pub use test_fixtures::{
 /// against the transcript: a different point of the same shape validates.
 /// The caller must supply the transcript-derived values, as the verifier's
 /// fold replay does.
-pub struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
-    inputs: CoefficientPackingGroupSemanticInputs<'a, F, E>,
+pub struct ValidatedCoefficientPackingGroup<'authority, 'output, F: Field, E: Field> {
+    inputs: CoefficientPackingGroupSemanticInputs<'authority, 'output, F, E>,
     geometry: SubringCoefficientPackingGeometry,
     group_claim_range: Range<usize>,
-    group_claim_coefficients: &'a [E],
+    group_claim_coefficients: &'output [E],
     num_claims: usize,
     num_live_blocks: usize,
     consistency_row: usize,
@@ -85,7 +83,9 @@ pub struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
     fold_gadget: Vec<E>,
 }
 
-impl<'a, F: Field, E: Field> ValidatedCoefficientPackingGroup<'a, F, E> {
+impl<'authority, 'output, F: Field, E: Field>
+    ValidatedCoefficientPackingGroup<'authority, 'output, F, E>
+{
     #[must_use]
     pub const fn group_index(&self) -> usize {
         self.inputs.group_index
@@ -97,12 +97,12 @@ impl<'a, F: Field, E: Field> ValidatedCoefficientPackingGroup<'a, F, E> {
     }
 
     #[must_use]
-    pub const fn prepared_point(&self) -> &'a PreparedSubringCoefficientPackingPoint<E> {
+    pub const fn prepared_point(&self) -> &'output PreparedSubringCoefficientPackingPoint<E> {
         self.inputs.prepared_point
     }
 
     #[must_use]
-    pub fn witness_layout(&self) -> &'a WitnessLayout {
+    pub fn witness_layout(&self) -> &'authority WitnessLayout {
         self.inputs.relation_plan.witness_layout()
     }
 
@@ -114,7 +114,7 @@ impl<'a, F: Field, E: Field> ValidatedCoefficientPackingGroup<'a, F, E> {
 
     /// The batch claim coefficients restricted to [`Self::group_claim_range`].
     #[must_use]
-    pub const fn group_claim_coefficients(&self) -> &'a [E] {
+    pub const fn group_claim_coefficients(&self) -> &'output [E] {
         self.group_claim_coefficients
     }
 
@@ -315,9 +315,9 @@ fn push_event<E: Field>(
 
 /// Build one group's shared coefficient-packing relation semantics.
 #[cfg(test)]
-fn prepare_coefficient_packing_group_semantics<F, E>(
-    inputs: CoefficientPackingGroupSemanticInputs<'_, F, E>,
-) -> Result<CoefficientPackingGroupSemantics<E>, AkitaError>
+fn prepare_coefficient_packing_group_semantics<'authority, 'output, F, E>(
+    inputs: CoefficientPackingGroupSemanticInputs<'authority, 'output, F, E>,
+) -> Result<CoefficientPackingGroupSemantics<'output, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
@@ -335,10 +335,10 @@ where
     )?)
 }
 
-fn validate_coefficient_packing_group<'a, F, E>(
-    inputs: CoefficientPackingGroupSemanticInputs<'a, F, E>,
+fn validate_coefficient_packing_group<'authority, 'output, F, E>(
+    inputs: CoefficientPackingGroupSemanticInputs<'authority, 'output, F, E>,
     authority: &CoefficientPackingBatchAuthority,
-) -> Result<ValidatedCoefficientPackingGroup<'a, F, E>, AkitaError>
+) -> Result<ValidatedCoefficientPackingGroup<'authority, 'output, F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
@@ -545,7 +545,7 @@ where
 /// row's E terms in claim, unit, block, digit and plane order, then its
 /// quotient terms. Events with a zero scalar are omitted.
 pub fn coefficient_packing_relation_events<F, E>(
-    validated: &ValidatedCoefficientPackingGroup<'_, F, E>,
+    validated: &ValidatedCoefficientPackingGroup<'_, '_, F, E>,
 ) -> Result<Vec<RelationWeightEvent<E>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -595,7 +595,9 @@ where
             .witness_layout()
             .units_for_group(inputs.group_index)?
         {
-            let block_events = cfg_into_iter!(unit.global_block_range())
+            let block_events = unit
+                .global_block_range()
+                .into_iter()
                 .map(|global_block| {
                     let challenge_index = claim
                         .checked_mul(group_params.num_live_blocks())
@@ -676,12 +678,9 @@ where
     Ok(events)
 }
 
-/// Packing-Z positions each Stage 2 term task covers.
-const PACKING_Z_POSITIONS_PER_TASK: usize = 1 << 10;
-
-fn prepare_coefficient_packing_prover_group<F, E>(
-    validated: ValidatedCoefficientPackingGroup<'_, F, E>,
-) -> Result<CoefficientPackingGroupSemantics<E>, AkitaError>
+fn prepare_coefficient_packing_prover_group<'authority, 'output, F, E>(
+    validated: ValidatedCoefficientPackingGroup<'authority, 'output, F, E>,
+) -> Result<CoefficientPackingGroupSemantics<'output, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
@@ -699,10 +698,7 @@ where
         inputs,
         geometry,
         group_claim_range,
-        group_claim_coefficients: _,
-        num_claims: _,
-        num_live_blocks: _,
-        consistency_row: _,
+        group_claim_coefficients,
         consistency_weight,
         scalar_claim_weight,
         d_d,
@@ -711,236 +707,45 @@ where
         alpha_powers,
         basis,
         opening_gadget,
-        challenge_alpha_values: _,
-        quotient_gadget: _,
-        denominator: _,
         witness_gadget,
         fold_gadget,
+        ..
     } = validated;
-    let group_layout = inputs.opening_batch.group_layout(inputs.group_index)?;
     let group_params = inputs
         .level_params
         .group_params_geometry(inputs.opening_batch, inputs.group_index)?;
-    let group_claim_coefficients = inputs
-        .claim_coefficients
-        .get(group_claim_range.clone())
-        .ok_or(AkitaError::InvalidProof)?;
-    let d_a = geometry.a_ring_dimension();
-
-    let mut direct_opening_source = Vec::new();
-    direct_opening_source
-        .try_reserve_exact(geometry.partial_base_field_width())
-        .map_err(|_| AkitaError::InvalidInput("direct-opening source allocation failed".into()))?;
-    for &basis_element in &basis {
-        direct_opening_source.extend(
-            inputs
-                .prepared_point
-                .tail_weights()
-                .iter()
-                .map(|&tail_weight| basis_element * tail_weight),
-        );
-    }
-    let mut packing_z_source = vec![E::zero(); d_a];
-    for (low_index, &packing_weight) in inputs.prepared_point.packing_weights().iter().enumerate() {
-        for (subring_index, &alpha_power) in alpha_powers.iter().enumerate() {
-            let physical = geometry.a_ring_coefficient_index(low_index, subring_index)?;
-            *packing_z_source
-                .get_mut(physical)
-                .ok_or(AkitaError::InvalidProof)? = packing_weight * alpha_power;
-        }
-    }
-    let direct_term_capacity = checked::product([
-        group_layout.num_polynomials(),
-        group_params.num_live_blocks(),
-        opening_gadget.len(),
-    ])
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup("coefficient-packing direct-opening term count overflow".into())
-    })?;
-    let segments_per_direct_term = geometry.partial_base_field_width() / d_d;
-    let direct_segment_capacity = direct_term_capacity
-        .checked_mul(segments_per_direct_term)
-        .ok_or_else(|| AkitaError::InvalidSetup("direct-opening segment count overflow".into()))?;
-    let terms_per_z_position = checked::product([witness_gadget.len(), fold_gadget.len()])
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("coefficient-packing packing-Z term count overflow".into())
-        })?;
-    let z_term_capacity = checked::product([
-        inputs
-            .relation_plan
-            .witness_layout()
-            .units_for_group(inputs.group_index)?
-            .count(),
-        group_params.num_positions_per_block(),
-        terms_per_z_position,
-    ])
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup("coefficient-packing packing-Z term count overflow".into())
-    })?;
-    let segment_capacity = direct_segment_capacity
-        .checked_add(z_term_capacity)
-        .ok_or_else(|| AkitaError::InvalidSetup("packing segment count overflow".into()))?;
-    let term_capacity = direct_term_capacity
-        .checked_add(z_term_capacity)
-        .ok_or_else(|| AkitaError::InvalidSetup("packing term count overflow".into()))?;
-    let mut segments = Vec::new();
-    segments
-        .try_reserve_exact(segment_capacity)
-        .map_err(|_| AkitaError::InvalidInput("packing segment allocation failed".into()))?;
-    let mut terms = Vec::new();
-    terms
-        .try_reserve_exact(term_capacity)
-        .map_err(|_| AkitaError::InvalidInput("packing term allocation failed".into()))?;
-    for (claim, &claim_coefficient) in group_claim_coefficients.iter().enumerate() {
-        for unit in inputs
-            .relation_plan
-            .witness_layout()
-            .units_for_group(inputs.group_index)?
-        {
-            // Every direct-opening term owns the next `segments_per_direct_term`
-            // segments, so a block's segments start at a fixed offset.
-            let first_segment = segments.len();
-            let block_terms = cfg_into_iter!(unit.global_block_range())
-                .map(|global_block| {
-                    let block_weight = *inputs
-                        .prepared_point
-                        .live_block_weights()
-                        .get(global_block)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let block_segment_start = (global_block - unit.global_block_start())
-                        .checked_mul(opening_gadget.len())
-                        .and_then(|term| term.checked_mul(segments_per_direct_term))
-                        .and_then(|offset| offset.checked_add(first_segment))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("direct-opening segment overflow".into())
-                        })?;
-                    let mut block_segments =
-                        Vec::with_capacity(opening_gadget.len() * segments_per_direct_term);
-                    let mut block_terms = Vec::with_capacity(opening_gadget.len());
-                    for (digit, &gadget) in opening_gadget.iter().enumerate() {
-                        let segment_start = block_segment_start + block_segments.len();
-                        for role_subcolumn in 0..segments_per_direct_term {
-                            let physical_start = unit.e_coefficient_index(
-                                d_d,
-                                group_layout.num_polynomials(),
-                                group_params.num_digits_open(),
-                                claim,
-                                global_block,
-                                role_subcolumn,
-                                digit,
-                                0,
-                            )?;
-                            let source_start = role_subcolumn * d_d;
-                            let physical_end =
-                                physical_start.checked_add(d_d).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "direct-opening segment overflow".into(),
-                                    )
-                                })?;
-                            let source_end = source_start.checked_add(d_d).ok_or_else(|| {
-                                AkitaError::InvalidSetup("direct-opening source overflow".into())
-                            })?;
-                            block_segments.push(CoefficientPackingStage2Segment {
-                                physical_coefficients: physical_start..physical_end,
-                                source_coefficients: source_start..source_end,
-                            });
-                        }
-                        block_terms.push(CoefficientPackingStage2Term {
-                            source: CoefficientPackingStage2Source::DirectOpening,
-                            factor: scalar_claim_weight * claim_coefficient * block_weight * gadget,
-                            segments: segment_start..block_segment_start + block_segments.len(),
-                        });
-                    }
-                    Ok((block_segments, block_terms))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            for (block_segments, block_terms) in block_terms {
-                segments.extend(block_segments);
-                terms.extend(block_terms);
-            }
-        }
-    }
-    let position_weights = inputs.prepared_point.position_weights();
-    for unit in inputs
+    let units = inputs
         .relation_plan
         .witness_layout()
-        .units_for_group(inputs.group_index)?
-    {
-        // Every packing-Z term owns exactly one segment.
-        let first_segment = segments.len();
-        let task_terms = cfg_into_iter!(
-            0..position_weights
-                .len()
-                .div_ceil(PACKING_Z_POSITIONS_PER_TASK)
-        )
-        .map(|task| {
-            let first_position = task * PACKING_Z_POSITIONS_PER_TASK;
-            let positions = first_position
-                ..(first_position + PACKING_Z_POSITIONS_PER_TASK).min(position_weights.len());
-            let task_len = positions.len() * terms_per_z_position;
-            let mut task_segments = Vec::with_capacity(task_len);
-            let mut task_terms = Vec::with_capacity(task_len);
-            for position in positions {
-                let position_weight = position_weights[position];
-                for (witness_digit, &witness_weight) in witness_gadget.iter().enumerate() {
-                    for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
-                        let physical_start = unit.z_coefficient_index(
-                            d_a,
-                            group_params.num_positions_per_block(),
-                            group_params.num_digits_inner(),
-                            group_params.num_digits_fold(),
-                            position,
-                            witness_digit,
-                            fold_digit,
-                            0,
-                        )?;
-                        let segment = first_segment
-                            .checked_add(first_position * terms_per_z_position)
-                            .and_then(|start| start.checked_add(task_segments.len()))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing-Z segment overflow".into())
-                            })?;
-                        let physical_end = physical_start.checked_add(d_a).ok_or_else(|| {
-                            AkitaError::InvalidSetup("packing-Z segment overflow".into())
-                        })?;
-                        task_segments.push(CoefficientPackingStage2Segment {
-                            physical_coefficients: physical_start..physical_end,
-                            source_coefficients: 0..d_a,
-                        });
-                        task_terms.push(CoefficientPackingStage2Term {
-                            source: CoefficientPackingStage2Source::PackingZ,
-                            factor: -(consistency_weight
-                                * position_weight
-                                * witness_weight
-                                * fold_weight),
-                            segments: segment..segment + 1,
-                        });
-                    }
-                }
-            }
-            Ok((task_segments, task_terms))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-        for (task_segments, task_terms) in task_terms {
-            segments.extend(task_segments);
-            terms.extend(task_terms);
-        }
-    }
+        .units_for_group(inputs.group_index)?;
+    let mut witness_units = Vec::new();
+    witness_units
+        .try_reserve_exact(units.clone().count())
+        .map_err(|_| AkitaError::InvalidInput("packing witness-unit allocation failed".into()))?;
+    witness_units.extend(units.cloned());
 
     Ok(CoefficientPackingGroupSemantics {
         group_index: inputs.group_index,
         geometry,
         relation_events,
-        stage2_terms: CoefficientPackingStage2Terms {
-            direct_opening_source,
-            packing_z_source,
-            segments,
-            terms,
-            physical_field_len,
-            relation_coefficient_block_len: coefficient_block,
-            group_claim_range,
-            scalar_claim_weight,
-        },
+        witness_units,
+        prepared_point: inputs.prepared_point,
+        group_claim_range,
+        group_claim_coefficients,
+        scalar_claim_weight,
+        consistency_weight,
+        d_d,
+        num_digits_open: group_params.num_digits_open(),
+        num_digits_inner: group_params.num_digits_inner(),
+        num_digits_fold: group_params.num_digits_fold(),
+        num_positions_per_block: group_params.num_positions_per_block(),
+        physical_field_len,
+        relation_coefficient_block_len: coefficient_block,
+        alpha_powers,
+        basis,
+        opening_gadget,
+        witness_gadget,
+        fold_gadget,
     })
 }
 
@@ -960,9 +765,11 @@ where
 ///
 /// Rejects prepared points for EvaluationTrace groups, duplicate or missing
 /// points, and points outside the relation group order.
-pub fn validate_coefficient_packing_batch_groups<'a, F, E, T>(
-    inputs: &CoefficientPackingBatchSemanticInputs<'a, F, E>,
-    mut project: impl FnMut(ValidatedCoefficientPackingGroup<'a, F, E>) -> Result<T, AkitaError>,
+pub fn validate_coefficient_packing_batch_groups<'authority, 'output, 'points, F, E, T>(
+    inputs: &CoefficientPackingBatchSemanticInputs<'authority, 'output, 'points, F, E>,
+    mut project: impl FnMut(
+        ValidatedCoefficientPackingGroup<'authority, 'output, F, E>,
+    ) -> Result<T, AkitaError>,
 ) -> Result<Vec<T>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -1047,9 +854,9 @@ where
 
 /// Prepare joined relation-weight events and Stage 2 terms for all packing
 /// groups from one validated fold authority.
-pub fn prepare_coefficient_packing_batch_semantics<F, E>(
-    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
-) -> Result<CoefficientPackingBatchSemantics<E>, AkitaError>
+pub fn prepare_coefficient_packing_batch_semantics<'authority, 'output, 'points, F, E>(
+    inputs: CoefficientPackingBatchSemanticInputs<'authority, 'output, 'points, F, E>,
+) -> Result<CoefficientPackingBatchSemantics<'output, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,

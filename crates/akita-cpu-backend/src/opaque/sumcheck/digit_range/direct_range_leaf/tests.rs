@@ -386,13 +386,15 @@ fn assert_rounds_match_dense_reference(
     let shape = format!(
         "basis={basis} width={bit_width} col_bits={col_bits} ring_bits={ring_bits} live={live_x_cols}"
     );
+    let uses_octet_prefix = num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS
+        && (live_x_cols << ring_bits) >= if basis == 4 { 8 * 256 } else { 8 * 65_536 };
 
     assert_eq!(
         matches!(
             prover.range_image,
             LowBasisRangeImageStorage::OctetPrefix(_)
         ),
-        num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS,
+        uses_octet_prefix,
         "{shape} initial storage"
     );
     for round in 0..num_vars {
@@ -412,13 +414,45 @@ fn assert_rounds_match_dense_reference(
                 prover.range_image,
                 LowBasisRangeImageStorage::OctetPrefix(_)
             ),
-            num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS
-                && round + 1 < octet_prefix::OCTET_PREFIX_ROUNDS,
+            uses_octet_prefix && round + 1 < octet_prefix::OCTET_PREFIX_ROUNDS,
             "{shape} storage after round={round}"
         );
     }
     assert_eq!(reference.len(), 1);
     assert_eq!(prover.final_range_image_eval(), reference[0], "{shape}");
+}
+
+#[test]
+fn stage1_octet_prefix_requires_enough_live_digits() {
+    for (basis, live_digits, expected_octet) in [
+        (4usize, 16usize, false),
+        (4, 2_048, true),
+        (8, 11_072, false),
+        (8, 524_288, true),
+    ] {
+        let ring_bits = 4;
+        let col_bits = (live_digits / (1 << ring_bits))
+            .next_power_of_two()
+            .trailing_zeros() as usize;
+        let tau = vec![F::from_u64(3); col_bits + ring_bits];
+        let prover = LowBasisRangeCheckProver::new(
+            PackedSignedDigits::from_i8_digits_auto(vec![1; live_digits]),
+            &tau,
+            DigitRangePlan::new(basis).unwrap(),
+            live_digits >> ring_bits,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
+        assert_eq!(
+            matches!(
+                prover.range_image,
+                LowBasisRangeImageStorage::OctetPrefix(_)
+            ),
+            expected_octet,
+            "basis={basis} live_digits={live_digits}"
+        );
+    }
 }
 
 #[test]

@@ -64,27 +64,35 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 actual: tau0.len(),
             });
         }
-        let range_image = if num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS {
-            LowBasisRangeImageStorage::OctetPrefix(OctetPrefix {
-                digits: digit_witness,
-                tau: tau0.to_vec(),
-                state: None,
-            })
-        } else {
-            // Ring bits are low: retain only the flat live prefix, just as
-            // octet-prefix materialization does. The omitted tail is zero.
-            LowBasisRangeImageStorage::Materialized(
-                (0..digit_witness.len())
-                    .map(|index| {
-                        E::from_i64(i64::from(range_image_from_digit(
-                            digit_witness
-                                .get(index)
-                                .expect("validated live digit index"),
-                        )))
-                    })
-                    .collect(),
-            )
+        // An octet prefix allocates a class table even for a tiny live witness.
+        // Require eight live digits per class before paying that fixed cost.
+        let octet_minimum_digits = match basis {
+            4 => 8 * 256,
+            8 => 8 * 65_536,
+            _ => usize::MAX,
         };
+        let range_image =
+            if num_vars >= octet_prefix::OCTET_PREFIX_ROUNDS && expected >= octet_minimum_digits {
+                LowBasisRangeImageStorage::OctetPrefix(OctetPrefix {
+                    digits: digit_witness,
+                    tau: tau0.to_vec(),
+                    state: None,
+                })
+            } else {
+                // Ring bits are low: retain only the flat live prefix, just as
+                // octet-prefix materialization does. The omitted tail is zero.
+                LowBasisRangeImageStorage::Materialized(
+                    (0..digit_witness.len())
+                        .map(|index| {
+                            E::from_i64(i64::from(range_image_from_digit(
+                                digit_witness
+                                    .get(index)
+                                    .expect("validated live digit index"),
+                            )))
+                        })
+                        .collect(),
+                )
+            };
         Ok(Self {
             range_image,
             split_eq: GruenSplitEq::new(tau0)?,

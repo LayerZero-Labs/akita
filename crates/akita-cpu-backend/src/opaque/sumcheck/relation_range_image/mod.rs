@@ -270,7 +270,6 @@ pub(crate) struct RelationRangeImageProver<E: Field> {
 }
 
 mod additional_terms;
-#[cfg(test)]
 mod coefficient_packing_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
@@ -288,6 +287,7 @@ mod weight_oracle;
 mod wide_mass;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
+pub(crate) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
 #[allow(unused_imports)]
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverLinearTerms};
 #[cfg(test)]

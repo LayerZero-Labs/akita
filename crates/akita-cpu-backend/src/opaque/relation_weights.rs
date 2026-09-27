@@ -61,7 +61,7 @@ pub(crate) struct RelationLaneWeightInputs<'a, F: Field, E: Field> {
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
     pub relation_plan: &'a RelationRangeImagePlan,
-    pub packing_semantics: Option<&'a CoefficientPackingBatchSemantics<E>>,
+    pub packing_semantics: Option<&'a CoefficientPackingBatchSemantics<'a, E>>,
     /// Method-typed prepared points for the current fold.
     pub opening_points:
         OpeningFamily<(), &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)]>,
@@ -180,7 +180,7 @@ fn pack_relation_events<E: Field>(
     weights: &mut RelationLaneWeights<E>,
     num_groups: usize,
     packing_required: bool,
-    packing_semantics: Option<&CoefficientPackingBatchSemantics<E>>,
+    packing_semantics: Option<&CoefficientPackingBatchSemantics<'_, E>>,
     live_coeff_len: usize,
     relation_coefficient_block_len: usize,
 ) -> Result<Vec<Option<usize>>, AkitaError> {
@@ -190,9 +190,8 @@ fn pack_relation_events<E: Field>(
     }
     if let Some(batch) = packing_semantics {
         for group in batch.groups() {
-            let terms = group.stage2_terms();
-            if terms.physical_field_len() != live_coeff_len
-                || terms.relation_coefficient_block_len() != relation_coefficient_block_len
+            if group.physical_field_len() != live_coeff_len
+                || group.relation_coefficient_block_len() != relation_coefficient_block_len
             {
                 return Err(AkitaError::InvalidSetup(
                     "packing semantics disagree with the current ring switch".into(),

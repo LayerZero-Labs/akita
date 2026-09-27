@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use akita_error::AkitaError;
 
-use akita_types::{
-    basis_weights_prefix, BasisMode, CoefficientPackingStage2Source, CoefficientPackingStage2Terms,
-};
+use akita_types::{basis_weights_prefix, BasisMode};
 use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
+
+use super::coefficient_packing_terms::{CpuCoefficientPackingSource, CpuCoefficientPackingTerms};
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -469,8 +469,8 @@ impl<E: Field> PreparedProverLinearTerms<E> {
     }
 
     /// Consume canonical coefficient-packing terms into the Stage 2 engine.
-    pub(crate) fn from_coefficient_packing(
-        weights: CoefficientPackingStage2Terms<E>,
+    pub(super) fn from_coefficient_packing(
+        weights: CpuCoefficientPackingTerms<E>,
     ) -> Result<Self, AkitaError> {
         let physical_field_len = weights.physical_field_len();
         let coeff_count = weights.relation_coefficient_block_len();
@@ -506,8 +506,8 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         };
         for term in terms {
             let source_index = match term.source() {
-                CoefficientPackingStage2Source::DirectOpening => 0,
-                CoefficientPackingStage2Source::PackingZ => 1,
+                CpuCoefficientPackingSource::DirectOpening => 0,
+                CpuCoefficientPackingSource::PackingZ => 1,
             };
             let source = sources.get(source_index).ok_or(AkitaError::InvalidProof)?;
             let term_segments = segments

@@ -20,6 +20,7 @@
 
 use super::*;
 use crate::opaque::sumcheck::{parallel_tasks, sum_partials};
+use std::mem::size_of;
 
 /// Rounds served from the compact table before it is materialized.
 pub(super) const OCTET_PREFIX_ROUNDS: usize = 4;
@@ -29,6 +30,34 @@ const HISTOGRAM_TILE_PAIRS: usize = 1 << 11;
 const HISTOGRAM_MERGE_CLASSES: usize = 1 << 10;
 /// Octet classes per round-2 accumulation chunk.
 const ROUND2_CLASS_CHUNK: usize = 1 << 12;
+/// Maximum aggregate payload of per-task class histograms.
+const HISTOGRAM_BUFFER_BUDGET_BYTES: usize = 64 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HistogramTaskPlan {
+    task_count: usize,
+}
+
+impl HistogramTaskPlan {
+    fn tile_range(self, task: usize, tiles: usize) -> Range<usize> {
+        let tiles_per_task = tiles / self.task_count;
+        let extra_tiles = tiles % self.task_count;
+        let start = task * tiles_per_task + task.min(extra_tiles);
+        let task_tiles = tiles_per_task + usize::from(task < extra_tiles);
+        start..start + task_tiles
+    }
+}
+
+/// Choose enough histogram tasks for load balance without letting the number
+/// of Rayon workers multiply the aggregate class-table allocation past the
+/// fixed byte budget.
+fn histogram_task_plan<E>(tiles: usize, num_classes: usize, workers: usize) -> HistogramTaskPlan {
+    let table_bytes = num_classes * 2 * size_of::<E>();
+    let max_tables = (HISTOGRAM_BUFFER_BUDGET_BYTES / table_bytes).max(1);
+    let requested_tasks = workers.saturating_mul(HISTOGRAM_TASKS_PER_THREAD).max(1);
+    let task_count = tiles.min(requested_tasks).min(max_tables);
+    HistogramTaskPlan { task_count }
+}
 
 /// Bits of a range-image class: one for basis 4, two for basis 8.
 #[inline]
@@ -153,13 +182,11 @@ fn octet_pair_class_weights<E: Field>(
     let first_mask = e_first.len() - 1;
     let first_bits = e_first.len().trailing_zeros();
     let tiles = live_pairs.div_ceil(HISTOGRAM_TILE_PAIRS);
-    let tiles_per_task = tiles
-        .div_ceil(parallel_tasks(HISTOGRAM_TASKS_PER_THREAD))
-        .max(1);
-    let mut tables: Vec<Vec<[E; 2]>> = cfg_into_iter!(0..tiles.div_ceil(tiles_per_task))
+    let task_plan = histogram_task_plan::<E>(tiles, num_classes, parallel_tasks(1));
+    let mut tables: Vec<Vec<[E; 2]>> = cfg_into_iter!(0..task_plan.task_count)
         .map(|task| {
             let mut weights = vec![[E::zero(); 2]; num_classes];
-            for tile in task * tiles_per_task..((task + 1) * tiles_per_task).min(tiles) {
+            for tile in task_plan.tile_range(task, tiles) {
                 let start = tile * HISTOGRAM_TILE_PAIRS;
                 let end = (start + HISTOGRAM_TILE_PAIRS).min(live_pairs);
                 let classes = reader.classes(2 * start..2 * end);
@@ -462,5 +489,83 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             _ => unreachable!("octet prefix covers rounds 0 through 3"),
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod histogram_tests {
+    use super::*;
+    use jolt_field::{Prime128Offset275, Prime32Offset99};
+
+    #[test]
+    fn histogram_task_plan_caps_aggregate_tables_for_worker_counts() {
+        let num_classes = 1 << 16;
+        let tiles = 256;
+        let table_bytes = num_classes * 2 * size_of::<Prime128Offset275>();
+        let max_tables = (HISTOGRAM_BUFFER_BUDGET_BYTES / table_bytes).max(1);
+        let workers_and_expected = [
+            (1, 2.min(max_tables)),
+            (16, 32.min(max_tables)),
+            (64, 128.min(max_tables)),
+        ];
+
+        for (workers, expected_tasks) in workers_and_expected {
+            let plan = histogram_task_plan::<Prime128Offset275>(tiles, num_classes, workers);
+            assert_eq!(plan.task_count, expected_tasks, "workers={workers}");
+            assert!(plan.task_count * table_bytes <= HISTOGRAM_BUFFER_BUDGET_BYTES);
+        }
+
+        let plan_16 = histogram_task_plan::<Prime128Offset275>(tiles, num_classes, 16);
+        let plan_64 = histogram_task_plan::<Prime128Offset275>(tiles, num_classes, 64);
+        assert_eq!(plan_16.task_count, plan_64.task_count);
+    }
+
+    fn assert_pair_class_weights_match_reference(digit_pattern: impl Fn(usize) -> i8) {
+        type F = Prime32Offset99;
+
+        let live_pairs = 3 * HISTOGRAM_TILE_PAIRS + 17;
+        let digits: Vec<i8> = (0..live_pairs * 16).map(digit_pattern).collect();
+        let packed = PackedSignedDigits::from_i8_digits_auto(digits);
+        let reader = OctetClassReader::new(&packed, 1);
+        let e_first: Vec<F> = (0..32).map(|i| F::from_u64(i as u64 + 3)).collect();
+        let e_second_len = live_pairs.div_ceil(e_first.len()).next_power_of_two();
+        let e_second: Vec<F> = (0..e_second_len)
+            .map(|i| F::from_u64(i as u64 + 11))
+            .collect();
+        let num_classes = 1 << 8;
+        let actual = octet_pair_class_weights(&reader, live_pairs, &e_first, &e_second);
+
+        let mut expected = vec![[F::zero(); 2]; num_classes];
+        let classes = reader.classes(0..2 * live_pairs);
+        for (pair, classes) in classes.chunks_exact(2).enumerate() {
+            let even = usize::from(classes[0]);
+            let odd = usize::from(classes[1]);
+            if even | odd == 0 {
+                continue;
+            }
+            let weight = e_first[pair & (e_first.len() - 1)]
+                * e_second[pair >> e_first.len().trailing_zeros()];
+            if even != 0 {
+                expected[even][0] += weight;
+            }
+            if odd != 0 {
+                expected[odd][1] += weight;
+            }
+        }
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn octet_pair_class_weights_match_low_diversity_reference() {
+        assert_pair_class_weights_match_reference(|_| 1);
+    }
+
+    #[test]
+    fn octet_pair_class_weights_match_high_diversity_reference() {
+        assert_pair_class_weights_match_reference(|digit| {
+            let octet = digit / 8;
+            ((octet >> (digit % 8)) & 1) as i8
+        });
     }
 }

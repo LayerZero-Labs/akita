@@ -3,16 +3,16 @@ use jolt_field::Prime128Offset275 as F;
 
 #[test]
 fn kernel_sequences_and_lookahead_match_live_geometry() {
-    use RoundKernel::{Dense as D, LivePrefix as L, OctetPrefix as O};
+    use RoundKernel::{Dense as D, LivePrefix as L};
     for (live, cols, ring, expected) in [
         (1, 2, 1, vec![L, L, L]),
         (3, 2, 1, vec![L, L, D]),
         (4, 2, 1, vec![D, D, D]),
-        (1, 3, 4, vec![O, O, O, O, L, L, L]),
-        (3, 2, 5, vec![O, O, O, O, L, L, D]),
-        (4, 2, 5, vec![O, O, O, O, D, D, D]),
-        (1, 5, 1, vec![O, O, O, O, L, L]),
-        (1, 0, 4, vec![O, O, O, O]),
+        (1, 3, 4, vec![L, L, L, L, L, L, L]),
+        (3, 2, 5, vec![L, L, L, L, L, L, D]),
+        (4, 2, 5, vec![D, D, D, D, D, D, D]),
+        (1, 5, 1, vec![L, L, L, L, L, L]),
+        (1, 0, 4, vec![D, D, D, D]),
     ] {
         let tau = vec![F::from_u64(7); cols + ring];
         let mut prover = LowBasisRangeCheckProver::new(
