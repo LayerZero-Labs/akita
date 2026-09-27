@@ -172,6 +172,9 @@ removed_api_patterns=(
   'warm_for_schedule'
   'prepare_ntt_cache_with_tail_prefix'
   'akita_verifier::batched_verify'
+  'ExtensionOpeningTensorPartials'
+  'derive_tensor_extension_opening_claim\b'
+  'subring_coefficient_packing_reference_tests'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"

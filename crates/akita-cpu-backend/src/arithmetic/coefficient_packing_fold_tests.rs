@@ -1,5 +1,6 @@
 use super::*;
 use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
+use akita_types::{basis_weights, BasisMode, PreparedSubringCoefficientPackingPoint};
 use jolt_field::{
     Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Zero,
 };
@@ -672,5 +673,84 @@ fn malformed_reference_inputs_reject_without_panicking() {
             &malformed_partials,
         )
         .is_err());
+    }
+}
+
+mod packing_relation {
+    use super::*;
+    use akita_algebra::ring::scalar_powers;
+    use akita_types::{
+        coefficient_packing_fixture, RingRelationGroupOpeningView, SisModulusProfileId,
+    };
+    use jolt_field::canonical_extension_basis;
+
+    #[test]
+    fn every_extension_plane_is_bound_by_the_packing_divisibility_identity() {
+        type F4 = Prime32Offset99;
+        type E4 = FpExt4<F4>;
+
+        let fixture = coefficient_packing_fixture::<F4, E4>(
+            SisModulusProfileId::Q32Offset99,
+            1024,
+            128,
+            64,
+            6,
+            4,
+            13,
+            1,
+            1,
+        );
+        let (geometry, challenges) = match fixture.relation.group_opening_view(0).unwrap() {
+            RingRelationGroupOpeningView::SubringCoefficientPacking {
+                geometry,
+                canonical_subring_challenges,
+                ..
+            } => (geometry, canonical_subring_challenges),
+            RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
+        };
+        let challenge = &challenges.as_slice()[..1];
+        let partials = (0..geometry.partial_base_field_width())
+            .map(|index| F4::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+        let product = fold_coefficient_packing_partials(geometry, challenge, &partials).unwrap();
+        let alpha = E4::from_u64(43);
+        let alpha_powers = scalar_powers(alpha, geometry.challenge_subring_dimension());
+        let challenge_eval = challenge[0].eval_at_pows::<F4, E4>(&alpha_powers).unwrap();
+        let denominator = alpha_powers.last().copied().unwrap() * alpha + E4::one();
+        let basis = canonical_extension_basis::<F4, E4>(geometry.extension_degree()).unwrap();
+        let plane_eval = |coefficients: &[F4]| {
+            coefficients
+                .iter()
+                .zip(&alpha_powers)
+                .fold(E4::zero(), |sum, (&coefficient, &power)| {
+                    sum + E4::lift_base(coefficient) * power
+                })
+        };
+        let residual = |reduced: &[F4]| {
+            (0..geometry.extension_degree()).fold(E4::zero(), |sum, plane| {
+                let range = plane * geometry.challenge_subring_dimension()
+                    ..(plane + 1) * geometry.challenge_subring_dimension();
+                sum + basis[plane]
+                    * (challenge_eval * plane_eval(&partials[range.clone()])
+                        - plane_eval(&reduced[range.clone()])
+                        - denominator
+                            * plane_eval(
+                                &product.quotient_high_half_base_field_coordinates()[range],
+                            ))
+            })
+        };
+        assert_eq!(
+            residual(product.reduced_base_field_coordinates()),
+            E4::zero()
+        );
+
+        let mut tampered = product.reduced_base_field_coordinates().to_vec();
+        let nonzero_plane_coefficient = geometry.challenge_subring_dimension() + 7;
+        tampered[nonzero_plane_coefficient] += F4::one();
+        assert_ne!(
+            residual(&tampered),
+            E4::zero(),
+            "the E[Y] oracle must detect a mutation outside the base extension plane"
+        );
     }
 }
