@@ -168,7 +168,10 @@ where
             )
         })
         .collect();
-    let factor = akita_types::tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
+    let factor = crate::arithmetic::extension_opening_reduction::tensor_equality_factor_evals::<
+        F,
+        E,
+    >(tail_point, eta)?;
     let group =
         crate::opaque::recursive::opening::ExtensionOpeningReductionGroup::new(terms, factor)?
             .extend_cylindrically(extra_point)?;
