@@ -427,20 +427,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("verifier statement")
     };
-    let verify = |statement| {
-        proof_scheme.batched_verify(
-            &proof,
-            &verifier_setup,
-            b"profile",
-            statement,
-            BasisMode::Lagrange,
-        )
-    };
+    let verifier = proof_scheme
+        .verifier(verifier_setup.clone())
+        .expect("verifier for the profile setup");
+    let verify =
+        |statement| verifier.batched_verify(&proof, b"profile", statement, BasisMode::Lagrange);
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
-    report_verifier_ntt_cache_size(
-        label,
-        verifier_setup
-            .verifier_ntt_cache_bytes()
-            .expect("verifier NTT cache metrics"),
-    );
+    report_verifier_ntt_cache_size(label, verifier.terminal_ntt_cache_bytes());
 }

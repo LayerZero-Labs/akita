@@ -1,6 +1,6 @@
 //! Canonical transcript descriptor binding shared by prover and verifier.
 //!
-//! Both `akita_prover::batched_prove` and `akita_verifier::batched_verify`
+//! Both `akita_prover::batched_prove` and `AkitaVerifier::batched_verify`
 //! bind the same canonical [`AkitaInstanceDescriptor`] bytes into the
 //! Fiat-Shamir transcript before protocol replay. The function lives here
 //! (rather than in `akita-prover` or `akita-verifier`) so both sides reach

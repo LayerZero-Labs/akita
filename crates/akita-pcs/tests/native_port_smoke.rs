@@ -89,13 +89,15 @@ fn onehot_fp32_native_roundtrip_inner() {
     let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).unwrap();
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"native-port-onehot-fp32",
-            statement,
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(
+                &proof,
+                b"native-port-onehot-fp32",
+                statement,
+                BasisMode::Lagrange,
+            )
+        })
         .unwrap();
 }
 
@@ -151,12 +153,9 @@ fn dense_fp128_native_roundtrip_inner() {
     let statement = GroupBatchStatement::new(selection, verify_claims).unwrap();
     let verifier_setup = scheme.setup_verifier(&setup).unwrap();
     scheme
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            b"native-port-smoke",
-            statement,
-            BasisMode::Lagrange,
-        )
+        .verifier(verifier_setup.clone())
+        .and_then(|verifier| {
+            verifier.batched_verify(&proof, b"native-port-smoke", statement, BasisMode::Lagrange)
+        })
         .unwrap();
 }

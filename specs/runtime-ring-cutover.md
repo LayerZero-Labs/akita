@@ -76,7 +76,7 @@ removed at merge:
   `RingCommitment<F, D>` or absorb by pretending to be a typed ring commitment
 - top-level prover and verifier functions such as
   `akita_prover::batched_prove::<..., D>` and
-  `akita_verifier::batched_verify::<..., D>`
+  `AkitaVerifier::<..., D>::batched_verify`
 
 These names are allowed to remain only when they are leaf arithmetic types,
 backend/kernel traits, tests for low-level arithmetic, or temporary in-flight
@@ -314,7 +314,7 @@ dispatched through `dispatch_for_field!` keyed on the matching `d_a` / `d_b` /
 - [x] Transcript absorption of commitments and ring-shaped proof data uses
       flat field coefficients under schedule-derived shape.
 - [x] Top-level `akita_prover::batched_prove` and
-      `akita_verifier::batched_verify` are not const-generic over a root `D`.
+      `AkitaVerifier::batched_verify` are not const-generic over a root `D`.
 - [x] Root polynomial inputs do not force `D` through PCS orchestration. Any
       remaining dimension-typed polynomial usage is confined to implementation
       views or kernel-entry conversions.
