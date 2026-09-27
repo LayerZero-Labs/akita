@@ -53,12 +53,8 @@ pub use compression::{
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    num_rounds_from_table_len, reduction_table_len, tensor_column_partials_from_base_evals,
-    tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
-    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
+    derive_tensor_extension_opening_claim_from_partials, tensor_equality_factor_eval_at_point,
+    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
@@ -110,8 +106,9 @@ pub use native_stage3::{
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
-    centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_ifma52,
-    ntt_cache_requires_exactness_tail, prepare_compression_ntt_cache, prepare_ntt_cache,
+    centered_quotient_requires_i16_tail_for_field, decode_riscv64_scalar_q128_cache,
+    dense_i8_commit_prefers_exact_ifma52, ntt_cache_requires_exactness_tail,
+    prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
     prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
     select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
     NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
@@ -200,12 +197,8 @@ pub use sis::{
     SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
-#[cfg(any(test, feature = "test-support"))]
-pub use subring_coefficient_packing::coefficient_packing_partials;
 pub use subring_coefficient_packing::{
-    coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
-    CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
-    SubringCoefficientPackingGeometry,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

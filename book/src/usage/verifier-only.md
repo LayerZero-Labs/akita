@@ -80,25 +80,32 @@ group is last, and every earlier group is a precommitted group.
 
 ## Verify directly
 
-Pass the application session label to the top-level verifier entry point.
+Build one `AkitaVerifier` from the verifier setup and the trusted catalog, then
+pass the application session label to its verification method.
 
 ```rust
-akita_verifier::batched_verify::<Config>(
+let verifier = akita_verifier::AkitaVerifier::new(verifier_setup, catalog)?;
+verifier.batched_verify(
     &proof_bytes,
-    &verifier_setup,
-    &catalog,
     TRANSCRIPT_DOMAIN,
     statement,
     BasisMode::Lagrange,
 )?;
 ```
 
+Construction fixes the catalog rows this verifier admits: those whose opening
+key fits the setup descriptor and whose direct matrix uses fit the setup's
+public matrix. It prepares the terminal matrix transforms of those rows once.
+Verification never mutates the verifier, so one instance can serve many proofs
+and threads. A verifier that checks a single proof, such as a zkVM guest, uses
+`AkitaVerifier::for_selection` to admit and prepare only that proof's row.
+
 The verifier resolves the explicit schedule selection in the supplied catalog.
 It does not run the planner. It then binds the instance descriptor, validates
 the public claims, and replays every fold through terminal verification.
 
 The repository's [quickstart example](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs)
-uses this direct verifier call after producing and decoding a proof. Cargo
+uses this verifier after producing and decoding a proof. Cargo
 compiles that call as part of the normal example checks.
 
 ## Supply verifier setup

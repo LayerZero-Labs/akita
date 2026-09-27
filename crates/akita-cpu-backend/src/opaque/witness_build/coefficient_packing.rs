@@ -1,5 +1,8 @@
 //! Consumer-owned construction of coefficient-packing opening material.
 
+use crate::arithmetic::coefficient_packing_fold::{
+    fold_coefficient_packing_partials, CoefficientPackingFoldProduct,
+};
 use crate::opaque::SubringCoefficientPackingPartials;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -7,8 +10,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_types::{
-    fold_coefficient_packing_partials, CoefficientPackingFoldProduct, CommittedGroupParams,
-    DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
+    CommittedGroupParams, DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
     SubringCoefficientPackingGeometry,
 };
 use jolt_field::{CanonicalEncoding, Field};

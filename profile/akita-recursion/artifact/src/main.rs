@@ -26,7 +26,7 @@ use akita_types::{
     GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
-use akita_verifier::batched_verify;
+use akita_verifier::AkitaVerifier;
 use clap::Parser;
 use jolt_field::{
     CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced,
@@ -304,15 +304,10 @@ fn verify_proof(
     session: &[u8],
     statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
-    batched_verify::<Cfg>(
-        proof,
-        verifier_setup,
-        schedules,
-        session,
-        statement,
-        BasisMode::Lagrange,
-    )
-    .map_err(|err| format!("verifier rejected proof: {err}"))
+    AkitaVerifier::new(verifier_setup.clone(), schedules.clone())
+        .map_err(|err| format!("verifier setup rejected: {err}"))?
+        .batched_verify(proof, session, statement, BasisMode::Lagrange)
+        .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
 fn random_claim_point<FF, E>(num_vars: usize, seed: u64) -> Vec<E>
@@ -433,14 +428,11 @@ macro_rules! generate_scalar_case {
                 .map_err(|err| format!("{} verifier opening claims: {err}", case))?,
         )
         .map_err(|err| format!("{} verifier statement: {err}", case))?;
-        batched_verify::<ScalarCfg>(
-            &proof,
-            &verifier_setup,
-            scheme.schedules(),
-            TRANSCRIPT_DOMAIN,
-            statement,
-            BasisMode::Lagrange,
-        )
+        scheme
+            .verifier(verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(&proof, TRANSCRIPT_DOMAIN, statement, BasisMode::Lagrange)
+            })
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
         let inputs: AkitaJoltInputs<ScalarField, $d, ScalarExt> = AkitaJoltInputs {
@@ -463,16 +455,19 @@ macro_rules! generate_scalar_case {
             scheme.schedules(),
         )
         .map_err(|err| format!("{} strict blob round-trip: {err}", case))?;
-        batched_verify::<ScalarCfg>(
-            &decoded.proof,
-            &decoded.verifier_setup,
-            scheme.schedules(),
-            &decoded.transcript_domain,
-            decoded
-                .verifier_statement()
-                .map_err(|err| format!("{} decoded statement: {err}", case))?,
-            BasisMode::Lagrange,
-        )
+        let decoded_statement = decoded
+            .verifier_statement()
+            .map_err(|err| format!("{} decoded statement: {err}", case))?;
+        scheme
+            .verifier(decoded.verifier_setup.clone())
+            .and_then(|verifier| {
+                verifier.batched_verify(
+                    &decoded.proof,
+                    &decoded.transcript_domain,
+                    decoded_statement,
+                    BasisMode::Lagrange,
+                )
+            })
         .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
         let blob = akita_recursion_glue::frame_with_schedule_catalog::<ScalarCfg>(
             &inner_blob,
