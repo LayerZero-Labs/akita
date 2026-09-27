@@ -409,7 +409,7 @@ fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
 }
 
 fn catalog_lookup_key_digest(key: &AkitaScheduleLookupKey) -> String {
-    akita_types::instance_descriptor::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
+    akita_types::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

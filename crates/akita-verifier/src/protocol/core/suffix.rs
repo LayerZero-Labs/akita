@@ -123,14 +123,7 @@ where
         _ => return Err(AkitaError::InvalidProof),
     };
     let opening_batch = block_claims.layout()?;
-    let openings = (0..opening_batch.num_groups())
-        .flat_map(|group_index| {
-            block_claims
-                .group_evaluations(group_index)
-                .map(|values| values.to_vec())
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>();
+    let openings = block_claims.flat_evaluations();
     let group_points = (0..opening_batch.num_groups())
         .map(|group_index| block_claims.group_point(group_index))
         .collect::<Result<Vec<_>, _>>()?;

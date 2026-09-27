@@ -4,8 +4,8 @@
 //! prover representation metadata: a row is identified only by its ordered
 //! exact committed profiles and the expanded verifier schedule.
 
+use crate::descriptor_bytes::digest_descriptor_bytes;
 use crate::descriptor_bytes::push_usize;
-use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::{CommittedGroupBatchProfile, FoldSchedule};
 use akita_error::AkitaError;
 use akita_serialization::{

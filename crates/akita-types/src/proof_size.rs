@@ -9,9 +9,9 @@
 //! Native nonce messages are priced independently by the canonical grinding
 //! plan and are not attributed to this fixed-width level layout.
 
+use crate::layout::digit_range::DigitRangeRouteShape;
+use crate::layout::digit_range::PhysicalL2NormProofWireShape;
 use crate::layout::field_bytes;
-use crate::proof::stage1::DigitRangeRouteShape;
-use crate::proof::PhysicalL2NormProofWireShape;
 use crate::{AkitaStage1StageShape, CommittedGroupParams, DigitRangePlan, RelationAddressGeometry};
 use akita_error::AkitaError;
 

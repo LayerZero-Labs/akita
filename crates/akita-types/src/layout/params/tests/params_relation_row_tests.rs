@@ -1,7 +1,7 @@
 use super::*;
+use crate::layout::relation_layout::{RelationRowFamily, RelationWitnessGeometry};
 use crate::proof::relation::{
     assemble_compressed_relation_rhs, relation_rhs_coeff_len, relation_rhs_row_count,
-    RelationRowFamily, RelationWitnessGeometry,
 };
 use crate::WitnessLayout;
 use jolt_field::{One, Prime128OffsetA7F7, Zero};

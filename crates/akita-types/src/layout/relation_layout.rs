@@ -4,6 +4,9 @@ use akita_error::{checked, AkitaError};
 
 use crate::{CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan, OpeningMethod};
 
+#[path = "relation_rows.rs"]
+mod rows;
+
 /// Checked coefficient geometry of one logical relation row.
 ///
 /// A row contains `coordinate_plane_count` polynomials modulo
@@ -121,7 +124,7 @@ pub struct RelationRhsLayout {
     pub d_ring_dimension: usize,
     pub n_d: usize,
     pub groups: Vec<RelationGroupRows>,
-    pub(super) compression: Option<RelationCompressionLayout>,
+    pub(crate) compression: Option<RelationCompressionLayout>,
 }
 
 #[cfg(test)]
@@ -243,10 +246,10 @@ impl RelationRowFamily {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RelationCompressionLayout {
-    pub(super) group_indices: Vec<usize>,
-    pub(super) group_plans: Vec<CompressionChainPlan>,
-    pub(super) opening_plan: CompressionChainPlan,
+pub(crate) struct RelationCompressionLayout {
+    pub(crate) group_indices: Vec<usize>,
+    pub(crate) group_plans: Vec<CompressionChainPlan>,
+    pub(crate) opening_plan: CompressionChainPlan,
 }
 
 #[cfg(test)]
