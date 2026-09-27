@@ -765,3 +765,60 @@ fn setup_requirements_union_covers_both_families_at_one_bound() {
         .expect_err("requirements at different bounds must not combine");
     assert!(error.to_string().contains("cannot combine"));
 }
+
+/// Edit a checked-in artifact structurally. Admission audits rows before its
+/// canonical-bytes check, so the edited artifact reaches the audit.
+fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&checked_in_artifact_bytes::<Cfg>()).expect("artifact JSON");
+    edit(&mut value);
+    serde_json::to_vec_pretty(&value).expect("artifact JSON")
+}
+
+fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Value {
+    value["rows"]
+        .as_array_mut()
+        .expect("rows")
+        .iter_mut()
+        .find_map(|row| {
+            row["schedule"]["recursive_folds"]
+                .as_array_mut()
+                .and_then(|folds| folds.first_mut())
+        })
+        .map(|fold| &mut fold["params"]["groups"]["entries"][0])
+        .expect("a row with a recursive fold group")
+}
+
+fn assert_rejected_as_invalid_setup<Cfg: CommitmentConfig>(bytes: &[u8], what: &str) {
+    match TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes) {
+        Err(akita_error::AkitaError::InvalidSetup(_)) => {}
+        other => panic!("{what} must be rejected as InvalidSetup, got {other:?}"),
+    }
+}
+
+#[test]
+fn unsupported_terminal_inner_log_basis_is_rejected_not_panicking() {
+    for log_basis in [0, 128] {
+        let bytes = edited_artifact::<fp128::Dense>(|value| {
+            value["rows"][0]["schedule"]["terminal"]["inner"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<fp128::Dense>(&bytes, "terminal A log_basis");
+    }
+}
+
+#[test]
+fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
+    type Cfg = RecursiveCommitmentConfig<akita_config::proof_optimized::fp32::Dense>;
+    for log_basis in [0, 128] {
+        let outer = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["profile"]["outer"]["digits"]["log_basis"] =
+                log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<Cfg>(&outer, "fold B log_basis");
+        let opening = edited_artifact::<Cfg>(|value| {
+            first_recursive_group(value)["opening"]["log_basis_open"] = log_basis.into();
+        });
+        assert_rejected_as_invalid_setup::<Cfg>(&opening, "fold opening log_basis");
+    }
+}
