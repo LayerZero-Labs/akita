@@ -28,7 +28,7 @@ use akita_types::{
     SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
 use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
-use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;
@@ -403,11 +403,10 @@ fn centered_i32_decompose_matches_ring_decompose() {
         balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
 
         let mut expected = vec![[0i8; D]; num_digits];
-        let q = (-F::one()).to_u128_checked().expect("u128 modulus") + 1;
         ring.balanced_decompose_pow2_i8_into_with_params(
             &mut expected,
             &akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(
-                num_digits, log_basis, q,
+                num_digits, log_basis,
             ),
         );
         assert_eq!(

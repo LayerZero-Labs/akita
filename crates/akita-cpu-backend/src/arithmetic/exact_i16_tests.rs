@@ -2,6 +2,7 @@ use super::prepared_tests::{prepared, D, F};
 use super::CpuBackend;
 use crate::opaque::plans::DenseCommitInput;
 use crate::sources::packed_digits::PackedSignedDigits;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_types::sis::compute_num_digits_field_width;
 use akita_types::{NttCacheKey, NttTransformDomain};
@@ -120,12 +121,13 @@ fn dense_i16_commit_matches_schoolbook_composition_inner() {
             )
             .expect("dense i16 commit");
 
+        let params = BalancedDecomposePow2Params::new(num_digits_inner, log_basis_inner);
         let mut digit_planes = vec![[0i16; D]; row_width];
         for (ring_index, ring) in block.iter().enumerate() {
             let start = ring_index * num_digits_inner;
             ring.balanced_decompose_pow2_i16_into(
                 &mut digit_planes[start..start + num_digits_inner],
-                log_basis_inner,
+                &params,
             );
         }
         let matrix = prepared
