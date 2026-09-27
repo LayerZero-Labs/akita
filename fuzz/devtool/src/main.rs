@@ -75,8 +75,8 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
     });
     let cases = registry.select(Selector::Any);
     println!(
-        "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8}  status",
-        "case", "family", "shape", "inputs", "folds", "margin", "attempts"
+        "{:>4}  {:<34} {:<24} {:>6} {:>6} {:>8} {:>8} {:>8}  status",
+        "case", "family", "shape", "inputs", "folds", "l2", "linf", "attempts"
     );
     let mut failed = 0usize;
     for (index, (family, case)) in cases.iter().enumerate() {
@@ -98,11 +98,12 @@ pub fn sweep(log2: u32, inputs: usize, seed: u64) -> Result<(), String> {
         }
         let peak = akita_fuzz::liveness::take_peak();
         println!(
-            "{index:>4}  {:<34} {:<24} {inputs:>6} {:>6} {:>8.4} {:>8}  {} ({:.1}s)",
+            "{index:>4}  {:<34} {:<24} {inputs:>6} {:>6} {:>8.4} {:>8.4} {:>8}  {} ({:.1}s)",
             family.name(),
             label,
             peak.folds,
             peak.max_margin,
+            peak.max_linf_margin,
             peak.max_attempts,
             if failures.is_empty() {
                 "ok".to_string()

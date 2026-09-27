@@ -74,6 +74,7 @@ covered only by the workspace's ignored release tests.
 | Verifier no-panic contract | `batched_verify`, `GroupBatchStatement::new` | every planned row ≤ 2^20, including recursive setup offloading (setup-prefix commitments, Stage 3) | mixed-dimension rejection tests | `verifier_boundary` (R, S) | Honest proofs as seeds; arbitrary bytes, spliced patches, truncation; malformed statement shapes; random row digests | Only the byte-identical honest proof may verify; malformed bytes must be `InvalidProof`; malformed statements may fail with any class except `InvalidSetup` | EOF, noncanonical atoms | ms | – |
 | Prover public boundary | `DensePoly::from_field_evals`, `OneHotPoly::new`, `import_source`, `commit`, selection, `batched_prove` | as above | Some unit tests | `prover_boundary` (R, S) | False claims, wrong point dimension, missing/extra/reordered handles, out-of-bound bounded values, dense under one-hot, uncataloged shapes within setup capacity, capacity overflow, bad constructors | Must fail before a proof exists, with the error classes each boundary documents (point-dimension and handle checks also accept `InvalidProof`, FINDINGS F-3) | – | ≈ one proof | – |
 | Parallelism and determinism | Rayon paths in commit/prove/verify; shared `CpuBackend` | direct rows ≤ 2^17 | two-thread ownership test | `pcs_parallel` (C, M) | 1–8 thread scoped pools; two concurrent proofs | Byte-identical proofs | – | 2–3 proofs | Sequential feature graph: build with `prepare --sequential` |
+| Liveness (fold-grind completeness) | Fold-response grinds in `batched_prove` (`fold_grind.rs`, 4096 nonces), planner response model (`response_model.rs`) | every planned row; L2- and L-infinity-route folds | Planner calibration tests | every proving target via `liveness::observe`; `pcs_liveness` (C) shapes inputs; `akita-fuzz-dev sweep` runs every row | Dense witnesses `c·[bit t = 0 or 1]` with `c ∈ {1, ±reach}` and an opening coordinate solved so every root E partial evaluation equals an extreme-digit field value (all balanced digits at `−2^(b−1)`, `2^(b−1)−1`, or alternating, `b ∈ 2..8`); one-hot and untouched groups get the full evaluation solved instead | Grind never exhausted; accepted response within cap; measured conditional mean `≤ (39/40)·cap` (L2 route); observed response spread within the L-infinity digit budget at joint acceptance 1/40 under the planner's Gaussian model; attempts `≤ 1024` | Margins and attempts as coverage buckets | ≈ one proof | Recursive-level E (sumcheck points, not caller-controlled); T and R (pseudo-random under the setup matrices) |
 | Resource behavior | all | all | – | every target (M) | – | libFuzzer timeout, RSS and malloc limits; cgroup `MemoryMax` when available | – | – | Hard per-input CPU limits |
 
 ## What the checks establish, and what they do not
@@ -102,6 +103,17 @@ covered only by the workspace's ignored release tests.
 - Extension-field multiplication is checked by field laws only; a wrong but
   consistent defining polynomial would pass them, and the end-to-end targets
   would not notice either because prover and verifier share it.
+- **Liveness margins are checked per sampled proof, against the planner's
+  own models.** The L2 margin compares the prover's measured recursive source
+  energy with the frozen cap; the L-infinity margin applies the planner's
+  Gaussian acceptance model to the observed response RMS, so it can miss
+  folds whose spread is concentrated in a few coordinates. A margin at or
+  below 1 means the planner's completeness argument covers that witness, not
+  that every witness of the row is covered. Only root E (the caller's
+  partial evaluations) is shaped; deeper E, T, and R are not
+  caller-controlled. Guidance needs the right position bit and digit basis
+  per row; the sweep's random inputs rarely hit them, the engine is expected
+  to find them through the margin coverage.
 - Timeouts show only that no sampled input exceeded the per-input limit.
 - The recursive and multi-chunk families, fp64 one-hot, and every row above
   the caps run only at their smallest shapes or not at all (table above).

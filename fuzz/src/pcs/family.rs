@@ -249,12 +249,21 @@ pub(super) struct Group<Cfg: PcsOps> {
 /// Shape one group toward the largest recursive digit energy the response
 /// model does not price at its worst case.
 ///
-/// A dense witness `c · [bit t of i = 0]` makes every partial evaluation that
-/// sums over bit `t` equal `c · (1 - r_t)` in the Lagrange basis, whatever
-/// the other coordinates and the block split; solving `r_t` so the first
-/// polynomial evaluates to an extreme-digit value then puts that value in
-/// every such partial evaluation (the recursive witness's E digits). Other
-/// witnesses keep their tables and only get the solved coordinate.
+/// A root opening's E rows are the per-block partial evaluations
+/// `E[b][k] = Σ_p w(r_pos; p) · f[k + D·(p + M·b)]`: only the position
+/// coordinates `r[log2 D .. log2 D + log2 M)` are summed, and no Fiat–Shamir
+/// value enters. With a dense witness `c` on one half of a position bit `t`
+/// (and zero elsewhere), every E coefficient is `c · w(r_t)`, so solving
+/// `r_t` sets all of them to an extreme-digit value:
+///
+/// - Lagrange: `f = c · [bit t = 0]`, `w = 1 - r_t`, so `r_t = 1 - v / c`;
+/// - monomial: `f = c · [bit t = 1]`, every other coordinate 0, `w = r_t`,
+///   so `r_t = v / c`.
+///
+/// `t` is drawn from bits 6 and up (the smallest ring dimension is 64);
+/// which of those are position bits depends on the row, and the margin
+/// coverage steers the engine toward the ones that matter. Other sources
+/// (one-hot) only get `r_t` solved so the full evaluation hits `v`.
 fn shape<Cfg: PcsOps>(
     plan: &GroupPlan,
     reader: &mut Reader<'_>,
@@ -262,31 +271,51 @@ fn shape<Cfg: PcsOps>(
     point: &mut [Cfg::ExtField],
     basis: BasisMode,
 ) {
+    const MIN_POSITION_BIT: usize = 6;
     let mode = reader.u8();
     if plan.num_vars == 0 || mode % 4 == 3 {
         return;
     }
-    let t = reader.choose(plan.num_vars);
+    let t = if plan.num_vars > MIN_POSITION_BIT {
+        MIN_POSITION_BIT + reader.choose(plan.num_vars - MIN_POSITION_BIT)
+    } else {
+        reader.choose(plan.num_vars)
+    };
     let target: Cfg::ExtField = gen::extreme_ext::<Cfg::Field, Cfg::ExtField>(reader);
     let scale = reader.u8();
-    if let (Tables::Dense(tables), true) = (&mut *tables, mode % 4 != 2) {
-        let domain = plan.source.domain;
-        let c = match scale % 3 {
-            0 => Cfg::Field::one(),
-            1 => gen::from_signed::<Cfg::Field>(false, domain.reach::<Cfg::Field>(false)),
-            _ => gen::from_signed::<Cfg::Field>(true, domain.reach::<Cfg::Field>(true)),
-        };
-        let c = domain.clamp(c);
+    let lagrange = matches!(basis, BasisMode::Lagrange);
+    let domain = plan.source.domain;
+    let c = domain.clamp(match scale % 3 {
+        0 => Cfg::Field::one(),
+        1 => gen::from_signed::<Cfg::Field>(false, domain.reach::<Cfg::Field>(false)),
+        _ => gen::from_signed::<Cfg::Field>(true, domain.reach::<Cfg::Field>(true)),
+    });
+    if let (Tables::Dense(tables), false, Some(inverse)) =
+        (&mut *tables, mode % 4 == 2, c.inverse())
+    {
+        let hot = usize::from(!lagrange);
         for table in tables.iter_mut() {
             for (index, value) in table.iter_mut().enumerate() {
-                *value = if (index >> t) & 1 == 0 {
+                *value = if (index >> t) & 1 == hot {
                     c
                 } else {
                     Cfg::Field::zero()
                 };
             }
         }
+        let ratio = target * Cfg::ExtField::lift_base(inverse);
+        if lagrange {
+            point[t] = Cfg::ExtField::one() - ratio;
+        } else {
+            for (coordinate, value) in point.iter_mut().enumerate() {
+                if coordinate != t {
+                    *value = Cfg::ExtField::zero();
+                }
+            }
+            point[t] = ratio;
+        }
         stats::count("liveness_shaped_witness");
+        return;
     }
     point[t] = Cfg::ExtField::zero();
     let low = tables.evaluate::<Cfg::ExtField>(&*point, basis)[0];

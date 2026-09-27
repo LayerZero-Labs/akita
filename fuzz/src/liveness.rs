@@ -22,12 +22,16 @@
 //! - `40 · measured mean ≤ 39 · cap`: the planner's model covers this witness
 //!   (otherwise the completeness guarantee no longer applies to it, even if
 //!   this proof succeeded);
+//! - on L-infinity-route folds (no L2 cap; acceptance means every response
+//!   coefficient fits `num_digits_fold` balanced digits), the observed
+//!   response spread still gets joint acceptance of at least 1/40 under the
+//!   planner's own Gaussian model ([`Sample::linf_margin`]);
 //! - attempts stay below [`ATTEMPT_ALARM`], which a covered fold exceeds with
 //!   probability at most `(39/40)^1024 < 2^-37`.
 //!
-//! The margin `40 · mean / (39 · cap)` and the attempt count are also
-//! reported to the engine as coverage (one distinct function per bucket), so
-//! inputs that push a fold closer to its cap are kept and mutated further.
+//! Both margins and the attempt count are also reported to the engine as
+//! coverage (one distinct function per bucket), so inputs that push a fold
+//! closer to its limit are kept and mutated further.
 
 use crate::stats;
 use akita_error::AkitaError;
@@ -68,6 +72,69 @@ impl Sample {
         let (mean, cap) = (self.conditional_mean?, self.cap?);
         (cap > 0).then(|| mean as f64 * 40.0 / (cap as f64 * 39.0))
     }
+
+    fn field(&self, name: &str) -> Option<u128> {
+        self.fields
+            .iter()
+            .find_map(|(field, value)| (*field == name).then_some(*value))
+    }
+
+    /// L-infinity-route folds (no L2 cap): `σ · x_n / bound`, where `σ` is
+    /// the observed response RMS, `bound` the smaller side of the range
+    /// `num_digits_response` balanced digits represent, and `x_n` the
+    /// two-sided normal quantile at which `n` independent coordinates all fit
+    /// with probability 1/40. The planner sizes the digit count so its
+    /// modeled response has joint acceptance at least 1/40 (Gaussian
+    /// correlation inequality, `whole_response_normal_quantile`); above 1.0
+    /// the observed spread gets less than that under the planner's own model.
+    pub fn linf_margin(&self) -> Option<f64> {
+        if self.cap.is_some() || self.terminal || !self.model {
+            return None;
+        }
+        let response = self.response?;
+        let coeffs = self.field("response_coeffs")?;
+        let log_basis = u32::try_from(self.field("log_basis_response")?).ok()?;
+        let digits = u32::try_from(self.field("num_digits_response")?).ok()?;
+        if coeffs == 0 || !(2..=32).contains(&log_basis) || digits == 0 {
+            return None;
+        }
+        let base = (1u128 << log_basis) as f64;
+        let span = (base.powi(digits as i32) - 1.0) / (base - 1.0);
+        let bound = (base / 2.0 - 1.0) * span;
+        let sigma = (response as f64 / coeffs as f64).sqrt();
+        (bound > 0.0).then(|| sigma * joint_quantile(coeffs as f64) / bound)
+    }
+}
+
+/// `x` with `(1 - 2Q(x))^n = 1/40`, `Q` the standard normal upper tail.
+fn joint_quantile(n: f64) -> f64 {
+    // Per-coordinate two-sided tail: 1 - (1/40)^(1/n).
+    let tail = -(-(40f64.ln()) / n).exp_m1();
+    let (mut low, mut high) = (0.0f64, 40.0f64);
+    for _ in 0..100 {
+        let mid = 0.5 * (low + high);
+        if 2.0 * upper_tail(mid) > tail {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    0.5 * (low + high)
+}
+
+/// Standard normal upper tail `Q(x)` for `x ≥ 0`: Simpson integration of
+/// the density over `[x, x + 12]` (relative error far below what the
+/// margin needs, also deep in the tail).
+fn upper_tail(x: f64) -> f64 {
+    const STEPS: usize = 2048;
+    let h = 12.0 / STEPS as f64;
+    let density = |t: f64| (-0.5 * t * t).exp() / (2.0 * std::f64::consts::PI).sqrt();
+    let mut sum = density(x) + density(x + 12.0);
+    for step in 1..STEPS {
+        let weight = if step % 2 == 1 { 4.0 } else { 2.0 };
+        sum += weight * density(x + step as f64 * h);
+    }
+    sum * h / 3.0
 }
 
 impl fmt::Display for Sample {
@@ -86,6 +153,7 @@ pub struct Peak {
     pub folds: u64,
     pub max_attempts: u64,
     pub max_margin: f64,
+    pub max_linf_margin: f64,
     pub worst: Option<Sample>,
 }
 
@@ -295,6 +363,18 @@ fn check(context: &str, samples: &[Sample]) {
                 moments_before(samples, index)
             );
         }
+        if let Some(margin) = sample.linf_margin() {
+            stats::count(MARGIN_COUNTERS[margin_counter(margin)]);
+            guide::linf(margin);
+            peak.max_linf_margin = peak.max_linf_margin.max(margin);
+            assert!(
+                margin <= 1.0,
+                "liveness: {context}: fold response spread exceeds the planner's L-infinity \
+                 digit budget (margin {margin:.4} > 1; per-attempt acceptance below 1/40 under \
+                 its Gaussian model): {sample}\nwitness moments before this fold:\n{}",
+                moments_before(samples, index)
+            );
+        }
         assert!(
             attempts <= ATTEMPT_ALARM,
             "liveness: {context}: fold grind needed {attempts} attempts (alarm {ATTEMPT_ALARM}, \
@@ -305,6 +385,7 @@ fn check(context: &str, samples: &[Sample]) {
         let global = global.get_or_insert_with(Peak::default);
         global.folds += peak.folds;
         global.max_attempts = global.max_attempts.max(peak.max_attempts);
+        global.max_linf_margin = global.max_linf_margin.max(peak.max_linf_margin);
         if peak.max_margin > global.max_margin {
             global.max_margin = peak.max_margin;
             global.worst = peak.worst;
@@ -373,28 +454,60 @@ mod guide {
         ($($n:literal)*) => { [$(reached::<$n> as fn()),*] };
     }
 
-    /// Margin in 1/64 steps over `[0.25, 1.25)` for non-terminal folds
-    /// (0..64) and terminal folds (64..128).
-    static MARGIN: [fn(); 128] = marks!(
-        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
-        32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60
-        61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89
-        90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113
-        114 115 116 117 118 119 120 121 122 123 124 125 126 127
+    /// Margin in 1/64 steps over `[0.25, 1.25)`: L2-route non-terminal
+    /// (0..64) and terminal (64..128) folds, L-infinity-route folds (128..192).
+    static MARGIN: [fn(); 192] = marks!(
+        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
     );
-    /// Attempt buckets (log2) for non-terminal (128..144) and terminal
-    /// (144..160) folds.
+    /// Attempt buckets (log2) for non-terminal (192..208) and terminal
+    /// (208..224) folds.
     static ATTEMPTS: [fn(); 32] = marks!(
-        128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149
-        150 151 152 153 154 155 156 157 158 159
+        192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223
     );
 
     pub(super) fn margin(terminal: bool, margin: f64) {
-        let step = ((margin - 0.25) * 64.0).clamp(0.0, 63.0) as usize;
-        MARGIN[usize::from(terminal) * 64 + step]();
+        MARGIN[usize::from(terminal) * 64 + step(margin)]();
+    }
+
+    pub(super) fn linf(margin: f64) {
+        MARGIN[128 + step(margin)]();
+    }
+
+    fn step(margin: f64) -> usize {
+        ((margin - 0.25) * 64.0).clamp(0.0, 63.0) as usize
     }
 
     pub(super) fn attempts(terminal: bool, bucket: usize) {
         ATTEMPTS[usize::from(terminal) * 16 + bucket.min(15)]();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_tail_matches_reference_values() {
+        for (x, expected) in [
+            (0.0, 0.5),
+            (1.96, 0.024_997_9),
+            (4.0, 3.167_124e-5),
+            (6.0, 9.865_876e-10),
+        ] {
+            let q = upper_tail(x);
+            assert!(
+                (q - expected).abs() <= 1e-6 * expected,
+                "Q({x}) = {q}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn joint_quantile_gives_one_fortieth_joint_acceptance() {
+        for n in [1.0, 64.0, 65_536.0, 1e7] {
+            let x = joint_quantile(n);
+            let joint = (1.0 - 2.0 * upper_tail(x)).powf(n);
+            assert!((joint - 1.0 / 40.0).abs() < 1e-6, "n = {n}: joint {joint}");
+        }
     }
 }
