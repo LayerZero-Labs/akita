@@ -7,7 +7,8 @@ use crate::WitnessUnitLayout;
 
 /// Destination for canonical witness coefficient emission.
 pub trait WitnessCoefficientSink {
-    /// Write one contiguous coefficient plane at its physical witness offset.
+    /// Write a contiguous coefficient span at its physical witness offset.
+    /// The span may contain multiple consecutive coefficient planes.
     fn write_coefficients(&mut self, start: usize, coefficients: &[i8]) -> Result<(), AkitaError>;
 }
 
