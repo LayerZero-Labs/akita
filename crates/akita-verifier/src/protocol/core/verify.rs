@@ -40,20 +40,8 @@ where
         let (final_group, precommitteds) = claims
             .groups()
             .split_last()
-            .ok_or_else(|| AkitaError::InvalidInput("statement has no claim groups".to_string()))?;
+            .ok_or(AkitaError::InvalidProof)?;
         let final_descriptor = *final_group.commitment().profile();
-        if final_descriptor.group.num_vars() != final_group.num_vars()
-            || final_descriptor.group.num_polynomials() != final_group.num_evaluations()
-            || precommitteds.iter().any(|group| {
-                let descriptor = group.commitment().profile();
-                descriptor.group.num_vars() != group.num_vars()
-                    || descriptor.group.num_polynomials() != group.num_evaluations()
-            })
-        {
-            return Err(AkitaError::InvalidInput(
-                "claim group shape does not match its commitment profile".to_string(),
-            ));
-        }
         for group in claims.groups() {
             let committed = group.commitment();
             let descriptor = committed.profile();

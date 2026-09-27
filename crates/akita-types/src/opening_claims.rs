@@ -403,7 +403,9 @@ impl<'a, E: Clone, F: Field> OpeningClaims<'a, E, &'a CommittedGroup<F>> {
             if declared.num_vars() != group.point.len()
                 || declared.num_polynomials() != group.evaluations.len()
             {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidInput(
+                    "claim group shape does not match its commitment profile".to_string(),
+                ));
             }
             groups.push(declared);
         }
@@ -421,7 +423,9 @@ impl<'a, E: Clone, F: Field> OpeningClaims<'a, E, CommittedGroup<F>> {
             if declared.num_vars() != group.point.len()
                 || declared.num_polynomials() != group.evaluations.len()
             {
-                return Err(AkitaError::InvalidProof);
+                return Err(AkitaError::InvalidInput(
+                    "claim group shape does not match its commitment profile".to_string(),
+                ));
             }
             groups.push(declared);
         }
