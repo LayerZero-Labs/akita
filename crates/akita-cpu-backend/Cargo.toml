@@ -92,5 +92,9 @@ harness = false
 name = "root_kernels"
 harness = false
 
+[[bench]]
+name = "quotient_kernels"
+harness = false
+
 [lints]
 workspace = true
