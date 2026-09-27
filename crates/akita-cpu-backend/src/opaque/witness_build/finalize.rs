@@ -784,11 +784,7 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != Some(levels) {
         return Err(AkitaError::InvalidProof);
     }
-    let q = (-F::one())
-        .to_u128_checked()
-        .expect("Akita field element must fit in u128")
-        + 1;
-    let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis);
     let mut events = layout
         .r_rows()
         .iter()
