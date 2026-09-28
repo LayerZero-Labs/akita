@@ -132,6 +132,16 @@ impl AkitaMetal {
     }
 
     pub(crate) fn pipeline(&self, host_name: &str) -> Result<&Pipeline, AkitaMetalError> {
-        Ok(self.library.pipeline(host_name)?)
+        // The compiled library is the capability registry. Generic public
+        // entry points may request an uninstantiated field/shape combination;
+        // that is a setup limitation, not a device execution fault.
+        self.library
+            .pipeline(host_name)
+            .map_err(|error| match error {
+                jolt_metal::MetalError::UnknownPipeline { name } => {
+                    AkitaMetalError::Shape(format!("no compiled kernel for {name}"))
+                }
+                other => other.into(),
+            })
     }
 }

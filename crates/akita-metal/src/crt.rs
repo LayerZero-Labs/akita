@@ -47,6 +47,7 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
         residues: &DeviceBuffer<i32>,
         out: &mut DeviceBuffer<F>,
     ) -> Result<Duration, AkitaMetalError> {
+        let pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
         let (elements, _) = rows::<K, D>(residues.len())?;
         let coefficients = elements
             .checked_mul(D)
@@ -62,7 +63,6 @@ impl<const K: usize, const D: usize> DeviceCrtNtt<K, D> {
             log_degree: D.trailing_zeros(),
         };
         let radix = DeviceBuffer::from_slice(metal.device(), &self.crt_weights::<F>())?;
-        let pipeline = metal.pipeline(&crt_kernel::<F>(K))?;
         let mut batch = Batch::new(metal.device())?;
         batch.dispatch(
             pipeline,
