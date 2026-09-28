@@ -11,9 +11,10 @@ use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, MslType};
 use jolt_metal::MetalField;
 
 use crate::crt::COEFFICIENT_GROUP;
+use crate::digits::{DeviceDigitPlanes, DigitPlane};
 use crate::error::AkitaMetalError;
 use crate::library::{AkitaMetal, Instance};
-use crate::matvec::{field_modulus, DigitPlane};
+use crate::matvec::field_modulus;
 use crate::ntt::shape_overflow;
 
 fn decompose_kernel<F: MslType, T: DigitPlane>() -> String {
@@ -58,9 +59,9 @@ fn words(value: u128) -> [u32; 4] {
 /// Decomposes rings of `ring_degree` coefficients into `levels` balanced
 /// base-`2^log_basis` digit planes each, as `decompose_rows_i8_into` and
 /// `CyclotomicRing::balanced_decompose_pow2_i16_into` do, and returns the GPU
-/// time.
+/// time. The returned planes carry their validated basis into matvec.
 ///
-/// `out` receives `levels` planes per ring, ring-major: exactly the digit
+/// The result holds `levels` planes per ring, ring-major: exactly the digit
 /// planes [`DeviceNttMatrix::mat_vec`](crate::matvec::DeviceNttMatrix::mat_vec)
 /// takes, with `cols = rings * levels` per block. Decomposing a ring of a
 /// larger degree as rings of `ring_degree` gives the subcolumn order of
@@ -71,18 +72,11 @@ pub fn decompose<F, T>(
     ring_degree: usize,
     levels: usize,
     log_basis: u32,
-    out: &mut DeviceBuffer<T>,
-) -> Result<Duration, AkitaMetalError>
+) -> Result<(DeviceDigitPlanes<T>, Duration), AkitaMetalError>
 where
     F: MetalField + CanonicalEncoding,
     T: DigitPlane,
 {
-    if !(1..=T::MAX_LOG_BASIS).contains(&log_basis) {
-        return Err(AkitaMetalError::Shape(format!(
-            "log_basis {log_basis} does not fit {} digits",
-            T::SUFFIX
-        )));
-    }
     if !ring_degree.is_power_of_two() {
         return Err(AkitaMetalError::Shape(format!(
             "ring degree {ring_degree} is not a power of two"
@@ -102,17 +96,17 @@ where
         )));
     }
     let digits = checked::product([count, levels]).ok_or_else(|| shape_overflow(count))?;
-    if out.len() != digits {
-        return Err(AkitaMetalError::Shape(format!(
-            "{count} coefficients of {levels} digits need {digits} outputs, got {}",
-            out.len()
-        )));
-    }
+    let pipeline = metal.pipeline(&decompose_kernel::<F, T>())?;
     if digits == 0 {
-        return Ok(Duration::ZERO);
+        return Ok((
+            DeviceDigitPlanes::zeroed(metal, digits, log_basis)?,
+            Duration::ZERO,
+        ));
     }
+    DeviceDigitPlanes::<T>::validate_log_basis(log_basis)?;
     let modulus = field_modulus::<F>()?;
     let u32_of = |value: usize| u32::try_from(value).map_err(|_| shape_overflow(value));
+    u32_of(ring_degree)?;
     let shape = DecomposeShape {
         modulus: words(modulus),
         threshold: words(decompose_centering_threshold(levels, log_basis, modulus)),
@@ -121,17 +115,19 @@ where
         levels: u32_of(levels)?,
         log_basis,
     };
+    let mut out = DeviceDigitPlanes::zeroed(metal, digits, log_basis)?;
     let mut batch = Batch::new(metal.device())?;
     batch.dispatch(
-        metal.pipeline(&decompose_kernel::<F, T>())?,
+        pipeline,
         &[
             Binding::buffer(coefficients),
-            Binding::buffer(out),
+            Binding::buffer(out.buffer_mut()),
             Binding::value(&shape),
         ],
         Grid::linear(count, COEFFICIENT_GROUP),
     )?;
-    Ok(batch.commit_and_wait()?)
+    let duration = batch.commit_and_wait()?;
+    Ok((out, duration))
 }
 
 #[cfg(test)]

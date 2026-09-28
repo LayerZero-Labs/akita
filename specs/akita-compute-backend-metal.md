@@ -92,6 +92,13 @@ a16z/jolt), adapted to Akita:
 5. **Tuning knobs are template parameters** with a single definition in Rust and
    a default valid everywhere. Configuration is a pure function of the shape.
 
+Balanced digit buffers cross the host/device boundary as `DeviceDigitPlanes<T>`.
+The type owns both private device storage and the `log_basis` used to validate
+that storage. Caller-owned slices are range-checked before upload, and device
+decomposition returns the same typed state. Matvec consumes that state directly;
+it cannot receive an independently supplied basis that would price CRT capacity
+for a smaller range than the stored digits.
+
 ### Testing
 
 Each kernel has a differential test against the CPU function it replaces, for
@@ -108,11 +115,14 @@ each pull request.
 
 ### Performance claims
 
-Benchmarks compare the device (GPU time) against the CPU backend on every core
-(wall time) on the same inputs, after checking that the outputs match. Each
-kernel pull request states the hardware, the command, the work per element and
-the bounding limit, measured with `jolt-metal`'s `limits` benchmark on the same
-machine.
+Benchmarks compare device GPU time and end-to-end call wall time against the CPU
+backend on every core (wall time) on the same inputs, after checking that all
+outputs match one shared CPU oracle. Matvec reports full-profile and
+planner-selected limb/profile variants on those inputs. Device matrix
+preparation is reported in a separate benchmark group, so transform/upload cost
+is not folded into steady-state multiplication. Each kernel pull request states
+the hardware, the command, the work per element and the bounding limit, measured
+with `jolt-metal`'s `limits` benchmark on the same machine.
 
 ### Kernels
 
