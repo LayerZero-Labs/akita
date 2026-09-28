@@ -305,7 +305,7 @@ fn one_column_fits<const K: usize>(limbs: usize, degree: usize, log_basis: u32) 
     let bound = if limbs == 1 {
         q
     } else {
-        1u128 << (129 + limbs - 1) / limbs
+        1u128 << 129usize.div_ceil(limbs)
     };
     CrtCapacity::from_prime_moduli(q128_primes()[..K].iter().map(|prime| prime.p as u128))
         .supports_modulus(1, degree, bound, 1 << (log_basis - 1))
